@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {Test} from "forge-std/Test.sol";
+import {Request} from "../src/request/Request.sol";
+
+contract RequestTest is Test {
+    Request public request;
+
+    function setUp() public {
+        request = new Request();
+    }
+}
