@@ -15,8 +15,7 @@ contract OfferReceiverTest is Test {
   Vm.Wallet internal maker3;
 
   // Constants for EIP-712
-  bytes32 internal constant OFFER_TYPEHASH =
-    0x03babd1fc4fa7801a5697c2a66bd17ee1499bad98dbcb9901bdae479682e3229;
+  bytes32 internal constant OFFER_TYPEHASH = 0x03babd1fc4fa7801a5697c2a66bd17ee1499bad98dbcb9901bdae479682e3229;
 
   // Custom errors (matching OfferReceiver)
   error InvalidOffer();
@@ -36,20 +35,12 @@ contract OfferReceiverTest is Test {
   }
 
   /// @notice Helper function to create a valid offer
-  function _createOffer(
-    address maker_,
-    uint256 amount,
-    uint256 expectedReturn,
-    uint256 nonce_,
-    uint256 expiration
-  ) internal pure returns (Offer memory) {
-    return Offer({
-      maker: maker_,
-      amount: amount,
-      expectedReturn: expectedReturn,
-      nonce: nonce_,
-      expiration: expiration
-    });
+  function _createOffer(address maker_, uint256 amount, uint256 expectedReturn, uint256 nonce_, uint256 expiration)
+    internal
+    pure
+    returns (Offer memory)
+  {
+    return Offer({maker: maker_, amount: amount, expectedReturn: expectedReturn, nonce: nonce_, expiration: expiration});
   }
 
   /// @notice Helper function to sign an offer using EIP-712
@@ -340,9 +331,7 @@ contract OfferReceiverTest is Test {
   /*                       FUZZ TESTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_ValidOffer(uint256 amount, uint256 expectedReturn, uint256 nonce_, uint256 timeUntilExpiry)
-    public
-  {
+  function testFuzz_ValidOffer(uint256 amount, uint256 expectedReturn, uint256 nonce_, uint256 timeUntilExpiry) public {
     // Bound inputs to reasonable ranges
     amount = bound(amount, 1, type(uint128).max);
     expectedReturn = bound(expectedReturn, 1, type(uint128).max);
@@ -612,8 +601,7 @@ contract OfferReceiverTest is Test {
     // Each maker submits multiple offers
     for (uint256 i = 0; i < numMakers; i++) {
       for (uint256 j = 1; j <= offersPerMaker; j++) {
-        Offer memory offer =
-          _createOffer(wallets[i].addr, 1000e6 * j, 100e6 * j, j, block.timestamp + 1 days);
+        Offer memory offer = _createOffer(wallets[i].addr, 1000e6 * j, 100e6 * j, j, block.timestamp + 1 days);
         bytes memory signature = _signOffer(offer, wallets[i]);
         receiver.validateOffer(offer, signature);
 

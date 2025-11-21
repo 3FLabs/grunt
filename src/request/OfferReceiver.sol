@@ -113,7 +113,7 @@ abstract contract OfferReceiver is EIP712 {
   ///      3. Ensures offer nonce is greater than stored nonce (freshness check)
   ///      4. Verifies signature using EIP-712 (EOA) or EIP-1271 (smart contract)
   ///      5. Updates the stored nonce to the offer's nonce (preventing replay)
-  ///      
+  ///
   ///      Note: This function does NOT pull funds from the maker. That logic must be
   ///      implemented separately by contracts inheriting from OfferReceiver.
   /// @param offer The offer struct containing all offer parameters
@@ -125,17 +125,17 @@ abstract contract OfferReceiver is EIP712 {
   function _validateOffer(Offer calldata offer, bytes calldata signature) internal {
     // Validate offer parameters are non-zero
     if (offer.maker == address(0) || offer.amount == 0 || offer.expectedReturn == 0) revert InvalidOffer();
-    
+
     // Check offer has not expired
     if (offer.expiration < block.timestamp) revert OfferExpired();
-    
+
     // Ensure offer nonce is fresh (greater than stored nonce)
     // This prevents replay attacks and validates offer hasn't been cancelled
     if (nonce(offer.maker) >= offer.nonce) revert InvalidNonce();
 
     // Compute EIP-712 typed data hash for signature verification
     bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
-    
+
     // Verify signature using EIP-712 (EOA) or EIP-1271 (smart contract)
     if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert InvalidSignature();
 
