@@ -60,3 +60,45 @@ Given: 1,000,000 PT and 100,000 YT outstanding
 - Yield holders receive any assets beyond the principal supply
 - If total assets < principal supply, principal holders share the loss proportionally
 - If total assets > principal supply, yield holders capture all upside
+
+## Prime Broker Offers
+
+### Offer Creation and Signing
+
+Prime brokers create cryptographically signed offers to lend assets to the protocol. Each offer specifies:
+- **Amount**: The principal amount to lend
+- **Expected Return**: The absolute return expected (not a rate)
+- **Maker**: The address providing the funds
+- **Nonce**: A sequential number for offer management (must start at 1)
+- **Expiration**: Timestamp after which the offer is no longer valid
+
+Offers are signed using either:
+- **EIP-712**: Standard typed data signing for EOA accounts
+- **EIP-1271**: Smart contract signature validation via `isValidSignature()`
+
+### Nonce Management
+
+Nonces enable flexible offer lifecycle management:
+
+**Starting Value**: All nonces must start at 1 (nonce 0 is invalid)
+
+**Offer Cancellation**:
+- **Soft Cancel**: Communicate with the off-chain server to mark offers as cancelled (no on-chain transaction)
+- **Hard Cancel**: Set nonce to a value higher than the offers to cancel on-chain
+
+**Example**: 
+- Broker creates offers with nonces 1, 2, 3
+- To cancel offers 1 and 2: call `setNonce(3)` on-chain
+- Any offer with nonce < 3 becomes invalid
+- New offers must use nonce ≥ 3
+
+### Offer Validation
+
+When an offer is consumed, the protocol validates:
+1. **Maker validity**: Maker address is not zero
+2. **Amount validity**: Amount and expectedReturn are non-zero
+3. **Expiration**: Current timestamp < expiration
+4. **Nonce freshness**: Offer nonce > current stored nonce for maker
+5. **Signature validity**: EIP-712 or EIP-1271 signature verification
+
+Upon successful validation, the offer's nonce is stored, preventing replay attacks.
