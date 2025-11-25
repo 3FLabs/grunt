@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
+import {MAX_128_BITS} from "./Constants.sol";
+
 /// @title LibAllowance
 /// @notice Library for efficient allowance management with infinite approval support.
 /// @dev Provides gas-optimized functions for consuming and normalizing uint128 allowances.
 ///      Implements infinite allowance semantics where type(uint128).max remains unchanged during consumption.
 library LibAllowance {
-  /// @dev The mask for the 128 bits (type(uint128).max).
-  uint256 private constant _MAX_128_BITS = 0xffffffffffffffffffffffffffffffff;
-
   /// @dev Consumes (decreases) an allowance by a given amount, with infinite allowance support.
   ///      Implements the logic: `result = allowance < type(uint128).max ? allowance - amount : type(uint128).max`
   ///      If the allowance is type(uint128).max (infinite), it remains unchanged after consumption.
@@ -20,7 +19,7 @@ library LibAllowance {
   function consume(uint128 allowance, uint128 amount) internal pure returns (uint128 result) {
     /// @solidity memory-safe-assembly
     assembly {
-      result := sub(allowance, mul(amount, lt(allowance, _MAX_128_BITS)))
+      result := sub(allowance, mul(amount, lt(allowance, MAX_128_BITS)))
     }
   }
 
@@ -33,7 +32,7 @@ library LibAllowance {
   function normalize(uint128 allowance) internal pure returns (uint256 result) {
     /// @solidity memory-safe-assembly
     assembly {
-      result := or(allowance, sub(0, eq(allowance, _MAX_128_BITS)))
+      result := or(allowance, sub(0, eq(allowance, MAX_128_BITS)))
     }
   }
 }

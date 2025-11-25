@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+import {MAX_128_BITS} from "./Constants.sol";
+
 /// @title Lib128Fields
 /// @notice Library for gas-efficient reading and writing of packed uint128 fields in storage.
 /// @dev This library provides low-level storage operations for packing two uint128 values into a single
@@ -26,11 +28,6 @@ pragma solidity ^0.8.0;
 ///      - No overflow checks are performed for maximum gas efficiency
 ///      - Memory-safe assembly is used to prevent unintended memory corruption
 library Lib128Fields {
-  /// @dev Bit mask for extracting the lower 128 bits (type(uint128).max).
-  ///      Used to isolate the first field from a packed uint256 value.
-  ///      Value: 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (2^128 - 1)
-  uint256 private constant _128_MASK = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-
   /// @dev Reads two packed uint128 fields from a storage slot.
   ///      Uses optimized assembly to read a single storage slot and extract both uint128 values.
   ///      This is more gas-efficient than reading two separate storage slots.
@@ -50,7 +47,7 @@ library Lib128Fields {
     /// @solidity memory-safe-assembly
     assembly {
       let val := sload(slot)
-      ptField := and(val, _128_MASK)
+      ptField := and(val, MAX_128_BITS)
       ytField := shr(128, val)
     }
   }
