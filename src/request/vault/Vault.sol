@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {ControlledVault} from "./ControlledVault.sol";
-import {VaultController} from "./VaultController.sol";
+import {ControlledToken} from "../tokens/ControlledToken.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 /// @title Vault
@@ -91,13 +91,13 @@ contract Vault is ControlledVault, Initializable {
   /*                    INTERNAL OVERRIDES                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc ControlledVault
+  /// @inheritdoc ControlledToken
   /// @dev Returns the immutable token type flag set during construction.
   function _isYtToken() internal view override returns (bool) {
     return _IS_YT;
   }
 
-  /// @inheritdoc ControlledVault
+  /// @inheritdoc ControlledToken
   /// @dev Returns the controller address stored in ERC-7201 namespaced storage.
   function _controller() internal view override returns (address) {
     return _vaultStorage().controller;
