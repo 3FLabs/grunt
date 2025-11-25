@@ -7,7 +7,6 @@ import {LibMintAuth} from "./libraries/LibMintAuth.sol";
 import {IERC20} from "../integrations/interfaces/IERC20.sol";
 import {IRequestCallback} from "../core/interfaces/IRequestCallback.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {UUPSUpgradeable} from "lib/solady/src/utils/UUPSUpgradeable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
@@ -16,13 +15,18 @@ import {TokenController} from "./tokens/TokenController.sol";
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 
 /// @title Request
-/// @notice Upgradeable contract for managing funding requests with dual-token (PT/YT) issuance.
+/// @notice Contract for managing funding requests with dual-token (PT/YT) issuance.
 /// @dev This contract combines multiple functionalities:
 ///      - **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
 ///      - **VaultController**: Manages PT/YT tokens with ERC4626-style redemptions
-///      - **Initializable/UUPSUpgradeable**: Supports proxy pattern for upgradeability
+///      - **Initializable**: Supports initialization for proxy deployments
 ///      - **Ownable**: Restricts admin functions to the contract owner
 ///      - **ReentrancyGuard**: Prevents reentrancy attacks during offer consumption
+///
+///      Deployment Options:
+///      - **Immutable**: Deploy directly and call `initialize()` in the constructor or immediately after
+///      - **Beacon Proxy**: Deploy as implementation behind an UpgradeableBeacon for upgradeable instances
+///      - **Minimal Proxy (Clone)**: Deploy as implementation for gas-efficient clones via ERC-1167
 ///
 ///      Lifecycle:
 ///      1. Contract is deployed and initialized with asset, PT/YT tokens, and metadata
@@ -35,7 +39,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      2. Owner calls `consume()` with the offer, signature, and PT amount to fulfill
 ///      3. The maker's `onRequestConsumed` callback is invoked to prepare funds
 ///      4. Assets are transferred from owner and PT/YT tokens are minted to the maker
-contract Request is OfferReceiver, VaultController, Initializable, UUPSUpgradeable, Ownable, ReentrancyGuardTransient {
+contract Request is OfferReceiver, VaultController, Initializable, Ownable, ReentrancyGuardTransient {
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
   using LibMintAuth for address;
@@ -67,8 +71,8 @@ contract Request is OfferReceiver, VaultController, Initializable, UUPSUpgradeab
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Storage struct containing all persistent state for the Request contract.
-  /// @dev Uses a single storage slot pattern for upgradeability. All fields are packed together
-  ///      and accessed via a fixed storage slot to maintain compatibility across upgrades.
+  /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
+  ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param asset The address of the underlying ERC20 asset (e.g., USDC)
   /// @param repaid Whether the request has been repaid, enabling withdrawals
   /// @param ptToken The address of the Principal Token contract
@@ -91,7 +95,7 @@ contract Request is OfferReceiver, VaultController, Initializable, UUPSUpgradeab
 
   /// @notice Returns a reference to the contract's storage struct.
   /// @dev Uses assembly to load the storage pointer from the fixed storage slot.
-  ///      This pattern ensures consistent storage layout across upgrades.
+  ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return requestStorage A storage pointer to the RequestStorage struct
   function _requestStorage() internal pure returns (RequestStorage storage requestStorage) {
     /// @solidity memory-safe-assembly
@@ -262,13 +266,10 @@ contract Request is OfferReceiver, VaultController, Initializable, UUPSUpgradeab
   }
 
   /// @inheritdoc EIP712
-  /// @dev Returns true because the contract is upgradeable and the name/version may change.
+  /// @dev Returns true because the name is stored in storage and may differ across proxy instances.
   function _domainNameAndVersionMayChange() internal pure override returns (bool) {
     return true;
   }
-
-  /// @inheritdoc UUPSUpgradeable
-  function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
   /// @inheritdoc ReentrancyGuardTransient
   /// @dev Returns false to disable the transient reentrancy guard on all networks.
