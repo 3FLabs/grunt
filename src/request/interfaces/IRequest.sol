@@ -44,6 +44,12 @@ interface IRequest {
   /*                          MINTING                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Returns the mint authorization for a given address.
+  /// @param account The address to query mint authorization for
+  /// @return ptAmount The amount of PT tokens the address is authorized to mint
+  /// @return ytAmount The amount of YT tokens the address is authorized to mint
+  function mintAuthorization(address account) external view returns (uint128 ptAmount, uint128 ytAmount);
+
   /// @notice Mints PT and YT tokens to the caller using their authorized amounts.
   function mint() external;
 

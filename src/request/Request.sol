@@ -202,6 +202,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRequest
+  function mintAuthorization(address account) external view returns (uint128 ptAmount, uint128 ytAmount) {
+    (ptAmount, ytAmount) = account.mintAuth();
+  }
+
+  /// @inheritdoc IRequest
   /// @dev The caller must have been previously authorized via `authorizeMinting()`. This function:
   ///      1. Reads the caller's authorized PT/YT amounts from storage
   ///      2. Transfers PT amount of underlying asset from caller to this contract
