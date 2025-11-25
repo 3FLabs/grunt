@@ -24,44 +24,71 @@ struct Offer {
 /// @notice Abstract contract for validating and consuming cryptographically signed prime broker offers.
 /// @dev Implements EIP-712 typed data hashing and signature verification (EIP-712/EIP-1271).
 ///      Manages nonces to prevent replay attacks and enable offer cancellation. Contracts inheriting
-///      from this can validate offers before pulling funds from prime brokers.
+///      from this can validate offers before processing funds from prime brokers.
+///
+///      Key Features:
+///      - **EIP-712 Signatures**: Type-safe structured data signing for EOAs
+///      - **EIP-1271 Support**: Smart contract signature validation for multisigs/smart wallets
+///      - **Nonce Management**: Monotonically increasing nonces prevent replay attacks
+///      - **Offer Cancellation**: Makers can invalidate pending offers by updating their nonce
+///
+///      Security Model:
+///      - Nonces must be strictly increasing (offer.nonce > stored nonce)
+///      - Nonce is updated before signature verification to prevent reentrancy replays
+///      - Expiration timestamps provide time-bound validity for offers
 abstract contract OfferReceiver is EIP712 {
   using SignatureCheckerLib for address;
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           EVENTS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted when a maker's nonce is updated.
+  /// @dev Triggered by both manual nonce updates (via `setNonce`) and offer consumption.
+  /// @param maker The address whose nonce was updated
+  /// @param newNonce The new nonce value
+  event NonceUpdated(address indexed maker, uint256 newNonce);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           ERRORS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Error thrown when an offer has invalid parameters (zero maker, amount, or expectedReturn).
-  /// @dev Validates that the offer contains valid non-zero values for critical fields.
   error InvalidOffer();
 
   /// @notice Error thrown when the offer signature verification fails.
-  /// @dev Signature is verified using EIP-712 for EOAs or EIP-1271 for smart contracts.
   error InvalidSignature();
 
   /// @notice Error thrown when an offer's expiration timestamp has passed.
-  /// @dev Compares offer.expiration with block.timestamp.
   error OfferExpired();
 
   /// @notice Error thrown when an offer's nonce is not greater than the stored nonce.
-  /// @dev Prevents replay attacks and validates offer freshness. Nonces must be monotonically increasing.
   error InvalidNonce();
 
   /// @notice Error thrown when attempting to set a nonce that is not greater than the current nonce.
-  /// @dev Nonce updates must always increase the value to properly invalidate old offers.
   error InvalidNonceUpdate();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          CONSTANTS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice EIP-712 typehash for the Offer struct.
   /// @dev Precomputed keccak256 of the Offer type string for gas efficiency.
   ///      Type string: "Offer(address maker,uint256 amount,uint256 expectedReturn,uint256 nonce,uint256 expiration)"
   uint256 internal constant _OFFER_TYPEHASH = 0x03babd1fc4fa7801a5697c2a66bd17ee1499bad98dbcb9901bdae479682e3229;
 
-  /// @notice Seed used to derive nonce storage slots for each maker.
-  /// @dev The nonce slot for a `maker` is computed using keccak256:
+  /// @dev Seed used to derive nonce storage slots for each maker.
+  ///      The nonce slot for a `maker` is computed using keccak256:
   /// ```
   ///     mstore(0x0c, _NONCE_SEED)
   ///     mstore(0x00, maker)
   ///     let nonceSlot := keccak256(0x0c, 0x20)
   /// ```
-  ///      Each maker has an independent nonce stored at their derived slot.
   uint256 private constant _NONCE_SEED = 0xaffed0e0;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      NONCE MANAGEMENT                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Returns the current nonce for a given maker address.
   /// @dev Nonces start at 0 by default. Offers must use nonces > stored value (starting at 1).
@@ -73,16 +100,18 @@ abstract contract OfferReceiver is EIP712 {
     assembly {
       mstore(0x0c, _NONCE_SEED)
       mstore(0x00, owner)
-      let nonceSlot := keccak256(0x0c, 0x20)
-      result := sload(nonceSlot)
+      result := sload(keccak256(0x0c, 0x20))
     }
   }
 
   /// @notice Allows a maker to manually update their nonce to cancel offers (hard cancel).
   /// @dev The new nonce must be strictly greater than the current nonce. All offers with
   ///      nonce <= newNonce become invalid. This is useful for bulk cancellation of offers.
-  ///      For example, if a maker has offers with nonces 1-5 and calls setNonce(3),
+  ///      Emits a {NonceUpdated} event.
+  ///
+  ///      Example: If a maker has offers with nonces 1-5 and calls setNonce(3),
   ///      offers 1, 2, and 3 are invalidated, and new offers must use nonce >= 4.
+  ///
   /// @param newNonce The new nonce value to set (must be > current nonce)
   /// @custom:reverts InvalidNonceUpdate if newNonce <= current nonce
   function setNonce(uint256 newNonce) external {
@@ -93,6 +122,7 @@ abstract contract OfferReceiver is EIP712 {
 
   /// @notice Internal function to update a maker's nonce.
   /// @dev Computes the storage slot using keccak256 and writes the new nonce value.
+  ///      Emits a {NonceUpdated} event after updating storage.
   ///      No validation is performed; the caller must ensure the nonce update is valid.
   /// @param owner The maker address whose nonce to update
   /// @param newNonce The new nonce value to store
@@ -101,21 +131,29 @@ abstract contract OfferReceiver is EIP712 {
     assembly {
       mstore(0x0c, _NONCE_SEED)
       mstore(0x00, owner)
-      let nonceSlot := keccak256(0x0c, 0x20)
-      sstore(nonceSlot, newNonce)
+      sstore(keccak256(0x0c, 0x20), newNonce)
     }
+    emit NonceUpdated(owner, newNonce);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     OFFER VALIDATION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Validates an offer and its signature, then consumes the nonce.
   /// @dev Performs comprehensive validation in the following order:
   ///      1. Checks offer parameters are non-zero (maker, amount, expectedReturn)
   ///      2. Validates expiration timestamp has not passed
   ///      3. Ensures offer nonce is greater than stored nonce (freshness check)
-  ///      4. Verifies signature using EIP-712 (EOA) or EIP-1271 (smart contract)
-  ///      5. Updates the stored nonce to the offer's nonce (preventing replay)
+  ///      4. Updates the stored nonce to the offer's nonce (preventing replay), emits {NonceUpdated}
+  ///      5. Verifies signature using EIP-712 (EOA) or EIP-1271 (smart contract)
+  ///
+  ///      The nonce is updated BEFORE signature verification to prevent reentrancy replays.
+  ///      This is safe because if the signature is invalid, the transaction reverts anyway.
   ///
   ///      Note: This function does NOT pull funds from the maker. That logic must be
   ///      implemented separately by contracts inheriting from OfferReceiver.
+  ///
   /// @param offer The offer struct containing all offer parameters
   /// @param signature The cryptographic signature (EIP-712 or EIP-1271)
   /// @custom:reverts InvalidOffer if maker is zero or amounts are zero
@@ -130,16 +168,13 @@ abstract contract OfferReceiver is EIP712 {
     if (offer.expiration <= block.timestamp) revert OfferExpired();
 
     // Ensure offer nonce is fresh (greater than stored nonce)
-    // This prevents replay attacks and validates offer hasn't been cancelled
     if (nonce(offer.maker) >= offer.nonce) revert InvalidNonce();
 
-    // Compute EIP-712 typed data hash for signature verification
-    bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
-
-    // Update stored nonce to prevent replay of this offer before validation to prevent reentrancy replays
+    // Update stored nonce BEFORE signature verification to prevent reentrancy replays
     _setNonce(offer.maker, offer.nonce);
 
-    // Verify signature using EIP-712 (EOA) or EIP-1271 (smart contract)
+    // Compute EIP-712 typed data hash and verify signature
+    bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
     if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert InvalidSignature();
   }
 }
