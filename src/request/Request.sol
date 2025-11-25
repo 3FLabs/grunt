@@ -5,6 +5,7 @@ import {OfferReceiver, Offer} from "./OfferReceiver.sol";
 import {VaultController} from "./vault/VaultController.sol";
 import {LibMintAuth} from "./libraries/LibMintAuth.sol";
 import {IERC20} from "../integrations/interfaces/IERC20.sol";
+import {IRequest} from "./interfaces/IRequest.sol";
 import {IRequestCallback} from "../core/interfaces/IRequestCallback.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
@@ -39,25 +40,10 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      2. Owner calls `consume()` with the offer, signature, and PT amount to fulfill
 ///      3. The maker's `onRequestConsumed` callback is invoked to prepare funds
 ///      4. Assets are transferred from owner and PT/YT tokens are minted to the maker
-contract Request is OfferReceiver, VaultController, Initializable, Ownable, ReentrancyGuardTransient {
+contract Request is IRequest, OfferReceiver, VaultController, Initializable, Ownable, ReentrancyGuardTransient {
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
   using LibMintAuth for address;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           EVENTS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Emitted when the contract is marked as repaid, enabling withdrawals.
-  /// @dev Once emitted, `canWithdraw()` returns true and users can redeem their PT/YT tokens.
-  event Repaid();
-
-  /// @notice Emitted when minting authorization is granted to an address.
-  /// @dev The authorized address can then call `mint()` to receive PT/YT tokens.
-  /// @param to The address receiving minting authorization
-  /// @param ptAmount The amount of PT tokens authorized to mint
-  /// @param ytAmount The amount of YT tokens authorized to mint
-  event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERRORS                             */
@@ -178,7 +164,7 @@ contract Request is OfferReceiver, VaultController, Initializable, Ownable, Reen
   /*                           ADMIN                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Marks the request as repaid, enabling withdrawals and redemptions.
+  /// @inheritdoc IRequest
   /// @dev Only callable by the owner. Once called, `canWithdraw()` returns true and users
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
   ///      Emits a {Repaid} event.
@@ -187,14 +173,11 @@ contract Request is OfferReceiver, VaultController, Initializable, Ownable, Reen
     emit Repaid();
   }
 
-  /// @notice Authorizes an address to mint a specific amount of PT and YT tokens.
+  /// @inheritdoc IRequest
   /// @dev Only callable by the owner. The authorized address can then call `mint()` to receive
   ///      the tokens after transferring the required underlying asset. This is useful for
   ///      whitelisting participants or implementing custom minting logic.
   ///      Emits an {AuthorizedMinting} event.
-  /// @param to The address to authorize for minting
-  /// @param ptAmount The amount of PT tokens the address can mint
-  /// @param ytAmount The amount of YT tokens the address can mint
   function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwner {
     to.updateMintAuth(ptAmount, ytAmount);
     emit AuthorizedMinting(to, ptAmount, ytAmount);
@@ -204,7 +187,7 @@ contract Request is OfferReceiver, VaultController, Initializable, Ownable, Reen
   /*                          MINTING                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Mints PT and YT tokens to the caller using their authorized amounts.
+  /// @inheritdoc IRequest
   /// @dev The caller must have been previously authorized via `authorizeMinting()`. This function:
   ///      1. Reads the caller's authorized PT/YT amounts from storage
   ///      2. Transfers PT amount of underlying asset from caller to this contract
@@ -226,7 +209,7 @@ contract Request is OfferReceiver, VaultController, Initializable, Ownable, Reen
   /*                     OFFER CONSUMPTION                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Consumes a signed offer by minting PT/YT tokens to the offer maker.
+  /// @inheritdoc IRequest
   /// @dev Only callable by the owner. This function implements the core offer consumption flow:
   ///      1. Validates the offer signature using EIP-712 (via `_validateOffer`)
   ///      2. Calculates the proportional YT amount based on the PT amount being consumed
@@ -240,16 +223,13 @@ contract Request is OfferReceiver, VaultController, Initializable, Ownable, Reen
   ///      The callback allows the maker to prepare funds (e.g., withdraw from DeFi, set allowances)
   ///      before the asset transfer occurs.
   ///
-  /// @param offer The signed offer struct containing maker, amount, expectedReturn, and other details
-  /// @param signature The EIP-712 signature authorizing the offer
-  /// @param ptAmount The amount of PT tokens to mint (must be <= offer.amount)
   /// @custom:reverts If the request has been repaid
   /// @custom:reverts If the offer signature is invalid
   /// @custom:reverts If the asset transfer fails
-  function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount) external onlyOwner nonReentrant {
+  function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount) external onlyOwner nonReentrant returns (uint256 ytAmount) {
     if (canWithdraw()) revert AlreadyRepaid();
     _validateOffer(offer, signature);
-    uint256 ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
+    ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     IRequestCallback(offer.maker).onRequestConsumed(offer, signature, ptAmount, ytAmount);
     asset().safeTransferFrom(msg.sender, address(this), ptAmount);
     _mint(offer.maker, ptAmount, ytAmount);
