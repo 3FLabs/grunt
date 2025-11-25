@@ -509,4 +509,274 @@ contract ControlledTokenTest is Test {
     assertEq(ptToken.allowance(owner, spender), 400 ether);
     assertEq(ytToken.allowance(owner, spender), 800 ether);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   COVERAGE IMPROVEMENT                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_emitApproval_unauthorized() public {
+    address randomCaller = address(0x999);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ptToken._emitApproval(address(1), address(2), 100 ether);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ytToken._emitApproval(address(1), address(2), 100 ether);
+  }
+
+  function test_emitTransfer_unauthorized() public {
+    address randomCaller = address(0x999);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ptToken._emitTransfer(address(1), address(2), 100 ether);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ytToken._emitTransfer(address(1), address(2), 100 ether);
+  }
+
+  function test_transfer_unauthorized() public {
+    address randomCaller = address(0x999);
+    address owner = address(1);
+    address recipient = address(2);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    // Try to call _transfer directly from a non-token contract
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    tokenController._transfer(owner, owner, recipient, 50 ether, false);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    tokenController._transfer(owner, owner, recipient, 50 ether, true);
+  }
+
+  function test_approve_unauthorized() public {
+    address randomCaller = address(0x999);
+    address owner = address(1);
+    address spender = address(2);
+
+    // Try to call _approve directly from a non-token contract
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    tokenController._approve(owner, spender, 100 ether, false);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    tokenController._approve(owner, spender, 100 ether, true);
+  }
+
+  function test_transferZeroAmount() public {
+    address owner = address(1);
+    address recipient = address(2);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    // Transfer 0 PT - should succeed without emitting event
+    vm.prank(owner);
+    bool result = ptToken.transfer(recipient, 0);
+    assertTrue(result);
+    assertEq(ptToken.balanceOf(owner), 100 ether);
+    assertEq(ptToken.balanceOf(recipient), 0);
+
+    // Transfer 0 YT
+    vm.prank(owner);
+    result = ytToken.transfer(recipient, 0);
+    assertTrue(result);
+    assertEq(ytToken.balanceOf(owner), 200 ether);
+    assertEq(ytToken.balanceOf(recipient), 0);
+  }
+
+  function test_mintZeroAmount() public {
+    address user = address(1);
+
+    // Mint 0 PT only
+    tokenController.mint(user, 0, 100 ether);
+    assertEq(ptToken.balanceOf(user), 0);
+    assertEq(ytToken.balanceOf(user), 100 ether);
+
+    // Mint 0 YT only
+    tokenController.mint(user, 50 ether, 0);
+    assertEq(ptToken.balanceOf(user), 50 ether);
+    assertEq(ytToken.balanceOf(user), 100 ether);
+
+    // Mint both 0
+    tokenController.mint(user, 0, 0);
+    assertEq(ptToken.balanceOf(user), 50 ether);
+    assertEq(ytToken.balanceOf(user), 100 ether);
+  }
+
+  function test_burnZeroAmount() public {
+    address user = address(1);
+    tokenController.mint(user, 100 ether, 200 ether);
+
+    // Burn 0 PT only
+    tokenController.burn(user, 0, 50 ether);
+    assertEq(ptToken.balanceOf(user), 100 ether);
+    assertEq(ytToken.balanceOf(user), 150 ether);
+
+    // Burn 0 YT only
+    tokenController.burn(user, 25 ether, 0);
+    assertEq(ptToken.balanceOf(user), 75 ether);
+    assertEq(ytToken.balanceOf(user), 150 ether);
+
+    // Burn both 0
+    tokenController.burn(user, 0, 0);
+    assertEq(ptToken.balanceOf(user), 75 ether);
+    assertEq(ytToken.balanceOf(user), 150 ether);
+  }
+
+  function test_burnInsufficientSupply() public {
+    address user = address(1);
+    tokenController.mint(user, 100 ether, 200 ether);
+
+    // Try to burn more PT than supply
+    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    tokenController.burn(user, 101 ether, 0);
+
+    // Try to burn more YT than supply
+    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    tokenController.burn(user, 0, 201 ether);
+  }
+
+  function test_burnInsufficientBalance() public {
+    address user1 = address(1);
+    address user2 = address(2);
+
+    tokenController.mint(user1, 50 ether, 100 ether);
+    tokenController.mint(user2, 50 ether, 100 ether);
+
+    // Total supply is 100 PT, 200 YT
+    // user1 has 50 PT, 100 YT
+    // Try to burn more than user1's balance but within supply
+    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    tokenController.burn(user1, 51 ether, 0);
+
+    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    tokenController.burn(user1, 0, 101 ether);
+  }
+
+  function test_transferBatchZeroAmounts() public {
+    address owner = address(1);
+    address recipient = address(2);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    // Transfer only PT (YT = 0)
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Transfer(owner, recipient, 50 ether);
+    bool result = tokenController.transferBatch(recipient, 50 ether, 0);
+    assertTrue(result);
+
+    // Transfer only YT (PT = 0)
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Transfer(owner, recipient, 100 ether);
+    result = tokenController.transferBatch(recipient, 0, 100 ether);
+    assertTrue(result);
+  }
+
+  function test_approveSameAllowance() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    // First approval
+    vm.prank(owner);
+    tokenController.approveBatch(spender, 100 ether, 200 ether);
+
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+    assertEq(ytToken.allowance(owner, spender), 200 ether);
+
+    // Approve same amount again - no events should be emitted for unchanged allowances
+    vm.prank(owner);
+    tokenController.approveBatch(spender, 100 ether, 200 ether);
+
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+    assertEq(ytToken.allowance(owner, spender), 200 ether);
+  }
+
+  function test_balancesOf() public {
+    address user = address(1);
+
+    tokenController.mint(user, 100 ether, 200 ether);
+
+    (uint128 ptBal, uint128 ytBal) = tokenController.balancesOf(user);
+    assertEq(ptBal, 100 ether);
+    assertEq(ytBal, 200 ether);
+  }
+
+  function test_totalSupplies() public {
+    tokenController.mint(address(1), 100 ether, 200 ether);
+    tokenController.mint(address(2), 50 ether, 75 ether);
+
+    (uint128 ptSupply, uint128 ytSupply) = tokenController.totalSupplies();
+    assertEq(ptSupply, 150 ether);
+    assertEq(ytSupply, 275 ether);
+  }
+
+  function test_allowancesOf() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    vm.prank(owner);
+    tokenController.approveBatch(spender, 100 ether, 200 ether);
+
+    (uint128 ptAllowance, uint128 ytAllowance) = tokenController.allowancesOf(owner, spender);
+    assertEq(ptAllowance, 100 ether);
+    assertEq(ytAllowance, 200 ether);
+  }
+
+  function test_totalSupplyIndividual() public {
+    tokenController.mint(address(1), 100 ether, 200 ether);
+
+    assertEq(tokenController.totalSupply(false), 100 ether); // PT
+    assertEq(tokenController.totalSupply(true), 200 ether);  // YT
+  }
+
+  function test_balanceOfIndividual() public {
+    address user = address(1);
+    tokenController.mint(user, 100 ether, 200 ether);
+
+    assertEq(tokenController.balanceOf(user, false), 100 ether); // PT
+    assertEq(tokenController.balanceOf(user, true), 200 ether);  // YT
+  }
+
+  function test_allowanceWithMaxValue() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    // Set max allowance
+    vm.prank(owner);
+    tokenController.approveBatch(spender, type(uint128).max, type(uint128).max);
+
+    // Should return uint256 max when uint128 max is stored
+    assertEq(tokenController.allowance(owner, spender, false), type(uint256).max);
+    assertEq(tokenController.allowance(owner, spender, true), type(uint256).max);
+  }
+
+  function test_transferFromBatchSelf() public {
+    address owner = address(1);
+    address recipient = address(2);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    // Transfer from self should not require allowance
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Transfer(owner, recipient, 50 ether);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Transfer(owner, recipient, 100 ether);
+    bool result = tokenController.transferFromBatch(owner, recipient, 50 ether, 100 ether);
+    assertTrue(result);
+
+    assertEq(ptToken.balanceOf(owner), 50 ether);
+    assertEq(ytToken.balanceOf(owner), 100 ether);
+    assertEq(ptToken.balanceOf(recipient), 50 ether);
+    assertEq(ytToken.balanceOf(recipient), 100 ether);
+  }
 }

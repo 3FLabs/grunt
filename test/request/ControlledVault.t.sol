@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {MockVaultController, ControlledVault, VaultController} from "../../src/mock/request/MockVaults.sol";
+import {ControlledToken} from "../../src/request/tokens/ControlledToken.sol";
+import {TokenController} from "../../src/request/tokens/TokenController.sol";
 import {MockERC20} from "../../src/mock/MockERC20.sol";
 import {IERC4626} from "../../src/integrations/interfaces/IERC4626.sol";
 
@@ -717,5 +719,448 @@ contract ControlledVaultTest is Test {
       uint256 expectedYield = uint256(yield1) * totalYield / totalYieldShares;
       assertApproxEqAbs(user1Yield, expectedYield, 1);
     }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   COVERAGE IMPROVEMENT                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_previewDeposit() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // PT: 1:1 ratio
+    assertEq(ptVault.previewDeposit(100 ether), 100 ether);
+    // YT: 0 assets backing 100 shares -> type(uint256).max
+    assertEq(ytVault.previewDeposit(100 ether), type(uint256).max);
+
+    // Add yield and test again
+    asset.mint(address(vaultController), 50 ether);
+    assertEq(ptVault.previewDeposit(100 ether), 100 ether);
+    assertEq(ytVault.previewDeposit(50 ether), 100 ether); // 50 assets -> 100 shares (2:1)
+  }
+
+  function test_previewMint() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // PT: 1:1 ratio
+    assertEq(ptVault.previewMint(100 ether), 100 ether);
+    // YT: 0 assets backing shares -> 0 assets required
+    assertEq(ytVault.previewMint(100 ether), 0);
+
+    // Add yield and test again
+    asset.mint(address(vaultController), 50 ether);
+    assertEq(ptVault.previewMint(100 ether), 100 ether);
+    assertEq(ytVault.previewMint(100 ether), 50 ether); // 100 shares -> 50 assets
+  }
+
+  function test_previewWithdraw() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // PT: 1:1 ratio
+    assertEq(ptVault.previewWithdraw(100 ether), 100 ether);
+    // YT: 0 assets -> type(uint256).max shares needed
+    assertEq(ytVault.previewWithdraw(100 ether), type(uint256).max);
+  }
+
+  function test_previewRedeem() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // PT: 1:1 ratio
+    assertEq(ptVault.previewRedeem(100 ether), 100 ether);
+    // YT: 0 assets backing shares
+    assertEq(ytVault.previewRedeem(100 ether), 0);
+  }
+
+  function test_emitDeposit_unauthorized() public {
+    address randomCaller = address(0x999);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ptVault._emitDeposit(address(1), address(2), 100 ether, 100 ether);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ytVault._emitDeposit(address(1), address(2), 100 ether, 100 ether);
+  }
+
+  function test_emitWithdraw_unauthorized() public {
+    address randomCaller = address(0x999);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ptVault._emitWithdraw(address(1), address(2), address(3), 100 ether, 100 ether);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    ytVault._emitWithdraw(address(1), address(2), address(3), 100 ether, 100 ether);
+  }
+
+  function test_withdraw_yieldToken() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // Add yield
+    asset.mint(address(vaultController), 50 ether);
+    vaultController.setCanWithdraw(true);
+
+    // Withdraw 25 ether worth of yield (50 shares out of 100, with 50 ether yield = 25)
+    vm.expectEmit(true, true, true, true, address(ytVault));
+    emit Withdraw(user, user, user, 25 ether, 50 ether);
+
+    vm.prank(user);
+    uint256 shares = ytVault.withdraw(25 ether, user, user);
+
+    assertEq(shares, 50 ether); // 25 assets / 0.5 = 50 shares
+    assertEq(ytVault.balanceOf(user), 50 ether);
+    assertEq(asset.balanceOf(user), 25 ether);
+  }
+
+  function test_redeemRevertsWhenLocked() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+
+    vm.expectRevert(VaultController.CannotWithdraw.selector);
+    ptVault.redeem(100 ether, user, user);
+    vm.stopPrank();
+  }
+
+  function test_withdrawWithAllowance() public {
+    address owner = address(0x1);
+    address spender = address(0x2);
+    address receiver = address(0x3);
+
+    asset.mint(owner, 1000 ether);
+
+    vm.startPrank(owner);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(owner, 1000 ether, 100 ether);
+    vaultController.approveBatch(spender, 500 ether, 50 ether);
+    vm.stopPrank();
+
+    vaultController.setCanWithdraw(true);
+
+    vm.prank(spender);
+    uint256 shares = ptVault.withdraw(200 ether, receiver, owner);
+
+    assertEq(shares, 200 ether);
+    assertEq(ptVault.balanceOf(owner), 800 ether);
+    assertEq(asset.balanceOf(receiver), 200 ether);
+  }
+
+  function test_redeemWithAllowance() public {
+    address owner = address(0x1);
+    address spender = address(0x2);
+    address receiver = address(0x3);
+
+    asset.mint(owner, 1000 ether);
+
+    vm.startPrank(owner);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(owner, 1000 ether, 100 ether);
+    vaultController.approveBatch(spender, 500 ether, 50 ether);
+    vm.stopPrank();
+
+    vaultController.setCanWithdraw(true);
+
+    vm.prank(spender);
+    uint256 assets = ptVault.redeem(200 ether, receiver, owner);
+
+    assertEq(assets, 200 ether);
+    assertEq(ptVault.balanceOf(owner), 800 ether);
+    assertEq(asset.balanceOf(receiver), 200 ether);
+  }
+
+  function test_burnAllWithAllowance() public {
+    address owner = address(0x1);
+    address spender = address(0x2);
+    address receiver = address(0x3);
+
+    asset.mint(owner, 1000 ether);
+
+    vm.startPrank(owner);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(owner, 1000 ether, 100 ether);
+    // Approve max allowance for spender
+    vaultController.approveBatch(spender, type(uint256).max, type(uint256).max);
+    vm.stopPrank();
+
+    asset.mint(address(vaultController), 50 ether);
+    vaultController.setCanWithdraw(true);
+
+    vm.prank(spender);
+    (uint256 ptShares, uint256 ytShares, uint256 pAssets, uint256 yAssets) = vaultController.burnAll(owner, receiver);
+
+    assertEq(ptShares, 1000 ether);
+    assertEq(ytShares, 100 ether);
+    assertEq(pAssets, 1000 ether);
+    assertEq(yAssets, 50 ether);
+    assertEq(asset.balanceOf(receiver), 1050 ether);
+    assertEq(ptVault.balanceOf(owner), 0);
+    assertEq(ytVault.balanceOf(owner), 0);
+  }
+
+  function test_withdrawExternal_unauthorized() public {
+    address randomCaller = address(0x999);
+    address user = address(0x1);
+
+    // Try to call _withdraw directly from a non-vault contract
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vaultController._withdraw(user, 100 ether, user, user, false);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vaultController._withdraw(user, 100 ether, user, user, true);
+  }
+
+  function test_redeemExternal_unauthorized() public {
+    address randomCaller = address(0x999);
+    address user = address(0x1);
+
+    // Try to call _redeem directly from a non-vault contract
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vaultController._redeem(user, 100 ether, user, user, false);
+
+    vm.prank(randomCaller);
+    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vaultController._redeem(user, 100 ether, user, user, true);
+  }
+
+  function test_convertToShares_zeroState() public view {
+    // Before any deposit, conversions should use initial values
+    // PT: 1:1 conversion
+    (uint256 ptShares, uint256 ytShares) = vaultController.convertToShares(100 ether, 0);
+    assertEq(ptShares, 100 ether);
+    assertEq(ytShares, 0);
+
+    // YT with non-zero assets but no supply returns max
+    (ptShares, ytShares) = vaultController.convertToShares(0, 100 ether);
+    assertEq(ptShares, 0);
+    assertEq(ytShares, type(uint256).max);
+  }
+
+  function test_convertToAssets_zeroState() public view {
+    // Before any deposit, conversions should use initial values
+    // PT: 1:1 conversion
+    (uint256 pAssets, uint256 yAssets) = vaultController.convertToAssets(100 ether, 0);
+    assertEq(pAssets, 100 ether);
+    assertEq(yAssets, 0);
+
+    // YT with shares but no assets returns 0
+    (pAssets, yAssets) = vaultController.convertToAssets(0, 100 ether);
+    assertEq(pAssets, 0);
+    assertEq(yAssets, 0);
+  }
+
+  function test_totalAssetsController() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    (uint256 pAssets, uint256 yAssets) = vaultController.totalAssets();
+    assertEq(pAssets, 1000 ether);
+    assertEq(yAssets, 0);
+
+    // Add yield
+    asset.mint(address(vaultController), 50 ether);
+
+    (pAssets, yAssets) = vaultController.totalAssets();
+    assertEq(pAssets, 1000 ether);
+    assertEq(yAssets, 50 ether);
+  }
+
+  function test_withdrawZeroAssets() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    vaultController.setCanWithdraw(true);
+
+    // Withdraw 0 assets - should succeed
+    vm.prank(user);
+    uint256 shares = ptVault.withdraw(0, user, user);
+    assertEq(shares, 0);
+    assertEq(ptVault.balanceOf(user), 1000 ether);
+  }
+
+  function test_redeemZeroShares() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    vaultController.setCanWithdraw(true);
+
+    // Redeem 0 shares - should succeed
+    vm.prank(user);
+    uint256 assets = ptVault.redeem(0, user, user);
+    assertEq(assets, 0);
+    assertEq(ptVault.balanceOf(user), 1000 ether);
+  }
+
+  function test_depositOnlyYT() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    // Deposit with 0 PT shares
+    vaultController.deposit(user, 0, 100 ether);
+    vm.stopPrank();
+
+    assertEq(ptVault.balanceOf(user), 0);
+    assertEq(ytVault.balanceOf(user), 100 ether);
+  }
+
+  function test_depositOnlyPT() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    // Deposit with 0 YT shares
+    vaultController.deposit(user, 500 ether, 0);
+    vm.stopPrank();
+
+    assertEq(ptVault.balanceOf(user), 500 ether);
+    assertEq(ytVault.balanceOf(user), 0);
+  }
+
+  function test_burnAllZeroBalance() public {
+    address owner = address(0x1);
+    address receiver = address(0x2);
+
+    vaultController.setCanWithdraw(true);
+
+    // burnAll with no balance
+    vm.prank(owner);
+    (uint256 ptShares, uint256 ytShares, uint256 pAssets, uint256 yAssets) = vaultController.burnAll(owner, receiver);
+
+    assertEq(ptShares, 0);
+    assertEq(ytShares, 0);
+    assertEq(pAssets, 0);
+    assertEq(yAssets, 0);
+  }
+
+  function test_withdrawalOperation_onlyPTShares() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    // Only deposit PT shares
+    vaultController.deposit(user, 1000 ether, 0);
+    vm.stopPrank();
+
+    vaultController.setCanWithdraw(true);
+
+    // Withdraw PT only (no YT)
+    vm.expectEmit(true, true, true, true, address(ptVault));
+    emit Withdraw(user, user, user, 500 ether, 500 ether);
+
+    vm.prank(user);
+    uint256 shares = ptVault.withdraw(500 ether, user, user);
+
+    assertEq(shares, 500 ether);
+    assertEq(ptVault.balanceOf(user), 500 ether);
+    assertEq(asset.balanceOf(user), 500 ether);
+  }
+
+  function test_withdrawalOperation_onlyYTShares() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    // Deposit PT and YT
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // Add yield
+    asset.mint(address(vaultController), 100 ether);
+    vaultController.setCanWithdraw(true);
+
+    // Redeem YT only
+    vm.expectEmit(true, true, true, true, address(ytVault));
+    emit Withdraw(user, user, user, 100 ether, 100 ether);
+
+    vm.prank(user);
+    uint256 assets = ytVault.redeem(100 ether, user, user);
+
+    assertEq(assets, 100 ether);
+    assertEq(ytVault.balanceOf(user), 0);
+    assertEq(asset.balanceOf(user), 100 ether);
+  }
+
+  function test_inheritance_ControlledToken() public {
+    // ControlledVault inherits from ControlledToken
+    // Test ERC20 functions via the vault
+
+    address user1 = address(0x1);
+    address user2 = address(0x2);
+    asset.mint(user1, 1000 ether);
+
+    vm.startPrank(user1);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user1, 1000 ether, 100 ether);
+
+    // Test ERC20 transfer
+    ptVault.transfer(user2, 100 ether);
+    assertEq(ptVault.balanceOf(user1), 900 ether);
+    assertEq(ptVault.balanceOf(user2), 100 ether);
+
+    // Test ERC20 approve and transferFrom
+    ptVault.approve(user2, 200 ether);
+    vm.stopPrank();
+
+    vm.prank(user2);
+    ptVault.transferFrom(user1, user2, 150 ether);
+    assertEq(ptVault.balanceOf(user1), 750 ether);
+    assertEq(ptVault.balanceOf(user2), 250 ether);
   }
 }
