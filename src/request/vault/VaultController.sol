@@ -255,8 +255,8 @@ abstract contract VaultController is TokenController {
   /*         CONTROLLER ENTRYPOINTS FOR CONTROLLED VAULTS       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice ERC4626 withdraw entrypoint called by individual PT or YT vault contracts.
-  /// @dev This function is called by ControlledVault.withdraw(). The `yt` parameter determines
+  /// @dev ERC4626 withdraw entrypoint called by individual PT or YT vault contracts.
+  ///      This function is called by ControlledVault.withdraw(). The `yt` parameter determines
   ///      which token type is being withdrawn. Only the appropriate vault contract can call this.
   ///      The function converts the asset amount to shares, burns the shares, and transfers assets.
   /// @param caller The address that initiated the withdraw call (from the vault contract)
@@ -279,8 +279,8 @@ abstract contract VaultController is TokenController {
     shares = yt.ternary(ytShares, ptShares);
   }
 
-  /// @notice ERC4626 redeem entrypoint called by individual PT or YT vault contracts.
-  /// @dev This function is called by ControlledVault.redeem(). The `yt` parameter determines
+  /// @dev ERC4626 redeem entrypoint called by individual PT or YT vault contracts.
+  ///      This function is called by ControlledVault.redeem(). The `yt` parameter determines
   ///      which token type is being redeemed. Only the appropriate vault contract can call this.
   ///      The function converts the shares to assets, burns the shares, and transfers assets.
   /// @param caller The address that initiated the redeem call (from the vault contract)

@@ -99,8 +99,8 @@ abstract contract ControlledToken is IERC20 {
   /*                     CONTROLLER SPECIFIC                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Emits the ERC20 Approval event for this token.
-  /// @dev Only the controller can call this function. Used when allowances are set via
+  /// @dev Emits the ERC20 Approval event for this token.
+  ///      Only the controller can call this function. Used when allowances are set via
   ///      the controller's batch operations or individual token approvals.
   /// @param owner The address that owns the tokens
   /// @param spender The address authorized to spend the tokens
@@ -110,8 +110,8 @@ abstract contract ControlledToken is IERC20 {
     emit Approval(owner, spender, amount);
   }
 
-  /// @notice Emits the ERC20 Transfer event for this token.
-  /// @dev Only the controller can call this function. Used when tokens are transferred,
+  /// @dev Emits the ERC20 Transfer event for this token.
+  ///      Only the controller can call this function. Used when tokens are transferred,
   ///      minted (from = address(0)), or burned (to = address(0)) via the controller.
   /// @param from The address tokens are transferred from (or address(0) for minting)
   /// @param to The address tokens are transferred to (or address(0) for burning)

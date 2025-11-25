@@ -289,8 +289,8 @@ abstract contract TokenController {
   /*                       Tokens internal                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Internal transfer function called by individual token contracts (PT or YT).
-  /// @dev This function is called by ControlledToken.transfer and ControlledToken.transferFrom.
+  /// @dev Internal transfer function called by individual token contracts (PT or YT).
+  ///      This function is called by ControlledToken.transfer and ControlledToken.transferFrom.
   ///      It handles both direct transfers and allowance-based transfers. The `yt` parameter
   ///      determines which token (PT or YT) is being transferred while the other amount is set to 0.
   /// @param caller The address initiating the transfer (msg.sender from the token contract)
@@ -312,8 +312,8 @@ abstract contract TokenController {
     return _transfer(from, to, ptAmount, ytAmount);
   }
 
-  /// @notice Internal approve function called by individual token contracts (PT or YT).
-  /// @dev This function is called by ControlledToken.approve. The `yt` parameter determines
+  /// @dev Internal approve function called by individual token contracts (PT or YT).
+  ///      This function is called by ControlledToken.approve. The `yt` parameter determines
   ///      which token (PT or YT) allowance is being set while the other is set to 0.
   /// @param from The address granting the allowance (token owner)
   /// @param spender The address receiving the allowance
