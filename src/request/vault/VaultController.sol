@@ -133,10 +133,10 @@ abstract contract VaultController is TokenController {
       _burn(owner, ptShares, ytShares);
       asset().safeTransfer(receiver, yAssets + pAssets);
       if (pAssets > 0 || ptShares > 0) {
-        ControlledVault(ytToken())._emitWithdraw(caller, receiver, owner, pAssets, ptShares);
+        ControlledVault(ptToken())._emitWithdraw(caller, receiver, owner, pAssets, ptShares);
       }
       if (yAssets > 0 || ytShares > 0) {
-        ControlledVault(ptToken())._emitWithdraw(caller, receiver, owner, yAssets, ytShares);
+        ControlledVault(ytToken())._emitWithdraw(caller, receiver, owner, yAssets, ytShares);
       }
     }
   }

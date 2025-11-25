@@ -246,6 +246,9 @@ contract ControlledVaultTest is Test {
     // Unlock withdrawals
     vaultController.setCanWithdraw(true);
 
+    vm.expectEmit(true, true, true, true, address(ptVault));
+    emit Withdraw(user, user, user, 100 ether, 100 ether);
+
     vm.prank(user);
     uint256 shares = ptVault.withdraw(100 ether, user, user);
 
@@ -280,6 +283,9 @@ contract ControlledVaultTest is Test {
 
     vaultController.setCanWithdraw(true);
 
+    vm.expectEmit(true, true, true, true, address(ptVault));
+    emit Withdraw(user, user, user, 100 ether, 100 ether);
+
     vm.prank(user);
     uint256 assets = ptVault.redeem(100 ether, user, user);
 
@@ -298,6 +304,9 @@ contract ControlledVaultTest is Test {
     vm.stopPrank();
 
     vaultController.setCanWithdraw(true);
+
+    vm.expectEmit(true, true, true, true, address(ytVault));
+    emit Withdraw(user, user, user, 0, 50 ether);
 
     vm.prank(user);
     uint256 assets = ytVault.redeem(50 ether, user, user);
@@ -320,6 +329,9 @@ contract ControlledVaultTest is Test {
     // Add 50 ether yield
     asset.mint(address(vaultController), 50 ether);
     vaultController.setCanWithdraw(true);
+
+    vm.expectEmit(true, true, true, true, address(ytVault));
+    emit Withdraw(user, user, user, 25 ether, 50 ether);
 
     vm.prank(user);
     uint256 assets = ytVault.redeem(50 ether, user, user);
