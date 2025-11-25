@@ -33,7 +33,7 @@ contract LibAllowanceTest is Test {
   /*                        CONSUME TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_consume(uint128 allowance, uint128 amount) public {
+  function testFuzz_consume(uint128 allowance, uint128 amount) public pure {
     vm.assume(allowance >= amount); // Assume valid consumption (as per the library comment)
 
     uint128 result = LibAllowance.consume(allowance, amount);
@@ -51,7 +51,7 @@ contract LibAllowanceTest is Test {
   /*                      NORMALIZE TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_normalize(uint128 allowance) public {
+  function testFuzz_normalize(uint128 allowance) public pure {
     uint256 result = LibAllowance.normalize(allowance);
 
     if (allowance == type(uint128).max) {
@@ -67,7 +67,7 @@ contract LibAllowanceTest is Test {
   /*                    INTEGRATION TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_consumeAndNormalize(uint128 allowance, uint128 amount) public {
+  function testFuzz_consumeAndNormalize(uint128 allowance, uint128 amount) public pure {
     vm.assume(allowance >= amount);
 
     uint128 consumed = LibAllowance.consume(allowance, amount);
@@ -84,6 +84,7 @@ contract LibAllowanceTest is Test {
 
   function testFuzz_multipleConsumes(uint128 initialAllowance, uint128 amount1, uint128 amount2, uint128 amount3)
     public
+    pure
   {
     vm.assume(initialAllowance >= amount1);
 

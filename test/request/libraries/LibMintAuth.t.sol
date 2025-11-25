@@ -109,7 +109,7 @@ contract LibMintAuthTest is Test {
     assertEq(ytRead, yt2);
   }
 
-  function test_mintAuth_defaultValues() public {
+  function test_mintAuth_defaultValues() public view {
     // Test that uninitialized storage returns zero
     address minter = address(0x999);
     (uint128 pt, uint128 yt) = LibMintAuth.mintAuth(minter);
