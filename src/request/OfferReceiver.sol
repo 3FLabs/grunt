@@ -136,10 +136,10 @@ abstract contract OfferReceiver is EIP712 {
     // Compute EIP-712 typed data hash for signature verification
     bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
 
+    // Update stored nonce to prevent replay of this offer before validation to prevent reentrancy replays
+    _setNonce(offer.maker, offer.nonce);
+
     // Verify signature using EIP-712 (EOA) or EIP-1271 (smart contract)
     if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert InvalidSignature();
-
-    // Update stored nonce to prevent replay of this offer
-    _setNonce(offer.maker, offer.nonce);
   }
 }
