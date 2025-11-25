@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Offer} from "../../request/OfferReceiver.sol";
+import {Offer} from "../OfferReceiver.sol";
 
 /// @title IRequestCallback
 /// @notice Interface for contracts that want to receive callbacks when their requests are being consumed.

@@ -61,6 +61,186 @@ Given: 1,000,000 PT and 100,000 YT outstanding
 - If total assets < principal supply, principal holders share the loss proportionally
 - If total assets > principal supply, yield holders capture all upside
 
+## Request Contract
+
+The `Request` contract is the core contract managing funding requests with dual-token (PT/YT) issuance. It combines multiple functionalities:
+
+- **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
+- **VaultController**: Manages PT/YT tokens with ERC4626-style redemptions
+- **Ownable**: Restricts admin functions to the contract owner
+
+### Request Lifecycle
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           REQUEST LIFECYCLE                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. DEPLOYMENT
+   └─> Factory creates Request + PT Vault + YT Vault (beacon proxies)
+   └─> Owner is set, contract initialized
+
+2. FUNDING PHASE (canWithdraw = false)
+   ├─> Method A: consume() - Process signed offers from prime brokers
+   │   └─> Callback triggers → Funds pulled → PT/YT minted to maker
+   └─> Method B: authorizeMinting() + mint() - Whitelist approach
+       └─> Owner authorizes → Prime broker calls mint() → PT/YT minted
+
+3. FUND UTILIZATION
+   └─> Owner calls pullFunds() to transfer assets to borrower
+
+4. REPAYMENT
+   └─> Borrower transfers assets back to Request contract
+
+5. REDEMPTION PHASE (canWithdraw = true)
+   └─> Owner calls setRepaid()
+   └─> PT/YT holders can redeem their tokens for underlying assets
+```
+
+### Funding Methods
+
+The Request contract supports two methods for prime brokers to provide funds:
+
+#### Method 1: Signed Offer Consumption (`consume`)
+
+The owner broadcasts a signed EIP-712 offer to the contract. This method is ideal for prime brokers who implement automated fund management through smart contracts.
+
+**Flow:**
+1. Prime broker creates and signs an `Offer` struct (off-chain)
+2. Owner calls `consume(offer, signature, ptAmount)`
+3. Contract validates the signature and offer parameters
+4. Contract calls `onRequestConsumed()` callback on the maker's contract
+5. Maker prepares funds during the callback (e.g., withdraws from DeFi, sets allowances)
+6. Contract pulls `ptAmount` of underlying asset from the owner
+7. PT and YT tokens are minted to the maker
+
+```solidity
+// Offer struct
+struct Offer {
+  address maker;        // Prime broker address
+  uint256 amount;       // Maximum principal amount
+  uint256 expectedReturn; // Expected yield amount
+  uint256 nonce;        // Sequential nonce (must be > stored nonce)
+  uint256 expiration;   // Timestamp when offer expires
+}
+
+// YT amount is calculated proportionally
+ytAmount = offer.expectedReturn * ptAmount / offer.amount
+```
+
+**Callback Interface:**
+
+Prime brokers implementing automated strategies must implement `IRequestCallback`:
+
+```solidity
+interface IRequestCallback {
+  function onRequestConsumed(
+    Offer calldata offer,
+    bytes calldata signature,
+    uint256 principal,  // PT amount to be pulled
+    uint256 yield       // YT amount to be minted
+  ) external;
+}
+```
+
+The callback is invoked **before** funds are pulled, allowing the maker to:
+- Withdraw from DeFi positions
+- Move funds from internal accounting
+- Set ERC20 allowances for the Request contract
+
+#### Method 2: Authorized Minting (`authorizeMinting` + `mint`)
+
+The owner whitelists specific addresses to mint PT/YT tokens. This method is simpler and suitable for prime brokers who manage funds manually or through EOAs.
+
+**Flow:**
+1. Owner calls `authorizeMinting(primebroker, ptAmount, ytAmount)`
+2. Prime broker approves the Request contract to spend their underlying asset
+3. Prime broker calls `mint()`
+4. Contract transfers `ptAmount` of underlying asset from the prime broker
+5. PT and YT tokens are minted to the prime broker
+6. Authorization is consumed (one-time use)
+
+```solidity
+// Owner authorizes minting
+request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+
+// Prime broker mints (after approving underlying asset)
+asset.approve(address(request), 1_000_000e6);
+request.mint(); // Receives 1M PT + 100k YT
+```
+
+### Fund Management
+
+After offers are consumed or minting is complete:
+
+1. **Pull Funds**: Owner calls `pullFunds(receiver, amount)` to transfer collected assets to the borrower
+2. **Borrower Utilizes Funds**: The borrower uses the funds for their intended purpose
+3. **Repayment**: Borrower transfers assets back to the Request contract
+4. **Enable Redemptions**: Owner calls `setRepaid()` to unlock withdrawals
+
+```solidity
+// After funding phase
+request.pullFunds(borrowerAddress, totalFunded);
+
+// After borrower repays
+request.setRepaid(); // Enables PT/YT holders to redeem
+```
+
+## RequestFactory
+
+The `RequestFactory` deploys Request instances using the **beacon proxy pattern** for gas-efficient and upgradeable deployments.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     BEACON PROXY PATTERN                        │
+└─────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────┐
+  │ RequestFactory   │
+  │                  │
+  │ REQUEST_BEACON ──┼──> UpgradeableBeacon ──> Request Implementation
+  │ PT_VAULT_BEACON ─┼──> UpgradeableBeacon ──> Vault(isPT=false)
+  │ YT_VAULT_BEACON ─┼──> UpgradeableBeacon ──> Vault(isPT=true)
+  └──────────────────┘
+           │
+           │ createRequest()
+           ▼
+  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+  │  Request Proxy   │     │  PT Vault Proxy  │     │  YT Vault Proxy  │
+  │  (ERC1967)       │     │  (ERC1967)       │     │  (ERC1967)       │
+  └────────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘
+           │                        │                        │
+           └────────────────────────┼────────────────────────┘
+                                    │
+                         delegates to beacon
+```
+
+### Deployment
+
+```solidity
+// Deploy factory with beacon owner
+RequestFactory factory = new RequestFactory(beaconOwner);
+
+// Create a new request with PT/YT vaults
+(address request, address ptVault, address ytVault) = factory.createRequest(
+  owner,          // Request owner (admin)
+  address(usdc),  // Underlying asset
+  "USDC Request", // Base name (becomes "PT-USDC Request" / "YT-USDC Request")
+  "USDC-REQ"      // Base symbol (becomes "PT-USDC-REQ" / "YT-USDC-REQ")
+);
+```
+
+### Upgrades
+
+The beacon owner can upgrade all proxies by updating the beacon's implementation:
+
+```solidity
+// All existing Request proxies now use the new implementation
+UpgradeableBeacon(factory.REQUEST_BEACON()).upgradeTo(newImplementation);
+```
+
 ## Prime Broker Offers
 
 ### Offer Creation and Signing

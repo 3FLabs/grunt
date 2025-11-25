@@ -6,7 +6,7 @@ import {VaultController} from "./vault/VaultController.sol";
 import {LibMintAuth} from "./libraries/LibMintAuth.sol";
 import {IERC20} from "../integrations/interfaces/IERC20.sol";
 import {IRequest} from "./interfaces/IRequest.sol";
-import {IRequestCallback} from "../core/interfaces/IRequestCallback.sol";
+import {IRequestCallback} from "./interfaces/IRequestCallback.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
@@ -33,7 +33,9 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      1. Contract is deployed and initialized with asset, PT/YT tokens, and metadata
 ///      2. Owner can authorize minting for specific addresses or consume signed offers
 ///      3. Authorized addresses can mint PT/YT tokens by depositing the underlying asset
-///      4. Once the owner marks the contract as "repaid", users can withdraw/redeem their tokens
+///      4. Once offers are consumed, the owner pulls funds to a receiver via `pullFunds()`
+///      5. The borrower repays by transferring the asset back to the contract
+///      6. Once fully repaid, the owner calls `setRepaid()` to enable withdrawals for PT/YT holders
 ///
 ///      Offer Consumption Flow:
 ///      1. A maker creates and signs an offer specifying amount and expected return
@@ -181,6 +183,18 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwner {
     to.updateMintAuth(ptAmount, ytAmount);
     emit AuthorizedMinting(to, ptAmount, ytAmount);
+  }
+
+  /// @inheritdoc IRequest
+  /// @dev Only callable by the owner. This function is used after offers are consumed to
+  ///      transfer the collected funds to the borrower (or any designated receiver). The borrower
+  ///      is then expected to repay by transferring assets back to the contract before
+  ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
+  ///      Emits a Transfer event from the underlying asset contract.
+  /// @custom:reverts If the request has been repaid
+  function pullFunds(address receiver, uint256 amount) external onlyOwner {
+    if (canWithdraw()) revert AlreadyRepaid();
+    asset().safeTransfer(receiver, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
