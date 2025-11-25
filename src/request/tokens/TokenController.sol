@@ -31,6 +31,9 @@ abstract contract TokenController {
   ///      both PT and YT allowances are set to type(uint128).max (infinite allowance).
   error InsufficientAllowance();
 
+  /// @notice Error thrown when attempting to transfer tokens to the same address.
+  error TransferToSelf();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           Internal                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -75,6 +78,7 @@ abstract contract TokenController {
   /// @return success Always returns true if the transfer succeeds (reverts on failure)
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
+    if (from == to) revert TransferToSelf();
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {

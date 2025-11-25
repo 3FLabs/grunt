@@ -226,7 +226,12 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @custom:reverts If the request has been repaid
   /// @custom:reverts If the offer signature is invalid
   /// @custom:reverts If the asset transfer fails
-  function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount) external onlyOwner nonReentrant returns (uint256 ytAmount) {
+  function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
+    external
+    onlyOwner
+    nonReentrant
+    returns (uint256 ytAmount)
+  {
     if (canWithdraw()) revert AlreadyRepaid();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);

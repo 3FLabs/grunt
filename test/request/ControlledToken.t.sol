@@ -363,6 +363,16 @@ contract ControlledTokenTest is Test {
     }
   }
 
+  function test_transferToSelf() public {
+    address owner = address(1);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(TokenController.TransferToSelf.selector);
+    ptToken.transfer(owner, 50 ether);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      WORKFLOW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
