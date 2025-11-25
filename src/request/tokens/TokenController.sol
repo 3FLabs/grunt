@@ -35,16 +35,16 @@ abstract contract TokenController {
   /*                           Internal                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Checks that the caller is the appropriate token contract (PT or YT).
-  /// @dev Reverts with {UnauthorizedTokenContract} if the caller is not the expected token contract.
+  /// @dev Checks that the caller is the appropriate token contract (PT or YT).
+  ///      Reverts with {UnauthorizedTokenContract} if the caller is not the expected token contract.
   ///      This prevents unauthorized external calls to internal token functions.
   /// @param yt True if checking for YT token, false if checking for PT token
   function _checkToken(bool yt) internal view virtual {
     if (msg.sender != (yt ? ytToken() : ptToken())) revert UnauthorizedTokenContract();
   }
 
-  /// @notice Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
-  /// @dev Implements standard ERC20 allowance consumption with infinite allowance support.
+  /// @dev Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
+  ///      Implements standard ERC20 allowance consumption with infinite allowance support.
   ///      If both PT and YT allowances are set to type(uint128).max, no allowance is consumed (infinite approval).
   ///      Otherwise, the allowances are decreased by the specified amounts.
   /// @param from The address that granted the allowance
@@ -65,8 +65,8 @@ abstract contract TokenController {
     }
   }
 
-  /// @notice Internal function to transfer PT and/or YT tokens from one address to another.
-  /// @dev Updates balances in packed storage and emits Transfer events for non-zero amounts.
+  /// @dev Transfers PT and/or YT tokens from one address to another.
+  ///      Updates balances in packed storage and emits Transfer events for non-zero amounts.
   ///      Performs balance checks before transferring to ensure sufficient funds.
   /// @param from The address to transfer tokens from
   /// @param to The address to transfer tokens to
@@ -89,8 +89,8 @@ abstract contract TokenController {
     }
   }
 
-  /// @notice Internal function to set the allowance for both PT and YT tokens.
-  /// @dev Caps allowances at type(uint128).max if a higher value is provided. Emits Approval events
+  /// @dev Sets the allowance for both PT and YT tokens.
+  ///      Caps allowances at type(uint128).max if a higher value is provided. Emits Approval events
   ///      for each token if the allowance changes. The normalized allowance (type(uint256).max for
   ///      uint128 max) is emitted in the event.
   /// @param from The address granting the allowance (token owner)
@@ -112,8 +112,8 @@ abstract contract TokenController {
     }
   }
 
-  /// @notice Internal function to mint new PT and/or YT tokens to an address.
-  /// @dev Increases total supply and recipient balance in packed storage. Emits Transfer events
+  /// @dev Mints new PT and/or YT tokens to an address.
+  ///      Increases total supply and recipient balance in packed storage. Emits Transfer events
   ///      from address(0) for non-zero amounts. Assumes amounts fit in uint128 (enforced by toUint128).
   /// @param to The address to mint tokens to
   /// @param pt The amount of PT tokens to mint
@@ -132,8 +132,8 @@ abstract contract TokenController {
     }
   }
 
-  /// @notice Internal function to burn PT and/or YT tokens from an address.
-  /// @dev Decreases total supply and owner balance in packed storage. Performs checks to ensure
+  /// @dev Burns PT and/or YT tokens from an address.
+  ///      Decreases total supply and owner balance in packed storage. Performs checks to ensure
   ///      sufficient supply and balance exist. Emits Transfer events to address(0) for non-zero amounts.
   /// @param from The address to burn tokens from
   /// @param pt The amount of PT tokens to burn

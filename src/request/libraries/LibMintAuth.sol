@@ -29,8 +29,8 @@ library LibMintAuth {
   /*                      SLOT COMPUTATION                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Computes the storage slot for a minter's PT and YT mint authorizations.
-  /// @dev Uses keccak256 to derive a unique storage slot from the mint auth seed and minter address.
+  /// @dev Computes the storage slot for a minter's PT and YT mint authorizations.
+  ///      Uses keccak256 to derive a unique storage slot from the mint auth seed and minter address.
   ///      The resulting slot contains packed PT (lower 128 bits) and YT (upper 128 bits) mint authorizations.
   ///
   ///      Slot Derivation:
@@ -54,8 +54,8 @@ library LibMintAuth {
   /*                      MINT AUTHORIZATION                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns both PT and YT mint authorizations for a given minter in a single read.
-  /// @dev Computes the storage slot using keccak256 and reads the packed mint authorizations using {Lib128Fields.fromSlot}.
+  /// @dev Returns both PT and YT mint authorizations for a given minter in a single read.
+  ///      Computes the storage slot using keccak256 and reads the packed mint authorizations using {Lib128Fields.fromSlot}.
   ///      Gas-efficient single storage read. No validation is performed; the caller must ensure proper usage.
   /// @param minter The address to query mint authorizations for
   /// @return ptMintAuth The PT mint authorization (lower 128 bits) as uint128
@@ -68,8 +68,8 @@ library LibMintAuth {
   /*                          UPDATES                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Updates both PT and YT mint authorizations for a given minter atomically.
-  /// @dev Computes the storage slot using keccak256, packs both authorizations into a single uint256 using
+  /// @dev Updates both PT and YT mint authorizations for a given minter atomically.
+  ///      Computes the storage slot using keccak256, packs both authorizations into a single uint256 using
   ///      {Lib128Fields.write}, and writes to storage. More gas-efficient than separate writes.
   ///      No validation is performed; the caller must ensure values fit in uint128.
   /// @param minter The address whose mint authorizations to update

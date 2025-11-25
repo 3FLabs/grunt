@@ -36,8 +36,8 @@ abstract contract VaultController is TokenController {
   /// @return allowed True if withdrawals/redemptions are enabled
   function canWithdraw() public view virtual returns (bool);
 
-  /// @notice Internal check that reverts if withdrawals are not currently permitted.
-  /// @dev Called before any withdraw or redeem operation to enforce the withdrawal lock.
+  /// @dev Reverts if withdrawals are not currently permitted.
+  ///      Called before any withdraw or redeem operation to enforce the withdrawal lock.
   /// @custom:reverts CannotWithdraw if withdrawals are locked
   function _checkCanWithdraw() internal view virtual {
     if (!canWithdraw()) revert CannotWithdraw();
@@ -47,8 +47,8 @@ abstract contract VaultController is TokenController {
   /*                    INTERNAL HELPERS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Calculates the current asset distribution and token supplies.
-  /// @dev Implements the core redemption formula where principal assets are prioritized:
+  /// @dev Calculates the current asset distribution and token supplies.
+  ///      Implements the core redemption formula where principal assets are prioritized:
   ///      - pAssets = min(totalAssets, ptSupply): Principal holders get up to 1:1 redemption
   ///      - yAssets = totalAssets - pAssets: Yield holders get any excess assets
   ///      This ensures principal holders are paid first, with yield capturing upside/downside.
@@ -70,8 +70,8 @@ abstract contract VaultController is TokenController {
     }
   }
 
-  /// @notice Returns true if either of the two values is zero.
-  /// @dev Used to determine if initial conversion logic should be used (when supply or assets are zero).
+  /// @dev Returns true if either of the two values is zero.
+  ///      Used to determine if initial conversion logic should be used (when supply or assets are zero).
   /// @param a First value to check
   /// @param b Second value to check
   /// @return result True if a == 0 OR b == 0
@@ -82,8 +82,8 @@ abstract contract VaultController is TokenController {
     }
   }
 
-  /// @notice Converts assets to shares when supply or assets are zero (initial state).
-  /// @dev For PT: returns 1:1 conversion. For YT: returns max uint256 if assets > 0 (indicating
+  /// @dev Converts assets to shares when supply or assets are zero (initial state).
+  ///      For PT: returns 1:1 conversion. For YT: returns max uint256 if assets > 0 (indicating
   ///      infinite price since there are no assets backing the yield yet), or the asset amount otherwise.
   /// @param assets Amount of assets to convert
   /// @param yt True if converting for YT, false if converting for PT
@@ -92,8 +92,8 @@ abstract contract VaultController is TokenController {
     shares = (yt && assets > 0).ternary(type(uint256).max, assets);
   }
 
-  /// @notice Converts shares to assets when supply or assets are zero (initial state).
-  /// @dev For PT: returns 1:1 conversion. For YT: returns 0 (since no yield exists yet).
+  /// @dev Converts shares to assets when supply or assets are zero (initial state).
+  ///      For PT: returns 1:1 conversion. For YT: returns 0 (since no yield exists yet).
   /// @param shares Amount of shares to convert
   /// @param yt True if converting for YT, false if converting for PT
   /// @return assets Amount of assets corresponding to the shares
@@ -105,8 +105,8 @@ abstract contract VaultController is TokenController {
   /*                  WITHDRAW & REDEEM INTERNALS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Core withdrawal operation that burns shares and transfers assets.
-  /// @dev Checks withdrawal permissions, consumes allowances if needed, burns shares, and transfers
+  /// @dev Core withdrawal operation that burns shares and transfers assets.
+  ///      Checks withdrawal permissions, consumes allowances if needed, burns shares, and transfers
   ///      assets to the receiver. Emits ERC4626 Withdraw events for non-zero amounts. This function
   ///      is used by both withdraw (assets-based) and redeem (shares-based) operations.
   /// @param caller The address initiating the operation (msg.sender)
@@ -141,8 +141,8 @@ abstract contract VaultController is TokenController {
     }
   }
 
-  /// @notice Withdraws a specified amount of assets by burning the required shares.
-  /// @dev Converts the requested assets to shares using current exchange rate, then performs
+  /// @dev Withdraws a specified amount of assets by burning the required shares.
+  ///      Converts the requested assets to shares using current exchange rate, then performs
   ///      the withdrawal operation. This is the ERC4626 "withdraw" flow.
   /// @param caller The address initiating the withdrawal
   /// @param pAssets The amount of principal assets to withdraw
@@ -160,8 +160,8 @@ abstract contract VaultController is TokenController {
     _withdrawalOperation(caller, receiver, owner, pAssets, yAssets, ptShares, ytShares);
   }
 
-  /// @notice Redeems a specified amount of shares for the corresponding assets.
-  /// @dev Converts the shares to assets using current exchange rate, then performs the
+  /// @dev Redeems a specified amount of shares for the corresponding assets.
+  ///      Converts the shares to assets using current exchange rate, then performs the
   ///      withdrawal operation. This is the ERC4626 "redeem" flow.
   /// @param caller The address initiating the redemption
   /// @param pShares The amount of PT shares to redeem

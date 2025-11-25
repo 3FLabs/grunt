@@ -46,8 +46,8 @@ library LibTokenController {
   /*                      SLOT COMPUTATION                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Computes the storage slot for an account's PT and YT balances.
-  /// @dev Uses keccak256 to derive a unique storage slot from the balance seed and account address.
+  /// @dev Computes the storage slot for an account's PT and YT balances.
+  ///      Uses keccak256 to derive a unique storage slot from the balance seed and account address.
   ///      The resulting slot contains packed PT (lower 128 bits) and YT (upper 128 bits) balances.
   ///
   ///      Slot Derivation:
@@ -67,8 +67,8 @@ library LibTokenController {
     }
   }
 
-  /// @notice Computes the storage slot for PT and YT allowances between an owner and spender.
-  /// @dev Uses keccak256 to derive a unique storage slot from the allowance seed, owner, and spender addresses.
+  /// @dev Computes the storage slot for PT and YT allowances between an owner and spender.
+  ///      Uses keccak256 to derive a unique storage slot from the allowance seed, owner, and spender addresses.
   ///      The resulting slot contains packed PT (lower 128 bits) and YT (upper 128 bits) allowances.
   ///
   ///      Slot Derivation:
@@ -95,8 +95,8 @@ library LibTokenController {
   /*                        TOTAL SUPPLY                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the total supply of either PT or YT tokens.
-  /// @dev Reads from packed storage using {Lib128Fields.fromSlot} and extracts the requested token supply.
+  /// @dev Returns the total supply of either PT or YT tokens.
+  ///      Reads from packed storage using {Lib128Fields.fromSlot} and extracts the requested token supply.
   ///      No validation is performed; the caller must ensure proper usage. Gas-efficient single storage read.
   /// @param yt True to return YT supply (upper 128 bits), false to return PT supply (lower 128 bits)
   /// @return result The total supply of the specified token type as uint128
@@ -109,8 +109,8 @@ library LibTokenController {
     }
   }
 
-  /// @notice Returns the total supplies of both PT and YT tokens in a single read.
-  /// @dev Reads from packed storage using {Lib128Fields.fromSlot} and extracts both token supplies.
+  /// @dev Returns the total supplies of both PT and YT tokens in a single read.
+  ///      Reads from packed storage using {Lib128Fields.fromSlot} and extracts both token supplies.
   ///      More gas-efficient than calling totalSupply() twice. No validation is performed;
   ///      the caller must ensure proper usage.
   /// @return pt The total PT supply (lower 128 bits) as uint128
@@ -123,8 +123,8 @@ library LibTokenController {
   /*                          BALANCES                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the balance of either PT or YT tokens for a given account.
-  /// @dev Computes the storage slot using keccak256, reads the packed balance using {Lib128Fields.fromSlot},
+  /// @dev Returns the balance of either PT or YT tokens for a given account.
+  ///      Computes the storage slot using keccak256, reads the packed balance using {Lib128Fields.fromSlot},
   ///      and extracts the requested token balance. No validation is performed; the caller must ensure proper usage.
   /// @param account The address to query the balance for
   /// @param yt True to return YT balance (upper 128 bits), false to return PT balance (lower 128 bits)
@@ -138,8 +138,8 @@ library LibTokenController {
     }
   }
 
-  /// @notice Returns both PT and YT balances for a given account in a single read.
-  /// @dev Computes the storage slot using keccak256 and reads the packed balances using {Lib128Fields.fromSlot}.
+  /// @dev Returns both PT and YT balances for a given account in a single read.
+  ///      Computes the storage slot using keccak256 and reads the packed balances using {Lib128Fields.fromSlot}.
   ///      More gas-efficient than calling balanceOf() twice. No validation is performed;
   ///      the caller must ensure proper usage.
   /// @param account The address to query balances for
@@ -153,8 +153,8 @@ library LibTokenController {
   /*                         ALLOWANCES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the allowance of either PT or YT tokens for a given (owner, spender) pair.
-  /// @dev Computes the storage slot using keccak256, reads the packed allowance using {Lib128Fields.fromSlot},
+  /// @dev Returns the allowance of either PT or YT tokens for a given (owner, spender) pair.
+  ///      Computes the storage slot using keccak256, reads the packed allowance using {Lib128Fields.fromSlot},
   ///      and extracts the requested token allowance. No validation is performed; the caller must ensure proper usage.
   /// @param owner The address that owns the tokens
   /// @param spender The address authorized to spend the tokens
@@ -169,8 +169,8 @@ library LibTokenController {
     }
   }
 
-  /// @notice Returns both PT and YT allowances for a given (owner, spender) pair in a single read.
-  /// @dev Computes the storage slot using keccak256 and reads the packed allowances using {Lib128Fields.fromSlot}.
+  /// @dev Returns both PT and YT allowances for a given (owner, spender) pair in a single read.
+  ///      Computes the storage slot using keccak256 and reads the packed allowances using {Lib128Fields.fromSlot}.
   ///      More gas-efficient than calling allowance() twice. No validation is performed;
   ///      the caller must ensure proper usage.
   /// @param owner The address that owns the tokens
@@ -185,8 +185,8 @@ library LibTokenController {
   /*                          UPDATES                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Updates the total supplies of both PT and YT tokens atomically.
-  /// @dev Packs both supplies into a single uint256 using {Lib128Fields.write} and writes to storage.
+  /// @dev Updates the total supplies of both PT and YT tokens atomically.
+  ///      Packs both supplies into a single uint256 using {Lib128Fields.write} and writes to storage.
   ///      More gas-efficient than separate writes. No validation is performed; the caller must ensure
   ///      values fit in uint128.
   /// @param pt The new PT total supply (stored in lower 128 bits)
@@ -195,8 +195,8 @@ library LibTokenController {
     _TOTAL_SUPPLY_SLOT.write(pt, yt);
   }
 
-  /// @notice Updates both PT and YT balances for a given account atomically.
-  /// @dev Computes the storage slot using keccak256, packs both balances into a single uint256 using
+  /// @dev Updates both PT and YT balances for a given account atomically.
+  ///      Computes the storage slot using keccak256, packs both balances into a single uint256 using
   ///      {Lib128Fields.write}, and writes to storage. More gas-efficient than separate writes.
   ///      No validation is performed; the caller must ensure values fit in uint128.
   /// @param account The address whose balances to update
@@ -206,8 +206,8 @@ library LibTokenController {
     balanceSlot(account).write(pt, yt);
   }
 
-  /// @notice Updates both PT and YT allowances for a given (owner, spender) pair atomically.
-  /// @dev Computes the storage slot using keccak256, packs both allowances into a single uint256 using
+  /// @dev Updates both PT and YT allowances for a given (owner, spender) pair atomically.
+  ///      Computes the storage slot using keccak256, packs both allowances into a single uint256 using
   ///      {Lib128Fields.write}, and writes to storage. More gas-efficient than separate writes.
   ///      No validation is performed; the caller must ensure values fit in uint128.
   /// @param owner The address that owns the tokens

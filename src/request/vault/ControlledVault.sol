@@ -138,8 +138,8 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   /*                     CONTROLLER SPECIFIC                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Emits the ERC4626 Deposit event for this vault.
-  /// @dev Only the VaultController can call this function. Used when shares are minted through
+  /// @dev Emits the ERC4626 Deposit event for this vault.
+  ///      Only the VaultController can call this function. Used when shares are minted through
   ///      the controller's deposit operations (not via the vault's deposit function which is disabled).
   /// @param sender The address that initiated the deposit
   /// @param owner The address receiving the shares
@@ -150,8 +150,8 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
     emit Deposit(sender, owner, assets, shares);
   }
 
-  /// @notice Emits the ERC4626 Withdraw event for this vault.
-  /// @dev Only the VaultController can call this function. Used when shares are burned and assets
+  /// @dev Emits the ERC4626 Withdraw event for this vault.
+  ///      Only the VaultController can call this function. Used when shares are burned and assets
   ///      are transferred during withdraw or redeem operations.
   /// @param sender The address that initiated the withdrawal
   /// @param receiver The address receiving the assets

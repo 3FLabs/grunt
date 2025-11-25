@@ -120,7 +120,6 @@ abstract contract OfferReceiver is EIP712 {
     _setNonce(msg.sender, newNonce);
   }
 
-  /// @notice Internal function to update a maker's nonce.
   /// @dev Computes the storage slot using keccak256 and writes the new nonce value.
   ///      Emits a {NonceUpdated} event after updating storage.
   ///      No validation is performed; the caller must ensure the nonce update is valid.
@@ -140,8 +139,8 @@ abstract contract OfferReceiver is EIP712 {
   /*                     OFFER VALIDATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Validates an offer and its signature, then consumes the nonce.
-  /// @dev Performs comprehensive validation in the following order:
+  /// @dev Validates an offer and its signature, then consumes the nonce.
+  ///      Performs comprehensive validation in the following order:
   ///      1. Checks offer parameters are non-zero (maker, amount, expectedReturn)
   ///      2. Validates expiration timestamp has not passed
   ///      3. Ensures offer nonce is greater than stored nonce (freshness check)

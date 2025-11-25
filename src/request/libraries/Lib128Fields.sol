@@ -31,8 +31,8 @@ library Lib128Fields {
   ///      Value: 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (2^128 - 1)
   uint256 private constant _128_MASK = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
 
-  /// @notice Reads two packed uint128 fields from a storage slot.
-  /// @dev Uses optimized assembly to read a single storage slot and extract both uint128 values.
+  /// @dev Reads two packed uint128 fields from a storage slot.
+  ///      Uses optimized assembly to read a single storage slot and extract both uint128 values.
   ///      This is more gas-efficient than reading two separate storage slots.
   ///
   ///      Implementation Details:
@@ -55,8 +55,8 @@ library Lib128Fields {
     }
   }
 
-  /// @notice Writes two uint128 fields to a storage slot in packed form.
-  /// @dev Uses optimized assembly to pack two uint128 values into a single uint256 and write to storage.
+  /// @dev Writes two uint128 fields to a storage slot in packed form.
+  ///      Uses optimized assembly to pack two uint128 values into a single uint256 and write to storage.
   ///      This is more gas-efficient than writing to two separate storage slots.
   ///
   ///      Implementation Details:

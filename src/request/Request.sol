@@ -93,8 +93,8 @@ contract Request is OfferReceiver, VaultController, Initializable, Ownable, Reen
   ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
   bytes32 private constant _MAIN_STORAGE_SLOT = 0xb094c22784bf6cbc6b58dc638ba7a1e443b696c9c43939e48b3762e49818c300;
 
-  /// @notice Returns a reference to the contract's storage struct.
-  /// @dev Uses assembly to load the storage pointer from the fixed storage slot.
+  /// @dev Returns a reference to the contract's storage struct.
+  ///      Uses assembly to load the storage pointer from the fixed storage slot.
   ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return requestStorage A storage pointer to the RequestStorage struct
   function _requestStorage() internal pure returns (RequestStorage storage requestStorage) {

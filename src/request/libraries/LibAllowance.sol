@@ -9,8 +9,8 @@ library LibAllowance {
   /// @dev The mask for the 128 bits (type(uint128).max).
   uint256 private constant _MAX_128_BITS = 0xffffffffffffffffffffffffffffffff;
 
-  /// @notice Consumes (decreases) an allowance by a given amount, with infinite allowance support.
-  /// @dev Implements the logic: `result = allowance < type(uint128).max ? allowance - amount : type(uint128).max`
+  /// @dev Consumes (decreases) an allowance by a given amount, with infinite allowance support.
+  ///      Implements the logic: `result = allowance < type(uint128).max ? allowance - amount : type(uint128).max`
   ///      If the allowance is type(uint128).max (infinite), it remains unchanged after consumption.
   ///      Otherwise, the amount is subtracted from the allowance. The caller must ensure that
   ///      allowance >= amount when allowance != type(uint128).max to avoid underflow.
@@ -24,8 +24,8 @@ library LibAllowance {
     }
   }
 
-  /// @notice Normalizes a uint128 allowance to uint256, converting infinite allowance representation.
-  /// @dev Implements the logic: `result = allowance != type(uint128).max ? allowance : type(uint256).max`
+  /// @dev Normalizes a uint128 allowance to uint256, converting infinite allowance representation.
+  ///      Implements the logic: `result = allowance != type(uint128).max ? allowance : type(uint256).max`
   ///      This converts the internal infinite allowance representation (uint128.max) to the ERC20
   ///      standard representation (uint256.max) for compatibility with standard ERC20 interfaces.
   /// @param allowance The uint128 allowance value to normalize

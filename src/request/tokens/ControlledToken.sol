@@ -22,25 +22,25 @@ abstract contract ControlledToken is IERC20 {
   /*                           Internal                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns true if this token is a YT (Yield Token), false if PT (Principal Token).
-  /// @dev Must be implemented by the concrete token contract to identify its type.
+  /// @dev Returns true if this token is a YT (Yield Token), false if PT (Principal Token).
+  ///      Must be implemented by the concrete token contract to identify its type.
   /// @return isYt True for YT tokens, false for PT tokens
   function _isYtToken() internal view virtual returns (bool);
 
-  /// @notice Returns the address of the TokenController that manages this token.
-  /// @dev All token operations are delegated to this controller.
+  /// @dev Returns the address of the TokenController that manages this token.
+  ///      All token operations are delegated to this controller.
   /// @return controller The TokenController address
   function _controller() internal view virtual returns (address);
 
-  /// @notice Checks that the caller is the authorized controller.
-  /// @dev Reverts with {Unauthorized} if msg.sender is not the controller.
+  /// @dev Checks that the caller is the authorized controller.
+  ///      Reverts with {Unauthorized} if msg.sender is not the controller.
   ///      Used to restrict event emission to the controller only.
   function _checkController() internal view virtual {
     if (msg.sender != _controller()) revert Unauthorized();
   }
 
-  /// @notice Returns the prefix for the token name and symbol based on token type.
-  /// @dev Returns "YT-" for yield tokens, "PT-" for principal tokens.
+  /// @dev Returns the prefix for the token name and symbol based on token type.
+  ///      Returns "YT-" for yield tokens, "PT-" for principal tokens.
   /// @return prefix The string prefix to prepend to base name/symbol
   function _prefix() internal view virtual returns (string memory) {
     return _isYtToken() ? "YT-" : "PT-";
