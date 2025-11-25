@@ -302,4 +302,12 @@ abstract contract VaultController is TokenController {
     (uint256 pAssets, uint256 yAssets) = _redeem(caller, pShares, yShares, receiver, owner);
     assets = yt.ternary(yAssets, pAssets);
   }
+
+  /// @inheritdoc TokenController
+  /// @dev Emits ERC4626 Deposit events for non-zero amounts.
+  function _mint(address to, uint256 pt, uint256 yt) internal virtual override {
+    super._mint(to, pt, yt);
+    if (pt > 0) ControlledVault(ptToken())._emitDeposit(msg.sender, to, pt, pt);
+    if (yt > 0) ControlledVault(ytToken())._emitDeposit(msg.sender, to, 0, yt);
+  }
 }

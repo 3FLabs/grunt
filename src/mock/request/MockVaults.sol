@@ -92,14 +92,6 @@ contract MockVaultController is VaultController {
 
     // Mint PT and YT shares (1:1 for simplicity in tests)
     _mint(to, ptShares, ytShares);
-
-    // Emit deposit events
-    if (ptShares > 0) {
-      ControlledVault(PT_VAULT)._emitDeposit(msg.sender, to, ptShares, ptShares);
-    }
-    if (ytShares > 0) {
-      ControlledVault(YT_VAULT)._emitDeposit(msg.sender, to, 0, ytShares);
-    }
   }
 }
 

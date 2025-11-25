@@ -127,7 +127,7 @@ abstract contract OfferReceiver is EIP712 {
     if (offer.maker == address(0) || offer.amount == 0 || offer.expectedReturn == 0) revert InvalidOffer();
 
     // Check offer has not expired
-    if (offer.expiration < block.timestamp) revert OfferExpired();
+    if (offer.expiration <= block.timestamp) revert OfferExpired();
 
     // Ensure offer nonce is fresh (greater than stored nonce)
     // This prevents replay attacks and validates offer hasn't been cancelled

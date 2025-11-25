@@ -20,7 +20,7 @@ abstract contract TokenController {
 
   /// @notice Error thrown when the caller is not authorized as a token contract.
   /// @dev Only the PT or YT token contracts can call certain internal functions.
-  error Unauthorized();
+  error UnauthorizedTokenContract();
 
   /// @notice Error thrown when an account has insufficient balance for a transfer or burn operation.
   /// @dev This error is thrown when attempting to transfer or burn more tokens than the account owns.
@@ -36,11 +36,11 @@ abstract contract TokenController {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Checks that the caller is the appropriate token contract (PT or YT).
-  /// @dev Reverts with {Unauthorized} if the caller is not the expected token contract.
+  /// @dev Reverts with {UnauthorizedTokenContract} if the caller is not the expected token contract.
   ///      This prevents unauthorized external calls to internal token functions.
   /// @param yt True if checking for YT token, false if checking for PT token
   function _checkToken(bool yt) internal view virtual {
-    if (msg.sender != (yt ? ytToken() : ptToken())) revert Unauthorized();
+    if (msg.sender != (yt ? ytToken() : ptToken())) revert UnauthorizedTokenContract();
   }
 
   /// @notice Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
@@ -299,7 +299,7 @@ abstract contract TokenController {
   /// @param amount The amount of tokens to transfer (for the specific token type)
   /// @param yt True if this is a YT transfer, false if this is a PT transfer
   /// @return success Always returns true if the transfer succeeds
-  /// @custom:reverts Unauthorized if not called by the appropriate token contract
+  /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   /// @custom:reverts InsufficientAllowance if allowance is insufficient (when caller != from)
   /// @custom:reverts InsufficientBalance if the sender has insufficient balance
   function _transfer(address caller, address from, address to, uint256 amount, bool yt) public virtual returns (bool) {
@@ -320,7 +320,7 @@ abstract contract TokenController {
   /// @param amount The allowance amount to set (for the specific token type)
   /// @param yt True if this is a YT approval, false if this is a PT approval
   /// @return success Always returns true if the approval succeeds
-  /// @custom:reverts Unauthorized if not called by the appropriate token contract
+  /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   function _approve(address from, address spender, uint256 amount, bool yt) public virtual returns (bool) {
     _checkToken(yt);
     uint256 ptAmount = yt.ternary(0, amount);
