@@ -735,7 +735,7 @@ contract ControlledTokenTest is Test {
     tokenController.mint(address(1), 100 ether, 200 ether);
 
     assertEq(tokenController.totalSupply(false), 100 ether); // PT
-    assertEq(tokenController.totalSupply(true), 200 ether);  // YT
+    assertEq(tokenController.totalSupply(true), 200 ether); // YT
   }
 
   function test_balanceOfIndividual() public {
@@ -743,7 +743,7 @@ contract ControlledTokenTest is Test {
     tokenController.mint(user, 100 ether, 200 ether);
 
     assertEq(tokenController.balanceOf(user, false), 100 ether); // PT
-    assertEq(tokenController.balanceOf(user, true), 200 ether);  // YT
+    assertEq(tokenController.balanceOf(user, true), 200 ether); // YT
   }
 
   function test_allowanceWithMaxValue() public {
