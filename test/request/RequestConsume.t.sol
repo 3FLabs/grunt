@@ -73,7 +73,9 @@ contract RequestConsumeTest is Test {
 
   function _computeDomainSeparator() internal view returns (bytes32) {
     return keccak256(
-      abi.encode(TYPE_HASH, keccak256(bytes(request.name())), keccak256(bytes("0.0.1")), block.chainid, address(request))
+      abi.encode(
+        TYPE_HASH, keccak256(bytes(request.name())), keccak256(bytes("0.0.1")), block.chainid, address(request)
+      )
     );
   }
 
@@ -103,8 +105,7 @@ contract RequestConsumeTest is Test {
     uint256 expectedReturn = 100_000e6;
 
     // Create and sign offer (maker is the callback contract)
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     // Owner provides funds (consume transfers from owner, not callback)
@@ -139,8 +140,7 @@ contract RequestConsumeTest is Test {
     uint256 consumeAmount = 500_000e6; // Consume only half
 
     // Create and sign offer
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     // Owner provides funds
@@ -171,8 +171,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     asset.approve(address(request), offerAmount * 2);
 
-    Offer memory offer1 =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    Offer memory offer1 = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory sig1 = _signOffer(offer1);
 
     vm.prank(owner);
@@ -181,8 +180,7 @@ contract RequestConsumeTest is Test {
     assertEq(ptVault.balanceOf(address(callback)), offerAmount);
 
     // Second offer (nonce must increase)
-    Offer memory offer2 =
-      _createOffer(address(callback), offerAmount, expectedReturn, 2, block.timestamp + 1 days);
+    Offer memory offer2 = _createOffer(address(callback), offerAmount, expectedReturn, 2, block.timestamp + 1 days);
     bytes memory sig2 = _signOffer(offer2);
 
     vm.prank(owner);
@@ -199,8 +197,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     request.setRepaid();
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
@@ -211,8 +208,7 @@ contract RequestConsumeTest is Test {
   function test_consume_onlyOwner() public {
     uint256 offerAmount = 1_000_000e6;
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     address notOwner = makeAddr("notOwner");
@@ -224,8 +220,7 @@ contract RequestConsumeTest is Test {
   function test_consume_revertsOnExpiredOffer() public {
     uint256 offerAmount = 1_000_000e6;
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp - 1);
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp - 1);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
@@ -241,16 +236,14 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     asset.approve(address(request), offerAmount * 2);
 
-    Offer memory offer1 =
-      _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    Offer memory offer1 = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory sig1 = _signOffer(offer1);
 
     vm.prank(owner);
     request.consume(offer1, sig1, offerAmount);
 
     // Try to consume with same nonce again
-    Offer memory offer2 =
-      _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    Offer memory offer2 = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory sig2 = _signOffer(offer2);
 
     vm.prank(owner);
@@ -294,8 +287,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     asset.approve(address(request), offerAmount);
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
@@ -307,11 +299,9 @@ contract RequestConsumeTest is Test {
   /*                    FUZZ TESTS                               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_consume_proportionalYield(
-    uint128 offerAmount,
-    uint128 expectedReturn,
-    uint128 consumeAmount
-  ) public {
+  function testFuzz_consume_proportionalYield(uint128 offerAmount, uint128 expectedReturn, uint128 consumeAmount)
+    public
+  {
     vm.assume(offerAmount > 0);
     vm.assume(expectedReturn > 0);
     vm.assume(consumeAmount > 0 && consumeAmount <= offerAmount);
@@ -321,8 +311,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     asset.approve(address(request), consumeAmount);
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
@@ -349,8 +338,7 @@ contract RequestConsumeTest is Test {
     asset.approve(address(request), offerAmount * numConsumes);
 
     for (uint256 i = 1; i <= numConsumes; i++) {
-      Offer memory offer =
-        _createOffer(address(callback), offerAmount, expectedReturn, i, block.timestamp + 1 days);
+      Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, i, block.timestamp + 1 days);
       bytes memory signature = _signOffer(offer);
 
       vm.prank(owner);
@@ -381,8 +369,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     asset.approve(address(request), offerAmount);
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
@@ -429,8 +416,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     asset.approve(address(request), consumeAmount);
 
-    Offer memory offer =
-      _createOffer(address(callback), consumeAmount, consumeReturn, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(callback), consumeAmount, consumeReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);

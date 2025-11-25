@@ -57,7 +57,8 @@ contract RequestTest is Test {
 
     // Create request via factory
     vm.prank(owner);
-    (address reqAddr, address ptAddr, address ytAddr) = factory.createRequest(owner, address(asset), "Test Request", "REQ");
+    (address reqAddr, address ptAddr, address ytAddr) =
+      factory.createRequest(owner, address(asset), "Test Request", "REQ");
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -257,7 +258,9 @@ contract RequestTest is Test {
 
   function _computeDomainSeparator() internal view returns (bytes32) {
     return keccak256(
-      abi.encode(TYPE_HASH, keccak256(bytes(request.name())), keccak256(bytes("0.0.1")), block.chainid, address(request))
+      abi.encode(
+        TYPE_HASH, keccak256(bytes(request.name())), keccak256(bytes("0.0.1")), block.chainid, address(request)
+      )
     );
   }
 
