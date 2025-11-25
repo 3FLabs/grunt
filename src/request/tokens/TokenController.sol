@@ -106,8 +106,8 @@ abstract contract TokenController {
       uint128 ptMin = uint128(FixedPointMathLib.min(pt, type(uint128).max));
       uint128 ytMin = uint128(FixedPointMathLib.min(yt, type(uint128).max));
       from.updateAllowance(spender, ptMin, ytMin);
-      if (pt != ptAllowance) ControlledToken(ptToken())._emitApproval(from, spender, ptMin.normalize());
-      if (yt != ytAllowance) ControlledToken(ytToken())._emitApproval(from, spender, ytMin.normalize());
+      if (ptMin != ptAllowance) ControlledToken(ptToken())._emitApproval(from, spender, ptMin.normalize());
+      if (ytMin != ytAllowance) ControlledToken(ytToken())._emitApproval(from, spender, ytMin.normalize());
       return true;
     }
   }
