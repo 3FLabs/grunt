@@ -36,7 +36,7 @@ contract RequestTest is Test {
   // Events
   event Repaid();
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
-  event RequestCreated(address request, address asset, address ptVault, address ytVault);
+  event RequestCreated(address request, address asset, address ptToken, address ytToken);
 
   // Errors
   error AlreadyRepaid();
@@ -71,14 +71,14 @@ contract RequestTest is Test {
 
   function test_factory_deploysBeacons() public view {
     assertNotEq(factory.REQUEST_BEACON(), address(0));
-    assertNotEq(factory.PT_VAULT_BEACON(), address(0));
-    assertNotEq(factory.YT_VAULT_BEACON(), address(0));
+    assertNotEq(factory.PT_TOKEN_BEACON(), address(0));
+    assertNotEq(factory.YT_TOKEN_BEACON(), address(0));
   }
 
   function test_factory_beaconOwner() public view {
     assertEq(UpgradeableBeacon(factory.REQUEST_BEACON()).owner(), beaconOwner);
-    assertEq(UpgradeableBeacon(factory.PT_VAULT_BEACON()).owner(), beaconOwner);
-    assertEq(UpgradeableBeacon(factory.YT_VAULT_BEACON()).owner(), beaconOwner);
+    assertEq(UpgradeableBeacon(factory.PT_TOKEN_BEACON()).owner(), beaconOwner);
+    assertEq(UpgradeableBeacon(factory.YT_TOKEN_BEACON()).owner(), beaconOwner);
   }
 
   function test_factory_createRequest_emitsEvent() public {
