@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {LibTokenController} from "../../../src/request/libraries/LibTokenController.sol";
+import {LibTokenController} from "../../../src/libs/request/LibTokenController.sol";
 
 contract LibTokenControllerTest is Test {
   using LibTokenController for address;

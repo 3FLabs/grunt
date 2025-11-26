@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Request} from "../../src/request/Request.sol";
 import {RequestFactory} from "../../src/request/RequestFactory.sol";
-import {Vault} from "../../src/request/vault/Vault.sol";
-import {ControlledVault} from "../../src/request/vault/ControlledVault.sol";
-import {MockERC20} from "../../src/mock/MockERC20.sol";
-import {MockRequestCallback} from "../../src/mock/request/MockRequestCallback.sol";
-import {Offer} from "../../src/request/OfferReceiver.sol";
+import {Vault} from "../../src/request/Vault.sol";
+import {ControlledVault} from "../../src/request/abstract/vault/ControlledVault.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
+import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
+import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
 contract RequestTest is Test {

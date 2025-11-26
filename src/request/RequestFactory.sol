@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Request} from "./Request.sol";
-import {Vault} from "./vault/Vault.sol";
+import {Vault} from "./Vault.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 

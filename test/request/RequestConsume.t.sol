@@ -5,10 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Request} from "../../src/request/Request.sol";
 import {RequestFactory} from "../../src/request/RequestFactory.sol";
-import {Vault} from "../../src/request/vault/Vault.sol";
-import {MockERC20} from "../../src/mock/MockERC20.sol";
-import {MockRequestCallback} from "../../src/mock/request/MockRequestCallback.sol";
-import {Offer} from "../../src/request/OfferReceiver.sol";
+import {Vault} from "../../src/request/Vault.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
+import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
+import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 
 /// @title RequestConsumeTest
 /// @notice Tests for the Request.consume() function with EIP-1271 callback contracts

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {MAX_128_BITS} from "./Constants.sol";
+import {MAX_128_BITS} from "../Constants.sol";
 
 /// @title Lib128Fields
 /// @notice Library for gas-efficient reading and writing of packed uint128 fields in storage.

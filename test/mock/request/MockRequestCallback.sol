@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IRequestCallback} from "../../request/interfaces/IRequestCallback.sol";
-import {Offer} from "../../request/OfferReceiver.sol";
+import {IRequestCallback} from "../../../src/interfaces/request/IRequestCallback.sol";
+import {Offer} from "../../../src/interfaces/request/IOfferReceiver.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 

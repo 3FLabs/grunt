@@ -41,3 +41,4 @@ interface IERC20 {
   /// @notice Returns the decimals places of the token.
   function decimals() external view returns (uint8);
 }
+

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {LibTokenController} from "../libraries/LibTokenController.sol";
+import {LibTokenController} from "../../../libs/request/LibTokenController.sol";
 import {ControlledToken} from "./ControlledToken.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
-import {LibAllowance} from "../libraries/LibAllowance.sol";
-import {ITokenController} from "../interfaces/ITokenController.sol";
+import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
+import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
 
 /// @title TokenController
 /// @notice Abstract contract for managing dual-token systems (Principal Token and Yield Token)

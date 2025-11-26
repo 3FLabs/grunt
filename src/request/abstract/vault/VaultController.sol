@@ -3,10 +3,10 @@ pragma solidity ^0.8.0;
 
 import {TokenController} from "../tokens/TokenController.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {LibTokenController} from "../libraries/LibTokenController.sol";
+import {LibTokenController} from "../../../libs/request/LibTokenController.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ControlledVault} from "./ControlledVault.sol";
-import {IVaultController} from "../interfaces/IVaultController.sol";
+import {IVaultController} from "../../../interfaces/request/IVaultController.sol";
 
 /// @title VaultController
 /// @notice Abstract base contract for managing dual-vault systems with Principal and Yield token separation.

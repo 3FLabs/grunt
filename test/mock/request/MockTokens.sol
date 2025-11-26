@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {ControlledToken} from "../../request/tokens/ControlledToken.sol";
-import {TokenController} from "../../request/tokens/TokenController.sol";
+import {ControlledToken} from "../../../src/request/abstract/tokens/ControlledToken.sol";
+import {TokenController} from "../../../src/request/abstract/tokens/TokenController.sol";
 
 contract MockControlledToken is ControlledToken {
   bool internal immutable IS_YT;

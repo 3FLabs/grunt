@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {Lib128Fields} from "../../../src/request/libraries/Lib128Fields.sol";
+import {Lib128Fields} from "../../../src/libs/request/Lib128Fields.sol";
 
 contract Lib128FieldsTest is Test {
   using Lib128Fields for uint256;

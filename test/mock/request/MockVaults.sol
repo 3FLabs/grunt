@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {ControlledVault} from "../../request/vault/ControlledVault.sol";
-import {VaultController} from "../../request/vault/VaultController.sol";
+import {ControlledVault} from "../../../src/request/abstract/vault/ControlledVault.sol";
+import {VaultController} from "../../../src/request/abstract/vault/VaultController.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {IERC20} from "../../integrations/interfaces/IERC20.sol";
+import {IERC20} from "../../../src/interfaces/integrations/IERC20.sol";
 
 contract MockControlledVault is ControlledVault {
   using SafeTransferLib for address;

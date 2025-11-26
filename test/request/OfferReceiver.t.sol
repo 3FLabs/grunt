@@ -3,8 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {MockOfferReceiver} from "../../src/mock/request/MockOfferReceiver.sol";
-import {Offer} from "../../src/request/OfferReceiver.sol";
+import {MockOfferReceiver} from "../mock/request/MockOfferReceiver.sol";
+import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 
 contract OfferReceiverTest is Test {
   MockOfferReceiver public receiver;

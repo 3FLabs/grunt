@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {OfferReceiver, Offer} from "../../request/OfferReceiver.sol";
+import {OfferReceiver} from "../../../src/request/abstract/OfferReceiver.sol";
+import {Offer} from "../../../src/interfaces/request/IOfferReceiver.sol";
 
 /// @notice Mock contract for testing OfferReceiver functionality
 /// @dev Exposes internal _validateOffer function for testing and implements required EIP712 functions

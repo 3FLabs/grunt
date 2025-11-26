@@ -18,7 +18,7 @@ interface IERC4626 is IERC20 {
   /// - MUST NOT revert.
   function asset() external view returns (address assetTokenAddress);
 
-  /// @notice Returns the total amount of the underlying asset that is “managed” by Vault.
+  /// @notice Returns the total amount of the underlying asset that is "managed" by Vault.
   /// @dev
   /// - SHOULD include any compounding that occurs from yield.
   /// - MUST be inclusive of any fees that are charged against assets in the Vault.
@@ -33,8 +33,8 @@ interface IERC4626 is IERC20 {
   /// - MUST NOT reflect slippage or other on-chain conditions, when performing the actual exchange.
   /// - MUST NOT revert.
   ///
-  /// NOTE: This calculation MAY NOT reflect the “per-user” price-per-share, and instead should reflect the
-  /// “average-user’s” price-per-share, meaning what the average user should expect to see when exchanging to and
+  /// NOTE: This calculation MAY NOT reflect the "per-user" price-per-share, and instead should reflect the
+  /// "average-user's" price-per-share, meaning what the average user should expect to see when exchanging to and
   /// from.
   function convertToShares(uint256 assets) external view returns (uint256 shares);
 
@@ -46,8 +46,8 @@ interface IERC4626 is IERC20 {
   /// - MUST NOT reflect slippage or other on-chain conditions, when performing the actual exchange.
   /// - MUST NOT revert.
   ///
-  /// NOTE: This calculation MAY NOT reflect the “per-user” price-per-share, and instead should reflect the
-  /// “average-user’s” price-per-share, meaning what the average user should expect to see when exchanging to and
+  /// NOTE: This calculation MAY NOT reflect the "per-user" price-per-share, and instead should reflect the
+  /// "average-user's" price-per-share, meaning what the average user should expect to see when exchanging to and
   /// from.
   function convertToAssets(uint256 shares) external view returns (uint256 assets);
 
@@ -82,7 +82,7 @@ interface IERC4626 is IERC20 {
   /// - MUST revert if all of assets cannot be deposited (due to deposit limit being reached, slippage, the user not
   ///   approving enough underlying tokens to the Vault contract, etc).
   ///
-  /// NOTE: most implementations will require pre-approval of the Vault with the Vault’s underlying asset token.
+  /// NOTE: most implementations will require pre-approval of the Vault with the Vault's underlying asset token.
   function deposit(uint256 assets, address receiver) external returns (uint256 shares);
 
   /// @notice Returns the maximum amount of the Vault shares that can be minted for the receiver, through a mint call.
@@ -115,7 +115,7 @@ interface IERC4626 is IERC20 {
   /// - MUST revert if all of shares cannot be minted (due to deposit limit being reached, slippage, the user not
   ///   approving enough underlying tokens to the Vault contract, etc).
   ///
-  /// NOTE: most implementations will require pre-approval of the Vault with the Vault’s underlying asset token.
+  /// NOTE: most implementations will require pre-approval of the Vault with the Vault's underlying asset token.
   function mint(uint256 shares, address receiver) external returns (uint256 assets);
 
   /// @notice Returns the maximum amount of the underlying asset that can be withdrawn from the owner balance in the
@@ -188,3 +188,4 @@ interface IERC4626 is IERC20 {
   /// Those methods should be performed separately.
   function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
 }
+

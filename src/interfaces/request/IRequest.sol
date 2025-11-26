@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Offer} from "../OfferReceiver.sol";
+import {Offer} from "./IOfferReceiver.sol";
 import {IVaultController} from "./IVaultController.sol";
 
 /// @title IRequest

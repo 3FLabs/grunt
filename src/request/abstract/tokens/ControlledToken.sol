@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {TokenController} from "./TokenController.sol";
-import {IERC20} from "../../integrations/interfaces/IERC20.sol";
+import {IERC20} from "../../../interfaces/integrations/IERC20.sol";
 import {LibString} from "lib/solady/src/utils/LibString.sol";
 
 /// @title ControlledToken

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {ControlledVault} from "./ControlledVault.sol";
-import {ControlledToken} from "../tokens/ControlledToken.sol";
+import {ControlledVault} from "./abstract/vault/ControlledVault.sol";
+import {ControlledToken} from "./abstract/tokens/ControlledToken.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 /// @title Vault

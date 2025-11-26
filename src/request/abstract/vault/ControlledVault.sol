@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import {ControlledToken} from "../tokens/ControlledToken.sol";
 import {VaultController} from "./VaultController.sol";
-import {IERC4626} from "../../integrations/interfaces/IERC4626.sol";
+import {IERC4626} from "../../../interfaces/integrations/IERC4626.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title ControlledVault

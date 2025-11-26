@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {MockTokenController, ControlledToken, TokenController} from "../../src/mock/request/MockTokens.sol";
+import {MockTokenController, ControlledToken, TokenController} from "../mock/request/MockTokens.sol";
 
 contract ControlledTokenTest is Test {
   MockTokenController public tokenController;

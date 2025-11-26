@@ -2,11 +2,11 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {MockVaultController, ControlledVault, VaultController} from "../../src/mock/request/MockVaults.sol";
-import {ControlledToken} from "../../src/request/tokens/ControlledToken.sol";
-import {TokenController} from "../../src/request/tokens/TokenController.sol";
-import {MockERC20} from "../../src/mock/MockERC20.sol";
-import {IERC4626} from "../../src/integrations/interfaces/IERC4626.sol";
+import {MockVaultController, ControlledVault, VaultController} from "../mock/request/MockVaults.sol";
+import {ControlledToken} from "../../src/request/abstract/tokens/ControlledToken.sol";
+import {TokenController} from "../../src/request/abstract/tokens/TokenController.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
+import {IERC4626} from "../../src/interfaces/integrations/IERC4626.sol";
 
 contract ControlledVaultTest is Test {
   MockVaultController public vaultController;

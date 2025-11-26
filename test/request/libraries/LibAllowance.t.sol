@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {LibAllowance} from "../../../src/request/libraries/LibAllowance.sol";
+import {LibAllowance} from "../../../src/libs/request/LibAllowance.sol";
 
 contract LibAllowanceTest is Test {
   using LibAllowance for uint128;

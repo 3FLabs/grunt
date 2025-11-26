@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {LibMintAuth} from "../../../src/request/libraries/LibMintAuth.sol";
+import {LibMintAuth} from "../../../src/libs/request/LibMintAuth.sol";
 
 contract LibMintAuthTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

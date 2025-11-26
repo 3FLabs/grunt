@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {MAX_128_BITS} from "./Constants.sol";
+import {MAX_128_BITS} from "../Constants.sol";
 
 /// @title LibAllowance
 /// @notice Library for efficient allowance management with infinite approval support.

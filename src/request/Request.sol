@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {OfferReceiver, Offer} from "./OfferReceiver.sol";
-import {VaultController} from "./vault/VaultController.sol";
-import {LibMintAuth} from "./libraries/LibMintAuth.sol";
-import {IERC20} from "../integrations/interfaces/IERC20.sol";
-import {IRequest} from "./interfaces/IRequest.sol";
-import {IRequestCallback} from "./interfaces/IRequestCallback.sol";
-import {ITokenController} from "./interfaces/ITokenController.sol";
+import {OfferReceiver} from "./abstract/OfferReceiver.sol";
+import {VaultController} from "./abstract/vault/VaultController.sol";
+import {TokenController} from "./abstract/tokens/TokenController.sol";
+import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
+import {IERC20} from "../interfaces/integrations/IERC20.sol";
+import {IRequest} from "../interfaces/request/IRequest.sol";
+import {IRequestCallback} from "../interfaces/request/IRequestCallback.sol";
+import {ITokenController} from "../interfaces/request/ITokenController.sol";
+import {Offer} from "../interfaces/request/IOfferReceiver.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {TokenController} from "./tokens/TokenController.sol";
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 
 /// @title Request
