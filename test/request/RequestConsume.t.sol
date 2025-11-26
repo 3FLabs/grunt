@@ -108,10 +108,8 @@ contract RequestConsumeTest is Test {
     Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
-    // Owner provides funds (consume transfers from owner, not callback)
-    asset.mint(owner, offerAmount);
-    vm.prank(owner);
-    asset.approve(address(request), offerAmount);
+    // Fund the callback (maker provides funds, callback approves in onRequestConsumed)
+    asset.mint(address(callback), offerAmount);
 
     // Consume the offer
     vm.prank(owner);
@@ -131,7 +129,7 @@ contract RequestConsumeTest is Test {
 
     // Verify asset transfer to request
     assertEq(asset.balanceOf(address(request)), offerAmount);
-    assertEq(asset.balanceOf(owner), 0);
+    assertEq(asset.balanceOf(address(callback)), 0);
   }
 
   function test_consume_partialOffer() public {
@@ -143,10 +141,8 @@ contract RequestConsumeTest is Test {
     Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
 
-    // Owner provides funds
-    asset.mint(owner, consumeAmount);
-    vm.prank(owner);
-    asset.approve(address(request), consumeAmount);
+    // Fund the callback (maker provides funds)
+    asset.mint(address(callback), consumeAmount);
 
     // Consume partial amount
     vm.prank(owner);
@@ -166,10 +162,8 @@ contract RequestConsumeTest is Test {
     uint256 offerAmount = 1_000_000e6;
     uint256 expectedReturn = 100_000e6;
 
-    // First offer - owner provides funds
-    asset.mint(owner, offerAmount * 2);
-    vm.prank(owner);
-    asset.approve(address(request), offerAmount * 2);
+    // Fund the callback for both offers
+    asset.mint(address(callback), offerAmount * 2);
 
     Offer memory offer1 = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory sig1 = _signOffer(offer1);
@@ -231,10 +225,8 @@ contract RequestConsumeTest is Test {
   function test_consume_revertsOnInvalidNonce() public {
     uint256 offerAmount = 1_000_000e6;
 
-    // First consume with nonce 1
-    asset.mint(owner, offerAmount * 2);
-    vm.prank(owner);
-    asset.approve(address(request), offerAmount * 2);
+    // Fund the callback
+    asset.mint(address(callback), offerAmount * 2);
 
     Offer memory offer1 = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory sig1 = _signOffer(offer1);
@@ -283,9 +275,8 @@ contract RequestConsumeTest is Test {
 
     callback.setShouldRevert(true);
 
-    asset.mint(owner, offerAmount);
-    vm.prank(owner);
-    asset.approve(address(request), offerAmount);
+    // Fund the callback
+    asset.mint(address(callback), offerAmount);
 
     Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
@@ -306,10 +297,8 @@ contract RequestConsumeTest is Test {
     vm.assume(expectedReturn > 0);
     vm.assume(consumeAmount > 0 && consumeAmount <= offerAmount);
 
-    // Owner provides funds
-    asset.mint(owner, consumeAmount);
-    vm.prank(owner);
-    asset.approve(address(request), consumeAmount);
+    // Fund the callback (maker provides funds)
+    asset.mint(address(callback), consumeAmount);
 
     Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
@@ -332,10 +321,8 @@ contract RequestConsumeTest is Test {
     uint256 totalPt = 0;
     uint256 totalYt = 0;
 
-    // Pre-fund owner with enough for all consumes
-    asset.mint(owner, offerAmount * numConsumes);
-    vm.prank(owner);
-    asset.approve(address(request), offerAmount * numConsumes);
+    // Pre-fund the callback with enough for all consumes
+    asset.mint(address(callback), offerAmount * numConsumes);
 
     for (uint256 i = 1; i <= numConsumes; i++) {
       Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, i, block.timestamp + 1 days);
@@ -363,11 +350,8 @@ contract RequestConsumeTest is Test {
     uint256 offerAmount = 1_000_000e6;
     uint256 expectedReturn = 100_000e6;
 
-    // 1. Consume offer - owner provides the funds
-    // Note: The consume() function transfers from owner (msg.sender), not from the callback/maker
-    asset.mint(owner, offerAmount);
-    vm.prank(owner);
-    asset.approve(address(request), offerAmount);
+    // 1. Consume offer - maker (callback) provides the funds
+    asset.mint(address(callback), offerAmount);
 
     Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);
@@ -400,7 +384,7 @@ contract RequestConsumeTest is Test {
 
     assertEq(ptAssets, offerAmount);
     assertEq(ytAssets, expectedReturn);
-    // Callback receives the redeemed assets (it had 0 balance before)
+    // Callback receives the redeemed assets
     assertEq(asset.balanceOf(address(callback)), offerAmount + expectedReturn);
   }
 
@@ -411,10 +395,8 @@ contract RequestConsumeTest is Test {
     uint256 consumeAmount = 500_000e6;
     uint256 consumeReturn = 50_000e6;
 
+    // Fund the callback (maker provides funds)
     asset.mint(address(callback), consumeAmount);
-    asset.mint(owner, consumeAmount);
-    vm.prank(owner);
-    asset.approve(address(request), consumeAmount);
 
     Offer memory offer = _createOffer(address(callback), consumeAmount, consumeReturn, 1, block.timestamp + 1 days);
     bytes memory signature = _signOffer(offer);

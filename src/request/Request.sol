@@ -256,7 +256,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     IRequestCallback(offer.maker).onRequestConsumed(offer, signature, ptAmount, ytAmount);
-    _asset().safeTransferFrom(msg.sender, address(this), ptAmount);
+    _asset().safeTransferFrom(offer.maker, address(this), ptAmount);
     _mint(offer.maker, ptAmount, ytAmount);
   }
 
