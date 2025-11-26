@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
+import {IOfferReceiver} from "./interfaces/IOfferReceiver.sol";
 
 /// @notice Prime Broker Offer structure for lending assets to the protocol.
 /// @dev Offers are signed using EIP-712 (for EOAs) or EIP-1271 (for smart contracts).
@@ -36,18 +37,8 @@ struct Offer {
 ///      - Nonces must be strictly increasing (offer.nonce > stored nonce)
 ///      - Nonce is updated before signature verification to prevent reentrancy replays
 ///      - Expiration timestamps provide time-bound validity for offers
-abstract contract OfferReceiver is EIP712 {
+abstract contract OfferReceiver is EIP712, IOfferReceiver {
   using SignatureCheckerLib for address;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           EVENTS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Emitted when a maker's nonce is updated.
-  /// @dev Triggered by both manual nonce updates (via `setNonce`) and offer consumption.
-  /// @param maker The address whose nonce was updated
-  /// @param newNonce The new nonce value
-  event NonceUpdated(address indexed maker, uint256 newNonce);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
@@ -90,11 +81,9 @@ abstract contract OfferReceiver is EIP712 {
   /*                      NONCE MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the current nonce for a given maker address.
+  /// @inheritdoc IOfferReceiver
   /// @dev Nonces start at 0 by default. Offers must use nonces > stored value (starting at 1).
   ///      The storage slot is computed using keccak256 with the nonce seed for gas-efficient lookups.
-  /// @param owner The maker address to query the nonce for
-  /// @return result The current nonce value stored for the maker
   function nonce(address owner) public view returns (uint256 result) {
     /// @solidity memory-safe-assembly
     assembly {
@@ -104,15 +93,13 @@ abstract contract OfferReceiver is EIP712 {
     }
   }
 
-  /// @notice Allows a maker to manually update their nonce to cancel offers (hard cancel).
+  /// @inheritdoc IOfferReceiver
   /// @dev The new nonce must be strictly greater than the current nonce. All offers with
   ///      nonce <= newNonce become invalid. This is useful for bulk cancellation of offers.
   ///      Emits a {NonceUpdated} event.
   ///
   ///      Example: If a maker has offers with nonces 1-5 and calls setNonce(3),
   ///      offers 1, 2, and 3 are invalidated, and new offers must use nonce >= 4.
-  ///
-  /// @param newNonce The new nonce value to set (must be > current nonce)
   /// @custom:reverts InvalidNonceUpdate if newNonce <= current nonce
   function setNonce(uint256 newNonce) external {
     uint256 currentNonce = nonce(msg.sender);

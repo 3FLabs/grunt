@@ -26,35 +26,35 @@ contract MockTokenController is TokenController {
   address internal immutable PT_TOKEN;
   address internal immutable YT_TOKEN;
 
-  string internal _name;
-  string internal _symbol;
+  string internal __name;
+  string internal __symbol;
   uint8 internal immutable DECIMALS;
 
   constructor(string memory name_, string memory symbol_, uint8 decimals_) {
     PT_TOKEN = address(new MockControlledToken(address(this), false));
     YT_TOKEN = address(new MockControlledToken(address(this), true));
-    _name = name_;
-    _symbol = symbol_;
+    __name = name_;
+    __symbol = symbol_;
     DECIMALS = decimals_;
   }
 
-  function name() public view override returns (string memory) {
-    return _name;
+  function name() external view returns (string memory) {
+    return __name;
   }
 
-  function symbol() public view override returns (string memory) {
-    return _symbol;
+  function symbol() external view returns (string memory) {
+    return __symbol;
   }
 
-  function decimals() public view override returns (uint8) {
+  function decimals() external view returns (uint8) {
     return DECIMALS;
   }
 
-  function ptToken() public view override returns (address) {
+  function _ptToken() internal view override returns (address) {
     return PT_TOKEN;
   }
 
-  function ytToken() public view override returns (address) {
+  function _ytToken() internal view override returns (address) {
     return YT_TOKEN;
   }
 

@@ -6,6 +6,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibTokenController} from "../libraries/LibTokenController.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ControlledVault} from "./ControlledVault.sol";
+import {IVaultController} from "../interfaces/IVaultController.sol";
 
 /// @title VaultController
 /// @notice Abstract base contract for managing dual-vault systems with Principal and Yield token separation.
@@ -13,7 +14,7 @@ import {ControlledVault} from "./ControlledVault.sol";
 ///      where principal holders are prioritized (receive up to 1:1 redemption) and yield holders receive
 ///      any excess assets. Asset distribution follows: principalAssets = min(totalAssets, ptSupply) and
 ///      yieldAssets = totalAssets - principalAssets. See README for detailed examples and formulas.
-abstract contract VaultController is TokenController {
+abstract contract VaultController is TokenController, IVaultController {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using FixedPointMathLib for bool;
@@ -23,24 +24,36 @@ abstract contract VaultController is TokenController {
   error CannotWithdraw();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      Abstract Metadata                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Returns the underlying asset address. Must be implemented by derived contracts.
+  function _asset() internal view virtual returns (address);
+
+  /// @dev Returns whether withdrawals are permitted. Must be implemented by derived contracts.
+  function _canWithdraw() internal view virtual returns (bool);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        METADATA/STATUS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the address of the underlying asset (ERC20) held by the vault.
+  /// @inheritdoc IVaultController
   /// @dev This is the asset that backs both PT and YT tokens (e.g., USDC).
-  /// @return assetAddress The ERC20 token address
-  function asset() public view virtual returns (address);
+  function asset() external view virtual returns (address) {
+    return _asset();
+  }
 
-  /// @notice Returns whether withdrawals and redemptions are currently permitted.
+  /// @inheritdoc IVaultController
   /// @dev Typically false during deposit phase, true during redemption phase.
-  /// @return allowed True if withdrawals/redemptions are enabled
-  function canWithdraw() public view virtual returns (bool);
+  function canWithdraw() external view virtual returns (bool) {
+    return _canWithdraw();
+  }
 
   /// @dev Reverts if withdrawals are not currently permitted.
   ///      Called before any withdraw or redeem operation to enforce the withdrawal lock.
   /// @custom:reverts CannotWithdraw if withdrawals are locked
-  function _checkCanWithdraw() internal view virtual {
-    if (!canWithdraw()) revert CannotWithdraw();
+  function _requireCanWithdraw() internal view virtual {
+    if (!_canWithdraw()) revert CannotWithdraw();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -64,7 +77,7 @@ abstract contract VaultController is TokenController {
   {
     unchecked {
       (ptSupply, ytSupply) = LibTokenController.totalSupplies();
-      uint256 assets = asset().balanceOf(address(this));
+      uint256 assets = _asset().balanceOf(address(this));
       pAssets = FixedPointMathLib.min(assets, ptSupply);
       yAssets = assets - pAssets;
     }
@@ -126,17 +139,17 @@ abstract contract VaultController is TokenController {
     uint256 ytShares
   ) internal virtual {
     unchecked {
-      _checkCanWithdraw();
+      _requireCanWithdraw();
       if (caller != owner) {
         _consumeAllowance(owner, caller, ptShares, ytShares);
       }
       _burn(owner, ptShares, ytShares);
-      asset().safeTransfer(receiver, yAssets + pAssets);
+      _asset().safeTransfer(receiver, yAssets + pAssets);
       if (pAssets > 0 || ptShares > 0) {
-        ControlledVault(ptToken())._emitWithdraw(caller, receiver, owner, pAssets, ptShares);
+        ControlledVault(_ptToken())._emitWithdraw(caller, receiver, owner, pAssets, ptShares);
       }
       if (yAssets > 0 || ytShares > 0) {
-        ControlledVault(ytToken())._emitWithdraw(caller, receiver, owner, yAssets, ytShares);
+        ControlledVault(_ytToken())._emitWithdraw(caller, receiver, owner, yAssets, ytShares);
       }
     }
   }
@@ -183,14 +196,10 @@ abstract contract VaultController is TokenController {
   /*                ERC4626 SHARE-ASSET CONVERSIONS             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Converts principal and yield assets to the equivalent amount of PT and YT shares.
+  /// @inheritdoc IVaultController
   /// @dev Uses `mulDivUp` for share calculation to favor the vault (rounds up shares needed).
   ///      Falls back to initial conversion logic when supply or assets are zero. The conversion
   ///      rate reflects the current redemption value based on asset distribution.
-  /// @param pAssets Amount of principal assets to convert
-  /// @param yAssets Amount of yield assets to convert
-  /// @return ptShares Amount of PT shares equivalent to pAssets
-  /// @return ytShares Amount of YT shares equivalent to yAssets
   function convertToShares(uint256 pAssets, uint256 yAssets) public view returns (uint256 ptShares, uint256 ytShares) {
     (uint256 totalPAssets, uint256 totalYAssets, uint256 totalPtSupply, uint256 totalYtSupply) = _assetsAndSupplies();
     ptShares = _eitherIsZero(totalPAssets, totalPtSupply)
@@ -201,14 +210,10 @@ abstract contract VaultController is TokenController {
       : yAssets.mulDivUp(totalYtSupply, totalYAssets);
   }
 
-  /// @notice Converts PT and YT shares to the equivalent amount of principal and yield assets.
+  /// @inheritdoc IVaultController
   /// @dev Uses `mulDiv` for asset calculation to favor the vault (rounds down assets received).
   ///      Falls back to initial conversion logic when supply or assets are zero. The conversion
   ///      rate reflects the current redemption value based on asset distribution.
-  /// @param ptShares Number of PT shares to convert
-  /// @param ytShares Number of YT shares to convert
-  /// @return pAssets Amount of principal assets equivalent to ptShares
-  /// @return yAssets Amount of yield assets equivalent to ytShares
   function convertToAssets(uint256 ptShares, uint256 ytShares) public view returns (uint256 pAssets, uint256 yAssets) {
     (uint256 totalPAssets, uint256 totalYAssets, uint256 totalPtSupply, uint256 totalYtSupply) = _assetsAndSupplies();
     pAssets = _eitherIsZero(totalPAssets, totalPtSupply)
@@ -219,11 +224,9 @@ abstract contract VaultController is TokenController {
       : ytShares.mulDiv(totalYAssets, totalYtSupply);
   }
 
-  /// @notice Returns the current asset distribution between principal and yield.
+  /// @inheritdoc IVaultController
   /// @dev Implements the redemption formula where pAssets = min(balance, ptSupply) and
   ///      yAssets = balance - pAssets. This ensures principal holders are prioritized.
-  /// @return pAssets The amount of assets allocated to principal holders
-  /// @return yAssets The amount of assets allocated to yield holders
   function totalAssets() public view virtual returns (uint256 pAssets, uint256 yAssets) {
     (pAssets, yAssets,,) = _assetsAndSupplies();
   }
@@ -232,16 +235,10 @@ abstract contract VaultController is TokenController {
   /*                 ADMIN/UTILITY (PT+YT FORFEIT)              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Burns all PT and YT shares owned by an account and sends the redeemed assets to a receiver.
+  /// @inheritdoc IVaultController
   /// @dev Convenient function for fully exiting a position. Redeems both PT and YT shares in a single
   ///      transaction using the current exchange rate. Requires appropriate allowances if caller != owner.
   ///      Respects withdrawal permissions via `_checkCanWithdraw()`.
-  /// @param owner The account whose entire position will be burned
-  /// @param receiver The address that will receive all redeemed assets
-  /// @return ptShares The amount of PT shares burned
-  /// @return ytShares The amount of YT shares burned
-  /// @return pAssets The amount of principal assets transferred to receiver
-  /// @return yAssets The amount of yield assets transferred to receiver
   function burnAll(address owner, address receiver)
     public
     virtual
@@ -307,7 +304,7 @@ abstract contract VaultController is TokenController {
   /// @dev Emits ERC4626 Deposit events for non-zero amounts.
   function _mint(address to, uint256 pt, uint256 yt) internal virtual override {
     super._mint(to, pt, yt);
-    if (pt > 0) ControlledVault(ptToken())._emitDeposit(msg.sender, to, pt, pt);
-    if (yt > 0) ControlledVault(ytToken())._emitDeposit(msg.sender, to, 0, yt);
+    if (pt > 0) ControlledVault(_ptToken())._emitDeposit(msg.sender, to, pt, pt);
+    if (yt > 0) ControlledVault(_ytToken())._emitDeposit(msg.sender, to, 0, yt);
   }
 }

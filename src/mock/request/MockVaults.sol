@@ -33,53 +33,53 @@ contract MockVaultController is VaultController {
   address internal immutable YT_VAULT;
   address internal immutable ASSET;
 
-  string internal _name;
-  string internal _symbol;
+  string internal __name;
+  string internal __symbol;
   uint8 internal immutable DECIMALS;
 
-  bool internal _canWithdraw;
+  bool internal __canWithdraw;
 
   constructor(address asset_, string memory name_, string memory symbol_) {
     ASSET = asset_;
     PT_VAULT = address(new MockControlledVault(address(this), false));
     YT_VAULT = address(new MockControlledVault(address(this), true));
-    _name = name_;
-    _symbol = symbol_;
+    __name = name_;
+    __symbol = symbol_;
     DECIMALS = IERC20(asset_).decimals();
-    _canWithdraw = true; // Allow withdrawals by default
+    __canWithdraw = true; // Allow withdrawals by default
   }
 
-  function name() public view override returns (string memory) {
-    return _name;
+  function name() external view returns (string memory) {
+    return __name;
   }
 
-  function symbol() public view override returns (string memory) {
-    return _symbol;
+  function symbol() external view returns (string memory) {
+    return __symbol;
   }
 
-  function decimals() public view override returns (uint8) {
+  function decimals() external view returns (uint8) {
     return DECIMALS;
   }
 
-  function ptToken() public view override returns (address) {
+  function _ptToken() internal view override returns (address) {
     return PT_VAULT;
   }
 
-  function ytToken() public view override returns (address) {
+  function _ytToken() internal view override returns (address) {
     return YT_VAULT;
   }
 
-  function asset() public view override returns (address) {
+  function _asset() internal view override returns (address) {
     return ASSET;
   }
 
-  function canWithdraw() public view override returns (bool) {
-    return _canWithdraw;
+  function _canWithdraw() internal view override returns (bool) {
+    return __canWithdraw;
   }
 
   // Test helper functions
   function setCanWithdraw(bool canWithdraw_) public {
-    _canWithdraw = canWithdraw_;
+    __canWithdraw = canWithdraw_;
   }
 
   function deposit(address to, uint256 ptShares, uint256 ytShares) public {

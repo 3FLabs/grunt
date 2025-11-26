@@ -7,6 +7,7 @@ import {LibMintAuth} from "./libraries/LibMintAuth.sol";
 import {IERC20} from "../integrations/interfaces/IERC20.sol";
 import {IRequest} from "./interfaces/IRequest.sol";
 import {IRequestCallback} from "./interfaces/IRequestCallback.sol";
+import {ITokenController} from "./interfaces/ITokenController.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
@@ -100,27 +101,27 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Can only be called once due to the `initializer` modifier. Sets up the contract owner,
   ///      underlying asset, PT/YT token addresses, and metadata. The contract starts in a non-repaid
   ///      state where withdrawals are disabled.
-  /// @param _owner The address that will own the contract and have admin privileges
-  /// @param _asset The address of the underlying ERC20 asset (e.g., USDC)
-  /// @param _ptToken The address of the deployed Principal Token contract
-  /// @param _ytToken The address of the deployed Yield Token contract
-  /// @param _name The base name for the tokens (will be prefixed with "PT-" / "YT-")
-  /// @param _symbol The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
+  /// @param owner_ The address that will own the contract and have admin privileges
+  /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
+  /// @param ptToken_ The address of the deployed Principal Token contract
+  /// @param ytToken_ The address of the deployed Yield Token contract
+  /// @param name_ The base name for the tokens (will be prefixed with "PT-" / "YT-")
+  /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
   function initialize(
-    address _owner,
-    address _asset,
-    address _ptToken,
-    address _ytToken,
-    string memory _name,
-    string memory _symbol
+    address owner_,
+    address asset_,
+    address ptToken_,
+    address ytToken_,
+    string memory name_,
+    string memory symbol_
   ) public initializer {
     RequestStorage storage req = _requestStorage();
-    req.asset = _asset;
-    req.ptToken = _ptToken;
-    req.ytToken = _ytToken;
-    req.name = _name;
-    req.symbol = _symbol;
-    _initializeOwner(_owner);
+    req.asset = asset_;
+    req.ptToken = ptToken_;
+    req.ytToken = ytToken_;
+    req.name = name_;
+    req.symbol = symbol_;
+    _initializeOwner(owner_);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -128,37 +129,37 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc VaultController
-  function asset() public view override returns (address) {
+  function _asset() internal view override returns (address) {
     return _requestStorage().asset;
   }
 
   /// @inheritdoc VaultController
-  function canWithdraw() public view override returns (bool) {
+  function _canWithdraw() internal view override returns (bool) {
     return _requestStorage().repaid;
   }
 
-  /// @inheritdoc TokenController
-  function name() public view override returns (string memory) {
+  /// @inheritdoc ITokenController
+  function name() external view returns (string memory) {
     return _requestStorage().name;
   }
 
-  /// @inheritdoc TokenController
-  function symbol() public view override returns (string memory) {
+  /// @inheritdoc ITokenController
+  function symbol() external view returns (string memory) {
     return _requestStorage().symbol;
   }
 
-  /// @inheritdoc TokenController
-  function decimals() public view override returns (uint8) {
-    return IERC20(asset()).decimals();
+  /// @inheritdoc ITokenController
+  function decimals() external view returns (uint8) {
+    return IERC20(_asset()).decimals();
   }
 
   /// @inheritdoc TokenController
-  function ptToken() public view override returns (address) {
+  function _ptToken() internal view override returns (address) {
     return _requestStorage().ptToken;
   }
 
   /// @inheritdoc TokenController
-  function ytToken() public view override returns (address) {
+  function _ytToken() internal view override returns (address) {
     return _requestStorage().ytToken;
   }
 
@@ -193,8 +194,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Emits a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid
   function pullFunds(address receiver, uint256 amount) external onlyOwner {
-    if (canWithdraw()) revert AlreadyRepaid();
-    asset().safeTransfer(receiver, amount);
+    if (_canWithdraw()) revert AlreadyRepaid();
+    _asset().safeTransfer(receiver, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -217,10 +218,10 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
   /// @custom:reverts If the request has been repaid
   function mint() external {
-    if (canWithdraw()) revert AlreadyRepaid();
+    if (_canWithdraw()) revert AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
     msg.sender.updateMintAuth(0, 0);
-    asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
+    _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
     _mint(msg.sender, ptMintAuth, ytMintAuth);
   }
 
@@ -251,11 +252,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     nonReentrant
     returns (uint256 ytAmount)
   {
-    if (canWithdraw()) revert AlreadyRepaid();
+    if (_canWithdraw()) revert AlreadyRepaid();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     IRequestCallback(offer.maker).onRequestConsumed(offer, signature, ptAmount, ytAmount);
-    asset().safeTransferFrom(msg.sender, address(this), ptAmount);
+    _asset().safeTransferFrom(msg.sender, address(this), ptAmount);
     _mint(offer.maker, ptAmount, ytAmount);
   }
 

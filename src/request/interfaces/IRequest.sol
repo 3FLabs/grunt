@@ -2,10 +2,11 @@
 pragma solidity ^0.8.20;
 
 import {Offer} from "../OfferReceiver.sol";
+import {IVaultController} from "./IVaultController.sol";
 
 /// @title IRequest
 /// @notice Interface for the Request contract that manages funding requests with dual-token (PT/YT) issuance.
-interface IRequest {
+interface IRequest is IVaultController {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

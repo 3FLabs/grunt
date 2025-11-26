@@ -6,13 +6,14 @@ import {ControlledToken} from "./ControlledToken.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {LibAllowance} from "../libraries/LibAllowance.sol";
+import {ITokenController} from "../interfaces/ITokenController.sol";
 
 /// @title TokenController
 /// @notice Abstract contract for managing dual-token systems (Principal Token and Yield Token)
 /// @dev Manages PT and YT tokens with packed storage for gas efficiency. All balances, supplies, and
 ///      allowances are stored as uint128 pairs in a single uint256 slot using LibTokenController.
 ///      The controller handles transfers, approvals, minting, and burning for both tokens simultaneously.
-abstract contract TokenController {
+abstract contract TokenController is ITokenController {
   using LibTokenController for address;
   using SafeCastLib for uint256;
   using LibAllowance for uint128;
@@ -43,7 +44,7 @@ abstract contract TokenController {
   ///      This prevents unauthorized external calls to internal token functions.
   /// @param yt True if checking for YT token, false if checking for PT token
   function _checkToken(bool yt) internal view virtual {
-    if (msg.sender != (yt ? ytToken() : ptToken())) revert UnauthorizedTokenContract();
+    if (msg.sender != (yt ? _ytToken() : _ptToken())) revert UnauthorizedTokenContract();
   }
 
   /// @dev Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
@@ -87,8 +88,8 @@ abstract contract TokenController {
       if (pt > ptBalanceSender || yt > ytBalanceSender) revert InsufficientBalance();
       from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
       to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
-      if (pt > 0) ControlledToken(ptToken())._emitTransfer(from, to, pt);
-      if (yt > 0) ControlledToken(ytToken())._emitTransfer(from, to, yt);
+      if (pt > 0) ControlledToken(_ptToken())._emitTransfer(from, to, pt);
+      if (yt > 0) ControlledToken(_ytToken())._emitTransfer(from, to, yt);
       return true;
     }
   }
@@ -110,8 +111,8 @@ abstract contract TokenController {
       uint128 ptMin = uint128(FixedPointMathLib.min(pt, type(uint128).max));
       uint128 ytMin = uint128(FixedPointMathLib.min(yt, type(uint128).max));
       from.updateAllowance(spender, ptMin, ytMin);
-      if (ptMin != ptAllowance) ControlledToken(ptToken())._emitApproval(from, spender, ptMin.normalize());
-      if (ytMin != ytAllowance) ControlledToken(ytToken())._emitApproval(from, spender, ytMin.normalize());
+      if (ptMin != ptAllowance) ControlledToken(_ptToken())._emitApproval(from, spender, ptMin.normalize());
+      if (ytMin != ytAllowance) ControlledToken(_ytToken())._emitApproval(from, spender, ytMin.normalize());
       return true;
     }
   }
@@ -131,8 +132,8 @@ abstract contract TokenController {
       // casting to 'uint128' is safe because [The balance cannot be higher than the total supply which does not overflow a 128 bit number]
       // forge-lint: disable-next-line(unsafe-typecast)
       to.updateBalances(ptBalance + uint128(pt), ytBalance + uint128(yt));
-      if (pt > 0) ControlledToken(ptToken())._emitTransfer(address(0), to, pt);
-      if (yt > 0) ControlledToken(ytToken())._emitTransfer(address(0), to, yt);
+      if (pt > 0) ControlledToken(_ptToken())._emitTransfer(address(0), to, pt);
+      if (yt > 0) ControlledToken(_ytToken())._emitTransfer(address(0), to, yt);
     }
   }
 
@@ -156,87 +157,66 @@ abstract contract TokenController {
       // casting to 'uint128' is safe because [These amounts are lower than 128 bits numbers]
       // forge-lint: disable-next-line(unsafe-typecast)
       from.updateBalances(ptBalance - uint128(pt), ytBalance - uint128(yt));
-      if (pt > 0) ControlledToken(ptToken())._emitTransfer(from, address(0), pt);
-      if (yt > 0) ControlledToken(ytToken())._emitTransfer(from, address(0), yt);
+      if (pt > 0) ControlledToken(_ptToken())._emitTransfer(from, address(0), pt);
+      if (yt > 0) ControlledToken(_ytToken())._emitTransfer(from, address(0), yt);
     }
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     Abstract Metadata                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Returns the PT token address. Must be implemented by derived contracts.
+  function _ptToken() internal view virtual returns (address);
+
+  /// @dev Returns the YT token address. Must be implemented by derived contracts.
+  function _ytToken() internal view virtual returns (address);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           Metadata                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the number of decimals used by both PT and YT tokens.
-  /// @dev This should typically match the underlying asset's decimals.
-  /// @return decimals The number of decimals (e.g., 18 for most tokens)
-  function decimals() public view virtual returns (uint8);
+  /// @inheritdoc ITokenController
+  function ptToken() external view virtual returns (address) {
+    return _ptToken();
+  }
 
-  /// @notice Returns the base name used by both PT and YT tokens.
-  /// @dev The actual token names are prefixed with "PT-" and "YT-" respectively.
-  /// @return name The base name string
-  function name() public view virtual returns (string memory);
+  /// @inheritdoc ITokenController
+  function ytToken() external view virtual returns (address) {
+    return _ytToken();
+  }
 
-  /// @notice Returns the base symbol used by both PT and YT tokens.
-  /// @dev The actual token symbols are prefixed with "PT-" and "YT-" respectively.
-  /// @return symbol The base symbol string
-  function symbol() public view virtual returns (string memory);
-
-  /// @notice Returns the address of the Principal Token (PT) contract.
-  /// @return pt The PT token contract address
-  function ptToken() public view virtual returns (address);
-
-  /// @notice Returns the address of the Yield Token (YT) contract.
-  /// @return yt The YT token contract address
-  function ytToken() public view virtual returns (address);
-
-  /// @notice Returns the balances of both PT and YT tokens for a given account.
+  /// @inheritdoc ITokenController
   /// @dev Reads from packed storage where both balances are stored in a single uint256 slot.
-  /// @param account The address to query balances for
-  /// @return pt The PT token balance
-  /// @return yt The YT token balance
   function balancesOf(address account) public view returns (uint128 pt, uint128 yt) {
     (pt, yt) = LibTokenController.balances(account);
   }
 
-  /// @notice Returns the total supplies of both PT and YT tokens.
+  /// @inheritdoc ITokenController
   /// @dev Reads from packed storage where both supplies are stored in a single uint256 slot.
-  /// @return pt The total PT token supply
-  /// @return yt The total YT token supply
   function totalSupplies() public view returns (uint128 pt, uint128 yt) {
     (pt, yt) = LibTokenController.totalSupplies();
   }
 
-  /// @notice Returns the allowances for both PT and YT tokens for a given owner-spender pair.
+  /// @inheritdoc ITokenController
   /// @dev Reads from packed storage where both allowances are stored in a single uint256 slot.
-  /// @param owner The address that owns the tokens
-  /// @param spender The address authorized to spend the tokens
-  /// @return pt The PT token allowance
-  /// @return yt The YT token allowance
   function allowancesOf(address owner, address spender) public view returns (uint128 pt, uint128 yt) {
     (pt, yt) = LibTokenController.allowances(owner, spender);
   }
 
-  /// @notice Returns the total supply of either PT or YT tokens.
-  /// @param yt True to return YT supply, false to return PT supply
-  /// @return supply The total supply of the specified token
+  /// @inheritdoc ITokenController
   function totalSupply(bool yt) public view returns (uint128) {
     return LibTokenController.totalSupply(yt);
   }
 
-  /// @notice Returns the balance of either PT or YT tokens for a given account.
-  /// @param account The address to query the balance for
-  /// @param yt True to return YT balance, false to return PT balance
-  /// @return balance The balance of the specified token
+  /// @inheritdoc ITokenController
   function balanceOf(address account, bool yt) external view returns (uint128) {
     return LibTokenController.balanceOf(account, yt);
   }
 
-  /// @notice Returns the allowance of either PT or YT tokens for a given owner-spender pair.
+  /// @inheritdoc ITokenController
   /// @dev Returns type(uint256).max if the stored allowance is type(uint128).max (infinite allowance).
   ///      This provides EIP-20 compatibility where infinite allowance is represented as uint256 max.
-  /// @param owner The address that owns the tokens
-  /// @param spender The address authorized to spend the tokens
-  /// @param yt True to return YT allowance, false to return PT allowance
-  /// @return result The allowance of the specified token (normalized to uint256.max if infinite)
   function allowance(address owner, address spender, bool yt) external view returns (uint256 result) {
     result = LibTokenController.allowance(owner, spender, yt);
     if (result == type(uint128).max) result = type(uint256).max;
@@ -246,25 +226,16 @@ abstract contract TokenController {
   /*                       Tokens batches                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Transfers both PT and YT tokens from the caller to a recipient in a single transaction.
+  /// @inheritdoc ITokenController
   /// @dev More gas efficient than calling transfer on both tokens separately.
-  /// @param to The address to transfer tokens to
-  /// @param ptAmount The amount of PT tokens to transfer
-  /// @param ytAmount The amount of YT tokens to transfer
-  /// @return success Always returns true if the transfer succeeds
   /// @custom:reverts InsufficientBalance if the caller has insufficient PT or YT balance
   function transferBatch(address to, uint256 ptAmount, uint256 ytAmount) public virtual returns (bool) {
     return _transfer(msg.sender, to, ptAmount, ytAmount);
   }
 
-  /// @notice Transfers both PT and YT tokens from one address to another using allowance.
+  /// @inheritdoc ITokenController
   /// @dev If the caller is not the owner, allowance is consumed. More gas efficient than calling
   ///      transferFrom on both tokens separately.
-  /// @param from The address to transfer tokens from
-  /// @param to The address to transfer tokens to
-  /// @param ptAmount The amount of PT tokens to transfer
-  /// @param ytAmount The amount of YT tokens to transfer
-  /// @return success Always returns true if the transfer succeeds
   /// @custom:reverts InsufficientAllowance if allowance is insufficient (when from != msg.sender)
   /// @custom:reverts InsufficientBalance if the sender has insufficient PT or YT balance
   function transferFromBatch(address from, address to, uint256 ptAmount, uint256 ytAmount)
@@ -278,13 +249,9 @@ abstract contract TokenController {
     return _transfer(from, to, ptAmount, ytAmount);
   }
 
-  /// @notice Approves a spender to use both PT and YT tokens on behalf of the caller.
+  /// @inheritdoc ITokenController
   /// @dev More gas efficient than calling approve on both tokens separately. Amounts exceeding
   ///      type(uint128).max are capped at that value for storage.
-  /// @param spender The address to grant allowance to
-  /// @param ptAmount The PT token allowance to grant
-  /// @param ytAmount The YT token allowance to grant
-  /// @return success Always returns true if the approval succeeds
   function approveBatch(address spender, uint256 ptAmount, uint256 ytAmount) public virtual returns (bool) {
     return _setAllowance(msg.sender, spender, ptAmount, ytAmount);
   }
