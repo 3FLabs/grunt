@@ -364,6 +364,15 @@ contract RequestTest is Test {
     request.setRepaid();
   }
 
+  function test_setRepaid_cannotCallTwice() public {
+    vm.prank(owner);
+    request.setRepaid();
+
+    vm.prank(owner);
+    vm.expectRevert(AlreadyRepaid.selector);
+    request.setRepaid();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 INTEGRATION TESTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

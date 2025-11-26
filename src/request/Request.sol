@@ -172,7 +172,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Only callable by the owner. Once called, `canWithdraw()` returns true and users
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
   ///      Emits a {Repaid} event.
+  /// @custom:reverts If the request has already been repaid
   function setRepaid() external onlyOwner {
+    if (_canWithdraw()) revert AlreadyRepaid();
     _requestStorage().repaid = true;
     emit Repaid();
   }
