@@ -49,7 +49,7 @@ pricePerYieldShare = yieldAssets / yieldTokenSupply
 Given: 1,000,000 PT and 100,000 YT outstanding
 
 | Total Assets | Principal Assets | Yield Assets | PT Price | YT Price |
-|--------------|------------------|--------------|----------|----------|
+| ------------ | ---------------- | ------------ | -------- | -------- |
 | 900,000      | 900,000          | 0            | 0.9      | 0        |
 | 1,000,000    | 1,000,000        | 0            | 1.0      | 0        |
 | 1,050,000    | 1,000,000        | 50,000       | 1.0      | 0.5      |
@@ -110,15 +110,15 @@ The owner broadcasts a signed EIP-712 offer to the contract. This method is idea
 2. Owner calls `consume(offer, signature, ptAmount)`
 3. Contract validates the signature and offer parameters
 4. Contract calls `onRequestConsumed()` callback on the maker's contract
-5. Maker prepares funds during the callback (e.g., withdraws from DeFi, sets allowances)
-6. Contract pulls `ptAmount` of underlying asset from the owner
-7. PT and YT tokens are minted to the maker
+5. Contract pulls `ptAmount` of underlying asset from the owner (msg.sender)
+6. PT and YT tokens are minted to the maker
+7. The maker's offer nonce is updated
 
 ```solidity
 // Offer struct
 struct Offer {
-  address maker;        // Prime broker address
-  uint256 amount;       // Maximum principal amount
+  address maker;        // Prime broker address that receives tokens
+  uint256 amount;       // Reference principal amount
   uint256 expectedReturn; // Expected yield amount
   uint256 nonce;        // Sequential nonce (must be > stored nonce)
   uint256 expiration;   // Timestamp when offer expires
@@ -126,19 +126,22 @@ struct Offer {
 
 // YT amount is calculated proportionally
 ytAmount = offer.expectedReturn * ptAmount / offer.amount
+
+// The ptAmount parameter determines how many PT tokens are minted
+// and scales the YT amount proportionally from the offer's expectedReturn
 ```
 
 **Callback Interface:**
 
-Prime brokers implementing automated strategies must implement `IRequestCallback`:
+Prime brokers implementing automated strategies can implement `IRequestCallback`:
 
 ```solidity
 interface IRequestCallback {
   function onRequestConsumed(
     Offer calldata offer,
     bytes calldata signature,
-    uint256 principal,  // PT amount to be pulled
-    uint256 yield       // YT amount to be minted
+    uint256 principal,  // PT amount being minted
+    uint256 yield       // YT amount being minted
   ) external;
 }
 ```
@@ -185,6 +188,8 @@ request.pullFunds(borrowerAddress, totalFunded);
 // After borrower repays
 request.setRepaid(); // Enables PT/YT holders to redeem
 ```
+
+The `pullFunds()` function can be called multiple times by the owner during the funding phase. The `setRepaid()` function toggles the withdrawal lock, enabling PT/YT holders to redeem their tokens for the underlying assets held by the contract.
 
 ## RequestFactory
 
@@ -264,13 +269,7 @@ Nonces enable flexible offer lifecycle management:
 
 **Offer Cancellation**:
 - **Soft Cancel**: Communicate with the off-chain server to mark offers as cancelled (no on-chain transaction)
-- **Hard Cancel**: Set nonce to a value higher than the offers to cancel on-chain
-
-**Example**: 
-- Broker creates offers with nonces 1, 2, 3
-- To cancel offers 1 and 2: call `setNonce(3)` on-chain
-- Any offer with nonce < 3 becomes invalid
-- New offers must use nonce ≥ 3
+- **Hard Cancel**: Set nonce on-chain to invalidate all offers at or below that nonce
 
 ### Offer Validation
 
