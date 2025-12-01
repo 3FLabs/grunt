@@ -1,0 +1,452 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Request} from "../../src/request/Request.sol";
+import {RequestFactory} from "../../src/request/RequestFactory.sol";
+import {Vault} from "../../src/request/Vault.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
+import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
+import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
+
+/// @title RequestConsumeTest
+/// @notice Tests for the Request.consume() function with EIP-1271 callback contracts
+contract RequestConsumeTest is Test {
+  RequestFactory public factory;
+  Request public request;
+  Vault public ptVault;
+  Vault public ytVault;
+  MockERC20 public asset;
+  MockRequestCallback public callback;
+
+  // Test addresses
+  address public owner;
+  address public borrower;
+  address public beaconOwner;
+
+  // Test wallet for signing (on behalf of callback contract)
+  Vm.Wallet internal callbackSigner;
+
+  // Constants for EIP-712
+  bytes32 internal constant OFFER_TYPEHASH = 0x03babd1fc4fa7801a5697c2a66bd17ee1499bad98dbcb9901bdae479682e3229;
+  bytes32 internal constant TYPE_HASH =
+    keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+
+  // Errors
+  error AlreadyRepaid();
+  error Unauthorized();
+  error InvalidOffer();
+  error InvalidSignature();
+  error OfferExpired();
+  error InvalidNonce();
+
+  function setUp() public {
+    owner = makeAddr("owner");
+    borrower = makeAddr("borrower");
+    beaconOwner = makeAddr("beaconOwner");
+    callbackSigner = vm.createWallet("callbackSigner");
+
+    // Deploy asset
+    asset = new MockERC20("USDC", "USDC", 6);
+
+    // Deploy factory
+    factory = new RequestFactory(beaconOwner);
+
+    // Create request via factory
+    vm.prank(owner);
+    (address reqAddr, address ptAddr, address ytAddr) =
+      factory.createRequest(owner, address(asset), "Test Request", "REQ");
+
+    request = Request(reqAddr);
+    ptVault = Vault(ptAddr);
+    ytVault = Vault(ytAddr);
+
+    // Deploy callback contract with signer
+    callback = new MockRequestCallback(address(asset), callbackSigner.addr);
+    callback.setRequest(address(request));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       HELPERS                               */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _computeDomainSeparator() internal view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        TYPE_HASH, keccak256(bytes(request.name())), keccak256(bytes("0.0.1")), block.chainid, address(request)
+      )
+    );
+  }
+
+  function _createOffer(address maker_, uint256 amount, uint256 expectedReturn, uint256 nonce_, uint256 expiration)
+    internal
+    pure
+    returns (Offer memory)
+  {
+    return Offer({maker: maker_, amount: amount, expectedReturn: expectedReturn, nonce: nonce_, expiration: expiration});
+  }
+
+  function _signOffer(Offer memory offer) internal returns (bytes memory) {
+    bytes32 structHash = keccak256(
+      abi.encode(OFFER_TYPEHASH, offer.maker, offer.amount, offer.expectedReturn, offer.nonce, offer.expiration)
+    );
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _computeDomainSeparator(), structHash));
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(callbackSigner, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    CONSUME TESTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_consume_fullOffer() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Create and sign offer (maker is the callback contract)
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    // Fund the callback (maker provides funds, callback approves in onRequestConsumed)
+    asset.mint(address(callback), offerAmount);
+
+    // Consume the offer
+    vm.prank(owner);
+    uint256 ytAmount = request.consume(offer, signature, offerAmount);
+
+    // Verify YT amount calculation
+    assertEq(ytAmount, expectedReturn);
+
+    // Verify callback was called
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastPrincipal(), offerAmount);
+    assertEq(callback.lastYield(), expectedReturn);
+
+    // Verify token minting to maker (callback)
+    assertEq(ptVault.balanceOf(address(callback)), offerAmount);
+    assertEq(ytVault.balanceOf(address(callback)), expectedReturn);
+
+    // Verify asset transfer to request
+    assertEq(asset.balanceOf(address(request)), offerAmount);
+    assertEq(asset.balanceOf(address(callback)), 0);
+  }
+
+  function test_consume_partialOffer() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+    uint256 consumeAmount = 500_000e6; // Consume only half
+
+    // Create and sign offer
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    // Fund the callback (maker provides funds)
+    asset.mint(address(callback), consumeAmount);
+
+    // Consume partial amount
+    vm.prank(owner);
+    uint256 ytAmount = request.consume(offer, signature, consumeAmount);
+
+    // YT amount should be proportional: expectedReturn * consumeAmount / offerAmount
+    uint256 expectedYt = expectedReturn * consumeAmount / offerAmount;
+    assertEq(ytAmount, expectedYt);
+    assertEq(ytAmount, 50_000e6); // 100k * 500k / 1M = 50k
+
+    // Verify token minting
+    assertEq(ptVault.balanceOf(address(callback)), consumeAmount);
+    assertEq(ytVault.balanceOf(address(callback)), expectedYt);
+  }
+
+  function test_consume_multipleOffers() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Fund the callback for both offers
+    asset.mint(address(callback), offerAmount * 2);
+
+    Offer memory offer1 = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory sig1 = _signOffer(offer1);
+
+    vm.prank(owner);
+    request.consume(offer1, sig1, offerAmount);
+
+    assertEq(ptVault.balanceOf(address(callback)), offerAmount);
+
+    // Second offer (nonce must increase)
+    Offer memory offer2 = _createOffer(address(callback), offerAmount, expectedReturn, 2, block.timestamp + 1 days);
+    bytes memory sig2 = _signOffer(offer2);
+
+    vm.prank(owner);
+    request.consume(offer2, sig2, offerAmount);
+
+    assertEq(ptVault.balanceOf(address(callback)), offerAmount * 2);
+    assertEq(ytVault.balanceOf(address(callback)), expectedReturn * 2);
+  }
+
+  function test_consume_revertsWhenRepaid() public {
+    uint256 offerAmount = 1_000_000e6;
+
+    // Set as repaid first
+    vm.prank(owner);
+    request.setRepaid();
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    vm.expectRevert(AlreadyRepaid.selector);
+    request.consume(offer, signature, offerAmount);
+  }
+
+  function test_consume_onlyOwner() public {
+    uint256 offerAmount = 1_000_000e6;
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    address notOwner = makeAddr("notOwner");
+    vm.prank(notOwner);
+    vm.expectRevert(Unauthorized.selector);
+    request.consume(offer, signature, offerAmount);
+  }
+
+  function test_consume_revertsOnExpiredOffer() public {
+    uint256 offerAmount = 1_000_000e6;
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp - 1);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    vm.expectRevert(OfferExpired.selector);
+    request.consume(offer, signature, offerAmount);
+  }
+
+  function test_consume_revertsOnInvalidNonce() public {
+    uint256 offerAmount = 1_000_000e6;
+
+    // Fund the callback
+    asset.mint(address(callback), offerAmount * 2);
+
+    Offer memory offer1 = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory sig1 = _signOffer(offer1);
+
+    vm.prank(owner);
+    request.consume(offer1, sig1, offerAmount);
+
+    // Try to consume with same nonce again
+    Offer memory offer2 = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory sig2 = _signOffer(offer2);
+
+    vm.prank(owner);
+    vm.expectRevert(InvalidNonce.selector);
+    request.consume(offer2, sig2, offerAmount);
+  }
+
+  function test_consume_revertsOnZeroMaker() public {
+    Offer memory offer = _createOffer(address(0), 1_000_000e6, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    vm.expectRevert(InvalidOffer.selector);
+    request.consume(offer, signature, 1_000_000e6);
+  }
+
+  function test_consume_revertsOnZeroAmount() public {
+    Offer memory offer = _createOffer(address(callback), 0, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    vm.expectRevert(InvalidOffer.selector);
+    request.consume(offer, signature, 0);
+  }
+
+  function test_consume_revertsOnZeroExpectedReturn() public {
+    Offer memory offer = _createOffer(address(callback), 1_000_000e6, 0, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    vm.expectRevert(InvalidOffer.selector);
+    request.consume(offer, signature, 1_000_000e6);
+  }
+
+  function test_consume_callbackCanRevert() public {
+    uint256 offerAmount = 1_000_000e6;
+
+    callback.setShouldRevert(true);
+
+    // Fund the callback
+    asset.mint(address(callback), offerAmount);
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    vm.expectRevert("MockRequestCallback: forced revert");
+    request.consume(offer, signature, offerAmount);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    FUZZ TESTS                               */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function testFuzz_consume_proportionalYield(uint128 offerAmount, uint128 expectedReturn, uint128 consumeAmount)
+    public
+  {
+    vm.assume(offerAmount > 0);
+    vm.assume(expectedReturn > 0);
+    vm.assume(consumeAmount > 0 && consumeAmount <= offerAmount);
+
+    // Fund the callback (maker provides funds)
+    asset.mint(address(callback), consumeAmount);
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    uint256 ytAmount = request.consume(offer, signature, consumeAmount);
+
+    // Verify proportional calculation
+    uint256 expectedYt = uint256(expectedReturn) * consumeAmount / offerAmount;
+    assertEq(ytAmount, expectedYt);
+    assertEq(ptVault.balanceOf(address(callback)), consumeAmount);
+    assertEq(ytVault.balanceOf(address(callback)), expectedYt);
+  }
+
+  function testFuzz_consume_multipleConsumes(uint8 numConsumes) public {
+    numConsumes = uint8(bound(numConsumes, 1, 20));
+
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+    uint256 totalPt = 0;
+    uint256 totalYt = 0;
+
+    // Pre-fund the callback with enough for all consumes
+    asset.mint(address(callback), offerAmount * numConsumes);
+
+    for (uint256 i = 1; i <= numConsumes; i++) {
+      Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, i, block.timestamp + 1 days);
+      bytes memory signature = _signOffer(offer);
+
+      vm.prank(owner);
+      uint256 ytAmount = request.consume(offer, signature, offerAmount);
+
+      totalPt += offerAmount;
+      totalYt += ytAmount;
+
+      assertEq(request.nonce(address(callback)), i);
+    }
+
+    assertEq(ptVault.balanceOf(address(callback)), totalPt);
+    assertEq(ytVault.balanceOf(address(callback)), totalYt);
+    assertEq(totalYt, expectedReturn * numConsumes);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 INTEGRATION TESTS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_integration_consumeAndRedeem() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // 1. Consume offer - maker (callback) provides the funds
+    asset.mint(address(callback), offerAmount);
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    request.consume(offer, signature, offerAmount);
+
+    // Callback should have received PT/YT tokens
+    assertEq(ptVault.balanceOf(address(callback)), offerAmount);
+    assertEq(ytVault.balanceOf(address(callback)), expectedReturn);
+
+    // 2. Pull funds to borrower
+    vm.prank(owner);
+    request.pullFunds(borrower, offerAmount);
+
+    // 3. Borrower repays with full expected return
+    asset.mint(borrower, expectedReturn);
+    vm.prank(borrower);
+    asset.transfer(address(request), offerAmount + expectedReturn);
+
+    // 4. Mark as repaid
+    vm.prank(owner);
+    request.setRepaid();
+
+    // 5. Callback contract redeems its PT/YT tokens
+    vm.startPrank(address(callback));
+    uint256 ptAssets = ptVault.redeem(offerAmount, address(callback), address(callback));
+    uint256 ytAssets = ytVault.redeem(expectedReturn, address(callback), address(callback));
+    vm.stopPrank();
+
+    assertEq(ptAssets, offerAmount);
+    assertEq(ytAssets, expectedReturn);
+    // Callback receives the redeemed assets
+    assertEq(asset.balanceOf(address(callback)), offerAmount + expectedReturn);
+  }
+
+  function test_integration_mixedFunding() public {
+    // Test mixing consume() and authorizeMinting() funding methods
+
+    // 1. First, use consume() for one prime broker
+    uint256 consumeAmount = 500_000e6;
+    uint256 consumeReturn = 50_000e6;
+
+    // Fund the callback (maker provides funds)
+    asset.mint(address(callback), consumeAmount);
+
+    Offer memory offer = _createOffer(address(callback), consumeAmount, consumeReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+
+    vm.prank(owner);
+    request.consume(offer, signature, consumeAmount);
+
+    // 2. Then use authorizeMinting() for another prime broker
+    address broker2 = makeAddr("broker2");
+    uint256 mintAmount = 500_000e6;
+    uint256 mintYield = 50_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(broker2, uint128(mintAmount), uint128(mintYield));
+
+    asset.mint(broker2, mintAmount);
+    vm.startPrank(broker2);
+    asset.approve(address(request), mintAmount);
+    request.mint();
+    vm.stopPrank();
+
+    // 3. Verify totals
+    assertEq(ptVault.totalSupply(), consumeAmount + mintAmount);
+    assertEq(ytVault.totalSupply(), consumeReturn + mintYield);
+
+    // 4. Pull, repay, redeem
+    vm.prank(owner);
+    request.pullFunds(borrower, consumeAmount + mintAmount);
+
+    // Full repayment with yield
+    asset.mint(borrower, consumeReturn + mintYield);
+    vm.prank(borrower);
+    asset.transfer(address(request), consumeAmount + mintAmount + consumeReturn + mintYield);
+
+    vm.prank(owner);
+    request.setRepaid();
+
+    // Both can redeem fully
+    vm.prank(address(callback));
+    uint256 callbackTotal = ptVault.redeem(consumeAmount, address(callback), address(callback));
+    vm.prank(address(callback));
+    callbackTotal += ytVault.redeem(consumeReturn, address(callback), address(callback));
+
+    vm.prank(broker2);
+    uint256 broker2Total = ptVault.redeem(mintAmount, broker2, broker2);
+    vm.prank(broker2);
+    broker2Total += ytVault.redeem(mintYield, broker2, broker2);
+
+    assertEq(callbackTotal, consumeAmount + consumeReturn);
+    assertEq(broker2Total, mintAmount + mintYield);
+  }
+}
+
