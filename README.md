@@ -67,7 +67,7 @@ The `Request` contract is the core contract managing funding requests with dual-
 
 - **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
 - **VaultController**: Manages PT/YT tokens with ERC4626-style redemptions
-- **Ownable**: Restricts admin functions to the contract owner
+- **OwnableRoles**: Restricts admin functions to the contract owner and allows for the "puller" role to pull funds from the contract
 
 ### Request Lifecycle
 
@@ -78,7 +78,7 @@ The `Request` contract is the core contract managing funding requests with dual-
 
 1. DEPLOYMENT
    └─> Factory creates Request + PT Vault + YT Vault (beacon proxies)
-   └─> Owner is set, contract initialized
+   └─> Owner and puller role are set, contract initialized
 
 2. FUNDING PHASE (canWithdraw = false)
    ├─> Method A: consume() - Process signed offers from prime brokers
@@ -87,10 +87,12 @@ The `Request` contract is the core contract managing funding requests with dual-
        └─> Owner authorizes → Prime broker calls mint() → PT/YT minted
 
 3. FUND UTILIZATION
-   └─> Owner calls pullFunds() to transfer assets to borrower
+   └─> Puller calls pullFunds(amount, data) to transfer assets to themselves
+   └─> If data is provided, onPullFunds() callback is invoked on the puller
 
 4. REPAYMENT
-   └─> Borrower transfers assets back to Request contract
+   └─> Puller (or borrower) transfers assets back to Request contract
+   └─> Optional: Use repay(amount) helper function
 
 5. REDEMPTION PHASE (canWithdraw = true)
    └─> Owner calls setRepaid()
@@ -110,7 +112,7 @@ The owner broadcasts a signed EIP-712 offer to the contract. This method is idea
 2. Owner calls `consume(offer, signature, ptAmount)`
 3. Contract validates the signature and offer parameters
 4. Contract calls `onRequestConsumed()` callback on the maker's contract
-5. Contract pulls `ptAmount` of underlying asset from the owner (msg.sender)
+5. Contract pulls `ptAmount` of underlying asset from the maker (offer.maker)
 6. PT and YT tokens are minted to the maker
 7. The maker's offer nonce is updated
 
@@ -176,20 +178,52 @@ request.mint(); // Receives 1M PT + 100k YT
 
 After offers are consumed or minting is complete:
 
-1. **Pull Funds**: Owner calls `pullFunds(receiver, amount)` to transfer collected assets to the borrower
-2. **Borrower Utilizes Funds**: The borrower uses the funds for their intended purpose
-3. **Repayment**: Borrower transfers assets back to the Request contract
-4. **Enable Redemptions**: Owner calls `setRepaid()` to unlock withdrawals
+1. **Pull Funds**: Address with puller role calls `pullFunds(amount, data)` to transfer collected assets to themselves
+2. **Callback Invocation**: If `data.length > 0`, the contract calls `onPullFunds(amount, data)` on the puller address
+3. **Fund Utilization**: The puller uses the funds for their intended purpose
+4. **Repayment**: Puller (or borrower) transfers assets back to the Request contract
+5. **Enable Redemptions**: Owner calls `setRepaid()` to unlock withdrawals
 
 ```solidity
-// After funding phase
-request.pullFunds(borrowerAddress, totalFunded);
+// After funding phase - puller pulls funds
+// Funds are transferred to msg.sender (the puller)
+request.pullFunds(totalFunded, ""); // No callback
 
-// After borrower repays
+// With callback data - useful for automated position management
+bytes memory positionData = abi.encode(positionId, strategy);
+request.pullFunds(totalFunded, positionData); // Calls onPullFunds() on puller
+
+// After repayment (optional helper function)
+request.repay(repaymentAmount);
+// Or direct transfer:
+asset.transfer(address(request), repaymentAmount);
+
+// Enable redemptions
 request.setRepaid(); // Enables PT/YT holders to redeem
 ```
 
-The `pullFunds()` function can be called multiple times by the owner during the funding phase. The `setRepaid()` function toggles the withdrawal lock, enabling PT/YT holders to redeem their tokens for the underlying assets held by the contract.
+**Puller Role:**
+- The puller role is set during contract initialization via the factory
+- Only addresses with the puller role can call `pullFunds()`
+- Funds are always transferred to `msg.sender` (the puller), not a separate recipient
+- The puller can be a smart contract implementing `IPositionManagerRequestCallback` for automated fund management
+
+**Callback Interface:**
+
+Position managers implementing automated strategies can implement `IPositionManagerRequestCallback`:
+
+```solidity
+interface IPositionManagerRequestCallback {
+  function onPullFunds(uint256 amount, bytes calldata data) external;
+}
+```
+
+The callback is invoked **after** funds are transferred, allowing the position manager to:
+- Open positions in DeFi protocols
+- Update internal accounting
+- Execute automated strategies based on the provided data
+
+The `pullFunds()` function can be called multiple times by the puller during the funding phase. The `setRepaid()` function toggles the withdrawal lock, enabling PT/YT holders to redeem their tokens for the underlying assets held by the contract.
 
 ## RequestFactory
 
@@ -231,6 +265,7 @@ RequestFactory factory = new RequestFactory(beaconOwner);
 // Create a new request with PT/YT vaults
 (address request, address ptVault, address ytVault) = factory.createRequest(
   owner,          // Request owner (admin)
+  puller,         // Address with puller role (can call pullFunds)
   address(usdc),  // Underlying asset
   "USDC Request", // Base name (becomes "PT-USDC Request" / "YT-USDC Request")
   "USDC-REQ"      // Base symbol (becomes "PT-USDC-REQ" / "YT-USDC-REQ")
