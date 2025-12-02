@@ -22,6 +22,7 @@ contract RequestConsumeTest is Test {
 
   // Test addresses
   address public owner;
+  address public puller;
   address public borrower;
   address public beaconOwner;
 
@@ -43,6 +44,7 @@ contract RequestConsumeTest is Test {
 
   function setUp() public {
     owner = makeAddr("owner");
+    puller = makeAddr("puller");
     borrower = makeAddr("borrower");
     beaconOwner = makeAddr("beaconOwner");
     callbackSigner = vm.createWallet("callbackSigner");
@@ -56,7 +58,7 @@ contract RequestConsumeTest is Test {
     // Create request via factory
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, address(asset), "Test Request", "REQ");
+      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ");
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -363,13 +365,13 @@ contract RequestConsumeTest is Test {
     assertEq(ptVault.balanceOf(address(callback)), offerAmount);
     assertEq(ytVault.balanceOf(address(callback)), expectedReturn);
 
-    // 2. Pull funds to borrower
-    vm.prank(owner);
-    request.pullFunds(borrower, offerAmount);
+    // 2. Pull funds to puller
+    vm.prank(puller);
+    request.pullFunds(offerAmount, "");
 
-    // 3. Borrower repays with full expected return
-    asset.mint(borrower, expectedReturn);
-    vm.prank(borrower);
+    // 3. Puller repays with full expected return (simulating borrower repayment)
+    asset.mint(puller, expectedReturn);
+    vm.prank(puller);
     asset.transfer(address(request), offerAmount + expectedReturn);
 
     // 4. Mark as repaid
@@ -423,12 +425,12 @@ contract RequestConsumeTest is Test {
     assertEq(ytVault.totalSupply(), consumeReturn + mintYield);
 
     // 4. Pull, repay, redeem
-    vm.prank(owner);
-    request.pullFunds(borrower, consumeAmount + mintAmount);
+    vm.prank(puller);
+    request.pullFunds(consumeAmount + mintAmount, "");
 
     // Full repayment with yield
-    asset.mint(borrower, consumeReturn + mintYield);
-    vm.prank(borrower);
+    asset.mint(puller, consumeReturn + mintYield);
+    vm.prank(puller);
     asset.transfer(address(request), consumeAmount + mintAmount + consumeReturn + mintYield);
 
     vm.prank(owner);

@@ -9,6 +9,7 @@ import {Vault} from "../../src/request/Vault.sol";
 import {ControlledVault} from "../../src/request/abstract/vault/ControlledVault.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
+import {MockPositionManagerRequestCallback} from "../mock/request/MockPositionManagerRequestCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
@@ -21,6 +22,7 @@ contract RequestTest is Test {
 
   // Test addresses
   address public owner;
+  address public puller;
   address public borrower;
   address public beaconOwner;
 
@@ -44,6 +46,7 @@ contract RequestTest is Test {
 
   function setUp() public {
     owner = makeAddr("owner");
+    puller = makeAddr("puller");
     borrower = makeAddr("borrower");
     beaconOwner = makeAddr("beaconOwner");
     maker = vm.createWallet("maker");
@@ -58,7 +61,7 @@ contract RequestTest is Test {
     // Create request via factory
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, address(asset), "Test Request", "REQ");
+      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ");
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -86,7 +89,7 @@ contract RequestTest is Test {
     vm.expectEmit(false, true, false, false);
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
-    factory.createRequest(owner, address(asset), "New Request", "NEW");
+    factory.createRequest(owner, puller, address(asset), "New Request", "NEW");
   }
 
   function test_factory_createRequest_initializesCorrectly() public view {
@@ -119,7 +122,7 @@ contract RequestTest is Test {
 
   function test_initialize_cannotReinitialize() public {
     vm.expectRevert();
-    request.initialize(owner, address(asset), address(ptVault), address(ytVault), "New", "NEW");
+    request.initialize(owner, puller, address(asset), address(ptVault), address(ytVault), "New", "NEW");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -294,11 +297,12 @@ contract RequestTest is Test {
     request.mint();
     vm.stopPrank();
 
-    // Now pull funds
-    vm.prank(owner);
-    request.pullFunds(borrower, amount);
+    // Now pull funds (puller receives funds, no callback)
+    asset.mint(puller, 0); // Ensure puller exists
+    vm.prank(puller);
+    request.pullFunds(amount, "");
 
-    assertEq(asset.balanceOf(borrower), amount);
+    assertEq(asset.balanceOf(puller), amount);
     assertEq(asset.balanceOf(address(request)), 0);
   }
 
@@ -316,28 +320,214 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Pull partial funds
-    vm.prank(owner);
-    request.pullFunds(borrower, 500_000e6);
+    vm.prank(puller);
+    request.pullFunds(500_000e6, "");
 
-    assertEq(asset.balanceOf(borrower), 500_000e6);
+    assertEq(asset.balanceOf(puller), 500_000e6);
     assertEq(asset.balanceOf(address(request)), 500_000e6);
   }
 
-  function test_pullFunds_onlyOwner() public {
-    address notOwner = makeAddr("notOwner");
+  function test_pullFunds_onlyPuller() public {
+    address notPuller = makeAddr("notPuller");
 
-    vm.prank(notOwner);
+    vm.prank(notPuller);
     vm.expectRevert(Unauthorized.selector);
-    request.pullFunds(borrower, 1_000_000e6);
+    request.pullFunds(1_000_000e6, "");
   }
 
   function test_pullFunds_revertsWhenRepaid() public {
     vm.prank(owner);
     request.setRepaid();
 
-    vm.prank(owner);
+    vm.prank(puller);
     vm.expectRevert(AlreadyRepaid.selector);
-    request.pullFunds(borrower, 1_000_000e6);
+    request.pullFunds(1_000_000e6, "");
+  }
+
+  function test_pullFunds_withCallback() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, address(callback), address(asset), "Callback Request", "CALLBACK");
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with callback data
+    bytes memory callbackData = abi.encode("test", 123);
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(amount, callbackData);
+
+    // Verify callback was called
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastAmount(), amount);
+    assertEq(callback.lastData(), callbackData);
+    assertEq(asset.balanceOf(address(callback)), amount);
+  }
+
+  function test_pullFunds_withCallback_revertsIfCallbackReverts() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract that will revert
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+    callback.setShouldRevert(true);
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, address(callback), address(asset), "Callback Request", "CALLBACK");
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with callback data - should revert
+    bytes memory callbackData = abi.encode("test");
+    vm.prank(address(callback));
+    vm.expectRevert("MockPositionManagerRequestCallback: forced revert");
+    callbackRequest.pullFunds(amount, callbackData);
+  }
+
+  function test_pullFunds_withEmptyData_noCallback() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, address(callback), address(asset), "Callback Request", "CALLBACK");
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with empty data - callback should not be called
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(amount, "");
+
+    // Verify callback was NOT called
+    assertEq(callback.callbackCalled(), false);
+    assertEq(callback.lastAmount(), 0);
+    assertEq(asset.balanceOf(address(callback)), amount);
+  }
+
+  function test_pullFunds_withCallback_differentData() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, address(callback), address(asset), "Callback Request", "CALLBACK");
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with different data types
+    bytes memory data1 = abi.encode("string data");
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(500_000e6, data1);
+
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastAmount(), 500_000e6);
+    assertEq(callback.lastData(), data1);
+
+    // Reset and pull again with different data
+    callback.reset();
+    bytes memory data2 = abi.encode(12345, "test");
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(500_000e6, data2);
+
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastAmount(), 500_000e6);
+    assertEq(callback.lastData(), data2);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -396,16 +586,16 @@ contract RequestTest is Test {
     assertEq(ptVault.balanceOf(primeBroker), principal);
     assertEq(ytVault.balanceOf(primeBroker), expectedYield);
 
-    // 3. Owner pulls funds to borrower
-    vm.prank(owner);
-    request.pullFunds(borrower, principal);
+    // 3. Puller pulls funds
+    vm.prank(puller);
+    request.pullFunds(principal, "");
 
-    assertEq(asset.balanceOf(borrower), principal);
+    assertEq(asset.balanceOf(puller), principal);
 
-    // 4. Borrower repays with profit
+    // 4. Puller repays with profit (simulating borrower repayment)
     uint256 repayAmount = principal + 50_000e6; // 50k profit (half of expected)
-    asset.mint(borrower, 50_000e6);
-    vm.prank(borrower);
+    asset.mint(puller, 50_000e6);
+    vm.prank(puller);
     asset.transfer(address(request), repayAmount);
 
     // 5. Owner marks as repaid
@@ -457,11 +647,11 @@ contract RequestTest is Test {
     assertEq(ytVault.totalSupply(), 150_000e6);
 
     // Pull and repay with full expected return
-    vm.prank(owner);
-    request.pullFunds(borrower, 1_500_000e6);
+    vm.prank(puller);
+    request.pullFunds(1_500_000e6, "");
 
-    asset.mint(borrower, 150_000e6); // Add the yield
-    vm.prank(borrower);
+    asset.mint(puller, 150_000e6); // Add the yield
+    vm.prank(puller);
     asset.transfer(address(request), 1_650_000e6);
 
     vm.prank(owner);
@@ -502,11 +692,11 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Pull funds
-    vm.prank(owner);
-    request.pullFunds(borrower, principal);
+    vm.prank(puller);
+    request.pullFunds(principal, "");
 
-    // Borrower only returns 900k (10% loss)
-    vm.prank(borrower);
+    // Puller only returns 900k (10% loss)
+    vm.prank(puller);
     asset.transfer(address(request), 900_000e6);
 
     vm.prank(owner);
@@ -577,10 +767,10 @@ contract RequestTest is Test {
     request.mint();
     vm.stopPrank();
 
-    vm.prank(owner);
-    request.pullFunds(borrower, pullAmount);
+    vm.prank(puller);
+    request.pullFunds(pullAmount, "");
 
-    assertEq(asset.balanceOf(borrower), pullAmount);
+    assertEq(asset.balanceOf(puller), pullAmount);
     assertEq(asset.balanceOf(address(request)), depositAmount - pullAmount);
   }
 
@@ -603,8 +793,8 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Pull funds
-    vm.prank(owner);
-    request.pullFunds(borrower, principal);
+    vm.prank(puller);
+    request.pullFunds(principal, "");
 
     // Repay (mint directly to request to simulate repayment)
     asset.mint(address(request), actualReturn);
@@ -672,12 +862,12 @@ contract RequestTest is Test {
     MockERC20 asset8 = new MockERC20("WBTC", "WBTC", 8);
 
     // Create request with 18 decimals
-    (, address pt18, address yt18) = factory.createRequest(owner, address(asset18), "DAI Request", "DAI-REQ");
+    (, address pt18, address yt18) = factory.createRequest(owner, puller, address(asset18), "DAI Request", "DAI-REQ");
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
-    (, address pt8, address yt8) = factory.createRequest(owner, address(asset8), "WBTC Request", "WBTC-REQ");
+    (, address pt8, address yt8) = factory.createRequest(owner, puller, address(asset8), "WBTC Request", "WBTC-REQ");
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
   }

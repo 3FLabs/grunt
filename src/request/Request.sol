@@ -7,11 +7,13 @@ import {TokenController} from "./abstract/tokens/TokenController.sol";
 import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
+import {IPositionManagerRequest} from "../interfaces/request/IPositionManagerRequest.sol";
 import {IRequestCallback} from "../interfaces/request/IRequestCallback.sol";
+import {IPositionManagerRequestCallback} from "../interfaces/request/IPositionManagerRequestCallback.sol";
 import {ITokenController} from "../interfaces/request/ITokenController.sol";
 import {Offer} from "../interfaces/request/IOfferReceiver.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -23,7 +25,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      - **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
 ///      - **VaultController**: Manages PT/YT tokens with ERC4626-style redemptions
 ///      - **Initializable**: Supports initialization for proxy deployments
-///      - **Ownable**: Restricts admin functions to the contract owner
+///      - **OwnableRoles**: Restricts admin functions to the contract owner and allows for the "puller" role to pull funds from the contract.
 ///      - **ReentrancyGuard**: Prevents reentrancy attacks during offer consumption
 ///
 ///      Deployment Options:
@@ -44,10 +46,16 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      2. Owner calls `consume()` with the offer, signature, and PT amount to fulfill
 ///      3. The maker's `onRequestConsumed` callback is invoked to prepare funds
 ///      4. Assets are transferred from owner and PT/YT tokens are minted to the maker
-contract Request is IRequest, OfferReceiver, VaultController, Initializable, Ownable, ReentrancyGuardTransient {
+contract Request is IRequest, OfferReceiver, VaultController, Initializable, OwnableRoles, ReentrancyGuardTransient {
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
   using LibMintAuth for address;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  uint256 internal constant _ROLE_PULLER = _ROLE_0;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERRORS                             */
@@ -103,6 +111,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      underlying asset, PT/YT token addresses, and metadata. The contract starts in a non-repaid
   ///      state where withdrawals are disabled.
   /// @param owner_ The address that will own the contract and have admin privileges
+  /// @param puller_ The address that will have the puller role
   /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
   /// @param ptToken_ The address of the deployed Principal Token contract
   /// @param ytToken_ The address of the deployed Yield Token contract
@@ -110,6 +119,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
   function initialize(
     address owner_,
+    address puller_,
     address asset_,
     address ptToken_,
     address ytToken_,
@@ -123,6 +133,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     req.name = name_;
     req.symbol = symbol_;
     _initializeOwner(owner_);
+    _setRoles(puller_, _ROLE_PULLER);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -189,16 +200,26 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
 
-  /// @inheritdoc IRequest
-  /// @dev Only callable by the owner. This function is used after offers are consumed to
-  ///      transfer the collected funds to the borrower (or any designated receiver). The borrower
+  /// @inheritdoc IPositionManagerRequest
+  /// @dev Only callable by the puller role. This function is used after offers are consumed to
+  ///      transfer the collected funds to the puller. The puller
   ///      is then expected to repay by transferring assets back to the contract before
   ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
   ///      Emits a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid
-  function pullFunds(address receiver, uint256 amount) external onlyOwner {
+  function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
     if (_canWithdraw()) revert AlreadyRepaid();
-    _asset().safeTransfer(receiver, amount);
+    _asset().safeTransfer(msg.sender, amount);
+    if (data.length > 0) {
+      IPositionManagerRequestCallback(msg.sender).onPullFunds(amount, data);
+    }
+  }
+
+  /// @inheritdoc IPositionManagerRequest
+  /// @dev simply transfers the underlying assets back to the contract
+  ///      This is purely optional wiht given implementation and may be done via a simple transfer.
+  function repay(uint256 amount) external {
+    _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
