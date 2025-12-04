@@ -72,6 +72,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param asset The address of the underlying ERC20 asset (e.g., USDC)
+  /// @param repaymentDeadline The time at which repayments are unlocked regardless of whether repaid is true or false
   /// @param repaid Whether the request has been repaid, enabling withdrawals
   /// @param ptToken The address of the Principal Token contract
   /// @param ytToken The address of the Yield Token contract
@@ -79,6 +80,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param symbol The base symbol for the PT/YT tokens (prefixed with "PT-" / "YT-")
   struct RequestStorage {
     address asset;
+    uint64 repaymentDeadline;
     bool repaid;
     address ptToken;
     address ytToken;
@@ -109,7 +111,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @notice Initializes the Request contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier. Sets up the contract owner,
   ///      underlying asset, PT/YT token addresses, and metadata. The contract starts in a non-repaid
-  ///      state where withdrawals are disabled.
+  ///      state where withdrawals are disabled until either setRepaid() is called or the repayment deadline passes.
   /// @param owner_ The address that will own the contract and have admin privileges
   /// @param puller_ The address that will have the puller role
   /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
@@ -117,6 +119,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param ytToken_ The address of the deployed Yield Token contract
   /// @param name_ The base name for the tokens (will be prefixed with "PT-" / "YT-")
   /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
+  /// @param repaymentDeadline_ The timestamp after which withdrawals are automatically enabled, regardless of repaid status
   function initialize(
     address owner_,
     address puller_,
@@ -124,10 +127,12 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     address ptToken_,
     address ytToken_,
     string memory name_,
-    string memory symbol_
+    string memory symbol_,
+    uint64 repaymentDeadline_
   ) public initializer {
     RequestStorage storage req = _requestStorage();
     req.asset = asset_;
+    req.repaymentDeadline = repaymentDeadline_;
     req.ptToken = ptToken_;
     req.ytToken = ytToken_;
     req.name = name_;
@@ -146,8 +151,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc VaultController
+  /// @dev Returns true if either the request has been marked as repaid OR the repayment deadline has passed.
+  ///      This allows withdrawals to be enabled automatically after a deadline, even if setRepaid() was never called.
   function _canWithdraw() internal view override returns (bool) {
-    return _requestStorage().repaid;
+    RequestStorage storage req = _requestStorage();
+    return req.repaid || block.timestamp >= req.repaymentDeadline;
   }
 
   /// @inheritdoc ITokenController

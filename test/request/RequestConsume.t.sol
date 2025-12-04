@@ -55,10 +55,10 @@ contract RequestConsumeTest is Test {
     // Deploy factory
     factory = new RequestFactory(beaconOwner);
 
-    // Create request via factory
+    // Create request via factory with far future deadline
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ");
+      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
