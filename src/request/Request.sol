@@ -61,7 +61,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*                         ERRORS                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev The request has already been repaid, preventing further calls to `setRepaid()`.
+  /// @dev The request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -216,9 +216,12 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc IPositionManagerRequest
-  /// @dev simply transfers the underlying assets back to the contract
-  ///      This is purely optional with given implementation and may be done via a simple transfer.
+  /// @dev Transfers the underlying assets back to the contract. This is purely optional
+  ///      with the given implementation and may be done via a simple transfer.
+  ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
+  /// @custom:reverts If the request has been repaid (canWithdraw is true)
   function repay(uint256 amount) external {
+    if (_canWithdraw()) revert AlreadyRepaid();
     _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 

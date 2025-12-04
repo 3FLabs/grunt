@@ -531,6 +531,138 @@ contract RequestTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      REPAY TESTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_repay_success() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    assertEq(asset.balanceOf(puller), amount);
+    assertEq(asset.balanceOf(address(request)), 0);
+
+    // Repay funds - puller transfers back
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+    request.repay(amount);
+    vm.stopPrank();
+
+    assertEq(asset.balanceOf(address(request)), amount);
+    assertEq(asset.balanceOf(puller), 0);
+  }
+
+  function test_repay_partial() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    assertEq(asset.balanceOf(puller), amount);
+
+    // Repay partial funds
+    vm.startPrank(puller);
+    asset.approve(address(request), 500_000e6);
+    request.repay(500_000e6);
+    vm.stopPrank();
+
+    assertEq(asset.balanceOf(address(request)), 500_000e6);
+    assertEq(asset.balanceOf(puller), 500_000e6);
+  }
+
+  function test_repay_revertsWhenRepaid() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    // Repay funds
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+    request.repay(amount);
+    vm.stopPrank();
+
+    // Mark as repaid
+    vm.prank(owner);
+    request.setRepaid();
+
+    // Try to repay again - should revert (even if puller has funds)
+    asset.mint(puller, amount);
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+    vm.expectRevert(AlreadyRepaid.selector);
+    request.repay(amount);
+    vm.stopPrank();
+  }
+
+  function test_repay_multipleTimes() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    // Repay in multiple transactions
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+
+    request.repay(300_000e6);
+    assertEq(asset.balanceOf(address(request)), 300_000e6);
+
+    request.repay(400_000e6);
+    assertEq(asset.balanceOf(address(request)), 700_000e6);
+
+    request.repay(300_000e6);
+    assertEq(asset.balanceOf(address(request)), amount);
+    vm.stopPrank();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   SET REPAID TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
