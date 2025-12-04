@@ -217,7 +217,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
 
   /// @inheritdoc IPositionManagerRequest
   /// @dev simply transfers the underlying assets back to the contract
-  ///      This is purely optional wiht given implementation and may be done via a simple transfer.
+  ///      This is purely optional with given implementation and may be done via a simple transfer.
   function repay(uint256 amount) external {
     _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
