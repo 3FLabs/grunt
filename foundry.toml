@@ -4,6 +4,8 @@ out = "out"
 libs = ["lib"]
 # Exclude mock contracts and scripts from coverage reports
 no_match_coverage = "mock|\\.s\\.sol$"
+# Enable auto-detection for multiple Solidity versions
+auto_detect_solc = true
 
 [fmt]
 tab_width = 2
