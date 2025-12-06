@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.8.19;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, stdError} from "forge-std/Test.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
@@ -67,6 +67,15 @@ contract MorphoBorrowPositionTest is Test {
   error InvalidMarketId();
   error MarketNotCreated();
   error AmountZero();
+
+  // Solady Initializable errors
+  error InvalidInitialization();
+
+  // Solady Ownable errors
+  error Unauthorized();
+
+  // Solady SafeTransferLib errors
+  error TransferFromFailed();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -202,7 +211,7 @@ contract MorphoBorrowPositionTest is Test {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
     newPosition.initialize(morpho, marketId, positionManager);
 
-    vm.expectRevert();
+    vm.expectRevert(InvalidInitialization.selector);
     newPosition.initialize(morpho, marketId, positionManager);
   }
 
@@ -265,7 +274,7 @@ contract MorphoBorrowPositionTest is Test {
     collateralToken.setBalance(user, amount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.supplyCollateral(amount);
   }
 
@@ -274,7 +283,7 @@ contract MorphoBorrowPositionTest is Test {
     // Don't give position manager any tokens
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert(TransferFromFailed.selector);
     borrowPosition.supplyCollateral(amount);
   }
 
@@ -288,7 +297,7 @@ contract MorphoBorrowPositionTest is Test {
     collateralToken.approve(address(borrowPosition), 0);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert(TransferFromFailed.selector);
     borrowPosition.supplyCollateral(amount);
   }
 
@@ -367,7 +376,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.withdrawCollateral(amount);
   }
 
@@ -380,7 +389,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(supplyAmount);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert(stdError.arithmeticError);
     borrowPosition.withdrawCollateral(withdrawAmount);
   }
 
@@ -404,7 +413,7 @@ contract MorphoBorrowPositionTest is Test {
 
     // Try to withdraw collateral (should fail due to health check)
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert("insufficient collateral");
     borrowPosition.withdrawCollateral(collateralAmount / 2);
   }
 
@@ -474,7 +483,7 @@ contract MorphoBorrowPositionTest is Test {
     _supplyLiquidity(LOAN_AMOUNT);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert("insufficient collateral");
     borrowPosition.borrow(borrowAmount);
   }
 
@@ -517,7 +526,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.borrow(borrowAmount);
   }
 
@@ -532,7 +541,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert("insufficient collateral");
     borrowPosition.borrow(borrowAmount);
   }
 
@@ -547,7 +556,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert("insufficient liquidity");
     borrowPosition.borrow(borrowAmount);
   }
 
@@ -564,7 +573,7 @@ contract MorphoBorrowPositionTest is Test {
     uint256 borrowAmount = maxBorrow + 1; // Exceed max by 1
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert("insufficient collateral");
     borrowPosition.borrow(borrowAmount);
   }
 
@@ -737,7 +746,7 @@ contract MorphoBorrowPositionTest is Test {
     loanToken.setBalance(user, borrowAmount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.repay(borrowAmount);
   }
 
@@ -758,7 +767,7 @@ contract MorphoBorrowPositionTest is Test {
     loanToken.setBalance(positionManager, 0);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert(TransferFromFailed.selector);
     borrowPosition.repay(borrowAmount);
   }
 
@@ -782,7 +791,7 @@ contract MorphoBorrowPositionTest is Test {
     loanToken.approve(address(borrowPosition), 0);
 
     vm.prank(positionManager);
-    vm.expectRevert();
+    vm.expectRevert(TransferFromFailed.selector);
     borrowPosition.repay(borrowAmount);
   }
 
@@ -1561,7 +1570,7 @@ contract MorphoBorrowPositionTest is Test {
     collateralToken.setBalance(user, amount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.supplyCollateral(amount);
   }
 
@@ -1573,7 +1582,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.withdrawCollateral(amount);
   }
 
@@ -1588,7 +1597,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.borrow(borrowAmount);
   }
 
@@ -1608,7 +1617,7 @@ contract MorphoBorrowPositionTest is Test {
     loanToken.setBalance(user, borrowAmount);
 
     vm.prank(user);
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.repay(borrowAmount);
   }
 
@@ -1620,16 +1629,16 @@ contract MorphoBorrowPositionTest is Test {
 
     vm.startPrank(user);
 
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.supplyCollateral(amount);
 
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.withdrawCollateral(amount);
 
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.borrow(amount);
 
-    vm.expectRevert();
+    vm.expectRevert(Unauthorized.selector);
     borrowPosition.repay(amount);
 
     vm.stopPrank();
