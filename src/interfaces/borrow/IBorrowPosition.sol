@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.19;
+pragma solidity =0.8.19;
 
 /// @title IBorrowPosition
 /// @notice Interface for borrow position contracts that manages a single borrowing position (e.g. Morpho, Euler, etc.)
