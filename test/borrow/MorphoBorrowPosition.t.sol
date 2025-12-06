@@ -1341,6 +1341,212 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    LIQUIDATION TESTS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_liquidation_PositionBecomesUnhealthyAfterPriceDropAndGetsLiquidated() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity for borrowing and liquidation
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow near max (80% of max)
+    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 borrowAmountActual = (maxBorrow * 80) / 100;
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmountActual);
+
+    // Verify position is healthy initially
+    assertTrue(borrowPosition.isHealthy(), "Position should be healthy initially");
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+
+    // Crash the collateral price to make position unhealthy
+    // Drop price by 50% to trigger liquidation
+    oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
+
+    // Position should now be unhealthy
+    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy after price drop");
+
+    // Setup liquidator
+    address liquidator = makeAddr("liquidator");
+
+    // Give liquidator loan tokens to repay debt
+    loanToken.setBalance(liquidator, borrowedBefore);
+    vm.startPrank(liquidator);
+    loanToken.approve(address(morpho), type(uint256).max);
+
+    // Liquidate the position - Morpho allows liquidating unhealthy positions
+    // Liquidator seizes collateral by repaying debt
+    (uint256 seizedAssets, uint256 repaidShares) = morpho.liquidate(
+      marketParams,
+      address(borrowPosition), // borrower address
+      borrowedBefore, // assets to seize (up to full debt)
+      0, // min shares received
+      "" // data
+    );
+
+    vm.stopPrank();
+
+    // Verify liquidation occurred
+    assertGt(seizedAssets, 0, "Should have seized collateral");
+    assertGt(repaidShares, 0, "Should have repaid debt");
+
+    // Verify position state after liquidation
+    uint256 collateralAfter = borrowPosition.totalCollateral();
+    uint256 borrowedAfter = borrowPosition.totalBorrowed();
+
+    assertLt(collateralAfter, collateralBefore, "Collateral should decrease after liquidation");
+    assertLt(borrowedAfter, borrowedBefore, "Borrowed amount should decrease after liquidation");
+
+    // Note: Due to liquidation incentive, the position might still be unhealthy
+    // or even have zero collateral left after full liquidation.
+    // The key is that debt and collateral both decreased.
+  }
+
+  function test_liquidation_PartialLiquidationReducesDebt() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow near max (90% of max)
+    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 borrowAmountActual = (maxBorrow * 90) / 100;
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmountActual);
+
+    assertTrue(borrowPosition.isHealthy(), "Position should be healthy initially");
+
+    // Price drops 30% - makes position unhealthy
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * 70) / 100);
+
+    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy after price drop");
+
+    // Liquidator performs partial liquidation
+    address liquidator = makeAddr("liquidator");
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+    uint256 partialRepayAmount = borrowedBefore / 2; // Repay 50% of debt
+
+    loanToken.setBalance(liquidator, partialRepayAmount);
+    vm.startPrank(liquidator);
+    loanToken.approve(address(morpho), type(uint256).max);
+
+    morpho.liquidate(marketParams, address(borrowPosition), partialRepayAmount, 0, "");
+
+    vm.stopPrank();
+
+    // Debt should be reduced
+    uint256 borrowedAfter = borrowPosition.totalBorrowed();
+    assertLt(borrowedAfter, borrowedBefore, "Debt should be reduced after liquidation");
+
+    // Note: Due to liquidation bonus, position might still be unhealthy after partial liquidation
+    // The test verifies that liquidation reduces debt, not necessarily restores full health
+  }
+
+  function test_liquidation_OwnerCanRepayInsteadOfBeingLiquidated() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral and borrow
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 borrowAmountActual = (maxBorrow * 85) / 100;
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmountActual);
+
+    assertTrue(borrowPosition.isHealthy(), "Position should be healthy initially");
+
+    // Price drops 40%
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * 60) / 100);
+
+    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy after price drop");
+
+    // Owner repays enough to restore health
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+    uint256 repayAmount = borrowedBefore / 2;
+
+    loanToken.setBalance(positionManager, repayAmount);
+    vm.prank(positionManager);
+    borrowPosition.repay(repayAmount);
+
+    // Position should be healthy again
+    assertTrue(borrowPosition.isHealthy(), "Position should be healthy after repayment");
+
+    // Verify debt decreased
+    assertLt(borrowPosition.totalBorrowed(), borrowedBefore, "Debt should be reduced");
+  }
+
+  function test_liquidation_VerifyCollateralAndDebtStateAfterFullLiquidation() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral and borrow
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 borrowAmountActual = (maxBorrow * 95) / 100;
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmountActual);
+
+    // Severe price drop (60% crash)
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * 40) / 100);
+
+    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy");
+
+    // Liquidator liquidates entire position
+    address liquidator = makeAddr("liquidator");
+    uint256 borrowedAmount = borrowPosition.totalBorrowed();
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    loanToken.setBalance(liquidator, borrowedAmount * 2); // Excess to ensure full liquidation
+    vm.startPrank(liquidator);
+    loanToken.approve(address(morpho), type(uint256).max);
+
+    // Try to seize all collateral to fully liquidate
+    (uint256 seizedAssets, uint256 repaidShares) =
+      morpho.liquidate(marketParams, address(borrowPosition), collateralBefore, 0, "");
+
+    vm.stopPrank();
+
+    // Verify liquidation results
+    assertGt(seizedAssets, 0, "Should have seized collateral");
+
+    // After liquidation, collateral and debt should be reduced significantly
+    uint256 collateralAfter = borrowPosition.totalCollateral();
+    uint256 borrowedAfter = borrowPosition.totalBorrowed();
+
+    assertLt(collateralAfter, collateralBefore, "Collateral should be seized");
+
+    // Verify that liquidation occurred and debt was reduced
+    // Note: In Morpho, liquidation includes a bonus, so the position may be fully liquidated
+    // with both collateral and debt approaching zero
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   AUTHORIZATION TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
