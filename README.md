@@ -281,3 +281,67 @@ When an offer is consumed, the protocol validates:
 5. **Signature validity**: EIP-712 or EIP-1271 signature verification
 
 Upon successful validation, the offer's nonce is stored, preventing replay attacks.
+
+## Borrow Module
+
+The borrow module enables protocol participants to open and manage collateralized borrow positions across different lending protocols through a common `IBorrowPosition` interface.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      BORROW MODULE ARCHITECTURE                  │
+└─────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────┐
+  │  IBorrowPosition     │  <-- Common interface for all protocols
+  │  (interface)         │
+  └──────────┬───────────┘
+             │
+             │ implements
+             ▼
+  ┌──────────────────────┐
+  │ MorphoBorrowPosition │  <-- Morpho Blue integration
+  │  - Initializable     │
+  │  - Ownable           │
+  │  - ERC-7201 Storage  │
+  └──────────────────────┘
+```
+
+### MorphoBorrowPosition
+
+Implementation of a borrow position for the Morpho Blue lending protocol.
+
+**Key Features:**
+- ERC-7201 namespaced storage for proxy compatibility
+- Ownable access control (typically owned by a Position Manager)
+- Conservative rounding for security (debt rounds up, limits round down)
+
+**Operations:**
+- `supplyCollateral(amount)` - Add collateral to increase borrowing capacity
+- `withdrawCollateral(amount)` - Remove collateral (subject to health checks)
+- `borrow(amount)` - Borrow assets against collateral
+- `repay(amount)` - Repay borrowed assets
+
+**Views:**
+- `totalBorrowed()` - Current debt including accrued interest
+- `totalCollateral()` - Current collateral amount
+- `isHealthy()` - Whether position is above liquidation threshold
+- `maxBorrow()` - Maximum borrowable amount given current collateral
+
+### Health Factor
+
+Position health is determined by comparing borrowed amount against maximum capacity:
+
+```
+collateralValue = collateral × oraclePrice / ORACLE_PRICE_SCALE
+maxBorrow = collateralValue × LLTV
+isHealthy = maxBorrow ≥ totalBorrowed
+```
+
+**Example:**
+- Collateral: 10 ETH at $2,000 = $20,000
+- LLTV: 80%
+- Max Borrow: $16,000 USDC
+- Current Borrowed: $12,000 USDC
+- Status: ✓ Healthy
+
+Where LLTV (Loan-to-Liquidation-Threshold-Value) is the market's maximum loan-to-collateral ratio.
