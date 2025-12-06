@@ -790,15 +790,15 @@ contract MorphoBorrowPositionTest is Test {
   /*                   ASSET GETTER TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_borrowAsset_ReturnsCorrectToken() public {
+  function test_borrowAsset_ReturnsCorrectToken() public view {
     assertEq(borrowPosition.borrowAsset(), address(loanToken), "Borrow asset incorrect");
   }
 
-  function test_collateralAsset_ReturnsCorrectToken() public {
+  function test_collateralAsset_ReturnsCorrectToken() public view {
     assertEq(borrowPosition.collateralAsset(), address(collateralToken), "Collateral asset incorrect");
   }
 
-  function test_borrowAssetAndCollateralAsset_AreDifferent() public {
+  function test_borrowAssetAndCollateralAsset_AreDifferent() public view {
     assertTrue(borrowPosition.borrowAsset() != borrowPosition.collateralAsset(), "Assets should be different");
   }
 
@@ -806,7 +806,7 @@ contract MorphoBorrowPositionTest is Test {
   /*                POSITION STATE VIEW TESTS                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_totalBorrowed_InitiallyZero() public {
+  function test_totalBorrowed_InitiallyZero() public view {
     assertEq(borrowPosition.totalBorrowed(), 0, "Initial borrow should be zero");
   }
 
@@ -874,7 +874,7 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(borrowPosition.totalBorrowed(), 0, "Full repay not reflected");
   }
 
-  function test_totalCollateral_InitiallyZero() public {
+  function test_totalCollateral_InitiallyZero() public view {
     assertEq(borrowPosition.totalCollateral(), 0, "Initial collateral should be zero");
   }
 
@@ -933,7 +933,7 @@ contract MorphoBorrowPositionTest is Test {
   /*                  POSITION HEALTH TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_isHealthy_InitiallyTrue() public {
+  function test_isHealthy_InitiallyTrue() public view {
     assertTrue(borrowPosition.isHealthy(), "Initial position should be healthy");
   }
 
@@ -1056,7 +1056,7 @@ contract MorphoBorrowPositionTest is Test {
   /*                    MAX BORROW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_maxBorrow_InitiallyZero() public {
+  function test_maxBorrow_InitiallyZero() public view {
     assertEq(borrowPosition.maxBorrow(), 0, "Max borrow should be zero without collateral");
   }
 
@@ -1130,6 +1130,14 @@ contract MorphoBorrowPositionTest is Test {
     uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, price, DEFAULT_LLTV);
 
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow should match calculation");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    MORPHO VIEW TESTS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_marketId_ReturnsCorrectMarketId() public view {
+    assertEq(Id.unwrap(borrowPosition.marketId()), Id.unwrap(marketId), "Market ID mismatch");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1527,17 +1535,15 @@ contract MorphoBorrowPositionTest is Test {
     loanToken.approve(address(morpho), type(uint256).max);
 
     // Try to seize all collateral to fully liquidate
-    (uint256 seizedAssets, uint256 repaidShares) =
-      morpho.liquidate(marketParams, address(borrowPosition), collateralBefore, 0, "");
+    (uint256 seizedAssets,) = morpho.liquidate(marketParams, address(borrowPosition), collateralBefore, 0, "");
 
     vm.stopPrank();
 
     // Verify liquidation results
     assertGt(seizedAssets, 0, "Should have seized collateral");
 
-    // After liquidation, collateral and debt should be reduced significantly
+    // After liquidation, collateral should be reduced significantly
     uint256 collateralAfter = borrowPosition.totalCollateral();
-    uint256 borrowedAfter = borrowPosition.totalBorrowed();
 
     assertLt(collateralAfter, collateralBefore, "Collateral should be seized");
 
