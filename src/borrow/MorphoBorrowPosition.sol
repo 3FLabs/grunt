@@ -1,13 +1,35 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
-import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
+import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
+import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
+import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
+
+import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 
 /// @title MorphoBorrowPosition
 /// @notice Implementation of a borrow position with the Morpho protocol.
-contract MorphoBorrowPosition is IBorrowPosition, Initializable {
+contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
+  using MathLib for uint256;
+  using SharesMathLib for uint256;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           ERRORS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when an address is zero
+  error AddressZero();
+
+  /// @notice Thrown when the market ID is invalid (zero)
+  error InvalidMarketId();
+
+  /// @notice Thrown when the market does not exist in Morpho
+  error MarketNotCreated();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -18,12 +40,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable {
   /// @param morpho The Morpho protocol contract
   /// @param marketId The Morpho market ID for this borrow position
   /// @param marketParams The Morpho market parameters for this borrow position
-  /// @param positionManager The grunt position manager address
   struct BorrowPositionStorage {
     IMorpho morpho;
     Id marketId;
     MarketParams marketParams;
-    address positionManager;
   }
 
   /// @dev Storage slot for the MorphoBorrowPosition contract's main storage struct.
@@ -47,14 +67,20 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the MorphoBorrowPosition contract with all required parameters.
+  /// @param morpho_ The Morpho protocol contract address
+  /// @param marketId_ The Morpho market ID for this borrow position
+  /// @param positionManager_ The address of the position manager (owner)
   function initialize(IMorpho morpho_, Id marketId_, address positionManager_) public initializer {
-    // TODO missing validation checks
+    if (address(morpho_) == address(0)) revert AddressZero();
+    if (Id.unwrap(marketId_) == bytes32(0)) revert InvalidMarketId();
+    if (morpho_.market(marketId_).lastUpdate == 0) revert MarketNotCreated();
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     $.morpho = morpho_;
     $.marketId = marketId_;
-    $.positionManager = positionManager_;
     $.marketParams = morpho_.idToMarketParams(marketId_);
+
+    _initializeOwner(positionManager_);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -62,22 +88,22 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IBorrowPosition
-  function supplyCollateral(uint256 amount) external override {
+  function supplyCollateral(uint256 amount) external override onlyOwner {
     // Implementation goes here
   }
 
   /// @inheritdoc IBorrowPosition
-  function withdrawCollateral(uint256 amount) external override {
+  function withdrawCollateral(uint256 amount) external override onlyOwner {
     // Implementation goes here
   }
 
   /// @inheritdoc IBorrowPosition
-  function borrow(uint256 amount) external override {
+  function borrow(uint256 amount) external override onlyOwner {
     // Implementation goes here
   }
 
   /// @inheritdoc IBorrowPosition
-  function repay(uint256 amount) external override {
+  function repay(uint256 amount) external override onlyOwner {
     // Implementation goes here
   }
 
@@ -101,26 +127,58 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable {
 
   /// @inheritdoc IBorrowPosition
   function totalBorrowed() external view override returns (uint256) {
-    // Implementation goes here
-    return 0;
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    Position memory _pos = $.morpho.position($.marketId, address(this));
+    Market memory _mkt = $.morpho.market($.marketId);
+
+    // Convert borrow shares to assets using market totals
+    return uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
   }
 
   /// @inheritdoc IBorrowPosition
   function totalCollateral() external view override returns (uint256) {
-    return 0;
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    return $.morpho.position($.marketId, address(this)).collateral;
   }
 
   /// @inheritdoc IBorrowPosition
   function isHealthy() external view override returns (bool) {
-    // Implementation goes here
-    // re-write the private isHealthy functions from Morpho.sol
-    return true;
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    Position memory _pos = $.morpho.position($.marketId, address(this));
+
+    // If no borrow, position is always healthy
+    if (_pos.borrowShares == 0) return true;
+
+    Market memory _mkt = $.morpho.market($.marketId);
+    MarketParams memory _marketParams = $.marketParams;
+
+    // Get collateral price from oracle
+    uint256 _collateralPrice = IOracle(_marketParams.oracle).price();
+
+    // Calculate borrowed amount (rounds up to be conservative)
+    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+
+    // Calculate max borrow based on collateral value and LLTV
+    uint256 _maxBorrow =
+      uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(_marketParams.lltv);
+
+    return _maxBorrow >= _borrowed;
   }
 
   /// @inheritdoc IBorrowPosition
   function maxBorrow() external view override returns (uint256) {
-    // Implementation goes here
-    return 0;
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    Position memory _pos = $.morpho.position($.marketId, address(this));
+    MarketParams memory _marketParams = $.marketParams;
+
+    // Get collateral price from oracle
+    uint256 _collateralPrice = IOracle(_marketParams.oracle).price();
+
+    // Calculate max borrow: collateralValue * LLTV
+    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(_marketParams.lltv);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
