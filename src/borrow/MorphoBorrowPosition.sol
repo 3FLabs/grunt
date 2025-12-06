@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
@@ -16,6 +17,7 @@ import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   using MathLib for uint256;
   using SharesMathLib for uint256;
+  using SafeTransferLib for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
@@ -29,6 +31,9 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
   /// @notice Thrown when the market does not exist in Morpho
   error MarketNotCreated();
+
+  /// @notice Thrown when the amount is zero
+  error AmountZero();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -89,22 +94,56 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
   /// @inheritdoc IBorrowPosition
   function supplyCollateral(uint256 amount) external override onlyOwner {
-    // Implementation goes here
+    if (amount == 0) revert AmountZero();
+
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    // Transfer collateral from caller to this contract
+    $.marketParams.collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+
+    // Approve Morpho to spend collateral
+    $.marketParams.collateralToken.safeApprove(address($.morpho), amount);
+
+    // Supply collateral to Morpho on behalf of this contract
+    $.morpho.supplyCollateral($.marketParams, amount, address(this), "");
   }
 
   /// @inheritdoc IBorrowPosition
   function withdrawCollateral(uint256 amount) external override onlyOwner {
-    // Implementation goes here
+    if (amount == 0) revert AmountZero();
+
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    // Withdraw collateral from Morpho to the owner (Position Manager)
+    // This will revert if the position would become unhealthy
+    $.morpho.withdrawCollateral($.marketParams, amount, address(this), msg.sender);
   }
 
   /// @inheritdoc IBorrowPosition
   function borrow(uint256 amount) external override onlyOwner {
-    // Implementation goes here
+    if (amount == 0) revert AmountZero();
+
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    // Borrow from Morpho, sending borrowed assets to the owner (Position Manager)
+    // This will revert if the position would become unhealthy or insufficient liquidity
+    $.morpho.borrow($.marketParams, amount, 0, address(this), msg.sender);
   }
 
   /// @inheritdoc IBorrowPosition
   function repay(uint256 amount) external override onlyOwner {
-    // Implementation goes here
+    if (amount == 0) revert AmountZero();
+
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    // Transfer loan tokens from caller to this contract
+    $.marketParams.loanToken.safeTransferFrom(msg.sender, address(this), amount);
+
+    // Approve Morpho to spend loan tokens
+    $.marketParams.loanToken.safeApprove(address($.morpho), amount);
+
+    // Repay debt to Morpho
+    $.morpho.repay($.marketParams, amount, 0, address(this), "");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
