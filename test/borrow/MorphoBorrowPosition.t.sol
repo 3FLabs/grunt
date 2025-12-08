@@ -3,6 +3,7 @@ pragma solidity =0.8.19;
 
 import {Test, stdError} from "forge-std/Test.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
+import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -29,6 +30,7 @@ contract MorphoBorrowPositionTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   MorphoBorrowPosition public borrowPosition;
+  MorphoBorrowPositionFactory public factory;
   IMorpho public morpho;
   ERC20Mock public loanToken;
   ERC20Mock public collateralToken;
@@ -147,9 +149,10 @@ contract MorphoBorrowPositionTest is Test {
 
     preLiquidation = preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(marketId)), preLiquidationParams);
 
-    // Deploy and initialize MorphoBorrowPosition (without a proxy)
-    borrowPosition = new MorphoBorrowPosition(preLiquidationFactory);
-    borrowPosition.initialize(morpho, marketId, positionManager, preLiquidation);
+    // Deploy factory and create MorphoBorrowPosition via factory (using beacon proxy)
+    factory = new MorphoBorrowPositionFactory(owner, preLiquidationFactory);
+    address borrowPositionAddress = factory.createBorrowPosition(morpho, marketId, positionManager, preLiquidation);
+    borrowPosition = MorphoBorrowPosition(borrowPositionAddress);
 
     // Setup approvals for position manager
     vm.startPrank(positionManager);
@@ -158,6 +161,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     // Label contracts
+    vm.label(address(factory), "BorrowPositionFactory");
     vm.label(address(borrowPosition), "BorrowPosition");
     vm.label(address(morpho), "Morpho");
     vm.label(owner, "Owner");
