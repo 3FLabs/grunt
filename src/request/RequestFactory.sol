@@ -84,27 +84,33 @@ contract RequestFactory {
   ///      1. Deploys Request proxy pointing to REQUEST_BEACON
   ///      2. Deploys PT Token proxy pointing to PT_TOKEN_BEACON
   ///      3. Deploys YT Token proxy pointing to YT_TOKEN_BEACON
-  ///      4. Initializes Request with owner, asset, token addresses, and metadata
+  ///      4. Initializes Request with owner, asset, token addresses, metadata, and repayment deadline
   ///      5. Initializes both tokens with the Request as their controller
   ///
   ///      The Request becomes the controller for both tokens, managing minting and burning.
   ///      Emits a {RequestCreated} event.
   /// @param owner The address that will own the Request (admin privileges)
+  /// @param puller The address that will have the puller role
   /// @param asset The underlying ERC20 asset address (e.g., USDC)
   /// @param name The base name for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for PT/YT tokens (prefixed with "PT-" / "YT-")
+  /// @param repaymentDeadline The timestamp after which withdrawals are automatically enabled, regardless of repaid status
   /// @return request The address of the newly deployed Request proxy
   /// @return ptToken The address of the newly deployed PT Token proxy
   /// @return ytToken The address of the newly deployed YT Token proxy
-  function createRequest(address owner, address asset, string memory name, string memory symbol)
-    external
-    returns (address request, address ptToken, address ytToken)
-  {
+  function createRequest(
+    address owner,
+    address puller,
+    address asset,
+    string memory name,
+    string memory symbol,
+    uint64 repaymentDeadline
+  ) external returns (address request, address ptToken, address ytToken) {
     request = REQUEST_BEACON.deployERC1967IBeaconProxy();
     ptToken = PT_TOKEN_BEACON.deployERC1967IBeaconProxy();
     ytToken = YT_TOKEN_BEACON.deployERC1967IBeaconProxy();
 
-    Request(request).initialize(owner, asset, ptToken, ytToken, name, symbol);
+    Request(request).initialize(owner, puller, asset, ptToken, ytToken, name, symbol, repaymentDeadline);
     Vault(ptToken).initialize(request);
     Vault(ytToken).initialize(request);
 

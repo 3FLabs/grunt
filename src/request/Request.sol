@@ -7,11 +7,13 @@ import {TokenController} from "./abstract/tokens/TokenController.sol";
 import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
+import {IPositionManagerRequest} from "../interfaces/request/IPositionManagerRequest.sol";
 import {IRequestCallback} from "../interfaces/request/IRequestCallback.sol";
+import {IPositionManagerRequestCallback} from "../interfaces/request/IPositionManagerRequestCallback.sol";
 import {ITokenController} from "../interfaces/request/ITokenController.sol";
 import {Offer} from "../interfaces/request/IOfferReceiver.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -23,7 +25,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      - **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
 ///      - **VaultController**: Manages PT/YT tokens with ERC4626-style redemptions
 ///      - **Initializable**: Supports initialization for proxy deployments
-///      - **Ownable**: Restricts admin functions to the contract owner
+///      - **OwnableRoles**: Restricts admin functions to the contract owner and allows for the "puller" role to pull funds from the contract.
 ///      - **ReentrancyGuard**: Prevents reentrancy attacks during offer consumption
 ///
 ///      Deployment Options:
@@ -44,16 +46,22 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      2. Owner calls `consume()` with the offer, signature, and PT amount to fulfill
 ///      3. The maker's `onRequestConsumed` callback is invoked to prepare funds
 ///      4. Assets are transferred from owner and PT/YT tokens are minted to the maker
-contract Request is IRequest, OfferReceiver, VaultController, Initializable, Ownable, ReentrancyGuardTransient {
+contract Request is IRequest, OfferReceiver, VaultController, Initializable, OwnableRoles, ReentrancyGuardTransient {
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
   using LibMintAuth for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  uint256 internal constant _ROLE_PULLER = _ROLE_0;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERRORS                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev The request has already been repaid, preventing further calls to `setRepaid()`.
+  /// @dev The request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -64,6 +72,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param asset The address of the underlying ERC20 asset (e.g., USDC)
+  /// @param repaymentDeadline The time at which repayments are unlocked regardless of whether repaid is true or false
   /// @param repaid Whether the request has been repaid, enabling withdrawals
   /// @param ptToken The address of the Principal Token contract
   /// @param ytToken The address of the Yield Token contract
@@ -71,6 +80,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param symbol The base symbol for the PT/YT tokens (prefixed with "PT-" / "YT-")
   struct RequestStorage {
     address asset;
+    uint64 repaymentDeadline;
     bool repaid;
     address ptToken;
     address ytToken;
@@ -101,28 +111,34 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @notice Initializes the Request contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier. Sets up the contract owner,
   ///      underlying asset, PT/YT token addresses, and metadata. The contract starts in a non-repaid
-  ///      state where withdrawals are disabled.
+  ///      state where withdrawals are disabled until either setRepaid() is called or the repayment deadline passes.
   /// @param owner_ The address that will own the contract and have admin privileges
+  /// @param puller_ The address that will have the puller role
   /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
   /// @param ptToken_ The address of the deployed Principal Token contract
   /// @param ytToken_ The address of the deployed Yield Token contract
   /// @param name_ The base name for the tokens (will be prefixed with "PT-" / "YT-")
   /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
+  /// @param repaymentDeadline_ The timestamp after which withdrawals are automatically enabled, regardless of repaid status
   function initialize(
     address owner_,
+    address puller_,
     address asset_,
     address ptToken_,
     address ytToken_,
     string memory name_,
-    string memory symbol_
+    string memory symbol_,
+    uint64 repaymentDeadline_
   ) public initializer {
     RequestStorage storage req = _requestStorage();
     req.asset = asset_;
+    req.repaymentDeadline = repaymentDeadline_;
     req.ptToken = ptToken_;
     req.ytToken = ytToken_;
     req.name = name_;
     req.symbol = symbol_;
     _initializeOwner(owner_);
+    _setRoles(puller_, _ROLE_PULLER);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -135,8 +151,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc VaultController
+  /// @dev Returns true if either the request has been marked as repaid OR the repayment deadline has passed.
+  ///      This allows withdrawals to be enabled automatically after a deadline, even if setRepaid() was never called.
   function _canWithdraw() internal view override returns (bool) {
-    return _requestStorage().repaid;
+    RequestStorage storage req = _requestStorage();
+    return req.repaid || block.timestamp >= req.repaymentDeadline;
   }
 
   /// @inheritdoc ITokenController
@@ -189,16 +208,29 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
 
-  /// @inheritdoc IRequest
-  /// @dev Only callable by the owner. This function is used after offers are consumed to
-  ///      transfer the collected funds to the borrower (or any designated receiver). The borrower
+  /// @inheritdoc IPositionManagerRequest
+  /// @dev Only callable by the puller role. This function is used after offers are consumed to
+  ///      transfer the collected funds to the puller. The puller
   ///      is then expected to repay by transferring assets back to the contract before
   ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
   ///      Emits a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid
-  function pullFunds(address receiver, uint256 amount) external onlyOwner {
+  function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
     if (_canWithdraw()) revert AlreadyRepaid();
-    _asset().safeTransfer(receiver, amount);
+    _asset().safeTransfer(msg.sender, amount);
+    if (data.length > 0) {
+      IPositionManagerRequestCallback(msg.sender).onPullFunds(amount, data);
+    }
+  }
+
+  /// @inheritdoc IPositionManagerRequest
+  /// @dev Transfers the underlying assets back to the contract. This is purely optional
+  ///      with the given implementation and may be done via a simple transfer.
+  ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
+  /// @custom:reverts If the request has been repaid (canWithdraw is true)
+  function repay(uint256 amount) external {
+    if (_canWithdraw()) revert AlreadyRepaid();
+    _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

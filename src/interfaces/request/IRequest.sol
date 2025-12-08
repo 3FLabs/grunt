@@ -3,10 +3,11 @@ pragma solidity ^0.8.20;
 
 import {Offer} from "./IOfferReceiver.sol";
 import {IVaultController} from "./IVaultController.sol";
+import {IPositionManagerRequest} from "./IPositionManagerRequest.sol";
 
 /// @title IRequest
 /// @notice Interface for the Request contract that manages funding requests with dual-token (PT/YT) issuance.
-interface IRequest is IVaultController {
+interface IRequest is IVaultController, IPositionManagerRequest {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -32,14 +33,6 @@ interface IRequest is IVaultController {
   /// @param ptAmount The amount of PT tokens the address can mint
   /// @param ytAmount The amount of YT tokens the address can mint
   function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external;
-
-  /// @notice Transfers underlying assets from the contract to a specified receiver.
-  /// @dev This function is used after offers are consumed to transfer the collected funds
-  ///      to the borrower. The borrower then repays by transferring assets back to the
-  ///      contract before `setRepaid()` is called to enable PT/YT holder withdrawals.
-  /// @param receiver The address to receive the transferred assets
-  /// @param amount The amount of underlying assets to transfer
-  function pullFunds(address receiver, uint256 amount) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          MINTING                           */

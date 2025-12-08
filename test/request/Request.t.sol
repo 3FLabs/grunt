@@ -9,6 +9,7 @@ import {Vault} from "../../src/request/Vault.sol";
 import {ControlledVault} from "../../src/request/abstract/vault/ControlledVault.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
+import {MockPositionManagerRequestCallback} from "../mock/request/MockPositionManagerRequestCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
@@ -21,6 +22,7 @@ contract RequestTest is Test {
 
   // Test addresses
   address public owner;
+  address public puller;
   address public borrower;
   address public beaconOwner;
 
@@ -44,6 +46,7 @@ contract RequestTest is Test {
 
   function setUp() public {
     owner = makeAddr("owner");
+    puller = makeAddr("puller");
     borrower = makeAddr("borrower");
     beaconOwner = makeAddr("beaconOwner");
     maker = vm.createWallet("maker");
@@ -55,10 +58,10 @@ contract RequestTest is Test {
     // Deploy factory
     factory = new RequestFactory(beaconOwner);
 
-    // Create request via factory
+    // Create request via factory with far future deadline (effectively disabled for most tests)
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, address(asset), "Test Request", "REQ");
+      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -86,7 +89,7 @@ contract RequestTest is Test {
     vm.expectEmit(false, true, false, false);
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
-    factory.createRequest(owner, address(asset), "New Request", "NEW");
+    factory.createRequest(owner, puller, address(asset), "New Request", "NEW", uint64(type(uint64).max));
   }
 
   function test_factory_createRequest_initializesCorrectly() public view {
@@ -119,7 +122,9 @@ contract RequestTest is Test {
 
   function test_initialize_cannotReinitialize() public {
     vm.expectRevert();
-    request.initialize(owner, address(asset), address(ptVault), address(ytVault), "New", "NEW");
+    request.initialize(
+      owner, puller, address(asset), address(ptVault), address(ytVault), "New", "NEW", uint64(type(uint64).max)
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -294,11 +299,12 @@ contract RequestTest is Test {
     request.mint();
     vm.stopPrank();
 
-    // Now pull funds
-    vm.prank(owner);
-    request.pullFunds(borrower, amount);
+    // Now pull funds (puller receives funds, no callback)
+    asset.mint(puller, 0); // Ensure puller exists
+    vm.prank(puller);
+    request.pullFunds(amount, "");
 
-    assertEq(asset.balanceOf(borrower), amount);
+    assertEq(asset.balanceOf(puller), amount);
     assertEq(asset.balanceOf(address(request)), 0);
   }
 
@@ -316,28 +322,350 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Pull partial funds
-    vm.prank(owner);
-    request.pullFunds(borrower, 500_000e6);
+    vm.prank(puller);
+    request.pullFunds(500_000e6, "");
 
-    assertEq(asset.balanceOf(borrower), 500_000e6);
+    assertEq(asset.balanceOf(puller), 500_000e6);
     assertEq(asset.balanceOf(address(request)), 500_000e6);
   }
 
-  function test_pullFunds_onlyOwner() public {
-    address notOwner = makeAddr("notOwner");
+  function test_pullFunds_onlyPuller() public {
+    address notPuller = makeAddr("notPuller");
 
-    vm.prank(notOwner);
+    vm.prank(notPuller);
     vm.expectRevert(Unauthorized.selector);
-    request.pullFunds(borrower, 1_000_000e6);
+    request.pullFunds(1_000_000e6, "");
   }
 
   function test_pullFunds_revertsWhenRepaid() public {
     vm.prank(owner);
     request.setRepaid();
 
-    vm.prank(owner);
+    vm.prank(puller);
     vm.expectRevert(AlreadyRepaid.selector);
-    request.pullFunds(borrower, 1_000_000e6);
+    request.pullFunds(1_000_000e6, "");
+  }
+
+  function test_pullFunds_withCallback() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+    );
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with callback data
+    bytes memory callbackData = abi.encode("test", 123);
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(amount, callbackData);
+
+    // Verify callback was called
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastAmount(), amount);
+    assertEq(callback.lastData(), callbackData);
+    assertEq(asset.balanceOf(address(callback)), amount);
+  }
+
+  function test_pullFunds_withCallback_revertsIfCallbackReverts() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract that will revert
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+    callback.setShouldRevert(true);
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+    );
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with callback data - should revert
+    bytes memory callbackData = abi.encode("test");
+    vm.prank(address(callback));
+    vm.expectRevert("MockPositionManagerRequestCallback: forced revert");
+    callbackRequest.pullFunds(amount, callbackData);
+  }
+
+  function test_pullFunds_withEmptyData_noCallback() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+    );
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with empty data - callback should not be called
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(amount, "");
+
+    // Verify callback was NOT called
+    assertEq(callback.callbackCalled(), false);
+    assertEq(callback.lastAmount(), 0);
+    assertEq(asset.balanceOf(address(callback)), amount);
+  }
+
+  function test_pullFunds_withCallback_differentData() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Deploy callback contract
+    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+
+    // Create a new request with callback as puller
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+    );
+
+    Request callbackRequest = Request(reqAddr);
+
+    // Fund the callback request
+    vm.prank(owner);
+    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(callbackRequest), amount);
+    callbackRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds with different data types
+    bytes memory data1 = abi.encode("string data");
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(500_000e6, data1);
+
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastAmount(), 500_000e6);
+    assertEq(callback.lastData(), data1);
+
+    // Reset and pull again with different data
+    callback.reset();
+    bytes memory data2 = abi.encode(12345, "test");
+    vm.prank(address(callback));
+    callbackRequest.pullFunds(500_000e6, data2);
+
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastAmount(), 500_000e6);
+    assertEq(callback.lastData(), data2);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      REPAY TESTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_repay_success() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    assertEq(asset.balanceOf(puller), amount);
+    assertEq(asset.balanceOf(address(request)), 0);
+
+    // Repay funds - puller transfers back
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+    request.repay(amount);
+    vm.stopPrank();
+
+    assertEq(asset.balanceOf(address(request)), amount);
+    assertEq(asset.balanceOf(puller), 0);
+  }
+
+  function test_repay_partial() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    assertEq(asset.balanceOf(puller), amount);
+
+    // Repay partial funds
+    vm.startPrank(puller);
+    asset.approve(address(request), 500_000e6);
+    request.repay(500_000e6);
+    vm.stopPrank();
+
+    assertEq(asset.balanceOf(address(request)), 500_000e6);
+    assertEq(asset.balanceOf(puller), 500_000e6);
+  }
+
+  function test_repay_revertsWhenRepaid() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    // Repay funds
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+    request.repay(amount);
+    vm.stopPrank();
+
+    // Mark as repaid
+    vm.prank(owner);
+    request.setRepaid();
+
+    // Try to repay again - should revert (even if puller has funds)
+    asset.mint(puller, amount);
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+    vm.expectRevert(AlreadyRepaid.selector);
+    request.repay(amount);
+    vm.stopPrank();
+  }
+
+  function test_repay_multipleTimes() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Pull funds - puller now has the funds
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    // Repay in multiple transactions
+    vm.startPrank(puller);
+    asset.approve(address(request), amount);
+
+    request.repay(300_000e6);
+    assertEq(asset.balanceOf(address(request)), 300_000e6);
+
+    request.repay(400_000e6);
+    assertEq(asset.balanceOf(address(request)), 700_000e6);
+
+    request.repay(300_000e6);
+    assertEq(asset.balanceOf(address(request)), amount);
+    vm.stopPrank();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -396,16 +724,16 @@ contract RequestTest is Test {
     assertEq(ptVault.balanceOf(primeBroker), principal);
     assertEq(ytVault.balanceOf(primeBroker), expectedYield);
 
-    // 3. Owner pulls funds to borrower
-    vm.prank(owner);
-    request.pullFunds(borrower, principal);
+    // 3. Puller pulls funds
+    vm.prank(puller);
+    request.pullFunds(principal, "");
 
-    assertEq(asset.balanceOf(borrower), principal);
+    assertEq(asset.balanceOf(puller), principal);
 
-    // 4. Borrower repays with profit
+    // 4. Puller repays with profit (simulating borrower repayment)
     uint256 repayAmount = principal + 50_000e6; // 50k profit (half of expected)
-    asset.mint(borrower, 50_000e6);
-    vm.prank(borrower);
+    asset.mint(puller, 50_000e6);
+    vm.prank(puller);
     asset.transfer(address(request), repayAmount);
 
     // 5. Owner marks as repaid
@@ -457,11 +785,11 @@ contract RequestTest is Test {
     assertEq(ytVault.totalSupply(), 150_000e6);
 
     // Pull and repay with full expected return
-    vm.prank(owner);
-    request.pullFunds(borrower, 1_500_000e6);
+    vm.prank(puller);
+    request.pullFunds(1_500_000e6, "");
 
-    asset.mint(borrower, 150_000e6); // Add the yield
-    vm.prank(borrower);
+    asset.mint(puller, 150_000e6); // Add the yield
+    vm.prank(puller);
     asset.transfer(address(request), 1_650_000e6);
 
     vm.prank(owner);
@@ -502,11 +830,11 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Pull funds
-    vm.prank(owner);
-    request.pullFunds(borrower, principal);
+    vm.prank(puller);
+    request.pullFunds(principal, "");
 
-    // Borrower only returns 900k (10% loss)
-    vm.prank(borrower);
+    // Puller only returns 900k (10% loss)
+    vm.prank(puller);
     asset.transfer(address(request), 900_000e6);
 
     vm.prank(owner);
@@ -577,10 +905,10 @@ contract RequestTest is Test {
     request.mint();
     vm.stopPrank();
 
-    vm.prank(owner);
-    request.pullFunds(borrower, pullAmount);
+    vm.prank(puller);
+    request.pullFunds(pullAmount, "");
 
-    assertEq(asset.balanceOf(borrower), pullAmount);
+    assertEq(asset.balanceOf(puller), pullAmount);
     assertEq(asset.balanceOf(address(request)), depositAmount - pullAmount);
   }
 
@@ -603,8 +931,8 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Pull funds
-    vm.prank(owner);
-    request.pullFunds(borrower, principal);
+    vm.prank(puller);
+    request.pullFunds(principal, "");
 
     // Repay (mint directly to request to simulate repayment)
     asset.mint(address(request), actualReturn);
@@ -672,12 +1000,14 @@ contract RequestTest is Test {
     MockERC20 asset8 = new MockERC20("WBTC", "WBTC", 8);
 
     // Create request with 18 decimals
-    (, address pt18, address yt18) = factory.createRequest(owner, address(asset18), "DAI Request", "DAI-REQ");
+    (, address pt18, address yt18) =
+      factory.createRequest(owner, puller, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max));
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
-    (, address pt8, address yt8) = factory.createRequest(owner, address(asset8), "WBTC Request", "WBTC-REQ");
+    (, address pt8, address yt8) =
+      factory.createRequest(owner, puller, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max));
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
   }
@@ -730,6 +1060,213 @@ contract RequestTest is Test {
     ytVault.mint(1_000_000e6, user);
 
     vm.stopPrank();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              REPAYMENT DEADLINE TESTS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_repaymentDeadline_enablesWithdrawalsAfterDeadline() public {
+    // Create a new request with a deadline in the future
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr, address ptAddr, address ytAddr) =
+      factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+    Vault deadlinePtVault = Vault(ptAddr);
+    Vault deadlineYtVault = Vault(ytAddr);
+
+    // Initially, withdrawals should be disabled
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // Deposit some funds
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(deadlineRequest), amount);
+    deadlineRequest.mint();
+    vm.stopPrank();
+
+    // Fast forward past the deadline
+    vm.warp(deadline + 1);
+
+    // Withdrawals should now be enabled even though setRepaid() was never called
+    assertEq(deadlineRequest.canWithdraw(), true);
+
+    // PT/YT holders should be able to redeem
+    vm.startPrank(primeBroker);
+    uint256 ptAssets = deadlinePtVault.redeem(amount, primeBroker, primeBroker);
+    uint256 ytAssets = deadlineYtVault.redeem(100_000e6, primeBroker, primeBroker);
+    vm.stopPrank();
+
+    assertEq(ptAssets, amount);
+    assertEq(ytAssets, 0); // No yield assets since nothing was repaid
+  }
+
+  function test_repaymentDeadline_setRepaidStillWorks() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Initially disabled
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // Call setRepaid before deadline
+    vm.prank(owner);
+    deadlineRequest.setRepaid();
+
+    // Should be enabled immediately
+    assertEq(deadlineRequest.canWithdraw(), true);
+  }
+
+  function test_repaymentDeadline_blocksOperationsAfterDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Deposit some funds
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(deadlineRequest), amount);
+    deadlineRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds
+    vm.prank(puller);
+    deadlineRequest.pullFunds(amount, "");
+
+    // Fast forward past deadline
+    vm.warp(deadline + 1);
+
+    // Operations should be blocked after deadline
+    vm.prank(owner);
+    vm.expectRevert(AlreadyRepaid.selector);
+    deadlineRequest.setRepaid();
+
+    vm.prank(puller);
+    vm.expectRevert(AlreadyRepaid.selector);
+    deadlineRequest.pullFunds(100e6, "");
+
+    vm.prank(puller);
+    vm.expectRevert(AlreadyRepaid.selector);
+    deadlineRequest.repay(100e6);
+
+    // But withdrawals should work
+    assertEq(deadlineRequest.canWithdraw(), true);
+  }
+
+  function test_repaymentDeadline_mintBlockedAfterDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Authorize minting
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    // Fast forward past deadline
+    vm.warp(deadline + 1);
+
+    // Mint should be blocked
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(deadlineRequest), amount);
+    vm.expectRevert(AlreadyRepaid.selector);
+    deadlineRequest.mint();
+    vm.stopPrank();
+  }
+
+  function test_repaymentDeadline_consumeBlockedAfterDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Fast forward past deadline
+    vm.warp(deadline + 1);
+
+    // Consume should be blocked
+    Offer memory offer = _createOffer(address(0x123), 1_000_000e6, 100_000e6, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer, maker);
+
+    vm.prank(owner);
+    vm.expectRevert(AlreadyRepaid.selector);
+    deadlineRequest.consume(offer, signature, 1_000_000e6);
+  }
+
+  function test_repaymentDeadline_beforeDeadlineOperationsWork() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Before deadline, operations should work normally
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // Deposit funds
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(deadlineRequest), amount);
+    deadlineRequest.mint();
+    vm.stopPrank();
+
+    // Pull funds should work
+    vm.prank(puller);
+    deadlineRequest.pullFunds(amount, "");
+
+    // Repay should work
+    asset.mint(puller, amount);
+    vm.startPrank(puller);
+    asset.approve(address(deadlineRequest), amount);
+    deadlineRequest.repay(amount);
+    vm.stopPrank();
+
+    // setRepaid should work
+    vm.prank(owner);
+    deadlineRequest.setRepaid();
+
+    assertEq(deadlineRequest.canWithdraw(), true);
+  }
+
+  function test_repaymentDeadline_exactlyAtDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // At exactly the deadline, withdrawals should be enabled
+    vm.warp(deadline);
+    assertEq(deadlineRequest.canWithdraw(), true);
   }
 }
 
