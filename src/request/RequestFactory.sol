@@ -106,9 +106,9 @@ contract RequestFactory {
     string memory symbol,
     uint64 repaymentDeadline
   ) external returns (address request, address ptToken, address ytToken) {
-    request = REQUEST_BEACON.deployERC1967IBeaconProxy();
-    ptToken = PT_TOKEN_BEACON.deployERC1967IBeaconProxy();
-    ytToken = YT_TOKEN_BEACON.deployERC1967IBeaconProxy();
+    request = REQUEST_BEACON.deployERC1967BeaconProxy();
+    ptToken = PT_TOKEN_BEACON.deployERC1967BeaconProxy();
+    ytToken = YT_TOKEN_BEACON.deployERC1967BeaconProxy();
 
     Request(request).initialize(owner, puller, asset, ptToken, ytToken, name, symbol, repaymentDeadline);
     Vault(ptToken).initialize(request);
