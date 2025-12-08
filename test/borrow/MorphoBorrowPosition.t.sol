@@ -140,14 +140,15 @@ contract MorphoBorrowPositionTest is Test {
     // Create PreLiquidation with default parameters
     preLiquidationParams = PreLiquidationParams({
       preLltv: (DEFAULT_LLTV * 90) / 100, // 72% (90% of 80%)
-      preLCF1: 0.50e18, // 50% close factor at preLltv
+      preLCF1: 0.5e18, // 50% close factor at preLltv
       preLCF2: 1.0e18, // 100% close factor at LLTV
       preLIF1: 1.03e18, // 3% incentive at preLltv
-      preLIF2: 1.10e18, // 10% incentive at LLTV
+      preLIF2: 1.1e18, // 10% incentive at LLTV
       preLiquidationOracle: address(oracle)
     });
 
-    preLiquidation = preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(marketId)), preLiquidationParams);
+    preLiquidation =
+      preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(marketId)), preLiquidationParams);
 
     // Deploy factory and create MorphoBorrowPosition via factory (using beacon proxy)
     factory = new MorphoBorrowPositionFactory(owner, preLiquidationFactory);
@@ -273,7 +274,8 @@ contract MorphoBorrowPositionTest is Test {
     Id otherMarketId = otherMarketParams.id();
 
     // Create preLiquidation for other market
-    IPreLiquidation wrongPreLiquidation = preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(otherMarketId)), preLiquidationParams);
+    IPreLiquidation wrongPreLiquidation =
+      preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(otherMarketId)), preLiquidationParams);
 
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
 
@@ -284,9 +286,7 @@ contract MorphoBorrowPositionTest is Test {
   function test_initialize_RevertWhen_PreLiquidationNotFromFactory() public {
     // Deploy a standalone PreLiquidation (not through factory) using pre-compiled bytecode
     IPreLiquidation fakePreLiquidation = PreLiquidationBytecode.deployPreLiquidation(
-      address(morpho),
-      PreLiquidationId.wrap(Id.unwrap(marketId)),
-      preLiquidationParams
+      address(morpho), PreLiquidationId.wrap(Id.unwrap(marketId)), preLiquidationParams
     );
 
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
@@ -301,7 +301,6 @@ contract MorphoBorrowPositionTest is Test {
       morpho.isAuthorized(address(borrowPosition), address(preLiquidation)), "PreLiquidation should be authorized"
     );
   }
-
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 SUPPLY COLLATERAL TESTS                    */
@@ -1274,7 +1273,6 @@ contract MorphoBorrowPositionTest is Test {
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow should match calculation");
   }
 
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    MORPHO VIEW TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -1514,7 +1512,9 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.borrow(borrowAmountActual);
 
     // Verify position is healthy initially at both thresholds
-    assertTrue(borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be healthy at preLltv initially");
+    assertTrue(
+      borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be healthy at preLltv initially"
+    );
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy at market LLTV initially");
     uint256 collateralBefore = borrowPosition.totalCollateral();
     uint256 borrowedBefore = borrowPosition.totalBorrowed();
@@ -1524,8 +1524,12 @@ contract MorphoBorrowPositionTest is Test {
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 92) / 100);
 
     // Position should now be unhealthy at preLltv but still healthy at market LLTV (for PreLiquidation)
-    assertFalse(borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be unhealthy at preLltv after price drop");
-    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should still be healthy at market LLTV for PreLiquidation");
+    assertFalse(
+      borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be unhealthy at preLltv after price drop"
+    );
+    assertTrue(
+      borrowPosition.isHealthy(marketParams.lltv), "Position should still be healthy at market LLTV for PreLiquidation"
+    );
 
     // Setup liquidator
     address liquidator = makeAddr("liquidator");
@@ -1583,14 +1587,20 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmountActual);
 
-    assertTrue(borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be healthy at preLltv initially");
+    assertTrue(
+      borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be healthy at preLltv initially"
+    );
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy at market LLTV initially");
 
     // Price drops ~5% - makes position unhealthy at preLltv but healthy at market LLTV
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 95) / 100);
 
-    assertFalse(borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be unhealthy at preLltv after price drop");
-    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should still be healthy at market LLTV for PreLiquidation");
+    assertFalse(
+      borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be unhealthy at preLltv after price drop"
+    );
+    assertTrue(
+      borrowPosition.isHealthy(marketParams.lltv), "Position should still be healthy at market LLTV for PreLiquidation"
+    );
 
     // Liquidator performs partial liquidation through PreLiquidation
     address liquidator = makeAddr("liquidator");
@@ -1677,7 +1687,9 @@ contract MorphoBorrowPositionTest is Test {
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 90) / 100);
 
     assertFalse(borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be unhealthy at preLltv");
-    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should still be healthy at market LLTV for PreLiquidation");
+    assertTrue(
+      borrowPosition.isHealthy(marketParams.lltv), "Position should still be healthy at market LLTV for PreLiquidation"
+    );
 
     // Liquidator performs large PreLiquidation (but respecting close factor)
     address liquidator = makeAddr("liquidator");

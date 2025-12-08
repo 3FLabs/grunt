@@ -90,12 +90,10 @@ contract MorphoBorrowPositionFactory {
   /// @param positionManager The address of the position manager (owner) that will control this position
   /// @param preLiquidation The pre-liquidation contract for this borrow position
   /// @return borrowPosition The address of the newly deployed MorphoBorrowPosition proxy
-  function createBorrowPosition(
-    IMorpho morpho,
-    Id marketId,
-    address positionManager,
-    IPreLiquidation preLiquidation
-  ) external returns (address borrowPosition) {
+  function createBorrowPosition(IMorpho morpho, Id marketId, address positionManager, IPreLiquidation preLiquidation)
+    external
+    returns (address borrowPosition)
+  {
     borrowPosition = BORROW_POSITION_BEACON.deployERC1967IBeaconProxy();
 
     MorphoBorrowPosition(borrowPosition).initialize(morpho, marketId, positionManager, preLiquidation);

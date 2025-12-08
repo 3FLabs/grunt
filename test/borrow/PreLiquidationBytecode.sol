@@ -43,11 +43,10 @@ library PreLiquidationBytecode {
   /// @param marketId The market ID
   /// @param params The PreLiquidation parameters
   /// @return preLiquidation The deployed PreLiquidation address
-  function deployPreLiquidation(
-    address morpho,
-    PreLiquidationId marketId,
-    PreLiquidationParams memory params
-  ) internal returns (IPreLiquidation preLiquidation) {
+  function deployPreLiquidation(address morpho, PreLiquidationId marketId, PreLiquidationParams memory params)
+    internal
+    returns (IPreLiquidation preLiquidation)
+  {
     bytes memory creationCode = getPreLiquidationCreationCode();
     bytes memory constructorArgs = abi.encode(morpho, marketId, params);
     bytes memory initCode = bytes.concat(creationCode, constructorArgs);
