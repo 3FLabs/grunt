@@ -9,6 +9,9 @@ import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
 import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
+import {IPreLiquidation} from "lib/pre-liquidation/src/interfaces/IPreLiquidation.sol";
+import {IPreLiquidationFactory} from "lib/pre-liquidation/src/interfaces/IPreLiquidationFactory.sol";
+import "lib/pre-liquidation/src/interfaces/IPreLiquidation.sol" as PreLiquidation;
 
 import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 
@@ -33,20 +36,39 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
   /// @notice Thrown when the market ID is invalid (zero bytes32).
   /// @dev Market IDs in Morpho are derived from market parameters and must be non-zero.
-  error InvalidMarketId();
+  /// @param marketId The invalid market ID.
+  error InvalidMarketId(Id marketId);
 
   /// @notice Thrown when attempting to initialize with a market that doesn't exist in Morpho.
   /// @dev Markets must be created in Morpho before a borrow position can be initialized for them.
   error MarketNotCreated();
 
   /// @notice Thrown when an operation is called with a zero amount.
-  /// @dev Zero amounts are not allowed for supply, withdraw, borrow, or repay operations.
   error AmountZero();
 
-  /// @notice Thrown when the target LLTV exceeds the market's maximum LLTV.
-  /// @param targetLltv The target LLTV that was invalid.
-  /// @param marketLltv The maximum LLTV allowed by the market.
-  error InvalidTargetLLTV(uint256 targetLltv, uint256 marketLltv);
+  /// @notice Thrown when the position has insufficient collateral after an operation.
+  error InsufficientCollateral();
+
+  /// @notice Thrown when the provided pre-liquidation contract is not valid (not known from the factory).
+  /// @param preLiquidation The invalid pre-liquidation contract address.
+  error InvalidPreLiquidation(address preLiquidation);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         IMMUTABLE                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev The preLiquidation Factory contract address.
+  IPreLiquidationFactory internal immutable _PRE_LIQUIDATION_FACTORY;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        CONSTRUCTOR                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Constructs the MorphoBorrowPosition contract with the PreLiquidation factory address.
+  /// @param preLiquidationFactory_ The PreLiquidation factory contract address.
+  constructor(IPreLiquidationFactory preLiquidationFactory_) {
+    _PRE_LIQUIDATION_FACTORY = preLiquidationFactory_;
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -58,12 +80,14 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @param morpho The Morpho protocol contract
   /// @param marketId The Morpho market ID for this borrow position
   /// @param marketParams The Morpho market parameters for this borrow position
-  /// @param targetLltv The target LLTV for this borrow position (independant of Morpho's LLTV)
+  /// @param preLiquidation The pre-liquidation contract for this borrow position
+  /// @param preLltv The pre-liquidation maximum LLTV for this borrow position
   struct BorrowPositionStorage {
     IMorpho morpho;
     Id marketId;
     MarketParams marketParams;
-    uint256 targetLltv;
+    IPreLiquidation preLiquidation;
+    uint256 preLltv;
   }
 
   /// @dev Storage slot for the MorphoBorrowPosition contract's main storage struct.
@@ -93,22 +117,32 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @param morpho_ The Morpho Blue protocol contract address.
   /// @param marketId_ The Morpho market ID for this borrow position. Must correspond to an existing market.
   /// @param positionManager_ The address of the position manager (owner) that will control this position.
-  /// @param targetLltv_ The target LLTV for this borrow position (below or equal to Morpho's market LLTV).
+  /// @param preLiquidation_ The pre-liquidation contract for this borrow position.
   /// @custom:reverts InvalidMarketId if marketId_ is zero.
   /// @custom:reverts MarketNotCreated if the market doesn't exist in Morpho (lastUpdate == 0).
-  function initialize(IMorpho morpho_, Id marketId_, address positionManager_, uint256 targetLltv_) public initializer {
+  function initialize(IMorpho morpho_, Id marketId_, address positionManager_, IPreLiquidation preLiquidation_)
+    public
+    initializer
+  {
     if (address(morpho_) == address(0)) revert AddressZero();
-    if (Id.unwrap(marketId_) == bytes32(0)) revert InvalidMarketId();
+    if (address(preLiquidation_) == address(0)) revert AddressZero();
+    if (Id.unwrap(marketId_) == bytes32(0)) revert InvalidMarketId(marketId_);
     if (morpho_.market(marketId_).lastUpdate == 0) revert MarketNotCreated();
-    if (targetLltv_ > morpho_.idToMarketParams(marketId_).lltv) {
-      revert InvalidTargetLLTV(targetLltv_, morpho_.idToMarketParams(marketId_).lltv);
+    if (PreLiquidation.Id.unwrap(preLiquidation_.ID()) != Id.unwrap(marketId_)) {
+      revert InvalidMarketId(marketId_);
+    }
+    if (!_PRE_LIQUIDATION_FACTORY.isPreLiquidation(address(preLiquidation_))) {
+      revert InvalidPreLiquidation(address(preLiquidation_));
     }
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     $.morpho = morpho_;
     $.marketId = marketId_;
     $.marketParams = morpho_.idToMarketParams(marketId_);
-    $.targetLltv = targetLltv_;
+    $.preLltv = preLiquidation_.preLiquidationParams().preLltv;
+
+    $.preLiquidation = preLiquidation_;
+    morpho_.setAuthorization(address(preLiquidation_), true);
 
     _initializeOwner(positionManager_);
   }
@@ -155,6 +189,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // Withdraw collateral from Morpho to the owner (Position Manager)
     // This will revert if the position would become unhealthy
     $.morpho.withdrawCollateral($.marketParams, amount, address(this), msg.sender);
+
+    if (!_isHealthy($.preLltv, $.marketParams.oracle)) {
+      revert InsufficientCollateral();
+    }
   }
 
   /// @inheritdoc IBorrowPosition
@@ -173,6 +211,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // Borrow from Morpho, sending borrowed assets to the owner (Position Manager)
     // This will revert if the position would become unhealthy or insufficient liquidity
     $.morpho.borrow($.marketParams, amount, 0, address(this), msg.sender);
+
+    if (!_isHealthy($.preLltv, $.marketParams.oracle)) {
+      revert InsufficientCollateral();
+    }
   }
 
   /// @inheritdoc IBorrowPosition
@@ -241,27 +283,22 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   }
 
   /// @inheritdoc IBorrowPosition
-  function isHealthy() external view override returns (bool) {
+  function isHealthy(uint256 lltv) external view override returns (bool) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
-    return _isHealthy($.marketParams.lltv, $.marketParams.oracle);
+    return _isHealthy(lltv, $.marketParams.oracle);
   }
 
   /// @inheritdoc IBorrowPosition
-  function inTarget() external view override returns (bool) {
+  function maxBorrow(uint256 lltv) external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
-    return _isHealthy($.targetLltv, $.marketParams.oracle);
-  }
 
-  /// @inheritdoc IBorrowPosition
-  function maxBorrow() external view override returns (uint256) {
-    BorrowPositionStorage storage $ = _borrowPositionStorage();
-    return _maxBorrow($.marketParams.lltv, $.marketParams.oracle);
-  }
+    Position memory _pos = $.morpho.position($.marketId, address(this));
 
-  /// @inheritdoc IBorrowPosition
-  function maxBorrowTarget() external view override returns (uint256) {
-    BorrowPositionStorage storage $ = _borrowPositionStorage();
-    return _maxBorrow($.targetLltv, $.marketParams.oracle);
+    // Get collateral price from oracle
+    uint256 _collateralPrice = IOracle($.marketParams.oracle).price();
+
+    // Calculate max borrow: collateralValue * LLTV
+    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv);
   }
 
   /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.
@@ -293,33 +330,9 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv) >= _borrowed;
   }
 
-  /// @dev Internal helper to calculate the maximum borrowable amount based on provided lltv and oracle.
-  ///      Formula: maxBorrow = (collateral * oraclePrice / ORACLE_PRICE_SCALE) * lltv
-  ///      Uses conservative rounding (down) to prevent borrowing more than allowed. Does not account
-  ///      for existing borrows; returns absolute max capacity.
-  /// @param lltv The LLTV to use for the calculation.
-  /// @param oracle The oracle address to fetch the collateral price.
-  /// @return The maximum amount of loan tokens that can be borrowed given current collateral.
-  function _maxBorrow(uint256 lltv, address oracle) internal view returns (uint256) {
-    BorrowPositionStorage storage $ = _borrowPositionStorage();
-
-    Position memory _pos = $.morpho.position($.marketId, address(this));
-
-    // Get collateral price from oracle
-    uint256 _collateralPrice = IOracle(oracle).price();
-
-    // Calculate max borrow: collateralValue * LLTV
-    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv);
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           GETTERS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @inheritdoc IBorrowPosition
-  function targetLltv() external view override returns (uint256) {
-    return _borrowPositionStorage().targetLltv;
-  }
 
   /// @notice Returns the Morpho market ID associated with this borrow position.
   /// @dev The market ID is set during initialization and uniquely identifies the Morpho market

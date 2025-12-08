@@ -12,6 +12,10 @@ import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
 import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
+import {IPreLiquidation, PreLiquidationParams} from "lib/pre-liquidation/src/interfaces/IPreLiquidation.sol";
+import {IPreLiquidationFactory} from "lib/pre-liquidation/src/interfaces/IPreLiquidationFactory.sol";
+import {Id as PreLiquidationId} from "lib/pre-liquidation/lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {PreLiquidationBytecode} from "./PreLiquidationBytecode.sol";
 
 /// @title MorphoBorrowPositionTest
 /// @notice Comprehensive test suite for MorphoBorrowPosition contract
@@ -30,6 +34,9 @@ contract MorphoBorrowPositionTest is Test {
   ERC20Mock public collateralToken;
   OracleMock public oracle;
   IrmMock public irm;
+  IPreLiquidationFactory public preLiquidationFactory;
+  IPreLiquidation public preLiquidation;
+  PreLiquidationParams public preLiquidationParams;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       TEST PARAMETERS                      */
@@ -64,9 +71,11 @@ contract MorphoBorrowPositionTest is Test {
 
   // MorphoBorrowPosition errors
   error AddressZero();
-  error InvalidMarketId();
+  error InvalidMarketId(Id marketId);
   error MarketNotCreated();
   error AmountZero();
+  error InsufficientCollateral();
+  error InvalidPreLiquidation(address preLiquidation);
 
   // Solady Initializable errors
   error InvalidInitialization();
@@ -76,8 +85,6 @@ contract MorphoBorrowPositionTest is Test {
 
   // Solady SafeTransferLib errors
   error TransferFromFailed();
-
-  error InvalidTargetLLTV(uint256 targetLltv, uint256 marketLltv);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -125,9 +132,24 @@ contract MorphoBorrowPositionTest is Test {
     morpho.createMarket(marketParams);
     marketId = marketParams.id();
 
+    // Deploy PreLiquidationFactory using pre-compiled bytecode
+    preLiquidationFactory = PreLiquidationBytecode.deployFactory(address(morpho));
+
+    // Create PreLiquidation with default parameters
+    preLiquidationParams = PreLiquidationParams({
+      preLltv: (DEFAULT_LLTV * 90) / 100, // 72% (90% of 80%)
+      preLCF1: 0.50e18, // 50% close factor at preLltv
+      preLCF2: 1.0e18, // 100% close factor at LLTV
+      preLIF1: 1.03e18, // 3% incentive at preLltv
+      preLIF2: 1.10e18, // 10% incentive at LLTV
+      preLiquidationOracle: address(oracle)
+    });
+
+    preLiquidation = preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(marketId)), preLiquidationParams);
+
     // Deploy and initialize MorphoBorrowPosition (without a proxy)
-    borrowPosition = new MorphoBorrowPosition();
-    borrowPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+    borrowPosition = new MorphoBorrowPosition(preLiquidationFactory);
+    borrowPosition.initialize(morpho, marketId, positionManager, preLiquidation);
 
     // Setup approvals for position manager
     vm.startPrank(positionManager);
@@ -175,9 +197,9 @@ contract MorphoBorrowPositionTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_initialize_Success() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
 
-    newPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+    newPosition.initialize(morpho, marketId, positionManager, preLiquidation);
 
     assertEq(address(newPosition.borrowAsset()), address(loanToken), "Borrow asset mismatch");
     assertEq(address(newPosition.collateralAsset()), address(collateralToken), "Collateral asset mismatch");
@@ -186,74 +208,96 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_MorphoIsZero() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
 
     vm.expectRevert(AddressZero.selector);
-    newPosition.initialize(IMorpho(address(0)), marketId, positionManager, DEFAULT_LLTV);
+    newPosition.initialize(IMorpho(address(0)), marketId, positionManager, preLiquidation);
   }
 
   function test_initialize_RevertWhen_MarketIdIsZero() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
+    Id zeroMarketId = Id.wrap(bytes32(0));
 
-    vm.expectRevert(InvalidMarketId.selector);
-    newPosition.initialize(morpho, Id.wrap(bytes32(0)), positionManager, DEFAULT_LLTV);
+    vm.expectRevert(abi.encodeWithSelector(InvalidMarketId.selector, zeroMarketId));
+    newPosition.initialize(morpho, zeroMarketId, positionManager, preLiquidation);
   }
 
   function test_initialize_RevertWhen_MarketNotCreated() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
 
     // Create a non-existent market ID
     Id fakeMarketId = Id.wrap(keccak256("nonexistent"));
 
     vm.expectRevert(MarketNotCreated.selector);
-    newPosition.initialize(morpho, fakeMarketId, positionManager, DEFAULT_LLTV);
+    newPosition.initialize(morpho, fakeMarketId, positionManager, preLiquidation);
   }
 
   function test_initialize_CanOnlyBeCalledOnce() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    newPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
+    newPosition.initialize(morpho, marketId, positionManager, preLiquidation);
 
     vm.expectRevert(InvalidInitialization.selector);
-    newPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+    newPosition.initialize(morpho, marketId, positionManager, preLiquidation);
   }
 
   function test_initialize_SetsMarketParams() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    newPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
+    newPosition.initialize(morpho, marketId, positionManager, preLiquidation);
 
     assertEq(newPosition.borrowAsset(), marketParams.loanToken, "Loan token mismatch");
     assertEq(newPosition.collateralAsset(), marketParams.collateralToken, "Collateral token mismatch");
   }
 
-  function test_initialize_SetsTargetLltv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = DEFAULT_LLTV / 2; // 40%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
+  function test_initialize_RevertWhen_PreLiquidationIsZero() public {
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
 
-    assertEq(newPosition.targetLltv(), targetLltv, "Target LLTV not set correctly");
+    vm.expectRevert(AddressZero.selector);
+    newPosition.initialize(morpho, marketId, positionManager, IPreLiquidation(address(0)));
   }
 
-  function test_initialize_RevertWhen_TargetLltvExceedsMarketLltv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 invalidTargetLltv = DEFAULT_LLTV + 1; // Exceeds market LLTV
+  function test_initialize_RevertWhen_PreLiquidationMarketMismatch() public {
+    // Create a different market
+    MarketParams memory otherMarketParams = MarketParams({
+      loanToken: address(loanToken),
+      collateralToken: address(new ERC20Mock()),
+      oracle: address(oracle),
+      irm: address(irm),
+      lltv: DEFAULT_LLTV
+    });
+    vm.prank(owner);
+    morpho.createMarket(otherMarketParams);
+    Id otherMarketId = otherMarketParams.id();
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidTargetLLTV.selector, invalidTargetLltv, DEFAULT_LLTV));
-    newPosition.initialize(morpho, marketId, positionManager, invalidTargetLltv);
+    // Create preLiquidation for other market
+    IPreLiquidation wrongPreLiquidation = preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(otherMarketId)), preLiquidationParams);
+
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
+
+    vm.expectRevert(abi.encodeWithSelector(InvalidMarketId.selector, marketId));
+    newPosition.initialize(morpho, marketId, positionManager, wrongPreLiquidation);
   }
 
-  function test_initialize_AllowsTargetLltvEqualToMarketLltv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    newPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+  function test_initialize_RevertWhen_PreLiquidationNotFromFactory() public {
+    // Deploy a standalone PreLiquidation (not through factory) using pre-compiled bytecode
+    IPreLiquidation fakePreLiquidation = PreLiquidationBytecode.deployPreLiquidation(
+      address(morpho),
+      PreLiquidationId.wrap(Id.unwrap(marketId)),
+      preLiquidationParams
+    );
 
-    assertEq(newPosition.targetLltv(), DEFAULT_LLTV, "Should allow target LLTV equal to market LLTV");
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition(preLiquidationFactory);
+
+    vm.expectRevert(abi.encodeWithSelector(InvalidPreLiquidation.selector, address(fakePreLiquidation)));
+    newPosition.initialize(morpho, marketId, positionManager, fakePreLiquidation);
   }
 
-  function test_initialize_AllowsZeroTargetLltv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    newPosition.initialize(morpho, marketId, positionManager, 0);
-
-    assertEq(newPosition.targetLltv(), 0, "Should allow zero target LLTV");
+  function test_initialize_SetsPreLiquidationAuthorization() public view {
+    // Verify Morpho authorized the preLiquidation contract
+    assertTrue(
+      morpho.isAuthorized(address(borrowPosition), address(preLiquidation)), "PreLiquidation should be authorized"
+    );
   }
+
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 SUPPLY COLLATERAL TESTS                    */
@@ -436,8 +480,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    // Borrow near max
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    // Borrow near max using preLltv (the actual threshold enforced)
+    uint256 maxBorrow = borrowPosition.maxBorrow(preLiquidationParams.preLltv);
     uint256 borrowAmount = (maxBorrow * 99) / 100;
 
     vm.prank(positionManager);
@@ -529,7 +573,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmount = (maxBorrow * borrowRatio) / 100;
 
     if (borrowAmount > 0) {
@@ -537,7 +581,7 @@ contract MorphoBorrowPositionTest is Test {
       borrowPosition.borrow(borrowAmount);
 
       assertGt(borrowPosition.totalBorrowed(), 0, "Borrow failed");
-      assertTrue(borrowPosition.isHealthy(), "Position unhealthy after borrow");
+      assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position unhealthy after borrow");
     }
   }
 
@@ -601,7 +645,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmount = maxBorrow + 1; // Exceed max by 1
 
     vm.prank(positionManager);
@@ -975,7 +1019,7 @@ contract MorphoBorrowPositionTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_isHealthy_InitiallyTrue() public view {
-    assertTrue(borrowPosition.isHealthy(), "Initial position should be healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Initial position should be healthy");
   }
 
   function test_isHealthy_WithoutBorrow() public {
@@ -985,7 +1029,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    assertTrue(borrowPosition.isHealthy(), "Position with only collateral should be healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position with only collateral should be healthy");
   }
 
   function test_isHealthy_BelowMaxBorrow() public {
@@ -997,13 +1041,13 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 safeBorrow = (maxBorrow * 50) / 100; // 50% of max
 
     vm.prank(positionManager);
     borrowPosition.borrow(safeBorrow);
 
-    assertTrue(borrowPosition.isHealthy(), "Position below max borrow should be healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position below max borrow should be healthy");
   }
 
   function test_isHealthy_AtMaxBorrow() public {
@@ -1015,13 +1059,14 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    // Use preLltv (the actual threshold enforced by the contract)
+    uint256 maxBorrow = borrowPosition.maxBorrow(preLiquidationParams.preLltv);
     uint256 safeBorrow = (maxBorrow * 99) / 100; // 99% of max for safety
 
     vm.prank(positionManager);
     borrowPosition.borrow(safeBorrow);
 
-    assertTrue(borrowPosition.isHealthy(), "Position at near-max borrow should be healthy");
+    assertTrue(borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position at near-max borrow should be healthy");
   }
 
   function test_isHealthy_AfterCollateralPriceIncrease() public {
@@ -1033,7 +1078,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmount = (maxBorrow * 80) / 100;
 
     vm.prank(positionManager);
@@ -1042,7 +1087,7 @@ contract MorphoBorrowPositionTest is Test {
     // Increase collateral price
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
 
-    assertTrue(borrowPosition.isHealthy(), "Position should be healthier after price increase");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthier after price increase");
   }
 
   function test_isHealthy_AfterCollateralPriceDecrease() public {
@@ -1054,13 +1099,13 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmount = (maxBorrow * 50) / 100; // Start at 50%
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmount);
 
-    assertTrue(borrowPosition.isHealthy(), "Initial position should be healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Initial position should be healthy");
 
     // Decrease collateral price significantly
     oracle.setPrice(DEFAULT_ORACLE_PRICE / 10);
@@ -1082,14 +1127,14 @@ contract MorphoBorrowPositionTest is Test {
 
     oracle.setPrice(price);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     if (maxBorrow > MIN_TEST_AMOUNT) {
       uint256 safeBorrow = (maxBorrow * 50) / 100;
 
       vm.prank(positionManager);
       borrowPosition.borrow(safeBorrow);
 
-      assertTrue(borrowPosition.isHealthy(), "Position at 50% should be healthy");
+      assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position at 50% should be healthy");
     }
   }
 
@@ -1098,7 +1143,7 @@ contract MorphoBorrowPositionTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_maxBorrow_InitiallyZero() public view {
-    assertEq(borrowPosition.maxBorrow(), 0, "Max borrow should be zero without collateral");
+    assertEq(borrowPosition.maxBorrow(marketParams.lltv), 0, "Max borrow should be zero without collateral");
   }
 
   function test_maxBorrow_AfterCollateralSupply() public {
@@ -1108,7 +1153,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    assertGt(borrowPosition.maxBorrow(), 0, "Max borrow should increase with collateral");
+    assertGt(borrowPosition.maxBorrow(marketParams.lltv), 0, "Max borrow should increase with collateral");
   }
 
   function test_maxBorrow_ProportionalToLLTV() public {
@@ -1118,7 +1163,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, DEFAULT_LLTV);
 
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow calculation incorrect");
@@ -1131,12 +1176,12 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrowBefore = borrowPosition.maxBorrow();
+    uint256 maxBorrowBefore = borrowPosition.maxBorrow(marketParams.lltv);
 
     // Double the price
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
 
-    uint256 maxBorrowAfter = borrowPosition.maxBorrow();
+    uint256 maxBorrowAfter = borrowPosition.maxBorrow(marketParams.lltv);
 
     assertApproxEqRel(maxBorrowAfter, maxBorrowBefore * 2, 0.01e18, "Max borrow should double with price");
   }
@@ -1151,7 +1196,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, price * (ORACLE_PRICE_SCALE / 1e18), DEFAULT_LLTV);
 
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow calculation should be accurate");
@@ -1167,212 +1212,12 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, price, DEFAULT_LLTV);
 
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow should match calculation");
   }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                  TARGET LLTV TESTS                         */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_targetLltv_ReturnsCorrectValue() public view {
-    assertEq(borrowPosition.targetLltv(), DEFAULT_LLTV, "Target LLTV should match initialization");
-  }
-
-  function test_inTarget_InitiallyTrue() public view {
-    assertTrue(borrowPosition.inTarget(), "Initial position should be in target");
-  }
-
-  function test_inTarget_WithoutBorrow() public {
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(collateralAmount);
-
-    assertTrue(borrowPosition.inTarget(), "Position with only collateral should be in target");
-  }
-
-  function test_inTarget_BelowTargetThreshold() public {
-    // Create a position with lower target LLTV (50% vs 80% market LLTV)
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = DEFAULT_LLTV / 2; // 40%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
-
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    _supplyLiquidity(LOAN_AMOUNT * 10);
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    collateralToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.supplyCollateral(collateralAmount);
-
-    // Borrow 30% of max borrow (below 40% target)
-    uint256 maxBorrowAtMarket = newPosition.maxBorrow();
-    uint256 borrowAmount = (maxBorrowAtMarket * 30) / 100;
-
-    vm.prank(positionManager);
-    loanToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.borrow(borrowAmount);
-
-    assertTrue(newPosition.inTarget(), "Position below target threshold should be in target");
-    assertTrue(newPosition.isHealthy(), "Position should also be healthy");
-  }
-
-  function test_inTarget_AboveTargetButHealthy() public {
-    // Create a position with lower target LLTV (50% vs 80% market LLTV)
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = DEFAULT_LLTV / 2; // 40%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
-
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    _supplyLiquidity(LOAN_AMOUNT * 10);
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    collateralToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.supplyCollateral(collateralAmount);
-
-    // Borrow 60% of max borrow (above 40% target but below 80% liquidation)
-    uint256 maxBorrowAtMarket = newPosition.maxBorrow();
-    uint256 borrowAmount = (maxBorrowAtMarket * 60) / 100;
-
-    vm.prank(positionManager);
-    loanToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.borrow(borrowAmount);
-
-    assertFalse(newPosition.inTarget(), "Position above target threshold should NOT be in target");
-    assertTrue(newPosition.isHealthy(), "Position should still be healthy (not liquidatable)");
-  }
-
-  function test_inTarget_AfterPriceDecrease() public {
-    // Create a position with lower target LLTV
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = DEFAULT_LLTV / 2; // 40%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
-
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    _supplyLiquidity(LOAN_AMOUNT * 10);
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    collateralToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.supplyCollateral(collateralAmount);
-
-    // Borrow 30% of max borrow (safe)
-    uint256 maxBorrowAtMarket = newPosition.maxBorrow();
-    uint256 borrowAmount = (maxBorrowAtMarket * 30) / 100;
-
-    vm.prank(positionManager);
-    loanToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.borrow(borrowAmount);
-
-    assertTrue(newPosition.inTarget(), "Should be in target initially");
-
-    // Decrease price by 30% - position may exit target but still be healthy
-    oracle.setPrice((DEFAULT_ORACLE_PRICE * 70) / 100);
-
-    // Position health depends on how the borrow ratio changes with price
-    // The test verifies that inTarget correctly reflects the new state
-  }
-
-  function test_maxBorrowTarget_InitiallyZero() public view {
-    assertEq(borrowPosition.maxBorrowTarget(), 0, "Max borrow target should be zero without collateral");
-  }
-
-  function test_maxBorrowTarget_LessThanMaxBorrow() public {
-    // Create a position with lower target LLTV (50% vs 80% market LLTV)
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = DEFAULT_LLTV / 2; // 40%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
-
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    collateralToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.supplyCollateral(collateralAmount);
-
-    uint256 maxBorrow = newPosition.maxBorrow();
-    uint256 maxBorrowTarget = newPosition.maxBorrowTarget();
-
-    assertLt(maxBorrowTarget, maxBorrow, "Max borrow target should be less than max borrow");
-    assertApproxEqRel(maxBorrowTarget, maxBorrow / 2, 0.01e18, "Max borrow target should be approximately half");
-  }
-
-  function test_maxBorrowTarget_EqualToMaxBorrowWhenTargetEqualsMarketLltv() public {
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(collateralAmount);
-
-    uint256 maxBorrow = borrowPosition.maxBorrow();
-    uint256 maxBorrowTarget = borrowPosition.maxBorrowTarget();
-
-    assertEq(maxBorrowTarget, maxBorrow, "Max borrow target should equal max borrow when target LLTV equals market LLTV");
-  }
-
-  function test_maxBorrowTarget_CalculationAccuracy() public {
-    // Create a position with specific target LLTV
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = 0.6e18; // 60%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
-
-    uint256 collateralAmount = 1_000e18;
-    uint256 price = 2_000e18; // $2000 per unit
-
-    oracle.setPrice(price * (ORACLE_PRICE_SCALE / 1e18));
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    collateralToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.supplyCollateral(collateralAmount);
-
-    uint256 maxBorrowTarget = newPosition.maxBorrowTarget();
-    uint256 expectedMaxBorrowTarget = _calculateMaxBorrow(collateralAmount, price * (ORACLE_PRICE_SCALE / 1e18), targetLltv);
-
-    assertApproxEqAbs(maxBorrowTarget, expectedMaxBorrowTarget, 1, "Max borrow target calculation should be accurate");
-  }
-
-  function test_maxBorrowTarget_ProportionalToTargetLltv() public {
-    // Create a position with 50% target LLTV
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    uint256 targetLltv = DEFAULT_LLTV / 2; // 40%
-    newPosition.initialize(morpho, marketId, positionManager, targetLltv);
-
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    collateralToken.approve(address(newPosition), type(uint256).max);
-
-    vm.prank(positionManager);
-    newPosition.supplyCollateral(collateralAmount);
-
-    uint256 maxBorrowTarget = newPosition.maxBorrowTarget();
-    uint256 expectedMaxBorrowTarget = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, targetLltv);
-
-    assertApproxEqAbs(maxBorrowTarget, expectedMaxBorrowTarget, 1, "Max borrow target calculation incorrect");
-  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    MORPHO VIEW TESTS                       */
@@ -1399,14 +1244,14 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     assertEq(borrowPosition.totalCollateral(), collateralAmount, "Step 2: Collateral supply failed");
-    assertTrue(borrowPosition.isHealthy(), "Step 2: Position should be healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Step 2: Position should be healthy");
 
     // 3. Borrow
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmount);
 
     assertGt(borrowPosition.totalBorrowed(), 0, "Step 3: Borrow failed");
-    assertTrue(borrowPosition.isHealthy(), "Step 3: Position should still be healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Step 3: Position should still be healthy");
 
     // 4. Repay
     uint256 totalBorrowed = borrowPosition.totalBorrowed();
@@ -1433,29 +1278,29 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    assertTrue(borrowPosition.isHealthy(), "Should be healthy with collateral only");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should be healthy with collateral only");
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrow1 = (maxBorrow * 25) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrow1);
 
-    assertTrue(borrowPosition.isHealthy(), "Should be healthy at 25% utilization");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should be healthy at 25% utilization");
 
     uint256 borrow2 = (maxBorrow * 25) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrow2);
 
-    assertTrue(borrowPosition.isHealthy(), "Should be healthy at 50% utilization");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should be healthy at 50% utilization");
 
     uint256 borrow3 = (maxBorrow * 20) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrow3);
 
-    assertTrue(borrowPosition.isHealthy(), "Should be healthy at 70% utilization");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should be healthy at 70% utilization");
   }
 
   function test_integration_MultipleOperations() public {
@@ -1472,7 +1317,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount / 2);
 
     // Multiple borrows
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     borrowPosition.borrow((maxBorrow * 20) / 100);
     borrowPosition.borrow((maxBorrow * 10) / 100);
 
@@ -1486,7 +1331,7 @@ contract MorphoBorrowPositionTest is Test {
 
     vm.stopPrank();
 
-    assertTrue(borrowPosition.isHealthy(), "Position should remain healthy");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should remain healthy");
     assertGt(borrowPosition.totalCollateral(), 0, "Should have remaining collateral");
     assertGt(borrowPosition.totalBorrowed(), 0, "Should have remaining debt");
   }
@@ -1501,25 +1346,25 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     // Borrow at initial price
-    uint256 maxBorrow1 = borrowPosition.maxBorrow();
+    uint256 maxBorrow1 = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmount = (maxBorrow1 * 50) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmount);
 
-    assertTrue(borrowPosition.isHealthy(), "Should be healthy at initial price");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should be healthy at initial price");
 
     // Price increases - can borrow more
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
 
-    uint256 maxBorrow2 = borrowPosition.maxBorrow();
+    uint256 maxBorrow2 = borrowPosition.maxBorrow(marketParams.lltv);
     assertGt(maxBorrow2, maxBorrow1, "Max borrow should increase with price");
-    assertTrue(borrowPosition.isHealthy(), "Should be healthy after price increase");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should be healthy after price increase");
 
     // Price decreases back
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
 
-    assertTrue(borrowPosition.isHealthy(), "Should still be healthy at original price");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Should still be healthy at original price");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1553,13 +1398,13 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow1 = borrowPosition.maxBorrow();
+    uint256 maxBorrow1 = borrowPosition.maxBorrow(marketParams.lltv);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
-    uint256 maxBorrow2 = borrowPosition.maxBorrow();
+    uint256 maxBorrow2 = borrowPosition.maxBorrow(marketParams.lltv);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 3);
-    uint256 maxBorrow3 = borrowPosition.maxBorrow();
+    uint256 maxBorrow3 = borrowPosition.maxBorrow(marketParams.lltv);
 
     assertLt(maxBorrow2, maxBorrow1, "Max borrow should decrease with price");
     assertGt(maxBorrow3, maxBorrow1, "Max borrow should increase with price");
@@ -1578,7 +1423,7 @@ contract MorphoBorrowPositionTest is Test {
     for (uint256 i = 0; i < numOps; i++) {
       borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
 
-      uint256 maxBorrow = borrowPosition.maxBorrow();
+      uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
       if (maxBorrow > MIN_TEST_AMOUNT) {
         uint256 safeBorrow = (maxBorrow * 10) / 100; // Borrow 10% of max each time
         borrowPosition.borrow(safeBorrow);
@@ -1587,7 +1432,7 @@ contract MorphoBorrowPositionTest is Test {
 
     vm.stopPrank();
 
-    assertTrue(borrowPosition.isHealthy(), "Position should be healthy after rapid ops");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy after rapid ops");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1606,14 +1451,14 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     // Borrow near max (80% of max)
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmountActual = (maxBorrow * 80) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmountActual);
 
     // Verify position is healthy initially
-    assertTrue(borrowPosition.isHealthy(), "Position should be healthy initially");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy initially");
     uint256 collateralBefore = borrowPosition.totalCollateral();
     uint256 borrowedBefore = borrowPosition.totalBorrowed();
 
@@ -1622,7 +1467,7 @@ contract MorphoBorrowPositionTest is Test {
     oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
 
     // Position should now be unhealthy
-    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy after price drop");
+    assertFalse(borrowPosition.isHealthy(marketParams.lltv), "Position should be unhealthy after price drop");
 
     // Setup liquidator
     address liquidator = makeAddr("liquidator");
@@ -1672,18 +1517,18 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     // Borrow near max (90% of max)
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmountActual = (maxBorrow * 90) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmountActual);
 
-    assertTrue(borrowPosition.isHealthy(), "Position should be healthy initially");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy initially");
 
     // Price drops 30% - makes position unhealthy
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 70) / 100);
 
-    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy after price drop");
+    assertFalse(borrowPosition.isHealthy(marketParams.lltv), "Position should be unhealthy after price drop");
 
     // Liquidator performs partial liquidation
     address liquidator = makeAddr("liquidator");
@@ -1717,18 +1562,18 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
     uint256 borrowAmountActual = (maxBorrow * 85) / 100;
 
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmountActual);
 
-    assertTrue(borrowPosition.isHealthy(), "Position should be healthy initially");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy initially");
 
     // Price drops 40%
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 60) / 100);
 
-    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy after price drop");
+    assertFalse(borrowPosition.isHealthy(marketParams.lltv), "Position should be unhealthy after price drop");
 
     // Owner repays enough to restore health
     uint256 borrowedBefore = borrowPosition.totalBorrowed();
@@ -1739,7 +1584,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.repay(repayAmount);
 
     // Position should be healthy again
-    assertTrue(borrowPosition.isHealthy(), "Position should be healthy after repayment");
+    assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy after repayment");
 
     // Verify debt decreased
     assertLt(borrowPosition.totalBorrowed(), borrowedBefore, "Debt should be reduced");
@@ -1756,7 +1601,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
-    uint256 maxBorrow = borrowPosition.maxBorrow();
+    // Use preLltv (the actual threshold enforced by the contract)
+    uint256 maxBorrow = borrowPosition.maxBorrow(preLiquidationParams.preLltv);
     uint256 borrowAmountActual = (maxBorrow * 95) / 100;
 
     vm.prank(positionManager);
@@ -1765,7 +1611,7 @@ contract MorphoBorrowPositionTest is Test {
     // Severe price drop (60% crash)
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 40) / 100);
 
-    assertFalse(borrowPosition.isHealthy(), "Position should be unhealthy");
+    assertFalse(borrowPosition.isHealthy(marketParams.lltv), "Position should be unhealthy");
 
     // Liquidator liquidates entire position
     address liquidator = makeAddr("liquidator");
