@@ -493,6 +493,32 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.withdrawCollateral(collateralAmount / 2);
   }
 
+  function test_withdrawCollateral_RevertWhen_ViolatesPreLiquidationThreshold() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity to Morpho
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow exactly at max using preLltv (the actual threshold enforced)
+    uint256 maxBorrow = borrowPosition.maxBorrow(preLiquidationParams.preLltv);
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxBorrow);
+
+    // Position is now exactly at the preLltv threshold
+    // Any withdrawal of collateral should trigger our custom InsufficientCollateral error
+    uint256 withdrawAmount = 1; // Try withdrawing even 1 wei
+
+    vm.prank(positionManager);
+    vm.expectRevert(InsufficientCollateral.selector);
+    borrowPosition.withdrawCollateral(withdrawAmount);
+  }
+
   function test_withdrawCollateral_SendsToOwner() public {
     uint256 amount = COLLATERAL_AMOUNT;
 
@@ -650,6 +676,32 @@ contract MorphoBorrowPositionTest is Test {
 
     vm.prank(positionManager);
     vm.expectRevert("insufficient collateral");
+    borrowPosition.borrow(borrowAmount);
+  }
+
+  function test_borrow_RevertWhen_ViolatesPreLiquidationThreshold() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Calculate max borrow at preLltv (72%) - this is the stricter threshold
+    uint256 maxBorrowAtPreLltv = borrowPosition.maxBorrow(preLiquidationParams.preLltv);
+
+    // Try to borrow slightly more than the preLltv allows
+    // This should trigger our custom InsufficientCollateral error
+    // We add 1 wei to push it over the preLltv threshold
+    // Morpho might allow it (if still under 80% LLTV), but our check won't
+    uint256 borrowAmount = maxBorrowAtPreLltv + 1;
+
+    vm.prank(positionManager);
+    // This could revert with either Morpho's "insufficient collateral" or our InsufficientCollateral
+    // depending on rounding. If maxBorrowAtPreLltv + 1 is still under Morpho's LLTV,
+    // Morpho will allow it but our check will catch it.
+    vm.expectRevert(InsufficientCollateral.selector);
     borrowPosition.borrow(borrowAmount);
   }
 
