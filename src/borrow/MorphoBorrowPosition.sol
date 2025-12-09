@@ -321,12 +321,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   function _isHealthy(uint256 lltv, address oracle) internal view returns (bool) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     IMorpho morpho = $.morpho;
-    Position memory _pos = morpho.position($.marketId, address(this));
+    Id _marketId = $.marketId;
+    Position memory _pos = morpho.position(_marketId, address(this));
 
     // If no borrow, position is always healthy
     if (_pos.borrowShares == 0) return true;
 
-    Market memory _mkt = morpho.market($.marketId);
+    Market memory _mkt = morpho.market(_marketId);
 
     // Get collateral price from oracle
     uint256 _collateralPrice = IOracle(oracle).price();
