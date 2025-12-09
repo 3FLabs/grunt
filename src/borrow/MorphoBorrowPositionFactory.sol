@@ -94,7 +94,7 @@ contract MorphoBorrowPositionFactory {
     external
     returns (address borrowPosition)
   {
-    borrowPosition = BORROW_POSITION_BEACON.deployERC1967IBeaconProxy();
+    borrowPosition = BORROW_POSITION_BEACON.deployERC1967BeaconProxy();
 
     MorphoBorrowPosition(borrowPosition).initialize(morpho, marketId, positionManager, preLiquidation);
 
