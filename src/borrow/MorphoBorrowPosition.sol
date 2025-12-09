@@ -162,15 +162,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     if (amount == 0) revert AmountZero();
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
+    MarketParams memory _marketParams = $.marketParams;
 
     // Transfer collateral from caller to this contract
-    $.marketParams.collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+    _marketParams.collateralToken.safeTransferFrom(msg.sender, address(this), amount);
 
     // Approve Morpho to spend collateral
-    $.marketParams.collateralToken.safeApprove(address($.morpho), amount);
+    _marketParams.collateralToken.safeApprove(address($.morpho), amount);
 
     // Supply collateral to Morpho on behalf of this contract
-    $.morpho.supplyCollateral($.marketParams, amount, address(this), "");
+    $.morpho.supplyCollateral(_marketParams, amount, address(this), "");
   }
 
   /// @inheritdoc IBorrowPosition
@@ -185,12 +186,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     if (amount == 0) revert AmountZero();
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
+    MarketParams memory _marketParams = $.marketParams;
 
     // Withdraw collateral from Morpho to the owner (Position Manager)
     // This will revert if the position would become unhealthy
-    $.morpho.withdrawCollateral($.marketParams, amount, address(this), msg.sender);
+    $.morpho.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
 
-    if (!_isHealthy($.preLltv, $.marketParams.oracle)) {
+    if (!_isHealthy($.preLltv, _marketParams.oracle)) {
       revert InsufficientCollateral();
     }
   }
@@ -207,12 +209,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     if (amount == 0) revert AmountZero();
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
+    MarketParams memory _marketParams = $.marketParams;
 
     // Borrow from Morpho, sending borrowed assets to the owner (Position Manager)
     // This will revert if the position would become unhealthy or insufficient liquidity
-    $.morpho.borrow($.marketParams, amount, 0, address(this), msg.sender);
+    $.morpho.borrow(_marketParams, amount, 0, address(this), msg.sender);
 
-    if (!_isHealthy($.preLltv, $.marketParams.oracle)) {
+    if (!_isHealthy($.preLltv, _marketParams.oracle)) {
       revert InsufficientCollateral();
     }
   }
@@ -228,15 +231,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     if (amount == 0) revert AmountZero();
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
+    MarketParams memory _marketParams = $.marketParams;
 
     // Transfer loan tokens from caller to this contract
-    $.marketParams.loanToken.safeTransferFrom(msg.sender, address(this), amount);
+    _marketParams.loanToken.safeTransferFrom(msg.sender, address(this), amount);
 
     // Approve Morpho to spend loan tokens
-    $.marketParams.loanToken.safeApprove(address($.morpho), amount);
+    _marketParams.loanToken.safeApprove(address($.morpho), amount);
 
     // Repay debt to Morpho
-    $.morpho.repay($.marketParams, amount, 0, address(this), "");
+    $.morpho.repay(_marketParams, amount, 0, address(this), "");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -312,13 +316,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @return True if the position is healthy, false otherwise.
   function _isHealthy(uint256 lltv, address oracle) internal view returns (bool) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
-
-    Position memory _pos = $.morpho.position($.marketId, address(this));
+    IMorpho morpho = $.morpho;
+    Position memory _pos = morpho.position($.marketId, address(this));
 
     // If no borrow, position is always healthy
     if (_pos.borrowShares == 0) return true;
 
-    Market memory _mkt = $.morpho.market($.marketId);
+    Market memory _mkt = morpho.market($.marketId);
 
     // Get collateral price from oracle
     uint256 _collateralPrice = IOracle(oracle).price();
