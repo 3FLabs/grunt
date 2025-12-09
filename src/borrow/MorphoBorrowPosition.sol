@@ -163,15 +163,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     MarketParams memory _marketParams = $.marketParams;
+    IMorpho _morpho = $.morpho;
 
     // Transfer collateral from caller to this contract
     _marketParams.collateralToken.safeTransferFrom(msg.sender, address(this), amount);
 
     // Approve Morpho to spend collateral
-    _marketParams.collateralToken.safeApprove(address($.morpho), amount);
+    _marketParams.collateralToken.safeApprove(address(_morpho), amount);
 
     // Supply collateral to Morpho on behalf of this contract
-    $.morpho.supplyCollateral(_marketParams, amount, address(this), "");
+    _morpho.supplyCollateral(_marketParams, amount, address(this), "");
   }
 
   /// @inheritdoc IBorrowPosition
@@ -232,15 +233,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     MarketParams memory _marketParams = $.marketParams;
+    IMorpho _morpho = $.morpho;
 
     // Transfer loan tokens from caller to this contract
     _marketParams.loanToken.safeTransferFrom(msg.sender, address(this), amount);
 
     // Approve Morpho to spend loan tokens
-    _marketParams.loanToken.safeApprove(address($.morpho), amount);
+    _marketParams.loanToken.safeApprove(address(_morpho), amount);
 
     // Repay debt to Morpho
-    $.morpho.repay(_marketParams, amount, 0, address(this), "");
+    _morpho.repay(_marketParams, amount, 0, address(this), "");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -270,9 +272,11 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   ///      of the total market debt that grows over time.
   function totalBorrowed() external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
+    IMorpho _morpho = $.morpho;
+    Id _marketId = $.marketId;
 
-    Position memory _pos = $.morpho.position($.marketId, address(this));
-    Market memory _mkt = $.morpho.market($.marketId);
+    Position memory _pos = _morpho.position(_marketId, address(this));
+    Market memory _mkt = _morpho.market(_marketId);
 
     // Convert borrow shares to assets using market totals
     return uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
