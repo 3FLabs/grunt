@@ -15,3 +15,6 @@ docs/
 
 # IDE files
 .vscode/
+
+# LLM files
+CLAUDE.md

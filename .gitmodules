@@ -4,3 +4,9 @@
 [submodule "lib/solady"]
 	path = lib/solady
 	url = https://github.com/vectorized/solady
+[submodule "lib/morpho-blue"]
+	path = lib/morpho-blue
+	url = https://github.com/morpho-org/morpho-blue
+[submodule "lib/pre-liquidation"]
+	path = lib/pre-liquidation
+	url = https://github.com/morpho-org/pre-liquidation

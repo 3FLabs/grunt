@@ -2,8 +2,11 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-# Exclude mock contracts and scripts from coverage reports
-no_match_coverage = "mock|\\.s\\.sol$"
+# Exclude mock contracts, scripts, PreLiquidation lib, and bytecode helpers from coverage reports
+# This prevents double counting when using multi-compiler support
+no_match_coverage = "mock|\\.s\\.sol$|lib/pre-liquidation|PreLiquidationBytecode"
+# Enable auto-detection for multiple Solidity versions
+auto_detect_solc = true
 
 [fmt]
 tab_width = 2

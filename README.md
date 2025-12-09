@@ -316,3 +316,72 @@ When an offer is consumed, the protocol validates:
 5. **Signature validity**: EIP-712 or EIP-1271 signature verification
 
 Upon successful validation, the offer's nonce is stored, preventing replay attacks.
+
+## Borrow Module
+
+The borrow module enables protocol participants to open and manage collateralized borrow positions across different lending protocols through a common `IBorrowPosition` interface.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      BORROW MODULE ARCHITECTURE                  │
+└─────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────┐
+  │  IBorrowPosition     │  <-- Common interface for all protocols
+  │  (interface)         │
+  └──────────┬───────────┘
+             │
+             │ implements
+             ▼
+  ┌──────────────────────────────┐
+  │   MorphoBorrowPosition       │  <-- Morpho Blue integration
+  │   - Initializable            │
+  │   - Ownable                  │
+  │   - ERC-7201 Storage         │
+  │   - PreLiquidation Support   │
+  └──────────────────────────────┘
+```
+
+### MorphoBorrowPosition
+
+Implementation of a borrow position for the Morpho Blue lending protocol with integrated PreLiquidation system support.
+
+**Key Features:**
+- **PreLiquidation Integration**: Connects to Morpho's PreLiquidation system for custom liquidation thresholds
+- **Dual LLTV Enforcement**: Enforces both market LLTV (by Morpho) and stricter preLltv (by this contract)
+- **ERC-7201 Namespaced Storage**: Proxy-compatible storage pattern preventing storage collisions
+- **Ownable Access Control**: Position manager has exclusive control over operations
+
+**Initialization:**
+Requires:
+- `morpho` - The Morpho Blue protocol contract
+- `marketId` - The Morpho market ID for this position
+- `positionManager` - The owner address controlling this position
+- `preLiquidation` - The PreLiquidation contract (must be from the factory)
+
+The contract validates that the PreLiquidation contract:
+1. Exists in the PreLiquidation factory's registry
+2. Has a market ID matching the provided marketId
+3. Authorizes the PreLiquidation contract to manage position liquidations
+
+**Operations:**
+- `supplyCollateral(amount)` - Add collateral to increase borrowing capacity
+- `withdrawCollateral(amount)` - Remove collateral (enforces preLltv health check)
+- `borrow(amount)` - Borrow assets against collateral (enforces preLltv health check)
+- `repay(amount)` - Repay borrowed assets
+
+**Views:**
+- `totalBorrowed()` - Current debt including accrued interest
+- `totalCollateral()` - Current collateral amount
+- `isHealthy(lltv)` - Whether position is above the specified LLTV threshold
+- `maxBorrow(lltv)` - Maximum borrowable amount given current collateral and specified LLTV
+
+### Health Factor & PreLiquidation
+
+Position health is determined by comparing borrowed amount against maximum capacity at a given LLTV:
+
+```
+collateralValue = collateral × oraclePrice / ORACLE_PRICE_SCALE
+maxBorrow = collateralValue × lltv
+isHealthy(lltv) = maxBorrow ≥ totalBorrowed
+```
