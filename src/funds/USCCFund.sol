@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.8.19;
+
+import {IFund, State, Request} from "../interfaces/funds/IFund.sol";
+
+contract USCCFund is IFund {
+  function create(Request calldata) external pure override returns (State) {
+    return State.ACCEPTED;
+  }
+
+  function commit(Request calldata) external pure override returns (State, uint256) {
+    return (State.ENDED, 0);
+  }
+
+  function recover(Request calldata) external pure override returns (State, uint256) {
+    return (State.ENDED, 0);
+  }
+
+  function unlock(Request calldata) external pure override returns (State, uint256) {
+    return (State.ENDED, 0);
+  }
+
+  function estimate(Request calldata) external pure override returns (uint256) {
+    return 0;
+  }
+
+  function asset() external pure override returns (address) {
+    return address(0);
+  }
+
+  function totalAssets() external pure override returns (uint256) {
+    return 0;
+  }
+
+  function maxDeposit(address) external pure override returns (uint256) {
+    return type(uint256).max;
+  }
+
+  function maxRedeem(address) external pure override returns (uint256) {
+    return type(uint256).max;
+  }
+
+  function state(Request calldata) external pure override returns (State) {
+    return State.ENDED;
+  }
+}
