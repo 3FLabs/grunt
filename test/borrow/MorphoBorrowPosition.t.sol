@@ -1204,6 +1204,9 @@ contract MorphoBorrowPositionTest is Test {
   function test_maxBorrow_AfterCollateralSupply() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
 
+    // Supply liquidity to Morpho
+    _supplyLiquidity(LOAN_AMOUNT);
+
     collateralToken.setBalance(positionManager, collateralAmount);
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
@@ -1214,12 +1217,15 @@ contract MorphoBorrowPositionTest is Test {
   function test_maxBorrow_ProportionalToLLTV() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
 
+    // Calculate expected max borrow and supply sufficient liquidity
+    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, DEFAULT_LLTV);
+    _supplyLiquidity(expectedMaxBorrow * 2);
+
     collateralToken.setBalance(positionManager, collateralAmount);
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
     uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
-    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, DEFAULT_LLTV);
 
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow calculation incorrect");
   }
@@ -1247,6 +1253,9 @@ contract MorphoBorrowPositionTest is Test {
 
     oracle.setPrice(price * (ORACLE_PRICE_SCALE / 1e18));
 
+    // Supply liquidity to Morpho (sufficient for expected max borrow)
+    _supplyLiquidity(10_000_000e18);
+
     collateralToken.setBalance(positionManager, collateralAmount);
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
@@ -1263,14 +1272,38 @@ contract MorphoBorrowPositionTest is Test {
 
     oracle.setPrice(price);
 
+    // Calculate expected max borrow and supply sufficient liquidity
+    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, price, DEFAULT_LLTV);
+    _supplyLiquidity(expectedMaxBorrow * 2); // Supply 2x to be safe
+
     collateralToken.setBalance(positionManager, collateralAmount);
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
     uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
-    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, price, DEFAULT_LLTV);
 
     assertApproxEqAbs(maxBorrow, expectedMaxBorrow, 1, "Max borrow should match calculation");
+  }
+
+  function test_maxBorrow_LimitedByAvailableLiquidity() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT; // 10,000e18
+    uint256 limitedLiquidity = 3_000e18; // Less than what collateral would allow
+
+    // Calculate theoretical max borrow (would be 8,000e18 with 80% LLTV)
+    uint256 theoreticalMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, DEFAULT_LLTV);
+
+    // Supply less liquidity than theoretical max
+    _supplyLiquidity(limitedLiquidity);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
+
+    // Max borrow should be limited by available liquidity, not collateral
+    assertEq(maxBorrow, limitedLiquidity, "Max borrow should equal available liquidity when liquidity is limiting");
+    assertLt(maxBorrow, theoreticalMaxBorrow, "Max borrow should be less than theoretical max");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1447,6 +1480,9 @@ contract MorphoBorrowPositionTest is Test {
 
   function test_EdgeCase_OraclePriceChanges() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity to Morpho (sufficient for all price scenarios)
+    _supplyLiquidity(100_000_000e18);
 
     collateralToken.setBalance(positionManager, collateralAmount);
     vm.prank(positionManager);

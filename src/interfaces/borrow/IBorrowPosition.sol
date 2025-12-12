@@ -53,7 +53,8 @@ interface IBorrowPosition {
   /// @return True if the position is healthy, false otherwise.
   function isHealthy(uint256 lltv) external view returns (bool);
 
-  /// @notice Returns the maximum amount that can be borrowed from this position for a given LLTV.
+  /// @notice Returns the maximum amount that can be borrowed from this position for a given LLTV
+  ///         (taking into account available liquidity).
   /// @param lltv The loan-to-liquidation value to consider.
   /// @return The maximum borrowable amount.
   function maxBorrow(uint256 lltv) external view returns (uint256);
