@@ -3,6 +3,7 @@ pragma solidity =0.8.19;
 
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
@@ -25,6 +26,7 @@ import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   using MathLib for uint256;
   using SharesMathLib for uint256;
+  using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -299,14 +301,21 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @inheritdoc IBorrowPosition
   function maxBorrow(uint256 lltv) external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
+    Id _marketId = $.marketId;
+    IMorpho _morpho = $.morpho;
 
-    Position memory _pos = $.morpho.position($.marketId, address(this));
+    // Get available liquidity in the market
+    Market memory _mkt = _morpho.market(_marketId);
+    uint256 _availableLiquidity = _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
 
     // Get collateral price from oracle
+    Position memory _pos = _morpho.position(_marketId, address(this));
     uint256 _collateralPrice = IOracle($.marketParams.oracle).price();
 
     // Calculate max borrow: collateralValue * LLTV
-    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv);
+    // Return computed max borrow or available liquidity, whichever is lower
+    return
+      uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv).min(_availableLiquidity);
   }
 
   /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.
