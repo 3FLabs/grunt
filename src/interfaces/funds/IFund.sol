@@ -25,6 +25,7 @@ struct Request {
   bytes32 salt;
 }
 
+/// @notice Interface for on-chain fund wrappers managing asset deposits and redemptions.
 interface IFund {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         OPERATIONS                         */
@@ -43,7 +44,7 @@ interface IFund {
 
   /// @notice Recovers input assets after a failed or partial processing.
   /// @param request The request parameters identifying the operation.
-  /// @return The new state after recovery (PROCESSING if partial, ENDED if full).
+  /// @return The new state after recovery (staying in RECOVERING if partial, ENDED if full).
   /// @return The assets that have been recovered by the receiver.
   function recover(Request calldata request) external returns (State, uint256);
 
@@ -52,7 +53,7 @@ interface IFund {
   ///      For REDEEM operations, transfers output assets from the wrapper to request.receiver.
   ///      Only callable when the request is in UNLOCKING state.
   /// @param request The request parameters identifying the completed operation.
-  /// @return The new state after unlocking (PROCESSING if partial, ENDED if full).
+  /// @return The new state after unlocking (staying in UNLOCKING if partial, ENDED if full).
   /// @return The assets that have been unlocked to the receiver.
   function unlock(Request calldata request) external returns (State, uint256);
 
