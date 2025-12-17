@@ -1096,9 +1096,7 @@ contract MorphoBorrowPositionTest is Test {
     uint256 expectedQuotedCollateral = _quoteCollateral(collateralAmount, newPrice);
     assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Collateral not quoted at oracle price");
     assertEq(
-      borrowPosition.totalCollateral(),
-      collateralAmount * 2,
-      "With 2x price, quoted collateral should be 2x raw amount"
+      borrowPosition.totalCollateral(), collateralAmount * 2, "With 2x price, quoted collateral should be 2x raw amount"
     );
   }
 
