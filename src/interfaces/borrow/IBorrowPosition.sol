@@ -44,7 +44,7 @@ interface IBorrowPosition {
   /// @return The total borrowed asset amount.
   function totalBorrowed() external view returns (uint256);
 
-  /// @notice Returns the total amount of collateral of this position.
+  /// @notice Returns the total amount of collateral of this position (quoted in borrowed asset).
   /// @return The total collateral amount.
   function totalCollateral() external view returns (uint256);
 
