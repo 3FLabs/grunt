@@ -285,11 +285,12 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   }
 
   /// @inheritdoc IBorrowPosition
-  /// @dev Returns the raw collateral amount stored in the Morpho position.
-  ///      This is denominated in the collateral token's native units.
+  /// @dev Takes the raw collateral amount stored in the Morpho position and quotes it
+  ///      in borrowed asset units.
   function totalCollateral() external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
-    return $.morpho.position($.marketId, address(this)).collateral;
+    return uint256($.morpho.position($.marketId, address(this)).collateral)
+      .mulDivDown(IOracle($.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
   }
 
   /// @inheritdoc IBorrowPosition
@@ -316,6 +317,15 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // Return computed max borrow or available liquidity, whichever is lower
     return
       uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv).min(_availableLiquidity);
+  }
+
+  /// @inheritdoc IBorrowPosition
+  function availableLiquidity() external view override returns (uint256) {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    // Get available liquidity in the market
+    Market memory _mkt = $.morpho.market($.marketId);
+    return _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
   }
 
   /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.
