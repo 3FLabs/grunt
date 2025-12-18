@@ -169,7 +169,5 @@ interface IPositionManager {
   /// @param data The rebalancing data containing amounts to pull from caller and operations to execute
   /// @return collateralExcess The excess collateral asset amount returned to the caller
   /// @return debtExcess The excess debt asset amount returned to the caller
-  function rebalance(RebalancingData calldata data)
-    external
-    returns (uint256 collateralExcess, uint256 debtExcess);
+  function rebalance(RebalancingData calldata data) external returns (uint256 collateralExcess, uint256 debtExcess);
 }
