@@ -375,6 +375,7 @@ The contract validates that the PreLiquidation contract:
 - `totalCollateral()` - Current collateral value **quoted in borrowed asset terms** (using oracle price)
 - `isHealthy(lltv)` - Whether position is above the specified LLTV threshold
 - `maxBorrow(lltv)` - Maximum borrowable amount given current collateral and specified LLTV
+- `availableLiquidity()` - Available liquidity in the market (totalSupplyAssets - totalBorrowAssets)
 
 ### Health Factor & PreLiquidation
 

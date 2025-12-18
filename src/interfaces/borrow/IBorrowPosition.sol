@@ -58,4 +58,8 @@ interface IBorrowPosition {
   /// @param lltv The loan-to-liquidation value to consider.
   /// @return The maximum borrowable amount.
   function maxBorrow(uint256 lltv) external view returns (uint256);
+
+  /// @notice Returns the available liquidity in the BorrowPosition market.
+  /// @return The amount of assets available for borrowing.
+  function availableLiquidity() external view returns (uint256);
 }

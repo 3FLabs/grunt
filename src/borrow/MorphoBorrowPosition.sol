@@ -319,6 +319,15 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
       uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv).min(_availableLiquidity);
   }
 
+  /// @inheritdoc IBorrowPosition
+  function availableLiquidity() external view override returns (uint256) {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+
+    // Get available liquidity in the market
+    Market memory _mkt = $.morpho.market($.marketId);
+    return _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
+  }
+
   /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.
   ///      Health calculation:
   ///      1. If no borrow exists (borrowShares == 0), position is always healthy.

@@ -1330,6 +1330,9 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(collateralAmount);
 
+    // Verify available liquidity matches what was supplied
+    assertEq(borrowPosition.availableLiquidity(), limitedLiquidity, "Available liquidity should match supply");
+
     uint256 maxBorrow = borrowPosition.maxBorrow(marketParams.lltv);
 
     // Max borrow should be limited by available liquidity, not collateral
@@ -1345,6 +1348,68 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(Id.unwrap(borrowPosition.marketId()), Id.unwrap(marketId), "Market ID mismatch");
   }
 
+  function test_availableLiquidity_InitiallyZero() public view {
+    assertEq(borrowPosition.availableLiquidity(), 0, "Available liquidity should be zero initially");
+  }
+
+  function test_availableLiquidity_AfterSupply() public {
+    uint256 supplyAmount = LOAN_AMOUNT;
+    _supplyLiquidity(supplyAmount);
+
+    assertEq(borrowPosition.availableLiquidity(), supplyAmount, "Available liquidity should equal supply");
+  }
+
+  function test_availableLiquidity_DecreasesAfterBorrow() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+    uint256 supplyAmount = LOAN_AMOUNT;
+
+    _supplyLiquidity(supplyAmount);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 availableBefore = borrowPosition.availableLiquidity();
+    assertEq(availableBefore, supplyAmount, "Available liquidity should equal supply before borrow");
+
+    uint256 borrowAmount = LOAN_AMOUNT / 2;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    uint256 availableAfter = borrowPosition.availableLiquidity();
+    assertEq(availableAfter, supplyAmount - borrowAmount, "Available liquidity should decrease by borrow amount");
+    assertLt(availableAfter, availableBefore, "Available liquidity should be less after borrow");
+  }
+
+  function test_availableLiquidity_IncreasesAfterRepay() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+    uint256 supplyAmount = LOAN_AMOUNT;
+
+    _supplyLiquidity(supplyAmount);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 borrowAmount = LOAN_AMOUNT / 2;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    uint256 availableAfterBorrow = borrowPosition.availableLiquidity();
+
+    // Repay half
+    uint256 repayAmount = borrowAmount / 2;
+    loanToken.setBalance(positionManager, repayAmount);
+    vm.prank(positionManager);
+    borrowPosition.repay(repayAmount);
+
+    uint256 availableAfterRepay = borrowPosition.availableLiquidity();
+    assertGt(availableAfterRepay, availableAfterBorrow, "Available liquidity should increase after repay");
+    assertApproxEqAbs(
+      availableAfterRepay, availableAfterBorrow + repayAmount, 1, "Available liquidity should increase by repay amount"
+    );
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*              INTEGRATION & WORKFLOW TESTS                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -1356,6 +1421,9 @@ contract MorphoBorrowPositionTest is Test {
     // 1. Supply liquidity to Morpho
     _supplyLiquidity(LOAN_AMOUNT);
 
+    // Verify available liquidity after supply
+    assertEq(borrowPosition.availableLiquidity(), LOAN_AMOUNT, "Step 1: Available liquidity should match supply");
+
     // 2. Supply collateral
     collateralToken.setBalance(positionManager, collateralAmount);
     vm.prank(positionManager);
@@ -1366,19 +1434,31 @@ contract MorphoBorrowPositionTest is Test {
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Step 2: Position should be healthy");
 
     // 3. Borrow
+    uint256 availableBeforeBorrow = borrowPosition.availableLiquidity();
     vm.prank(positionManager);
     borrowPosition.borrow(borrowAmount);
 
     assertGt(borrowPosition.totalBorrowed(), 0, "Step 3: Borrow failed");
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Step 3: Position should still be healthy");
+    assertEq(
+      borrowPosition.availableLiquidity(),
+      availableBeforeBorrow - borrowAmount,
+      "Step 3: Available liquidity should decrease by borrow amount"
+    );
 
     // 4. Repay
     uint256 totalBorrowed = borrowPosition.totalBorrowed();
+    uint256 availableBeforeRepay = borrowPosition.availableLiquidity();
     loanToken.setBalance(positionManager, totalBorrowed + 1e18);
     vm.prank(positionManager);
     borrowPosition.repay(totalBorrowed);
 
     assertEq(borrowPosition.totalBorrowed(), 0, "Step 4: Repay failed");
+    assertGt(
+      borrowPosition.availableLiquidity(),
+      availableBeforeRepay,
+      "Step 4: Available liquidity should increase after repay"
+    );
 
     // 5. Withdraw collateral
     vm.prank(positionManager);
