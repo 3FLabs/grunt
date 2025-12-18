@@ -1,35 +1,36 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.8.19;
 
-import {IFund, State, Request} from "../interfaces/funds/IFund.sol";
+import {IFund} from "../interfaces/funds/IFund.sol";
+import {Order, State} from "../libs/Order.sol";
 
 contract USCCFund is IFund {
   /// @inheritdoc IFund
-  function create(Request calldata) external pure override returns (State) {
+  function create(Order calldata) external pure override returns (State) {
     // validate inputs.
     // No pending state, always accepted or revert.
     return State.ACCEPTED;
   }
 
   /// @inheritdoc IFund
-  function commit(Request calldata) external pure override returns (State, uint256) {
-    // request must be accepted
+  function commit(Order calldata) external pure override returns (State, uint256) {
+    // order must be accepted
     // transferFrom caller to superstate fund
     return (State.UNLOCKING, 0);
   }
 
   /// @inheritdoc IFund
-  function recover(Request calldata) external pure override returns (State, uint256) {
+  function recover(Order calldata) external pure override returns (State, uint256) {
     return (State.ENDED, 0);
   }
 
   /// @inheritdoc IFund
-  function unlock(Request calldata) external pure override returns (State, uint256) {
+  function unlock(Order calldata) external pure override returns (State, uint256) {
     return (State.ENDED, 0);
   }
 
   /// @inheritdoc IFund
-  function estimate(Request calldata) external pure override returns (uint256) {
+  function estimate(Order calldata) external pure override returns (uint256) {
     return 0;
   }
 
@@ -54,7 +55,7 @@ contract USCCFund is IFund {
   }
 
   /// @inheritdoc IFund
-  function state(Request calldata) external pure override returns (State) {
+  function state(Order calldata) external pure override returns (State) {
     return State.ENDED;
   }
 }
