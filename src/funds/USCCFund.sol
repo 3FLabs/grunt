@@ -16,9 +16,12 @@ import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Inte
 import {Order, State, Id, Mode} from "../libs/Order.sol";
 
 /// @notice Wrapper of Superstate USCC fund.
-/// @dev Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
-///      The USCC tokens are held by this contract. Only wUSCC are sent to users.
-///      The order owner and receiver is always msg.sender (the position manager).
+/// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
+///        The USCC tokens are held by this contract. Only wUSCC are sent to users.
+///      - The order owner and receiver is always msg.sender (the position manager).
+///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
+///        from the state returned by the public state() function. The state() function performs dynamic checks
+///        on asset balances to determine state transitions.
 contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -104,12 +107,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param recipient The superstate address receiving USDC to mint USCC.
   /// @param currentOrder The current order being processed. We only handle one at a time.
-  /// @param internalState The internal state of the (current) order.
+  /// @param internalState The internal state of the current order.
   /// @param usdc The address of the USDC token contract.
   /// @param uscc The address of the USCC token contract.
   /// @param wuscc The address of the wrapped USCC token contract.
   /// @param oracle The address of Chainlink USCC Oracle.
-  /// @param cachedBalance Cached USCC balance to compute received amounts.
+  /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
@@ -286,6 +289,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @notice Sets the fund internal state to RECOVERING (if issues arise with Superstate).
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  ///      This is an emergency function to signal that Superstate failed to process the order.
+  ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
+  ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
   function recovering() external onlyOwnerOrRoles(OPERATOR_ROLE) {
     UsccFundStorage storage $ = _usccFundStorage();
     if ($.internalState != State.PROCESSING) revert InvalidState($.internalState);
@@ -347,6 +353,17 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
+  /// @dev This function returns the dynamic state based on balance checks, which may differ from internalState.
+  ///
+  ///      For PROCESSING state (waiting for Superstate to process the order):
+  ///      - Deposit: checks if USCC output was received → UNLOCKING if yes, PROCESSING if no
+  ///      - Redeem: checks if USDC output was received → UNLOCKING if yes, PROCESSING if no
+  ///
+  ///      For RECOVERING state (Superstate failed, attempting recovery):
+  ///      - Deposit: checks if USDC input was returned → RECOVERING if yes, PROCESSING if no
+  ///      - Redeem: checks if USCC input was returned → RECOVERING if yes, PROCESSING if no
+  ///
+  ///      For all other states (EMPTY, ACCEPTED, ENDED), returns internalState directly.
   function state(Order calldata order) public view override returns (State) {
     UsccFundStorage storage $ = _usccFundStorage();
 
