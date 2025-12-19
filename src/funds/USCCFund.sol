@@ -250,16 +250,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
-    if (state(order) != State.RECOVERING) revert InvalidState($.internalState);
+
+    (State _currentState, uint256 _amount) = _state(order);
+    if (_currentState != State.RECOVERING) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
-      $.usdc.safeTransfer(msg.sender, order.input);
+      $.usdc.safeTransfer(msg.sender, _amount);
     } else {
-      IWrappedAsset($.wuscc).mint(msg.sender, order.input);
+      IWrappedAsset($.wuscc).mint(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
-    return (State.ENDED, order.input);
+    return (State.ENDED, _amount);
   }
 
   /// @inheritdoc IFund
@@ -267,16 +269,15 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
-    if (state(order) != State.UNLOCKING) revert InvalidState($.internalState);
 
-    uint256 _amount;
+    (State _currentState, uint256 _amount) = _state(order);
+    if (_currentState != State.UNLOCKING) revert InvalidState($.internalState);
+
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver and keep USCC in the contract
-      _amount = $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
       IWrappedAsset($.wuscc).mint(msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
-      _amount = $.usdc.balanceOf(address(this));
       $.usdc.safeTransfer(msg.sender, _amount);
     }
 
@@ -331,16 +332,15 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function totalAssets() external view override returns (uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
-    uint256 balance = $.uscc.balanceOf(address(this));
+    uint256 _balance = $.uscc.balanceOf(address(this));
     AggregatorV3Interface _oracle = AggregatorV3Interface($.oracle);
 
-    (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = _oracle.latestRoundData();
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
 
-    if (answer <= 0) revert ChainlinkInvalidAnswer();
-    if (updatedAt == 0) revert ChainlinkIncompleteRound();
-    if (answeredInRound < roundId) revert ChainlinkStaleRound();
-
-    return balance.mulDiv(answer.toUint256(), 10 ** _oracle.decimals());
+    if (_answer <= 0) revert ChainlinkInvalidAnswer();
+    if (_updatedAt == 0) revert ChainlinkIncompleteRound();
+    if (_answeredInRound < _roundId) revert ChainlinkStaleRound();
+    return _balance.mulDiv(_answer.toUint256(), 10 ** _oracle.decimals());
   }
 
   /// @inheritdoc IFund
@@ -354,7 +354,17 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev This function returns the dynamic state based on balance checks, which may differ from internalState.
+  function state(Order calldata order) public view override returns (State) {
+    (State _currentState,) = _state(order);
+    return _currentState;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         INTERNALS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Internal function that returns both the dynamic state and the associated amount.
+  ///      This function returns the dynamic state based on balance checks, which may differ from internalState.
   ///
   ///      For PROCESSING state (waiting for Superstate to process the order):
   ///      - Deposit: checks if USCC output was received → UNLOCKING if yes, PROCESSING if no
@@ -365,38 +375,40 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      - Redeem: checks if USCC input was returned → RECOVERING if yes, PROCESSING if no
   ///
   ///      For all other states (EMPTY, ACCEPTED, ENDED), returns internalState directly.
-  function state(Order calldata order) public view override returns (State) {
+  /// @param order The order to check the state for.
+  /// @return The current state based on balance checks.
+  /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
+  function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
     if ($.internalState == State.PROCESSING) {
+      uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        return $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance) >= order.output
-          ? State.UNLOCKING
-          : State.PROCESSING;
+        _amount = $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
+        return _amount >= order.output ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we received USDC
-        return $.usdc.balanceOf(address(this)) >= order.output ? State.UNLOCKING : State.PROCESSING;
+        _amount = $.usdc.balanceOf(address(this));
+        return _amount >= order.output ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       }
     }
 
     if ($.internalState == State.RECOVERING) {
+      uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
-        return $.usdc.balanceOf(address(this)) >= order.input ? State.RECOVERING : State.PROCESSING;
+        _amount = $.usdc.balanceOf(address(this));
+        return _amount >= order.input ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we can recover USCC
-        return $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance) >= order.input
-          ? State.RECOVERING
-          : State.PROCESSING;
+        _amount = $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
+        return _amount >= order.input ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       }
     }
-    return $.internalState;
-  }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         INTERNALS                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+    return ($.internalState, 0);
+  }
 
   /// @inheritdoc OwnableRoles
   /// @dev Set DEPOSITOR_ROLE as immutable (only set in initialize).
