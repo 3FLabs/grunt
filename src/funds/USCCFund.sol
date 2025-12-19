@@ -1,19 +1,29 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.8.19;
 
-import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {ISuperstateToken} from "../interfaces/integrations/superstate/ISuperstateToken.sol";
 import {IAllowlist} from "../interfaces/integrations/superstate/IAllowlist.sol";
 import {IFund} from "../interfaces/funds/IFund.sol";
-import {Order, State, Id} from "../libs/Order.sol";
+import {Order, State, Id, Mode} from "../libs/Order.sol";
 
 /// @notice Wrapper of Superstate USCC fund.
 /// @dev Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
-contract USCCFund is IFund, Ownable, Initializable {
+contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           ROLES                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Role for operator.
+  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+
+  /// @notice Role for depositor.
+  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
@@ -48,6 +58,9 @@ contract USCCFund is IFund, Ownable, Initializable {
 
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
+
+  /// @notice Thrown when attempting to grant invalid roles (e.g., immutable roles).
+  error InvalidRoles(uint256 roles);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -94,15 +107,20 @@ contract USCCFund is IFund, Ownable, Initializable {
   /// @notice Initializes the USCCFund contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
   ///      The position manager becomes the owner and has exclusive control over the position.
-  /// @param positionManager_ The address of the position manager (owner) that will control this position.
+  /// @param owner_ The address that will own this contract (managing roles).
+  /// @param positionManager_ The address of the position manager (depositor) that will control this position.
   /// @param recipient_ The superstate address receiving USDC to mint USCC.
   /// @param usdc_ The address of the USDC token contract.
   /// @param uscc_ The address of the USCC token contract.
   /// @param wuscc_ The address of the wrapped USCC token contract.
-  function initialize(address positionManager_, address recipient_, address usdc_, address uscc_, address wuscc_)
-    public
-    initializer
-  {
+  function initialize(
+    address owner_,
+    address positionManager_,
+    address recipient_,
+    address usdc_,
+    address uscc_,
+    address wuscc_
+  ) public initializer {
     if (usdc_.code.length == 0) revert InvalidContract(usdc_);
     if (uscc_.code.length == 0) revert InvalidContract(uscc_);
     if (wuscc_.code.length == 0) revert InvalidContract(wuscc_);
@@ -114,7 +132,8 @@ contract USCCFund is IFund, Ownable, Initializable {
     $.uscc = uscc_;
     $.wuscc = wuscc_;
 
-    _initializeOwner(positionManager_);
+    _initializeOwner(owner_);
+    _setRoles(positionManager_, DEPOSITOR_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -122,14 +141,13 @@ contract USCCFund is IFund, Ownable, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFund
-  function create(Order calldata order) external override onlyOwner returns (State) {
+  function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
     if (order.input == 0) revert AmountZero(); // no restrictions on output
     if (order.owner != msg.sender) revert InvalidOwner();
     if (order.receiver != msg.sender) revert InvalidReceiver();
 
     UsccFundStorage storage $ = _usccFundStorage();
-    if ($.currentState != State.EMPTY) revert PendingOrder();
-    if (!$.currentOrder.eq(Id.wrap(0))) revert PendingOrder();
+    if ($.currentState != State.EMPTY && $.currentState != State.ENDED) revert PendingOrder();
 
     // Check allowlist permissions for this contract to deposit in USCC
     if (!IAllowlist(ISuperstateToken($.uscc).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC"))
@@ -145,34 +163,42 @@ contract USCCFund is IFund, Ownable, Initializable {
   }
 
   /// @inheritdoc IFund
-  function commit(Order calldata order) external override onlyOwner returns (State, uint256) {
+  function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
     if ($.currentState != State.ACCEPTED) revert InvalidState($.currentState);
 
-    $.uscc.safeTransferFrom(msg.sender, $.recipient, order.input);
+    if (order.mode == Mode.DEPOSIT) {
+      $.uscc.safeTransferFrom(msg.sender, $.recipient, order.input);
+    } else {
+      // TODO burn wuscc
+    }
 
     $.currentState = State.PROCESSING;
-    return (State.UNLOCKING, 0);
+    return (State.PROCESSING, 0);
   }
 
   /// @inheritdoc IFund
-  function recover(Order calldata) external view override onlyOwner returns (State, uint256) {
-    // TODO
-    return (State.ENDED, 0);
-  }
-
-  /// @inheritdoc IFund
-  function unlock(Order calldata) external view override onlyOwner returns (State, uint256) {
-    // TODO
-    return (State.ENDED, 0);
-  }
-
-  function recovering() external {
-    // TODO only operator
-
+  function recover(Order calldata) external view override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
+    // TODO
+    return (State.ENDED, 0);
+  }
+
+  /// @inheritdoc IFund
+  function unlock(Order calldata) external view override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    // TODO
+
+    // TODO Mint wuscc to order.receiver
+
+    return (State.ENDED, 0);
+  }
+
+  /// @notice Sets the fund state to RECOVERING (if issues arise with Superstate).
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  function recovering() external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    UsccFundStorage storage $ = _usccFundStorage();
     if ($.currentState != State.PROCESSING) revert InvalidState($.currentState);
     $.currentState = State.RECOVERING;
   }
@@ -214,5 +240,19 @@ contract USCCFund is IFund, Ownable, Initializable {
 
     // TODO if processing (only) => check usdc balance
     return $.currentState;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         INTERNALS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc OwnableRoles
+  /// @dev Set DEPOSITOR_ROLE as immutable (only set in initialize).
+  function _grantRoles(address user, uint256 roles) internal override {
+    // Check if DEPOSITOR_ROLE is included in the roles bitmap
+    if (roles & DEPOSITOR_ROLE != 0) {
+      revert InvalidRoles(roles);
+    }
+    _updateRoles(user, roles, true);
   }
 }
