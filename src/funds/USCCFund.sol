@@ -170,7 +170,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (recipient_ == address(0)) revert AddressZero();
 
     // Ensure oracle decimals match USCC decimals
-    uint256 _usccDecimals = ISuperstateToken(uscc_).decimals();
+    uint256 _usccDecimals = IERC20(uscc_).decimals();
     if (AggregatorV3Interface(oracle_).decimals() != _usccDecimals) {
       revert InvalidOracle(oracle_);
     }
@@ -305,7 +305,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (oracle.code.length == 0) revert InvalidContract(oracle);
 
     // Ensure oracle decimals match USCC decimals
-    if (AggregatorV3Interface(oracle).decimals() != ISuperstateToken(_usccFundStorage().uscc).decimals()) {
+    if (AggregatorV3Interface(oracle).decimals() != IERC20(_usccFundStorage().uscc).decimals()) {
       revert InvalidOracle(oracle);
     }
     _usccFundStorage().oracle = oracle;
