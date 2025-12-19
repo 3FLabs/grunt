@@ -8,6 +8,7 @@ import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {ISuperstateToken} from "../interfaces/integrations/superstate/ISuperstateToken.sol";
 import {IAllowlist} from "../interfaces/integrations/superstate/IAllowlist.sol";
 import {IFund} from "../interfaces/funds/IFund.sol";
+import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {Order, State, Id, Mode} from "../libs/Order.sol";
 
 /// @notice Wrapper of Superstate USCC fund.
@@ -171,7 +172,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       $.uscc.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
-      // TODO burn wuscc
+      IWrappedAsset($.wuscc).burn(msg.sender, order.input);
+      // TODO redeem on Superstate
     }
 
     $.currentState = State.PROCESSING;
@@ -179,19 +181,33 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function recover(Order calldata) external view override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  /// @dev No partial recoveries, always goes to ENDED.
+  function recover(Order calldata) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
-    // TODO
+    // TODO check for USCC/USDC balance (order input)
+
+    $.currentState = State.ENDED;
     return (State.ENDED, 0);
   }
 
   /// @inheritdoc IFund
-  function unlock(Order calldata) external view override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
-    // TODO
+  /// @dev No partial unlocks, always goes to ENDED.
+  function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    UsccFundStorage storage $ = _usccFundStorage();
 
-    // TODO Mint wuscc to order.receiver
+    // TODO check for USDC balance received from Superstate
 
+    // TODO use right amount and not 0
+    if (order.mode == Mode.DEPOSIT) {
+      // Mint wUSCC to receiver
+      IWrappedAsset($.wuscc).mint(msg.sender, 0);
+    } else {
+      // Transfer USDC to receiver
+      $.usdc.safeTransferFrom(address(this), msg.sender, 0);
+    }
+
+    $.currentState = State.ENDED;
     return (State.ENDED, 0);
   }
 
