@@ -317,6 +317,22 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     _usccFundStorage().oracle = oracle;
   }
 
+  /// @notice Resolves the current order by setting its input and output amounts.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
+  ///      differ from expected ones (e.g., due to unexpected conditions).
+  function resolve(Order memory order, uint256 input, uint256 output) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    UsccFundStorage storage $ = _usccFundStorage();
+    State _internalState = $.internalState;
+    if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) revert InvalidState($.internalState);
+    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+
+    order.input = input;
+    order.output = output;
+
+    $.currentOrder = order.toId(address(this));
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
