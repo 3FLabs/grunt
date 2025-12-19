@@ -18,7 +18,7 @@ import {Order, State, Id, Mode} from "../libs/Order.sol";
 /// @notice Wrapper of Superstate USCC fund.
 /// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
 ///        The USCC tokens are held by this contract. Only wUSCC are sent to users.
-///      - The order owner and receiver is always msg.sender (the position manager).
+///      - The order owner and receiver is always msg.sender (the depositor contract).
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
 ///        on asset balances to determine state transitions.
@@ -146,9 +146,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @notice Initializes the USCCFund contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
-  ///      The position manager becomes the owner and has exclusive control over the position.
-  /// @param owner_ The address that will own this contract (managing roles).
-  /// @param positionManager_ The address of the position manager (depositor) that will control this position.
+  ///      The owner has admin control, while the depositor can execute orders.
+  /// @param owner_ The address that will own this contract and manage roles.
+  /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
   /// @param recipient_ The superstate address receiving USDC to mint USCC.
   /// @param usdc_ The address of the USDC token contract.
   /// @param uscc_ The address of the USCC token contract.
@@ -156,13 +156,14 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param oracle_ The address of Chainlink USCC Oracle.
   function initialize(
     address owner_,
-    address positionManager_,
+    address depositor_,
     address recipient_,
     address usdc_,
     address uscc_,
     address wuscc_,
     address oracle_
   ) public initializer {
+    if (depositor_.code.length == 0) revert InvalidContract(depositor_);
     if (usdc_.code.length == 0) revert InvalidContract(usdc_);
     if (uscc_.code.length == 0) revert InvalidContract(uscc_);
     if (wuscc_.code.length == 0) revert InvalidContract(wuscc_);
@@ -189,7 +190,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.oracle = oracle_;
 
     _initializeOwner(owner_);
-    _setRoles(positionManager_, DEPOSITOR_ROLE);
+    _setRoles(depositor_, DEPOSITOR_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
