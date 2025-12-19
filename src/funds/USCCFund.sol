@@ -28,7 +28,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeCastLib for int256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           ROLES                            */
+  /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
@@ -36,6 +36,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @notice Role for depositor.
   uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+
+  /// @dev USCC/USDC/wUSCC all have 6 decimals (same for the oracle).
+  uint256 private constant _DECIMALS = 6;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
@@ -169,17 +172,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (wuscc_.code.length == 0) revert InvalidContract(wuscc_);
     if (oracle_.code.length == 0) revert InvalidContract(oracle_);
     if (recipient_ == address(0)) revert AddressZero();
+    _checkDecimals(usdc_);
+    _checkDecimals(uscc_);
+    _checkDecimals(wuscc_);
 
-    // Ensure oracle decimals match USCC decimals
-    uint256 _usccDecimals = IERC20(uscc_).decimals();
-    if (AggregatorV3Interface(oracle_).decimals() != _usccDecimals) {
+    // Ensure oracle has 6 decimals
+    if (AggregatorV3Interface(oracle_).decimals() != _DECIMALS) {
       revert InvalidOracle(oracle_);
-    }
-
-    // Ensure wUSCC decimals match USCC decimals
-    uint256 _wusccDecimals = IERC20(wuscc_).decimals();
-    if (_wusccDecimals != _usccDecimals) {
-      revert DecimalsMismatch(_wusccDecimals, _usccDecimals);
     }
 
     UsccFundStorage storage $ = _usccFundStorage();
@@ -307,9 +306,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (oracle.code.length == 0) revert InvalidContract(oracle);
 
     // Ensure oracle decimals match USCC decimals
-    if (AggregatorV3Interface(oracle).decimals() != IERC20(_usccFundStorage().uscc).decimals()) {
+    if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
       revert InvalidOracle(oracle);
     }
+
     _usccFundStorage().oracle = oracle;
   }
 
@@ -418,5 +418,14 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert InvalidRoles(roles);
     }
     _updateRoles(user, roles, true);
+  }
+
+  /// @dev Internal function to check that a token has the expected decimals (6).
+  /// @param token The token address to check.
+  function _checkDecimals(address token) internal view {
+    uint256 _decimals = IERC20(token).decimals();
+    if (_decimals != _DECIMALS) {
+      revert DecimalsMismatch(_decimals, _DECIMALS);
+    }
   }
 }
