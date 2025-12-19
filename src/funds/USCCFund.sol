@@ -321,6 +321,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
   ///      differ from expected ones (e.g., due to unexpected conditions).
+  /// @param order The order to resolve.
+  /// @param input The new input amount.
+  /// @param output The new output amount.
   function resolve(Order memory order, uint256 input, uint256 output) external onlyOwnerOrRoles(OPERATOR_ROLE) {
     UsccFundStorage storage $ = _usccFundStorage();
     State _internalState = $.internalState;
