@@ -230,18 +230,19 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
     if ($.internalState != State.ACCEPTED) revert InvalidState($.internalState);
 
+    address _usdc = $.usdc;
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
       $.usdc.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
       // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
       IWrappedAsset($.wuscc).burn(msg.sender, order.input);
-      ISuperstateToken($.uscc).offchainRedeem(order.input);
+      ISuperstateToken(_usdc).offchainRedeem(order.input);
     }
 
     // Snapshot balance before receiving minted uscc or recovered uscc
     // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
-    $.cachedBalance = $.uscc.balanceOf(address(this));
+    $.cachedBalance = _usdc.balanceOf(address(this));
 
     $.internalState = State.PROCESSING;
     return (State.PROCESSING, order.input);
@@ -335,15 +336,14 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function totalAssets() external view override returns (uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
-    uint256 _balance = $.uscc.balanceOf(address(this));
-    AggregatorV3Interface _oracle = AggregatorV3Interface($.oracle);
-
-    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) =
+      AggregatorV3Interface($.oracle).latestRoundData();
 
     if (_answer <= 0) revert ChainlinkInvalidAnswer();
     if (_updatedAt == 0) revert ChainlinkIncompleteRound();
     if (_answeredInRound < _roundId) revert ChainlinkStaleRound();
-    return _balance.mulDiv(_answer.toUint256(), _SCALED_UNIT);
+
+    return $.uscc.balanceOf(address(this)).mulDiv(_answer.toUint256(), _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
