@@ -238,7 +238,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     // Snapshot balance before receiving minted uscc or recovered uscc
     // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
-    $.cachedBalance = IERC20($.uscc).balanceOf(address(this));
+    $.cachedBalance = $.uscc.balanceOf(address(this));
 
     $.internalState = State.PROCESSING;
     return (State.PROCESSING, order.input);
@@ -271,11 +271,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     uint256 _amount;
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver and keep USCC in the contract
-      _amount = ISuperstateToken($.uscc).balanceOf(address(this)) - $.cachedBalance;
+      _amount = $.uscc.balanceOf(address(this)) - $.cachedBalance;
       IWrappedAsset($.wuscc).mint(msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
-      _amount = IERC20($.usdc).balanceOf(address(this));
+      _amount = $.usdc.balanceOf(address(this));
       $.usdc.safeTransfer(msg.sender, _amount);
     }
 
@@ -330,7 +330,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function totalAssets() external view override returns (uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
-    uint256 balance = ISuperstateToken($.uscc).balanceOf(address(this));
+    uint256 balance = $.uscc.balanceOf(address(this));
     AggregatorV3Interface _oracle = AggregatorV3Interface($.oracle);
 
     (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = _oracle.latestRoundData();
@@ -349,7 +349,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return IERC20(_usccFundStorage().wuscc).balanceOf(account);
+    return _usccFundStorage().wuscc.balanceOf(account);
   }
 
   /// @inheritdoc IFund
@@ -370,24 +370,20 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if ($.internalState == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        return ISuperstateToken($.uscc).balanceOf(address(this)) - $.cachedBalance >= order.output
-          ? State.UNLOCKING
-          : State.PROCESSING;
+        return $.uscc.balanceOf(address(this)) - $.cachedBalance >= order.output ? State.UNLOCKING : State.PROCESSING;
       } else {
         // Redeem: check if we received USDC
-        return IERC20($.usdc).balanceOf(address(this)) >= order.output ? State.UNLOCKING : State.PROCESSING;
+        return $.usdc.balanceOf(address(this)) >= order.output ? State.UNLOCKING : State.PROCESSING;
       }
     }
 
     if ($.internalState == State.RECOVERING) {
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
-        return IERC20($.usdc).balanceOf(address(this)) >= order.input ? State.RECOVERING : State.PROCESSING;
+        return $.usdc.balanceOf(address(this)) >= order.input ? State.RECOVERING : State.PROCESSING;
       } else {
         // Redeem: check if we can recover USCC
-        return ISuperstateToken($.uscc).balanceOf(address(this)) - $.cachedBalance >= order.input
-          ? State.RECOVERING
-          : State.PROCESSING;
+        return $.uscc.balanceOf(address(this)) - $.cachedBalance >= order.input ? State.RECOVERING : State.PROCESSING;
       }
     }
     return $.internalState;
