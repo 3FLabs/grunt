@@ -4,17 +4,24 @@ pragma solidity =0.8.19;
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {ISuperstateToken} from "../interfaces/integrations/superstate/ISuperstateToken.sol";
 import {IAllowlist} from "../interfaces/integrations/superstate/IAllowlist.sol";
 import {IFund} from "../interfaces/funds/IFund.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
+import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Interface.sol";
 import {Order, State, Id, Mode} from "../libs/Order.sol";
 
 /// @notice Wrapper of Superstate USCC fund.
 /// @dev Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
+///      The USCC tokens are held by this contract. Only wUSCC are sent to users.
 contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
+  using FixedPointMathLib for uint256;
+  using SafeCastLib for int256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ROLES                            */
@@ -63,6 +70,30 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @notice Thrown when attempting to grant invalid roles (e.g., immutable roles).
   error InvalidRoles(uint256 roles);
 
+  /// @notice Thrown when the Chainlink oracle returns a non-positive price.
+  /// @dev Indicates an invalid or paused oracle feed, or corrupted round data.
+  ///      Triggered if `answer <= 0` from `latestRoundData()`.
+  error ChainlinkInvalidAnswer();
+
+  /// @notice Thrown when the latest Chainlink round is not yet complete.
+  /// @dev Indicates the oracle round has not been finalized.
+  ///      Triggered if `updatedAt == 0` from `latestRoundData()`.
+  error ChainlinkIncompleteRound();
+
+  /// @notice Thrown when the Chainlink oracle response is stale.
+  /// @dev Indicates the answer comes from an earlier round than the latest one.
+  ///      Triggered if `answeredInRound < roundId` from `latestRoundData()`.
+  error ChainlinkStaleRound();
+
+  /// @notice Thrown when the provided oracle address is invalid (e.g., decimals mismatch).
+  /// @param oracle The invalid oracle address.
+  error InvalidOracle(address oracle);
+
+  /// @notice Thrown when there is a decimals mismatch between two tokens.
+  /// @param decimalsA The decimals of the first token.
+  /// @param decimalsB The decimals of the second token.
+  error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -76,6 +107,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param usdc The address of the USDC token contract.
   /// @param uscc The address of the USCC token contract.
   /// @param wuscc The address of the wrapped USCC token contract.
+  /// @param oracle The address of Chainlink USCC Oracle.
+  /// @param cachedBalance Cached USCC balance to compute received amounts.
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
@@ -83,6 +116,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address usdc;
     address uscc;
     address wuscc;
+    address oracle;
+    uint256 cachedBalance;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -114,24 +149,40 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param usdc_ The address of the USDC token contract.
   /// @param uscc_ The address of the USCC token contract.
   /// @param wuscc_ The address of the wrapped USCC token contract.
+  /// @param oracle_ The address of Chainlink USCC Oracle.
   function initialize(
     address owner_,
     address positionManager_,
     address recipient_,
     address usdc_,
     address uscc_,
-    address wuscc_
+    address wuscc_,
+    address oracle_
   ) public initializer {
     if (usdc_.code.length == 0) revert InvalidContract(usdc_);
     if (uscc_.code.length == 0) revert InvalidContract(uscc_);
     if (wuscc_.code.length == 0) revert InvalidContract(wuscc_);
+    if (oracle_.code.length == 0) revert InvalidContract(oracle_);
     if (recipient_ == address(0)) revert AddressZero();
+
+    // Ensure oracle decimals match USCC decimals
+    uint256 _usccDecimals = ISuperstateToken(uscc_).decimals();
+    if (AggregatorV3Interface(oracle_).decimals() != _usccDecimals) {
+      revert InvalidOracle(oracle_);
+    }
+
+    // Ensure wUSCC decimals match USCC decimals
+    uint256 _wusccDecimals = IERC20(wuscc_).decimals();
+    if (_wusccDecimals != _usccDecimals) {
+      revert DecimalsMismatch(_wusccDecimals, _usccDecimals);
+    }
 
     UsccFundStorage storage $ = _usccFundStorage();
     $.recipient = recipient_;
     $.usdc = usdc_;
     $.uscc = uscc_;
     $.wuscc = wuscc_;
+    $.oracle = oracle_;
 
     _initializeOwner(owner_);
     _setRoles(positionManager_, DEPOSITOR_ROLE);
@@ -159,46 +210,61 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     // No pending state, always accepted or revert.
     $.currentOrder = order.toId(address(this));
     $.currentState = State.ACCEPTED;
+    $.cachedBalance = 0;
 
     return State.ACCEPTED;
   }
 
   /// @inheritdoc IFund
+  /// @dev No partial commits, always goes to PROCESSING.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
     if ($.currentState != State.ACCEPTED) revert InvalidState($.currentState);
 
     if (order.mode == Mode.DEPOSIT) {
-      $.uscc.safeTransferFrom(msg.sender, $.recipient, order.input);
+      // Depositing: transfer USDC to recipient to mint USCC
+      $.usdc.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
+      // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
       IWrappedAsset($.wuscc).burn(msg.sender, order.input);
-      // TODO redeem on Superstate
+      ISuperstateToken($.uscc).offchainRedeem(order.input);
     }
 
+    // Snapshot balance before receiving minted uscc or recovered uscc
+    // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
+    $.cachedBalance = IERC20($.uscc).balanceOf(address(this));
+
     $.currentState = State.PROCESSING;
-    return (State.PROCESSING, 0);
+    return (State.PROCESSING, order.input);
   }
 
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED.
-  function recover(Order calldata) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
+    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    if (state(order) != State.RECOVERING) revert InvalidState($.currentState);
 
-    // TODO check for USCC/USDC balance (order input)
+    if (order.mode == Mode.DEPOSIT) {
+      $.usdc.safeTransfer(msg.sender, order.input);
+    } else {
+      IWrappedAsset($.wuscc).mint(msg.sender, order.input);
+    }
 
     $.currentState = State.ENDED;
-    return (State.ENDED, 0);
+    return (State.ENDED, order.input);
   }
 
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED.
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
+    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    if (state(order) != State.UNLOCKING) revert InvalidState($.currentState);
 
-    // TODO check for USDC balance received from Superstate
+    // TODO compute right amount and not 0
 
-    // TODO use right amount and not 0
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver
       IWrappedAsset($.wuscc).mint(msg.sender, 0);
@@ -211,7 +277,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     return (State.ENDED, 0);
   }
 
-  /// @notice Sets the fund state to RECOVERING (if issues arise with Superstate).
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       ADMINISTRATION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Sets the fund internal state to RECOVERING (if issues arise with Superstate).
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   function recovering() external onlyOwnerOrRoles(OPERATOR_ROLE) {
     UsccFundStorage storage $ = _usccFundStorage();
@@ -219,15 +289,22 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.currentState = State.RECOVERING;
   }
 
+  /// @notice Sets the oracle address.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @param oracle The new oracle address.
+  function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    if (oracle.code.length == 0) revert InvalidContract(oracle);
+
+    // Ensure oracle decimals match USCC decimals
+    if (AggregatorV3Interface(oracle).decimals() != ISuperstateToken(_usccFundStorage().uscc).decimals()) {
+      revert InvalidOracle(oracle);
+    }
+    _usccFundStorage().oracle = oracle;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @inheritdoc IFund
-  function estimate(Order calldata) external pure override returns (uint256) {
-    // TODO
-    return 0;
-  }
 
   /// @inheritdoc IFund
   function asset() external view override returns (address) {
@@ -235,9 +312,25 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function totalAssets() external pure override returns (uint256) {
-    // TODO convert with oracle (base on balance of uscc)
-    return 0;
+  function share() external view returns (address) {
+    return _usccFundStorage().wuscc;
+  }
+
+  /// @inheritdoc IFund
+  /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
+  function totalAssets() external view override returns (uint256) {
+    UsccFundStorage storage $ = _usccFundStorage();
+
+    uint256 balance = ISuperstateToken($.uscc).balanceOf(address(this));
+    AggregatorV3Interface _oracle = AggregatorV3Interface($.oracle);
+
+    (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = _oracle.latestRoundData();
+
+    if (answer <= 0) revert ChainlinkInvalidAnswer();
+    if (updatedAt == 0) revert ChainlinkIncompleteRound();
+    if (answeredInRound < roundId) revert ChainlinkStaleRound();
+
+    return balance.mulDiv(answer.toUint256(), 10 ** _oracle.decimals());
   }
 
   /// @inheritdoc IFund
@@ -251,10 +344,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function state(Order calldata) external view override returns (State) {
+  function state(Order calldata) public view override returns (State) {
     UsccFundStorage storage $ = _usccFundStorage();
 
     // TODO if processing (only) => check usdc balance
+
+    // TODO if internal state is recovering => display recovering if received funds
+
     return $.currentState;
   }
 

@@ -45,17 +45,15 @@ interface IFund {
   /// @return The current state of the order in the lifecycle.
   function state(Order calldata order) external view returns (State);
 
-  /// @notice Estimates the output assets for an order.
-  /// @dev The estimation is not guaranteed and may differ from actual results.
-  /// @dev The method ignores the possible current state of the order.
-  /// @param order The order parameters defining the operation
-  /// @return The estimated output for the order.
-  function estimate(Order calldata order) external view returns (uint256);
-
   /// @notice Returns the ERC20 asset in which the wrapper is denominated.
   /// @dev This is the base asset used for accounting and valuation.
   /// @return The address of the main base asset.
   function asset() external view returns (address);
+
+  /// @notice Returns the share token of the fund.
+  /// @dev Could be address(this) or a separate ERC20 representing shares.
+  /// @return The address of the share token.
+  function share() external view returns (address);
 
   /// @notice Returns the total amount of the wrapper's base asset under management.
   /// @return The total amount of assets denominated in the asset() token.
