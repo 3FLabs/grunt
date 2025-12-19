@@ -18,6 +18,7 @@ import {Order, State, Id, Mode} from "../libs/Order.sol";
 /// @notice Wrapper of Superstate USCC fund.
 /// @dev Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
 ///      The USCC tokens are held by this contract. Only wUSCC are sent to users.
+///      The order owner and receiver is always msg.sender (the position manager).
 contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -264,18 +265,19 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
     if (state(order) != State.UNLOCKING) revert InvalidState($.internalState);
 
-    // TODO compute right amount and not 0
-
+    uint256 _amount;
     if (order.mode == Mode.DEPOSIT) {
-      // Mint wUSCC to receiver
-      IWrappedAsset($.wuscc).mint(msg.sender, 0);
+      // Mint wUSCC to receiver and keep USCC in the contract
+      _amount = ISuperstateToken($.uscc).balanceOf(address(this)) - $.cachedBalance;
+      IWrappedAsset($.wuscc).mint(msg.sender, _amount);
     } else {
-      // Transfer USDC to receiver
-      $.usdc.safeTransferFrom(address(this), msg.sender, 0);
+      // Transfer USDC to receiver (all the USDC held by the contract)
+      _amount = IERC20($.usdc).balanceOf(address(this));
+      $.usdc.safeTransfer(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
-    return (State.ENDED, 0);
+    return (State.ENDED, _amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -345,13 +347,32 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function state(Order calldata) public view override returns (State) {
+  function state(Order calldata order) public view override returns (State) {
     UsccFundStorage storage $ = _usccFundStorage();
 
-    // TODO if processing (only) => check usdc balance
+    if ($.internalState == State.PROCESSING) {
+      if (order.mode == Mode.DEPOSIT) {
+        // Deposit: check if we received USCC
+        return ISuperstateToken($.uscc).balanceOf(address(this)) - $.cachedBalance >= order.output
+          ? State.UNLOCKING
+          : State.PROCESSING;
+      } else {
+        // Redeem: check if we received USDC
+        return IERC20($.usdc).balanceOf(address(this)) >= order.output ? State.UNLOCKING : State.PROCESSING;
+      }
+    }
 
-    // TODO if internal state is recovering => display recovering if received funds
-
+    if ($.internalState == State.RECOVERING) {
+      if (order.mode == Mode.DEPOSIT) {
+        // Deposit: check if we can recover USDC
+        return IERC20($.usdc).balanceOf(address(this)) >= order.input ? State.RECOVERING : State.PROCESSING;
+      } else {
+        // Redeem: check if we can recover USCC
+        return ISuperstateToken($.uscc).balanceOf(address(this)) - $.cachedBalance >= order.input
+          ? State.RECOVERING
+          : State.PROCESSING;
+      }
+    }
     return $.internalState;
   }
 
