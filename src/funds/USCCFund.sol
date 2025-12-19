@@ -40,6 +40,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev USCC/USDC/wUSCC all have 6 decimals (same for the oracle).
   uint256 private constant _DECIMALS = 6;
 
+  /// @dev Scaled unit for 6 decimals.
+  uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -340,7 +343,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_answer <= 0) revert ChainlinkInvalidAnswer();
     if (_updatedAt == 0) revert ChainlinkIncompleteRound();
     if (_answeredInRound < _roundId) revert ChainlinkStaleRound();
-    return _balance.mulDiv(_answer.toUint256(), 10 ** _oracle.decimals());
+    return _balance.mulDiv(_answer.toUint256(), _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
