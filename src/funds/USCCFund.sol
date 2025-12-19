@@ -272,7 +272,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     uint256 _amount;
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver and keep USCC in the contract
-      _amount = $.uscc.balanceOf(address(this)) - $.cachedBalance;
+      _amount = $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
       IWrappedAsset($.wuscc).mint(msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
@@ -371,7 +371,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if ($.internalState == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        return $.uscc.balanceOf(address(this)) - $.cachedBalance >= order.output ? State.UNLOCKING : State.PROCESSING;
+        return $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance) >= order.output
+          ? State.UNLOCKING
+          : State.PROCESSING;
       } else {
         // Redeem: check if we received USDC
         return $.usdc.balanceOf(address(this)) >= order.output ? State.UNLOCKING : State.PROCESSING;
@@ -384,7 +386,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
         return $.usdc.balanceOf(address(this)) >= order.input ? State.RECOVERING : State.PROCESSING;
       } else {
         // Redeem: check if we can recover USCC
-        return $.uscc.balanceOf(address(this)) - $.cachedBalance >= order.input ? State.RECOVERING : State.PROCESSING;
+        return $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance) >= order.input
+          ? State.RECOVERING
+          : State.PROCESSING;
       }
     }
     return $.internalState;
