@@ -103,7 +103,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param recipient The superstate address receiving USDC to mint USCC.
   /// @param currentOrder The current order being processed. We only handle one at a time.
-  /// @param currentState The current state of the (current) order.
+  /// @param internalState The internal state of the (current) order.
   /// @param usdc The address of the USDC token contract.
   /// @param uscc The address of the USCC token contract.
   /// @param wuscc The address of the wrapped USCC token contract.
@@ -112,7 +112,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
-    State currentState;
+    State internalState;
     address usdc;
     address uscc;
     address wuscc;
@@ -199,7 +199,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.receiver != msg.sender) revert InvalidReceiver();
 
     UsccFundStorage storage $ = _usccFundStorage();
-    if ($.currentState != State.EMPTY && $.currentState != State.ENDED) revert PendingOrder();
+    State _internalState = $.internalState;
+    if (_internalState != State.EMPTY && _internalState != State.ENDED) revert PendingOrder();
 
     // Check allowlist permissions for this contract to deposit in USCC
     if (!IAllowlist(ISuperstateToken($.uscc).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC"))
@@ -209,7 +210,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     // No pending state, always accepted or revert.
     $.currentOrder = order.toId(address(this));
-    $.currentState = State.ACCEPTED;
+    $.internalState = State.ACCEPTED;
     $.cachedBalance = 0;
 
     return State.ACCEPTED;
@@ -220,7 +221,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
-    if ($.currentState != State.ACCEPTED) revert InvalidState($.currentState);
+    if ($.internalState != State.ACCEPTED) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
@@ -235,7 +236,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
     $.cachedBalance = IERC20($.uscc).balanceOf(address(this));
 
-    $.currentState = State.PROCESSING;
+    $.internalState = State.PROCESSING;
     return (State.PROCESSING, order.input);
   }
 
@@ -244,7 +245,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
-    if (state(order) != State.RECOVERING) revert InvalidState($.currentState);
+    if (state(order) != State.RECOVERING) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
       $.usdc.safeTransfer(msg.sender, order.input);
@@ -252,7 +253,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       IWrappedAsset($.wuscc).mint(msg.sender, order.input);
     }
 
-    $.currentState = State.ENDED;
+    $.internalState = State.ENDED;
     return (State.ENDED, order.input);
   }
 
@@ -261,7 +262,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
     if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
-    if (state(order) != State.UNLOCKING) revert InvalidState($.currentState);
+    if (state(order) != State.UNLOCKING) revert InvalidState($.internalState);
 
     // TODO compute right amount and not 0
 
@@ -273,7 +274,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       $.usdc.safeTransferFrom(address(this), msg.sender, 0);
     }
 
-    $.currentState = State.ENDED;
+    $.internalState = State.ENDED;
     return (State.ENDED, 0);
   }
 
@@ -285,8 +286,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   function recovering() external onlyOwnerOrRoles(OPERATOR_ROLE) {
     UsccFundStorage storage $ = _usccFundStorage();
-    if ($.currentState != State.PROCESSING) revert InvalidState($.currentState);
-    $.currentState = State.RECOVERING;
+    if ($.internalState != State.PROCESSING) revert InvalidState($.internalState);
+    $.internalState = State.RECOVERING;
   }
 
   /// @notice Sets the oracle address.
@@ -351,7 +352,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     // TODO if internal state is recovering => display recovering if received funds
 
-    return $.currentState;
+    return $.internalState;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
