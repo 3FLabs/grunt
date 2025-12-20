@@ -105,6 +105,57 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          EVENTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted when a new order is created and accepted.
+  /// @param orderId The unique identifier of the order.
+  /// @param mode The mode of the order (DEPOSIT or REDEEM).
+  /// @param owner The owner of the order.
+  /// @param receiver The receiver of the order output.
+  /// @param input The input amount for the order.
+  /// @param output The expected output amount for the order.
+  event OrderCreated(
+    Id indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
+  );
+
+  /// @notice Emitted when an order is committed and assets are transferred.
+  /// @param orderId The unique identifier of the order.
+  /// @param mode The mode of the order (DEPOSIT or REDEEM).
+  /// @param amount The amount committed.
+  event OrderCommitted(Id indexed orderId, Mode mode, uint256 amount);
+
+  /// @notice Emitted when an order is recovered and funds are returned.
+  /// @param orderId The unique identifier of the order.
+  /// @param mode The mode of the order (DEPOSIT or REDEEM).
+  /// @param amount The amount recovered.
+  /// @param receiver The address receiving the recovered funds.
+  event OrderRecovered(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+
+  /// @notice Emitted when an order is unlocked and completed successfully.
+  /// @param orderId The unique identifier of the order.
+  /// @param mode The mode of the order (DEPOSIT or REDEEM).
+  /// @param amount The amount unlocked.
+  /// @param receiver The address receiving the unlocked funds.
+  event OrderUnlocked(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+
+  /// @notice Emitted when the internal state is manually set to RECOVERING.
+  /// @param orderId The unique identifier of the order being recovered.
+  event OrderRecovering(Id indexed orderId);
+
+  /// @notice Emitted when the oracle address is updated.
+  /// @param newOracle The new oracle address.
+  /// @param operator The address that updated the oracle.
+  event OracleUpdated(address indexed newOracle, address indexed operator);
+
+  /// @notice Emitted when an order is manually resolved by an operator.
+  /// @param orderId The unique identifier of the resolved order.
+  /// @param newInput The new input amount set by the operator.
+  /// @param newOutput The new output amount set by the operator.
+  /// @param operator The address that resolved the order.
+  event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -216,9 +267,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     // No pending state, always accepted or revert.
-    $.currentOrder = order.toId(address(this));
+    Id _orderId = order.toId(address(this));
+    $.currentOrder = _orderId;
     $.internalState = State.ACCEPTED;
     $.cachedBalance = 0;
+
+    emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
     return State.ACCEPTED;
   }
@@ -227,7 +281,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev No partial commits, always goes to PROCESSING.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
-    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    Id _currentOrder = $.currentOrder;
+    if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
     if ($.internalState != State.ACCEPTED) revert InvalidState($.internalState);
 
     address _usdc = $.usdc;
@@ -245,6 +300,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.cachedBalance = _usdc.balanceOf(address(this));
 
     $.internalState = State.PROCESSING;
+
+    emit OrderCommitted(_currentOrder, order.mode, order.input);
+
     return (State.PROCESSING, order.input);
   }
 
@@ -252,7 +310,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev No partial recoveries, always goes to ENDED.
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
-    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    Id _currentOrder = $.currentOrder;
+    if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.RECOVERING) revert InvalidState($.internalState);
@@ -264,6 +323,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     $.internalState = State.ENDED;
+
+    emit OrderRecovered(_currentOrder, order.mode, _amount, msg.sender);
+
     return (State.ENDED, _amount);
   }
 
@@ -271,7 +333,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev No partial unlocks, always goes to ENDED.
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
-    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    Id _currentOrder = $.currentOrder;
+    if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.UNLOCKING) revert InvalidState($.internalState);
@@ -285,6 +348,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     $.internalState = State.ENDED;
+
+    emit OrderUnlocked(_currentOrder, order.mode, _amount, msg.sender);
+
     return (State.ENDED, _amount);
   }
 
@@ -301,6 +367,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     UsccFundStorage storage $ = _usccFundStorage();
     if ($.internalState != State.PROCESSING) revert InvalidState($.internalState);
     $.internalState = State.RECOVERING;
+
+    emit OrderRecovering($.currentOrder);
   }
 
   /// @notice Sets the oracle address.
@@ -314,7 +382,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert InvalidOracle(oracle);
     }
 
-    _usccFundStorage().oracle = oracle;
+    UsccFundStorage storage $ = _usccFundStorage();
+    $.oracle = oracle;
+
+    emit OracleUpdated(oracle, msg.sender);
   }
 
   /// @notice Resolves the current order by setting its input and output amounts.
@@ -333,7 +404,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     order.input = input;
     order.output = output;
 
-    $.currentOrder = order.toId(address(this));
+    Id newOrderId = order.toId(address(this));
+    $.currentOrder = newOrderId;
+
+    emit OrderResolved(newOrderId, input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
