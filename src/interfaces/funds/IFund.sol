@@ -22,7 +22,7 @@ interface IFund {
 
   /// @notice Recovers input assets after a failed or partial processing.
   /// @param order The order parameters identifying the operation.
-  /// @return The new state after recovery (staying in RECOVERING if partial, ENDED if full).
+  /// @return The new state after recovery (going back to PROCESSING if partial, ENDED if full).
   /// @return The assets that have been recovered by the receiver.
   function recover(Order calldata order) external returns (State, uint256);
 
@@ -31,7 +31,7 @@ interface IFund {
   ///      For REDEEM operations, transfers output assets from the wrapper to order.receiver.
   ///      Only callable when the order is in UNLOCKING state.
   /// @param order The order parameters identifying the completed operation.
-  /// @return The new state after unlocking (staying in UNLOCKING if partial, ENDED if full).
+  /// @return The new state after unlocking (going back to PROCESSING if partial, ENDED if full).
   /// @return The assets that have been unlocked to the receiver.
   function unlock(Order calldata order) external returns (State, uint256);
 
