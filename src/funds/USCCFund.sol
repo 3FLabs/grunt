@@ -43,6 +43,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Scaled unit for 6 decimals.
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
 
+  /// @dev Basis points denominator (10,000 basis points = 100%).
+  uint256 private constant _BASIS_POINTS = 10_000;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -94,6 +97,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Indicates the answer comes from an earlier round than the latest one.
   ///      Triggered if `answeredInRound < roundId` from `latestRoundData()`.
   error ChainlinkStaleRound();
+
+  /// @notice Thrown when the price deviation between consecutive Chainlink rounds exceeds the authorized threshold.
+  /// @dev Indicates a potential fat-finger error or anomalous oracle update.
+  ///      Triggered if the absolute deviation in basis points exceeds `maxPriceDeviationBps`.
+  error ChainlinkFatFinger();
 
   /// @notice Thrown when the provided oracle address is invalid (e.g., decimals mismatch).
   /// @param oracle The invalid oracle address.
@@ -170,6 +178,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param wuscc The address of the wrapped USCC token contract.
   /// @param oracle The address of Chainlink USCC Oracle.
   /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
+  /// @param maxPriceDeviationBps Maximum allowed price deviation in basis points (1 bp = 0.01%) between consecutive oracle rounds.
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
@@ -179,6 +188,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address wuscc;
     address oracle;
     uint256 cachedBalance;
+    uint256 maxPriceDeviationBps;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -211,6 +221,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param uscc_ The address of the USCC token contract.
   /// @param wuscc_ The address of the wrapped USCC token contract.
   /// @param oracle_ The address of Chainlink USCC Oracle.
+  /// @param maxPriceDeviationBps_ Maximum allowed price deviation in basis points (1 bp = 0.01%) between consecutive oracle rounds.
   function initialize(
     address owner_,
     address depositor_,
@@ -218,7 +229,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address usdc_,
     address uscc_,
     address wuscc_,
-    address oracle_
+    address oracle_,
+    uint256 maxPriceDeviationBps_
   ) public initializer {
     if (depositor_.code.length == 0) revert InvalidContract(depositor_);
     if (usdc_.code.length == 0) revert InvalidContract(usdc_);
@@ -241,6 +253,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.uscc = uscc_;
     $.wuscc = wuscc_;
     $.oracle = oracle_;
+    $.maxPriceDeviationBps = maxPriceDeviationBps_;
 
     _initializeOwner(owner_);
     _setRoles(depositor_, DEPOSITOR_ROLE);
@@ -426,15 +439,41 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
+  ///      Includes fat-finger protection by checking price deviation against the previous round.
   function totalAssets() external view override returns (uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
-    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) =
-      AggregatorV3Interface($.oracle).latestRoundData();
+    AggregatorV3Interface _oracle = AggregatorV3Interface($.oracle);
 
+    // Fetch latest round data
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
+
+    // Validate latest round
     if (_answer <= 0) revert ChainlinkInvalidAnswer();
     if (_updatedAt == 0) revert ChainlinkIncompleteRound();
     if (_answeredInRound < _roundId) revert ChainlinkStaleRound();
+
+    // Fat-finger protection: check deviation against previous round
+    if (_roundId > 1) {
+      (, int256 _previousAnswer,,,) = _oracle.getRoundData(_roundId - 1);
+
+      // Validate previous round
+      if (_previousAnswer <= 0) revert ChainlinkInvalidAnswer();
+
+      // Calculate absolute deviation in basis points
+      uint256 _latestPrice = _answer.toUint256();
+      uint256 _previousPrice = _previousAnswer.toUint256();
+
+      uint256 _deviation;
+      if (_latestPrice > _previousPrice) {
+        _deviation = (_latestPrice - _previousPrice).mulDiv(_BASIS_POINTS, _previousPrice);
+      } else {
+        _deviation = (_previousPrice - _latestPrice).mulDiv(_BASIS_POINTS, _previousPrice);
+      }
+
+      // Revert if deviation exceeds authorized threshold
+      if (_deviation > $.maxPriceDeviationBps) revert ChainlinkFatFinger();
+    }
 
     return $.uscc.balanceOf(address(this)).mulDiv(_answer.toUint256(), _SCALED_UNIT);
   }
