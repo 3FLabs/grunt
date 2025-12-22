@@ -320,7 +320,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Collateral not supplied");
+    assertEq(borrowPosition.totalCollateral(), amount, "Raw collateral not supplied");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Quoted collateral not supplied");
   }
 
   function test_supplyCollateral_MultipleSupplies() public {
@@ -335,7 +336,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount1 + amount2, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Collateral not accumulated");
+    assertEq(borrowPosition.totalCollateral(), amount1 + amount2, "Raw collateral not accumulated");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Quoted collateral not accumulated");
   }
 
   function testFuzz_supplyCollateral_Amount(uint128 amount) public {
@@ -347,7 +349,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Collateral amount mismatch");
+    assertEq(borrowPosition.totalCollateral(), amount, "Raw collateral amount mismatch");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Quoted collateral amount mismatch");
   }
 
   function test_supplyCollateral_RevertWhen_AmountIsZero() public {
@@ -405,7 +408,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.withdrawCollateral(amount);
 
-    assertEq(borrowPosition.totalCollateral(), 0, "Collateral not withdrawn");
+    assertEq(borrowPosition.totalCollateral(), 0, "Raw collateral not withdrawn");
+    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Quoted collateral not withdrawn");
     assertEq(collateralToken.balanceOf(positionManager) - balanceBefore, amount, "Balance not returned");
   }
 
@@ -421,7 +425,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.withdrawCollateral(withdrawAmount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(totalAmount - withdrawAmount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Partial withdrawal incorrect");
+    assertEq(borrowPosition.totalCollateral(), totalAmount - withdrawAmount, "Partial withdrawal of raw collateral incorrect");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Partial withdrawal of quoted collateral incorrect");
   }
 
   function test_withdrawCollateral_FullWithdraw() public {
@@ -434,7 +439,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.withdrawCollateral(amount);
 
-    assertEq(borrowPosition.totalCollateral(), 0, "Full withdrawal failed");
+    assertEq(borrowPosition.totalCollateral(), 0, "Full withdrawal of raw collateral failed");
+    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Full withdrawal of quoted collateral failed");
   }
 
   function testFuzz_withdrawCollateral_Amount(uint128 amount) public {
@@ -447,7 +453,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.withdrawCollateral(amount);
 
-    assertEq(borrowPosition.totalCollateral(), 0, "Withdrawal amount mismatch");
+    assertEq(borrowPosition.totalCollateral(), 0, "Withdrawal of raw collateral amount mismatch");
+    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Withdrawal of quoted collateral amount mismatch");
   }
 
   function test_withdrawCollateral_RevertWhen_AmountIsZero() public {
@@ -1024,7 +1031,8 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_totalCollateral_InitiallyZero() public view {
-    assertEq(borrowPosition.totalCollateral(), 0, "Initial collateral should be zero");
+    assertEq(borrowPosition.totalCollateral(), 0, "Initial raw collateral should be zero");
+    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Initial quoted collateral should be zero");
   }
 
   function test_totalCollateral_AfterSupply() public {
@@ -1035,7 +1043,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Supply not reflected");
+    assertEq(borrowPosition.totalCollateral(), amount, "Raw collateral supply not reflected");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Quoted collateral supply not reflected");
   }
 
   function test_totalCollateral_MultipleSupplies() public {
@@ -1050,7 +1059,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount1 + amount2, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Multiple supplies not reflected");
+    assertEq(borrowPosition.totalCollateral(), amount1 + amount2, "Multiple raw collateral supplies not reflected");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Multiple quoted collateral supplies not reflected");
   }
 
   function test_totalCollateral_AfterWithdraw() public {
@@ -1065,7 +1075,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.withdrawCollateral(withdrawAmount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(supplyAmount - withdrawAmount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Withdraw not reflected");
+    assertEq(borrowPosition.totalCollateral(), supplyAmount - withdrawAmount, "Raw collateral withdraw not reflected");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Quoted collateral withdraw not reflected");
   }
 
   function test_totalCollateral_AfterFullWithdraw() public {
@@ -1078,10 +1089,11 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.withdrawCollateral(amount);
 
-    assertEq(borrowPosition.totalCollateral(), 0, "Full withdraw not reflected");
+    assertEq(borrowPosition.totalCollateral(), 0, "Full withdraw of raw collateral not reflected");
+    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Full withdraw of quoted collateral not reflected");
   }
 
-  function test_totalCollateral_QuotedAtOraclePrice() public {
+  function test_totalCollateralQuoted_ChangesWithOraclePrice() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
     uint256 newPrice = DEFAULT_ORACLE_PRICE * 2; // 2:1 collateral:borrow
 
@@ -1092,11 +1104,14 @@ contract MorphoBorrowPositionTest is Test {
     // Change oracle price
     oracle.setPrice(newPrice);
 
-    // totalCollateral should now return double the collateral amount (quoted in borrow asset)
+    // totalCollateral should remain the same (raw amount)
+    assertEq(borrowPosition.totalCollateral(), collateralAmount, "Raw collateral should not change with price");
+
+    // totalCollateralQuoted should now return double the collateral amount (quoted in borrow asset)
     uint256 expectedQuotedCollateral = _quoteCollateral(collateralAmount, newPrice);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Collateral not quoted at oracle price");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Collateral not quoted at oracle price");
     assertEq(
-      borrowPosition.totalCollateral(), collateralAmount * 2, "With 2x price, quoted collateral should be 2x raw amount"
+      borrowPosition.totalCollateralQuoted(), collateralAmount * 2, "With 2x price, quoted collateral should be 2x raw amount"
     );
   }
 
@@ -1430,7 +1445,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(collateralAmount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(collateralAmount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Step 2: Collateral supply failed");
+    assertEq(borrowPosition.totalCollateral(), collateralAmount, "Step 2: Raw collateral supply failed");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Step 2: Quoted collateral supply failed");
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Step 2: Position should be healthy");
 
     // 3. Borrow
@@ -1464,7 +1480,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.withdrawCollateral(collateralAmount);
 
-    assertEq(borrowPosition.totalCollateral(), 0, "Step 5: Withdraw failed");
+    assertEq(borrowPosition.totalCollateral(), 0, "Step 5: Raw collateral withdraw failed");
+    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Step 5: Quoted collateral withdraw failed");
     assertEq(borrowPosition.totalBorrowed(), 0, "Step 5: Should have no debt");
   }
 
@@ -1531,7 +1548,8 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should remain healthy");
-    assertGt(borrowPosition.totalCollateral(), 0, "Should have remaining collateral");
+    assertGt(borrowPosition.totalCollateral(), 0, "Should have remaining raw collateral");
+    assertGt(borrowPosition.totalCollateralQuoted(), 0, "Should have remaining quoted collateral");
     assertGt(borrowPosition.totalBorrowed(), 0, "Should have remaining debt");
   }
 
@@ -1578,7 +1596,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Small amount supply failed");
+    assertEq(borrowPosition.totalCollateral(), amount, "Small amount raw collateral supply failed");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Small amount quoted collateral supply failed");
   }
 
   function testFuzz_EdgeCase_VeryLargeAmounts(uint128 amount) public {
@@ -1589,7 +1608,8 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.supplyCollateral(amount);
 
     uint256 expectedQuotedCollateral = _quoteCollateral(amount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), expectedQuotedCollateral, "Large amount supply failed");
+    assertEq(borrowPosition.totalCollateral(), amount, "Large amount raw collateral supply failed");
+    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Large amount quoted collateral supply failed");
   }
 
   function test_EdgeCase_OraclePriceChanges() public {
@@ -1666,7 +1686,7 @@ contract MorphoBorrowPositionTest is Test {
       borrowPosition.isHealthy(preLiquidationParams.preLltv), "Position should be healthy at preLltv initially"
     );
     assertTrue(borrowPosition.isHealthy(marketParams.lltv), "Position should be healthy at market LLTV initially");
-    uint256 collateralBefore = borrowPosition.totalCollateral();
+    uint256 collateralBefore = borrowPosition.totalCollateralQuoted();
     uint256 borrowedBefore = borrowPosition.totalBorrowed();
 
     // Drop price slightly to make position unhealthy at preLltv but still healthy at market LLTV
@@ -1708,7 +1728,7 @@ contract MorphoBorrowPositionTest is Test {
     assertGt(repaidShares, 0, "Should have repaid debt");
 
     // Verify position state after liquidation
-    uint256 collateralAfter = borrowPosition.totalCollateral();
+    uint256 collateralAfter = borrowPosition.totalCollateralQuoted();
     uint256 borrowedAfter = borrowPosition.totalBorrowed();
 
     assertLt(collateralAfter, collateralBefore, "Collateral should decrease after PreLiquidation");
@@ -1844,7 +1864,7 @@ contract MorphoBorrowPositionTest is Test {
     // Liquidator performs large PreLiquidation (but respecting close factor)
     address liquidator = makeAddr("liquidator");
     uint256 borrowedAmount = borrowPosition.totalBorrowed();
-    uint256 collateralBefore = borrowPosition.totalCollateral();
+    uint256 collateralBefore = borrowPosition.totalCollateralQuoted();
 
     // Use 20% of borrowed amount to respect close factor limits
     uint256 seizeAmount = (borrowedAmount * 20) / 100;
@@ -1863,7 +1883,7 @@ contract MorphoBorrowPositionTest is Test {
     assertGt(seizedAssets, 0, "Should have seized collateral");
 
     // After liquidation, collateral should be reduced significantly
-    uint256 collateralAfter = borrowPosition.totalCollateral();
+    uint256 collateralAfter = borrowPosition.totalCollateralQuoted();
 
     assertLt(collateralAfter, collateralBefore, "Collateral should be seized");
 

@@ -285,9 +285,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   }
 
   /// @inheritdoc IBorrowPosition
+  /// @dev Returns the raw collateral amount stored in the Morpho position.
+  function totalCollateral() external view override returns (uint256) {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    return uint256($.morpho.position($.marketId, address(this)).collateral);
+  }
+
+  /// @inheritdoc IBorrowPosition
   /// @dev Takes the raw collateral amount stored in the Morpho position and quotes it
   ///      in borrowed asset units.
-  function totalCollateral() external view override returns (uint256) {
+  function totalCollateralQuoted() external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     return uint256($.morpho.position($.marketId, address(this)).collateral)
       .mulDivDown(IOracle($.marketParams.oracle).price(), ORACLE_PRICE_SCALE);

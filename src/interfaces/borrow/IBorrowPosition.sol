@@ -44,9 +44,13 @@ interface IBorrowPosition {
   /// @return The total borrowed asset amount.
   function totalBorrowed() external view returns (uint256);
 
-  /// @notice Returns the total amount of collateral of this position (quoted in borrowed asset).
-  /// @return The total collateral amount.
+  /// @notice Returns the total amount of collateral deposited in this position.
+  /// @return The total collateral amount (in collateral asset units).
   function totalCollateral() external view returns (uint256);
+
+  /// @notice Returns the total amount of collateral of this position (quoted in borrowed asset).
+  /// @return The total collateral amount quoted in borrowed asset.
+  function totalCollateralQuoted() external view returns (uint256);
 
   /// @notice Checks if the borrow position is healthy for a given LLTV.
   /// @param lltv The loan-to-liquidation value to check against.
