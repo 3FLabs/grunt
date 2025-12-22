@@ -128,6 +128,12 @@ interface IPositionManager {
   /// @param position The address of the IBorrowPosition contract to remove
   function removeBorrowPosition(address position) external;
 
+  /// @notice Sets the maximum borrow amount for a specific borrow position.
+  /// @dev This limit is used when distributing borrow operations across positions. Only callable by the owner.
+  /// @param position The address of the IBorrowPosition contract
+  /// @param maxBorrowAmount The maximum amount that can be borrowed from this position
+  function setMaxBorrowAmount(address position, uint256 maxBorrowAmount) external;
+
   /// @notice Sets the fee configuration data for this PositionManager.
   /// @dev Before updating the fee configuration, this function must accrue and allocate any pending
   ///      fee shares to the current fee recipient. This ensures that the previous fee recipient receives
