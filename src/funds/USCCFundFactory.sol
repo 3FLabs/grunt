@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.8.19;
+
+import {USCCFund} from "./USCCFund.sol";
+import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+
+/// @title USCCFundFactory
+/// @notice Factory contract for deploying USCCFund instances.
+/// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
+///      - **UpgradeableBeacon**: The contract type (USCCFund) has its own beacon
+///      - **ERC1967 Beacon Proxy**: Instances are deployed as minimal proxies pointing to the beacon
+///      - **LibClone**: Gas-efficient proxy deployment via Solady's clone library
+///
+///      Architecture:
+///      - One beacon is deployed at construction time with the USCCFund implementation
+///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
+///      - Each `createFund` call deploys one proxy: USCCFund
+///      - Multiple USCCFund instances can share the same WrappedAsset token
+///
+///      Deployment Flow:
+///      1. Factory is deployed with an initial beacon owner
+///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
+///      3. Users call `createFund()` to deploy new USCCFund instances
+///      4. Each fund is initialized with its parameters including a shared WrappedAsset address
+///      5. **Post-deployment**: WrappedAsset owner must grant ISSUER_ROLE to the new fund
+///
+///      Upgrade Flow:
+///      1. Beacon owner deploys new USCCFund implementation contract
+///      2. Beacon owner calls `upgradeTo()` on the beacon
+///      3. All existing proxies immediately use the new implementation
+contract USCCFundFactory {
+  using LibClone for address;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          EVENTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted when a new USCCFund is created.
+  /// @param fund The address of the newly deployed USCCFund proxy
+  /// @param wrappedAsset The address of the WrappedAsset token used by this fund
+  /// @param usdc The underlying USDC token address
+  /// @param uscc The underlying USCC token address
+  /// @param recipient The Superstate recipient address
+  event FundCreated(address indexed fund, address indexed wrappedAsset, address usdc, address uscc, address recipient);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         IMMUTABLES                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice The UpgradeableBeacon contract managing USCCFund implementations.
+  /// @dev All USCCFund proxies deployed by this factory delegate to this beacon's implementation.
+  address public immutable USCC_FUND_BEACON;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         ERRORS                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
+  /// @param addr The invalid address.
+  error InvalidContract(address addr);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        CONSTRUCTOR                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Deploys the factory and creates the beacon contract with the USCCFund implementation.
+  /// @dev Deploys one UpgradeableBeacon wrapping a freshly deployed USCCFund implementation.
+  ///      The beacon owner can later upgrade the implementation for all proxies.
+  /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
+  constructor(address initialBeaconOwner) {
+    USCC_FUND_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new USCCFund())));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      FACTORY METHODS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Creates a new USCCFund proxy.
+  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
+  ///      1. Deploys USCCFund proxy pointing to USCC_FUND_BEACON
+  ///      2. Initializes the fund with all parameters including the shared WrappedAsset
+  ///
+  ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
+  ///      to the newly deployed fund address so it can mint/burn wrapped tokens.
+  ///
+  ///      The depositor receives DEPOSITOR_ROLE on the fund (can execute orders).
+  ///      Emits a {FundCreated} event.
+  /// @param owner The address that will own the USCCFund (admin privileges)
+  /// @param depositor The address that will have the depositor role (must be a contract)
+  /// @param recipient The Superstate address receiving USDC to mint USCC
+  /// @param usdc The USDC token contract address (must be a contract)
+  /// @param uscc The USCC token contract address (must be a contract)
+  /// @param wrappedAsset The WrappedAsset (wUSCC) token address (must be a contract, can be shared)
+  /// @param oracle The Chainlink USCC price oracle address (must be a contract)
+  /// @param maxPriceDeviationBps Maximum allowed price deviation in basis points (fat-finger protection)
+  /// @return fund The address of the newly deployed USCCFund proxy
+  function createFund(
+    address owner,
+    address depositor,
+    address recipient,
+    address usdc,
+    address uscc,
+    address wrappedAsset,
+    address oracle,
+    uint256 maxPriceDeviationBps
+  ) external returns (address fund) {
+    // Validate contract addresses (code.length != 0)
+    if (depositor.code.length == 0) revert InvalidContract(depositor);
+    if (usdc.code.length == 0) revert InvalidContract(usdc);
+    if (uscc.code.length == 0) revert InvalidContract(uscc);
+    if (wrappedAsset.code.length == 0) revert InvalidContract(wrappedAsset);
+    if (oracle.code.length == 0) revert InvalidContract(oracle);
+
+    // Deploy USCCFund proxy
+    fund = USCC_FUND_BEACON.deployERC1967BeaconProxy();
+
+    // Initialize USCCFund
+    USCCFund(fund).initialize(owner, depositor, recipient, usdc, uscc, wrappedAsset, oracle, maxPriceDeviationBps);
+
+    emit FundCreated(fund, wrappedAsset, usdc, uscc, recipient);
+  }
+}
