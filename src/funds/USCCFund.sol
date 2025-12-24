@@ -112,6 +112,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param decimalsB The decimals of the second token.
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
 
+  /// @notice Thrown when the provided basis points value is invalid (e.g., exceeds 10,000).
+  /// @param bps The invalid basis points value.
+  error InvalidBps(uint256 bps);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -162,6 +166,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param newOutput The new output amount set by the operator.
   /// @param operator The address that resolved the order.
   event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
+
+  /// @notice Emitted when the maximum allowed price deviation in basis points is updated.
+  /// @param maxPriceDeviationBps The new maximum price deviation in basis points.
+  event maxPriceDeviationBpsUpdated(uint256 maxPriceDeviationBps);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -245,6 +253,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     // Ensure oracle has 6 decimals
     if (AggregatorV3Interface(oracle_).decimals() != _DECIMALS) {
       revert InvalidOracle(oracle_);
+    }
+
+    if (maxPriceDeviationBps_ > _BASIS_POINTS) {
+      revert InvalidBps(maxPriceDeviationBps_);
     }
 
     UsccFundStorage storage $ = _usccFundStorage();
@@ -399,6 +411,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.oracle = oracle;
 
     emit OracleUpdated(oracle, msg.sender);
+  }
+
+  /// @notice Sets the maximum allowed price deviation in basis points between consecutive oracle rounds.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @param maxPriceDeviationBps The new maximum price deviation in basis points.
+  function setMaxPriceDeviationBps(uint256 maxPriceDeviationBps) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    if (maxPriceDeviationBps > _BASIS_POINTS) revert InvalidBps(maxPriceDeviationBps);
+
+    UsccFundStorage storage $ = _usccFundStorage();
+    $.maxPriceDeviationBps = maxPriceDeviationBps;
+
+    emit maxPriceDeviationBpsUpdated(maxPriceDeviationBps);
   }
 
   /// @notice Resolves the current order by setting its input and output amounts.
