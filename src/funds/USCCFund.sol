@@ -310,19 +310,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
     if ($.internalState != State.ACCEPTED) revert InvalidState($.internalState);
 
-    address _usdc = $.usdc;
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
       $.usdc.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
       // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
       IWrappedAsset($.wuscc).burn(msg.sender, order.input);
-      ISuperstateToken(_usdc).offchainRedeem(order.input);
+      ISuperstateToken($.usdc).offchainRedeem(order.input);
     }
 
     // Snapshot balance before receiving minted uscc or recovered uscc
     // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
-    $.cachedBalance = _usdc.balanceOf(address(this));
+    $.cachedBalance = $.uscc.balanceOf(address(this));
 
     $.internalState = State.PROCESSING;
 

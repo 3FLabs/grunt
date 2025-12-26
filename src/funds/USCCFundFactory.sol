@@ -105,7 +105,6 @@ contract USCCFundFactory {
     address oracle,
     uint256 maxPriceDeviationBps
   ) external returns (address fund) {
-    // Validate contract addresses (code.length != 0)
     if (depositor.code.length == 0) revert InvalidContract(depositor);
     if (usdc.code.length == 0) revert InvalidContract(usdc);
     if (uscc.code.length == 0) revert InvalidContract(uscc);
