@@ -440,7 +440,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
   ///      differ from expected ones (e.g., due to unexpected conditions).
-  /// @param order The order to resolve.
+  ///
+  ///      IMPORTANT: Modifying the input/output amounts generates a NEW order ID, since the order ID is
+  ///      a hash of all order parameters. After calling resolve(), the original order ID becomes invalid.
+  ///      Subsequent unlock() or recover() calls MUST use the resolved order with the updated input/output
+  ///      amounts, not the original order. The new order ID is emitted in the OrderResolved event.
+  ///
+  /// @param order The order to resolve (must match current order ID before resolution).
   /// @param input The new input amount.
   /// @param output The new output amount.
   function resolve(Order memory order, uint256 input, uint256 output) external onlyOwnerOrRoles(OPERATOR_ROLE) {

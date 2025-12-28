@@ -809,6 +809,51 @@ contract USCCFundTest is Test {
     fund.resolve(order, ONE_USDC, ONE_USDC);
   }
 
+  function test_Resolve_OrderIdChange() public {
+    // Demonstrates that resolve() changes the order ID, requiring use of resolved order for unlock
+    Order memory originalOrder = _depositOrder(ONE_USDC, ONE_USDC);
+    Id originalId = originalOrder.toId(address(fund));
+    fund.create(originalOrder);
+    _commitDeposit(originalOrder);
+
+    // Operator resolves with different amounts (e.g., Superstate sent less than expected)
+    uint256 newInput = ONE_USDC;
+    uint256 newOutput = (ONE_USDC * 95) / 100; // Only 95% received
+
+    vm.prank(owner);
+    fund.resolve(originalOrder, newInput, newOutput);
+
+    // Create resolved order with updated amounts
+    Order memory resolvedOrder = Order({
+      owner: originalOrder.owner,
+      receiver: originalOrder.receiver,
+      input: newInput,
+      output: newOutput,
+      mode: originalOrder.mode,
+      salt: originalOrder.salt
+    });
+    Id resolvedId = resolvedOrder.toId(address(fund));
+
+    // Verify the order ID changed
+    assertFalse(originalId.eq(resolvedId), "order ID should change after resolve");
+
+    // Original order is now invalid - state() returns EMPTY
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.EMPTY), "original order is invalid");
+
+    // Resolved order is valid - state() returns current state
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order is valid");
+
+    // Mint the resolved output amount to trigger UNLOCKING
+    uscc.mint(address(fund), newOutput);
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.UNLOCKING), "resolved order unlocking");
+
+    // Unlock must use the resolved order, not the original
+    fund.unlock(resolvedOrder);
+
+    // User receives the resolved output amount
+    assertEq(wuscc.balanceOf(address(this)), newOutput, "user receives resolved output");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            VIEWS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
