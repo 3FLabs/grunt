@@ -588,10 +588,20 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Set DEPOSITOR_ROLE as immutable (only set in initialize).
   function _grantRoles(address user, uint256 roles) internal override {
     // Check if DEPOSITOR_ROLE is included in the roles bitmap
-    if (roles & DEPOSITOR_ROLE != 0) {
+    if ((roles & DEPOSITOR_ROLE) != 0) {
       revert InvalidRoles(roles);
     }
     _updateRoles(user, roles, true);
+  }
+
+  /// @inheritdoc OwnableRoles
+  /// @dev Prevent DEPOSITOR_ROLE from being removed after initialization.
+  function _removeRoles(address user, uint256 roles) internal override {
+    // Check if DEPOSITOR_ROLE is included in the roles bitmap
+    if ((roles & DEPOSITOR_ROLE) != 0) {
+      revert InvalidRoles(roles);
+    }
+    _updateRoles(user, roles, false);
   }
 
   /// @dev Internal function to check that a token has the expected decimals (6).

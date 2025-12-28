@@ -1064,6 +1064,19 @@ contract USCCFundTest is Test {
     fund.grantRoles(outsider, depositorRole);
   }
 
+  function test_Roles_DepositorNotRevokable() public {
+    uint256 depositorRole = fund.DEPOSITOR_ROLE();
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, depositorRole));
+    fund.revokeRoles(address(this), depositorRole);
+  }
+
+  function test_Roles_DepositorNotRenounceable() public {
+    uint256 depositorRole = fund.DEPOSITOR_ROLE();
+    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, depositorRole));
+    fund.renounceRoles(depositorRole);
+  }
+
   function test_Roles_OperatorGrantable() public {
     uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
