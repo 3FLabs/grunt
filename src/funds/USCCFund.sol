@@ -246,12 +246,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     uint256 minPriceLimit_,
     uint256 maxPriceLimit_
   ) public initializer {
+    if (owner_ == address(0)) revert AddressZero();
+    if (recipient_ == address(0)) revert AddressZero();
     if (depositor_.code.length == 0) revert InvalidContract(depositor_);
     if (usdc_.code.length == 0) revert InvalidContract(usdc_);
     if (uscc_.code.length == 0) revert InvalidContract(uscc_);
     if (wuscc_.code.length == 0) revert InvalidContract(wuscc_);
     if (oracle_.code.length == 0) revert InvalidContract(oracle_);
-    if (recipient_ == address(0)) revert AddressZero();
     _checkDecimals(usdc_);
     _checkDecimals(uscc_);
     _checkDecimals(wuscc_);

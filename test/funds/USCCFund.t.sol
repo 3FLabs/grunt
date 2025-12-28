@@ -191,6 +191,22 @@ contract USCCFundTest is Test {
     );
   }
 
+  function test_Initialize_RevertsInvalidOwner() public {
+    USCCFund local = new USCCFund();
+    vm.expectRevert(AddressZero.selector);
+    local.initialize(
+      address(0),
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
+    );
+  }
+
   function test_Initialize_RevertsInvalidRecipient() public {
     USCCFund local = new USCCFund();
     vm.expectRevert(AddressZero.selector);
