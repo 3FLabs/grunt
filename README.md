@@ -386,3 +386,24 @@ collateralValue = collateral × oraclePrice / ORACLE_PRICE_SCALE
 maxBorrow = collateralValue × lltv
 isHealthy(lltv) = maxBorrow ≥ totalBorrowed
 ```
+
+## Funds Module (USCC)
+
+The funds module wraps external assets behind a standardized order lifecycle (`IFund`) with create/commit/unlock/recover operations.
+
+### USCCFund
+
+USCCFund integrates Superstate's USCC using a single-order state machine:
+- **Deposit flow**: depositor creates a DEPOSIT order, commits USDC to the Superstate recipient, then unlocks wUSCC after USCC is minted to the fund.
+- **Redeem flow**: depositor creates a REDEEM order, commits by burning wUSCC and calling `offchainRedeem`, then unlocks USDC when it arrives.
+- The fund holds USCC; users receive wUSCC. Redemptions return USDC.
+- Total assets use a Chainlink USCC oracle with a max price deviation guard (fat-finger protection).
+- Owner/operator roles can set oracle parameters, mark recovering, or resolve stuck orders.
+
+### WrappedAsset (wUSCC)
+
+`WrappedAsset` is an ERC20 wrapper minted/burned by authorized issuers. Multiple USCCFund instances can share the same wUSCC token; each new fund must be granted `ISSUER_ROLE`.
+
+### USCCFundFactory
+
+The factory deploys USCCFund instances as beacon proxies and initializes them with USDC/USCC addresses, the wUSCC token, and oracle settings.
