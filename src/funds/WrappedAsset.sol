@@ -6,6 +6,9 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 
+/// @title WrappedAsset
+/// @notice ERC20 wrapper token with role-based mint and burn permissions.
+/// @dev Issuers (ISSUER_ROLE) can mint and burn; metadata is stored in ERC-7201 namespaced storage.
 contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ROLES                            */
