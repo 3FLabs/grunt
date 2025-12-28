@@ -3,6 +3,7 @@ pragma solidity =0.8.19;
 
 import {Test} from "forge-std/Test.sol";
 import {USCCFund} from "src/funds/USCCFund.sol";
+import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, Id} from "src/libs/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
@@ -52,6 +53,7 @@ contract USCCFundTest is Test {
   /*                           TEST STATE                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  USCCFundFactory public factory;
   USCCFund public fund;
   WrappedAsset public wuscc;
   MockERC20 public usdc;
@@ -83,10 +85,11 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     wuscc.initialize(owner, owner, "wUSCC", "Wrapped USCC", 6);
 
-    fund = new USCCFund();
-    fund.initialize(
+    factory = new USCCFundFactory(owner);
+    address fundAddress = factory.createFund(
       owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
     );
+    fund = USCCFund(fundAddress);
 
     allowlist.setAllowed(address(fund), "USCC", true);
     uint256 issuerRole = wuscc.ISSUER_ROLE();
@@ -701,6 +704,12 @@ contract USCCFundTest is Test {
     fund.totalAssets();
   }
 
+  function test_TotalAssets_FatFingerProtectionPasses_PriceDecrease() public {
+    oracle.setRoundData(2, int256(ONE_USDC - 50), block.timestamp, 2);
+    oracle.setLatestRound(2);
+    fund.totalAssets();
+  }
+
   function test_TotalAssets_FirstRound() public {
     oracle.setLatestRound(1);
     fund.totalAssets();
@@ -815,6 +824,15 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     fund.transferOwnership(operator);
     assertEq(fund.owner(), operator, "new owner");
+  }
+
+  function test_Roles_DepositorInCombinedRoles() public {
+    uint256 depositorRole = fund.DEPOSITOR_ROLE();
+    uint256 operatorRole = fund.OPERATOR_ROLE();
+    uint256 combinedRoles = depositorRole | operatorRole;
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, combinedRoles));
+    fund.grantRoles(outsider, combinedRoles);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
