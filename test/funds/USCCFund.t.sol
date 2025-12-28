@@ -936,6 +936,29 @@ contract USCCFundTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
   }
 
+  function test_State_NonCurrentOrderReturnsEmpty() public {
+    // Create and process first order
+    Order memory order1 = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order1);
+    _commitDeposit(order1);
+
+    // Query with a different order that was never created
+    Order memory order2 = _depositOrder(2 * ONE_USDC, 2 * ONE_USDC);
+    assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order should be EMPTY");
+
+    // Even in UNLOCKING state, non-current order should return EMPTY
+    uscc.mint(address(fund), order1.output);
+    assertEq(uint256(fund.state(order1)), uint256(State.UNLOCKING), "current order is UNLOCKING");
+    assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order still EMPTY");
+
+    // Complete first order
+    fund.unlock(order1);
+
+    // After completion, both should return ENDED/EMPTY appropriately
+    assertEq(uint256(fund.state(order1)), uint256(State.ENDED), "completed order is ENDED");
+    assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order still EMPTY");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         STATE MACHINE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

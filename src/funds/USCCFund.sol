@@ -534,13 +534,22 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      - Redeem: checks if USCC input was returned → RECOVERING if yes, PROCESSING if no
   ///
   ///      For all other states (EMPTY, ACCEPTED, ENDED), returns internalState directly.
+  ///
+  ///      Returns EMPTY for any order that is not the current order (except when internalState is EMPTY or ENDED).
   /// @param order The order to check the state for.
   /// @return The current state based on balance checks.
   /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
+    
+    // Return EMPTY to indicate this order doesn't exist
+    if (!order.toId(address(this)).eq($.currentOrder)) {
+      return (State.EMPTY, 0);
+    }
 
-    if ($.internalState == State.PROCESSING) {
+    State _internalState = $.internalState;
+    
+    if (_internalState == State.PROCESSING) {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
@@ -553,7 +562,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       }
     }
 
-    if ($.internalState == State.RECOVERING) {
+    if (_internalState == State.RECOVERING) {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
@@ -566,7 +575,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       }
     }
 
-    return ($.internalState, 0);
+    return (_internalState, 0);
   }
 
   /// @inheritdoc OwnableRoles
