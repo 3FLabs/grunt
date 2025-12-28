@@ -1065,6 +1065,101 @@ contract USCCFundTest is Test {
     assertFalse(orderA.toId(address(fund)).eq(orderB.toId(address(fund))), "different ids");
   }
 
+  function test_Edge_ExcessFunds_DepositUnlock() public {
+    // Test that excess USCC received on deposit is transferred to user
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Superstate sends 10% more than expected
+    uint256 excessAmount = order.output + (order.output / 10);
+    uscc.mint(address(fund), excessAmount);
+
+    // State should be UNLOCKING
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+
+    // Unlock should transfer the full excess amount
+    fund.unlock(order);
+
+    // User receives all the excess
+    assertEq(wuscc.balanceOf(address(this)), excessAmount, "user receives excess wUSCC");
+    assertEq(uscc.balanceOf(address(fund)), excessAmount, "fund holds excess USCC");
+  }
+
+  function test_Edge_ExcessFunds_RedeemUnlock() public {
+    // Test that excess USDC received on redeem is transferred to user
+    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    vm.prank(owner);
+    wuscc.mint(address(this), order.input);
+    uscc.mint(address(fund), order.input);
+    fund.commit(order);
+
+    // Superstate sends 10% more USDC than expected
+    uint256 excessAmount = order.output + (order.output / 10);
+    usdc.mint(address(fund), excessAmount);
+
+    // State should be UNLOCKING
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+
+    // Unlock should transfer the full excess amount
+    fund.unlock(order);
+
+    // User receives all the excess
+    assertEq(usdc.balanceOf(address(this)), excessAmount, "user receives excess USDC");
+  }
+
+  function test_Edge_ExcessFunds_DepositRecovery() public {
+    // Test that excess USDC returned during recovery is transferred to user
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Set to recovering state (owner can call this)
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate returns 10% more USDC than was sent
+    uint256 excessAmount = order.input + (order.input / 10);
+    usdc.mint(address(fund), excessAmount);
+
+    // State should be RECOVERING
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
+
+    // Recover should transfer the full excess amount
+    fund.recover(order);
+
+    // User receives all the excess
+    assertEq(usdc.balanceOf(address(this)), excessAmount, "user receives excess USDC in recovery");
+  }
+
+  function test_Edge_ExcessFunds_RedeemRecovery() public {
+    // Test that excess USCC returned during recovery is transferred to user
+    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    vm.prank(owner);
+    wuscc.mint(address(this), order.input);
+    uscc.mint(address(fund), order.input);
+    fund.commit(order);
+
+    // Set to recovering state (owner can call this)
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate returns 10% more USCC than was burned
+    uint256 excessAmount = order.input + (order.input / 10);
+    uscc.mint(address(fund), excessAmount);
+
+    // State should be RECOVERING
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
+
+    // Recover should transfer the full excess amount as wUSCC
+    fund.recover(order);
+
+    // User receives all the excess as wUSCC
+    assertEq(wuscc.balanceOf(address(this)), excessAmount, "user receives excess wUSCC in recovery");
+  }
+
   function testFuzz_Create_Deposit(uint96 amount) public {
     amount = uint96(bound(amount, 1, type(uint96).max));
     Order memory order = _depositOrder(amount, amount);
