@@ -541,14 +541,14 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
-    
+
     // Return EMPTY to indicate this order doesn't exist
     if (!order.toId(address(this)).eq($.currentOrder)) {
       return (State.EMPTY, 0);
     }
 
     State _internalState = $.internalState;
-    
+
     if (_internalState == State.PROCESSING) {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
