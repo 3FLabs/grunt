@@ -43,9 +43,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Scaled unit for 6 decimals.
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
 
-  /// @dev Basis points denominator (10,000 basis points = 100%).
-  uint256 private constant _BASIS_POINTS = 10_000;
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
