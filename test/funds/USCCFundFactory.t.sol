@@ -58,7 +58,7 @@ contract USCCFundFactoryTest is Test {
     assertEq(fund.owner(), owner, "owner");
   }
 
-  function test_Factory_DeploysWrappedAsset() public view {
+  function test_Setup_WrappedAssetInitialized() public view {
     assertEq(wuscc.owner(), owner, "owner");
     assertEq(wuscc.symbol(), "wUSCC", "symbol");
   }
