@@ -31,6 +31,7 @@ contract USCCFundTest is Test {
   error InvalidOracle(address oracle);
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
   error InvalidBps(uint256 bps);
+  error InvalidPriceLimits();
   error InvalidInitialization();
   error Unauthorized();
 
@@ -43,11 +44,12 @@ contract USCCFundTest is Test {
   event OrderRecovering(Id indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
   event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
-  event maxPriceDeviationBpsUpdated(uint256 maxPriceDeviationBps);
+  event PriceLimitsUpdated(uint256 minPriceLimit, uint256 maxPriceLimit);
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
-  uint256 private constant DEFAULT_BPS = 100;
   uint256 private constant ONE_USDC = 1e6;
+  uint256 private constant DEFAULT_MIN_PRICE = 0.9e6;
+  uint256 private constant DEFAULT_MAX_PRICE = 1.1e6;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           TEST STATE                       */
@@ -87,7 +89,15 @@ contract USCCFundTest is Test {
 
     factory = new USCCFundFactory(owner);
     address fundAddress = factory.createFund(
-      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
     fund = USCCFund(fundAddress);
 
@@ -113,31 +123,71 @@ contract USCCFundTest is Test {
     USCCFund local = new USCCFund();
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0xBEEF)));
     local.initialize(
-      owner, address(0xBEEF), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(0xBEEF),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
 
     local = new USCCFund();
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
     local.initialize(
-      owner, address(this), recipient, address(1), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(1),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
 
     local = new USCCFund();
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(2)));
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(2), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(2),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
 
     local = new USCCFund();
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(3)));
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(uscc), address(3), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(3),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
 
     local = new USCCFund();
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(4)));
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(4), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(4),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
   }
 
@@ -145,7 +195,15 @@ contract USCCFundTest is Test {
     USCCFund local = new USCCFund();
     vm.expectRevert(AddressZero.selector);
     local.initialize(
-      owner, address(this), address(0), address(usdc), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      address(0),
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
   }
 
@@ -154,14 +212,30 @@ contract USCCFundTest is Test {
     MockERC20 badUsdc = new MockERC20("Bad USDC", "BUSDC", 18);
     vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
     local.initialize(
-      owner, address(this), recipient, address(badUsdc), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(badUsdc),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
 
     local = new USCCFund();
     MockERC20 badUscc = new MockERC20("Bad USCC", "BUSCC", 18);
     vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(badUscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(badUscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
   }
 
@@ -170,7 +244,15 @@ contract USCCFundTest is Test {
     MockERC20 badWuscc = new MockERC20("Bad WUSCC", "BWUSCC", 18);
     vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(uscc), address(badWuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(badWuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
   }
 
@@ -179,22 +261,46 @@ contract USCCFundTest is Test {
     MockChainlinkOracle badOracle = new MockChainlinkOracle(8);
     vm.expectRevert(abi.encodeWithSelector(InvalidOracle.selector, address(badOracle)));
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(badOracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(badOracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
   }
 
-  function test_Initialize_RevertsInvalidBps() public {
+  function test_Initialize_RevertsInvalidPriceLimits() public {
     USCCFund local = new USCCFund();
-    vm.expectRevert(abi.encodeWithSelector(InvalidBps.selector, 10_001));
+    vm.expectRevert(InvalidPriceLimits.selector);
     local.initialize(
-      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 10_001
+      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 1.1e6, 0.9e6
+    );
+  }
+
+  function test_Initialize_RevertsEqualPriceLimits() public {
+    USCCFund local = new USCCFund();
+    vm.expectRevert(InvalidPriceLimits.selector);
+    local.initialize(
+      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 1e6, 1e6
     );
   }
 
   function test_Initialize_OnlyOnce() public {
     vm.expectRevert(InvalidInitialization.selector);
     fund.initialize(
-      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), DEFAULT_BPS
+      owner,
+      address(this),
+      recipient,
+      address(usdc),
+      address(uscc),
+      address(wuscc),
+      address(oracle),
+      DEFAULT_MIN_PRICE,
+      DEFAULT_MAX_PRICE
     );
   }
 
@@ -557,6 +663,10 @@ contract USCCFundTest is Test {
 
   function test_SetOracle_Success() public {
     MockChainlinkOracle newOracle = new MockChainlinkOracle(6);
+    // Set valid data in the new oracle since setOracle() now reads from it
+    newOracle.setRoundData(1, int256(ONE_USDC), block.timestamp, 1);
+    newOracle.setLatestRound(1);
+
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
     emit OracleUpdated(address(newOracle), owner);
@@ -583,23 +693,58 @@ contract USCCFundTest is Test {
     fund.setOracle(address(newOracle));
   }
 
-  function test_SetMaxPriceDeviationBps_Success() public {
+  function test_SetPriceLimits_Success() public {
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit maxPriceDeviationBpsUpdated(200);
-    fund.setMaxPriceDeviationBps(200);
+    emit PriceLimitsUpdated(0.85e6, 1.15e6);
+    fund.setPriceLimits(0.85e6, 1.15e6);
   }
 
-  function test_SetMaxPriceDeviationBps_RevertsInvalidBps() public {
+  function test_SetPriceLimits_RevertsIfMinAboveMax() public {
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidBps.selector, 10_001));
-    fund.setMaxPriceDeviationBps(10_001);
+    vm.expectRevert(InvalidPriceLimits.selector);
+    fund.setPriceLimits(1.2e6, 0.9e6);
   }
 
-  function test_SetMaxPriceDeviationBps_OnlyOperatorOrOwner() public {
+  function test_SetPriceLimits_RevertsIfEqual() public {
+    vm.prank(owner);
+    vm.expectRevert(InvalidPriceLimits.selector);
+    fund.setPriceLimits(1e6, 1e6);
+  }
+
+  function test_SetPriceLimits_OnlyOperatorOrOwner() public {
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
-    fund.setMaxPriceDeviationBps(200);
+    fund.setPriceLimits(0.85e6, 1.15e6);
+  }
+
+  function test_PriceBounds_ProtectionFromStart() public {
+    // Price bounds protection works from initialization without needing updates
+    // Set price above max limit ($1.10)
+    oracle.setRoundData(2, int256(1.2e6), block.timestamp, 2);
+    oracle.setLatestRound(2);
+
+    uscc.mint(address(fund), 5 * ONE_USDC);
+
+    // Should revert because price ($1.20) exceeds max limit ($1.10)
+    vm.expectRevert(ChainlinkFatFinger.selector);
+    fund.totalAssets();
+
+    // Set price below min limit ($0.90)
+    oracle.setRoundData(3, int256(0.8e6), block.timestamp, 3);
+    oracle.setLatestRound(3);
+
+    // Should revert because price ($0.80) is below min limit ($0.90)
+    vm.expectRevert(ChainlinkFatFinger.selector);
+    fund.totalAssets();
+
+    // Set price within bounds
+    oracle.setRoundData(4, int256(ONE_USDC), block.timestamp, 4);
+    oracle.setLatestRound(4);
+
+    // Should succeed
+    uint256 assets = fund.totalAssets();
+    assertEq(assets, 5 * ONE_USDC, "assets");
   }
 
   function test_Resolve_Success() public {
@@ -727,11 +872,35 @@ contract USCCFundTest is Test {
     fund.totalAssets();
   }
 
-  function test_TotalAssets_PreviousRoundInvalid() public {
+  function test_TotalAssets_RoundIdGap() public {
+    // Simulate a gap in round IDs (e.g., jump from round 1 to round 5)
+    // Round 2, 3, 4 don't exist
+    oracle.setRoundData(5, int256(ONE_USDC), block.timestamp, 5);
+    oracle.setLatestRound(5);
+
+    // This succeeds because we check absolute bounds, not previous rounds
+    uscc.mint(address(fund), 5 * ONE_USDC);
+    fund.totalAssets();
+  }
+
+  function test_TotalAssets_RoundIdGap_LargeJump() public {
+    // Simulate a large gap in round IDs
+    oracle.setRoundData(100, int256(ONE_USDC), block.timestamp, 100);
+    oracle.setLatestRound(100);
+
+    // Round 99 doesn't exist - handled gracefully with bounds-based approach
+    uscc.mint(address(fund), 5 * ONE_USDC);
+    fund.totalAssets();
+  }
+
+  function test_TotalAssets_SuccessWithNonSequentialRounds() public {
+    // Bounds-based approach doesn't depend on previous rounds
+    // This test verifies that even if previous round data is invalid, we can still read totalAssets
     oracle.setRoundData(2, int256(ONE_USDC), block.timestamp, 2);
-    oracle.setRoundData(1, 0, block.timestamp, 1);
+    oracle.setRoundData(1, 0, block.timestamp, 1); // Invalid previous round
     oracle.setLatestRound(2);
-    vm.expectRevert(ChainlinkInvalidAnswer.selector);
+
+    // Should succeed because we validate against absolute bounds, not previous rounds
     fund.totalAssets();
   }
 

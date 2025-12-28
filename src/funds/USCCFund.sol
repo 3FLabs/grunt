@@ -98,9 +98,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      Triggered if `answeredInRound < roundId` from `latestRoundData()`.
   error ChainlinkStaleRound();
 
-  /// @notice Thrown when the price deviation between consecutive Chainlink rounds exceeds the authorized threshold.
+  /// @notice Thrown when the oracle price falls outside the configured acceptable bounds.
   /// @dev Indicates a potential fat-finger error or anomalous oracle update.
-  ///      Triggered if the absolute deviation in basis points exceeds `maxPriceDeviationBps`.
+  ///      Triggered if the price is below `minPriceLimit` or above `maxPriceLimit`.
   error ChainlinkFatFinger();
 
   /// @notice Thrown when the provided oracle address is invalid (e.g., decimals mismatch).
@@ -115,6 +115,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @notice Thrown when the provided basis points value is invalid (e.g., exceeds 10,000).
   /// @param bps The invalid basis points value.
   error InvalidBps(uint256 bps);
+
+  /// @notice Thrown when the provided price limits are invalid.
+  /// @dev Triggered when minPriceLimit >= maxPriceLimit.
+  error InvalidPriceLimits();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -167,9 +171,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param operator The address that resolved the order.
   event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
-  /// @notice Emitted when the maximum allowed price deviation in basis points is updated.
-  /// @param maxPriceDeviationBps The new maximum price deviation in basis points.
-  event maxPriceDeviationBpsUpdated(uint256 maxPriceDeviationBps);
+  /// @notice Emitted when the price limits for fat-finger protection are updated.
+  /// @param minPriceLimit The new minimum acceptable price.
+  /// @param maxPriceLimit The new maximum acceptable price.
+  event PriceLimitsUpdated(uint256 minPriceLimit, uint256 maxPriceLimit);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -186,7 +191,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param wuscc The address of the wrapped USCC token contract.
   /// @param oracle The address of Chainlink USCC Oracle.
   /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
-  /// @param maxPriceDeviationBps Maximum allowed price deviation in basis points (1 bp = 0.01%) between consecutive oracle rounds.
+  /// @param minPriceLimit Minimum acceptable price for USCC (in oracle decimals), used for fat-finger protection.
+  /// @param maxPriceLimit Maximum acceptable price for USCC (in oracle decimals), used for fat-finger protection.
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
@@ -196,7 +202,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address wuscc;
     address oracle;
     uint256 cachedBalance;
-    uint256 maxPriceDeviationBps;
+    uint256 minPriceLimit;
+    uint256 maxPriceLimit;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -229,7 +236,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param uscc_ The address of the USCC token contract.
   /// @param wuscc_ The address of the wrapped USCC token contract.
   /// @param oracle_ The address of Chainlink USCC Oracle.
-  /// @param maxPriceDeviationBps_ Maximum allowed price deviation in basis points (1 bp = 0.01%) between consecutive oracle rounds.
+  /// @param minPriceLimit_ Minimum acceptable price for USCC (in oracle decimals, e.g., 0.90e6 for $0.90).
+  /// @param maxPriceLimit_ Maximum acceptable price for USCC (in oracle decimals, e.g., 1.10e6 for $1.10).
   function initialize(
     address owner_,
     address depositor_,
@@ -238,7 +246,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address uscc_,
     address wuscc_,
     address oracle_,
-    uint256 maxPriceDeviationBps_
+    uint256 minPriceLimit_,
+    uint256 maxPriceLimit_
   ) public initializer {
     if (depositor_.code.length == 0) revert InvalidContract(depositor_);
     if (usdc_.code.length == 0) revert InvalidContract(usdc_);
@@ -255,8 +264,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert InvalidOracle(oracle_);
     }
 
-    if (maxPriceDeviationBps_ > _BASIS_POINTS) {
-      revert InvalidBps(maxPriceDeviationBps_);
+    if (minPriceLimit_ >= maxPriceLimit_) {
+      revert InvalidPriceLimits();
     }
 
     UsccFundStorage storage $ = _usccFundStorage();
@@ -265,7 +274,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.uscc = uscc_;
     $.wuscc = wuscc_;
     $.oracle = oracle_;
-    $.maxPriceDeviationBps = maxPriceDeviationBps_;
+    $.minPriceLimit = minPriceLimit_;
+    $.maxPriceLimit = maxPriceLimit_;
 
     _initializeOwner(owner_);
     _setRoles(depositor_, DEPOSITOR_ROLE);
@@ -412,16 +422,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     emit OracleUpdated(oracle, msg.sender);
   }
 
-  /// @notice Sets the maximum allowed price deviation in basis points between consecutive oracle rounds.
+  /// @notice Sets the acceptable price limits for USCC oracle.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  /// @param maxPriceDeviationBps The new maximum price deviation in basis points.
-  function setMaxPriceDeviationBps(uint256 maxPriceDeviationBps) external onlyOwnerOrRoles(OPERATOR_ROLE) {
-    if (maxPriceDeviationBps > _BASIS_POINTS) revert InvalidBps(maxPriceDeviationBps);
-
+  ///      Used for fat-finger protection - any price outside these bounds triggers ChainlinkFatFinger error.
+  /// @param minPrice The minimum acceptable price in oracle decimals (e.g., 0.90e6 for $0.90).
+  /// @param maxPrice The maximum acceptable price in oracle decimals (e.g., 1.10e6 for $1.10).
+  function setPriceLimits(uint256 minPrice, uint256 maxPrice) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    if (minPrice >= maxPrice) revert InvalidPriceLimits();
     UsccFundStorage storage $ = _usccFundStorage();
-    $.maxPriceDeviationBps = maxPriceDeviationBps;
+    $.minPriceLimit = minPrice;
+    $.maxPriceLimit = maxPrice;
 
-    emit maxPriceDeviationBpsUpdated(maxPriceDeviationBps);
+    emit PriceLimitsUpdated(minPrice, maxPrice);
   }
 
   /// @notice Resolves the current order by setting its input and output amounts.
@@ -462,7 +474,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
-  ///      Includes fat-finger protection by checking price deviation against the previous round.
+  ///      Includes fat-finger protection by validating the oracle price is within configured bounds.
+  ///      For USCC (stablecoin), the price should remain close to $1.00.
+  ///      Any price outside the bounds (default: $0.90 - $1.10) indicates oracle malfunction or fat-finger error.
+  ///      This approach requires no state updates and works reliably even with frequent calls.
   function totalAssets() external view override returns (uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
@@ -476,29 +491,15 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_updatedAt == 0) revert ChainlinkIncompleteRound();
     if (_answeredInRound < _roundId) revert ChainlinkStaleRound();
 
-    // Fat-finger protection: check deviation against previous round
-    if (_roundId > 1) {
-      (, int256 _previousAnswer,,,) = _oracle.getRoundData(_roundId - 1);
+    uint256 _latestPrice = _answer.toUint256();
 
-      // Validate previous round
-      if (_previousAnswer <= 0) revert ChainlinkInvalidAnswer();
-
-      // Calculate absolute deviation in basis points
-      uint256 _latestPrice = _answer.toUint256();
-      uint256 _previousPrice = _previousAnswer.toUint256();
-
-      uint256 _deviation;
-      if (_latestPrice > _previousPrice) {
-        _deviation = (_latestPrice - _previousPrice).mulDiv(_BASIS_POINTS, _previousPrice);
-      } else {
-        _deviation = (_previousPrice - _latestPrice).mulDiv(_BASIS_POINTS, _previousPrice);
-      }
-
-      // Revert if deviation exceeds authorized threshold
-      if (_deviation > $.maxPriceDeviationBps) revert ChainlinkFatFinger();
+    // Fat-finger protection: validate price is within reasonable absolute bounds
+    // Any price outside configured bounds indicates oracle malfunction or fat-finger error
+    if (_latestPrice < $.minPriceLimit || _latestPrice > $.maxPriceLimit) {
+      revert ChainlinkFatFinger();
     }
 
-    return $.uscc.balanceOf(address(this)).mulDiv(_answer.toUint256(), _SCALED_UNIT);
+    return $.uscc.balanceOf(address(this)).mulDiv(_latestPrice, _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund

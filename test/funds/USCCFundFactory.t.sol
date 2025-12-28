@@ -35,6 +35,9 @@ contract USCCFundFactoryTest is Test {
     usdc = new MockERC20("USD Coin", "USDC", 6);
     uscc = new MockSuperstateToken("USCC", "USCC", address(allowlist), address(usdc));
     oracle = new MockChainlinkOracle(6);
+    // Initialize oracle with valid data since USCCFund.initialize() now reads from it
+    oracle.setRoundData(1, int256(1e6), block.timestamp, 1);
+    oracle.setLatestRound(1);
 
     WrappedAsset implementation = new WrappedAsset();
     address proxy = LibClone.deployERC1967(address(implementation));
@@ -47,7 +50,7 @@ contract USCCFundFactoryTest is Test {
 
   function test_Factory_DeploysUSCCFund() public {
     address fundAddress = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 100
+      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
     );
     USCCFund fund = USCCFund(fundAddress);
     assertEq(fund.asset(), address(usdc), "usdc");
@@ -62,7 +65,7 @@ contract USCCFundFactoryTest is Test {
 
   function test_Factory_ConfiguresRoles() public {
     address fundAddress = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 100
+      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
     );
     USCCFund fund = USCCFund(fundAddress);
     assertEq(fund.rolesOf(depositor), fund.DEPOSITOR_ROLE(), "depositor");
@@ -70,10 +73,10 @@ contract USCCFundFactoryTest is Test {
 
   function test_Factory_MultipleDeployments() public {
     address fundOne = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 100
+      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
     );
     address fundTwo = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 100
+      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
     );
 
     assertTrue(fundOne != fundTwo, "distinct funds");
@@ -81,26 +84,36 @@ contract USCCFundFactoryTest is Test {
 
   function test_Factory_RevertsInvalidContracts() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(owner, address(1), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 100);
+    factory.createFund(
+      owner, address(1), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
+    );
   }
 
   function test_Factory_RevertsInvalidUsdc() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, recipient, address(1), address(uscc), address(wuscc), address(oracle), 100);
+    factory.createFund(
+      owner, depositor, recipient, address(1), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
+    );
   }
 
   function test_Factory_RevertsInvalidUscc() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, recipient, address(usdc), address(1), address(wuscc), address(oracle), 100);
+    factory.createFund(
+      owner, depositor, recipient, address(usdc), address(1), address(wuscc), address(oracle), 0.9e6, 1.1e6
+    );
   }
 
   function test_Factory_RevertsInvalidWrappedAsset() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(1), address(oracle), 100);
+    factory.createFund(
+      owner, depositor, recipient, address(usdc), address(uscc), address(1), address(oracle), 0.9e6, 1.1e6
+    );
   }
 
   function test_Factory_RevertsInvalidOracle() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(1), 100);
+    factory.createFund(
+      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(1), 0.9e6, 1.1e6
+    );
   }
 }
