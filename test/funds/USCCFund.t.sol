@@ -310,11 +310,19 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     wuscc.mint(address(this), order.input);
 
+    // Mint USCC to fund so it can burn it during offchainRedeem
+    // In real scenario, fund would have USCC from previous deposits
+    uscc.mint(address(fund), order.input);
+
     uint256 balanceBefore = wuscc.balanceOf(address(this));
     (State state,) = fund.commit(order);
 
     assertEq(uint256(state), uint256(State.PROCESSING), "state");
     assertEq(wuscc.balanceOf(address(this)), balanceBefore - order.input, "burned");
+
+    // Verify offchainRedeem was called on USCC (not USDC)
+    assertEq(uscc.lastOffchainRedeemer(), address(fund), "offchainRedeem caller should be fund");
+    assertEq(uscc.lastOffchainRedeemAmount(), order.input, "offchainRedeem amount should match order input");
   }
 
   function test_Commit_RevertsInvalidOrder() public {
@@ -376,6 +384,8 @@ contract USCCFundTest is Test {
     fund.create(order);
     vm.prank(owner);
     wuscc.mint(address(this), order.input);
+    // Mint USCC to fund so it can burn during offchainRedeem
+    uscc.mint(address(fund), order.input);
     fund.commit(order);
     usdc.mint(address(fund), order.output);
 
@@ -456,6 +466,8 @@ contract USCCFundTest is Test {
     fund.create(order);
     vm.prank(owner);
     wuscc.mint(address(this), order.input);
+    // Mint USCC to fund so it can burn during offchainRedeem
+    uscc.mint(address(fund), order.input);
     fund.commit(order);
 
     vm.prank(owner);
@@ -773,6 +785,8 @@ contract USCCFundTest is Test {
     fund.create(order);
     vm.prank(owner);
     wuscc.mint(address(this), order.input);
+    // Mint USCC to fund so it can burn during offchainRedeem
+    uscc.mint(address(fund), order.input);
     fund.commit(order);
     usdc.mint(address(fund), order.output);
     fund.unlock(order);

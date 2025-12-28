@@ -316,7 +316,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     } else {
       // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
       IWrappedAsset($.wuscc).burn(msg.sender, order.input);
-      ISuperstateToken($.usdc).offchainRedeem(order.input);
+      ISuperstateToken($.uscc).offchainRedeem(order.input);
     }
 
     // Snapshot balance before receiving minted uscc or recovered uscc
