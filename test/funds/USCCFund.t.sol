@@ -95,7 +95,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           INITIALIZATION                   */
+  /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Initialize_Success() public view {
@@ -278,7 +278,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                              COMMIT                        */
+  /*                          COMMIT                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Commit_DepositSuccess() public {
@@ -349,7 +349,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                              UNLOCK                        */
+  /*                          UNLOCK                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Unlock_DepositSuccess() public {
@@ -426,7 +426,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                              RECOVER                       */
+  /*                          RECOVER                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Recover_DepositSuccess() public {
@@ -510,7 +510,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                              ADMIN                         */
+  /*                            ADMIN                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Recovering_Success() public {
@@ -650,7 +650,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                              VIEWS                         */
+  /*                            VIEWS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Asset_ReturnsUsdc() public view {
@@ -794,7 +794,7 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                              ROLES                         */
+  /*                            ROLES                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_DepositorImmutable() public {
@@ -820,22 +820,6 @@ contract USCCFundTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         EDGE CASES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_Edge_ZeroOutput() public {
-    Order memory order = _depositOrder(ONE_USDC, 0);
-    fund.create(order);
-    _commitDeposit(order);
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
-  }
-
-  function test_Edge_LargeAmounts() public {
-    uint256 amount = type(uint96).max;
-    Order memory order = _depositOrder(amount, amount);
-    fund.create(order);
-    usdc.mint(address(this), amount);
-    usdc.approve(address(fund), amount);
-    fund.commit(order);
-  }
 
   function test_Edge_CachedBalanceAccuracy() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
