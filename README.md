@@ -397,8 +397,8 @@ USCCFund integrates Superstate's USCC using a single-order state machine:
 - **Deposit flow**: depositor creates a DEPOSIT order, commits USDC to the Superstate recipient, then unlocks wUSCC after USCC is minted to the fund.
 - **Redeem flow**: depositor creates a REDEEM order, commits by burning wUSCC and calling `offchainRedeem`, then unlocks USDC when it arrives.
 - The fund holds USCC; users receive wUSCC. Redemptions return USDC.
-- Total assets use a Chainlink USCC oracle with a max price deviation guard (fat-finger protection).
-- Owner/operator roles can set oracle parameters, mark recovering, or resolve stuck orders.
+- Total assets use a Chainlink USCC oracle.
+- Owner/operator roles can set the oracle, mark recovering, or resolve stuck orders.
 
 ### WrappedAsset (wUSCC)
 
@@ -406,4 +406,4 @@ USCCFund integrates Superstate's USCC using a single-order state machine:
 
 ### USCCFundFactory
 
-The factory deploys USCCFund instances as beacon proxies and initializes them with USDC/USCC addresses, the wUSCC token, and oracle settings.
+The factory deploys USCCFund instances as beacon proxies and initializes them with USDC/USCC addresses, the wUSCC token, and the oracle address.

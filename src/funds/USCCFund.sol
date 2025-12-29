@@ -95,11 +95,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      Triggered if `answeredInRound < roundId` from `latestRoundData()`.
   error ChainlinkStaleRound();
 
-  /// @notice Thrown when the oracle price falls outside the configured acceptable bounds.
-  /// @dev Indicates a potential fat-finger error or anomalous oracle update.
-  ///      Triggered if the price is below `minPriceLimit` or above `maxPriceLimit`.
-  error ChainlinkFatFinger();
-
   /// @notice Thrown when the provided oracle address is invalid (e.g., decimals mismatch).
   /// @param oracle The invalid oracle address.
   error InvalidOracle(address oracle);
@@ -112,10 +107,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @notice Thrown when the provided basis points value is invalid (e.g., exceeds 10,000).
   /// @param bps The invalid basis points value.
   error InvalidBps(uint256 bps);
-
-  /// @notice Thrown when the provided price limits are invalid.
-  /// @dev Triggered when minPriceLimit >= maxPriceLimit.
-  error InvalidPriceLimits();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -168,11 +159,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param operator The address that resolved the order.
   event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
-  /// @notice Emitted when the price limits for fat-finger protection are updated.
-  /// @param minPriceLimit The new minimum acceptable price.
-  /// @param maxPriceLimit The new maximum acceptable price.
-  event PriceLimitsUpdated(uint256 minPriceLimit, uint256 maxPriceLimit);
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -188,8 +174,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param wuscc The address of the wrapped USCC token contract.
   /// @param oracle The address of Chainlink USCC Oracle.
   /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
-  /// @param minPriceLimit Minimum acceptable price for USCC (in oracle decimals), used for fat-finger protection.
-  /// @param maxPriceLimit Maximum acceptable price for USCC (in oracle decimals), used for fat-finger protection.
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
@@ -199,8 +183,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address wuscc;
     address oracle;
     uint256 cachedBalance;
-    uint256 minPriceLimit;
-    uint256 maxPriceLimit;
+    uint256 _reserved0;
+    uint256 _reserved1;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -233,8 +217,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param uscc_ The address of the USCC token contract.
   /// @param wuscc_ The address of the wrapped USCC token contract.
   /// @param oracle_ The address of Chainlink USCC Oracle.
-  /// @param minPriceLimit_ Minimum acceptable price for USCC (in oracle decimals, e.g., 0.90e6 for $0.90).
-  /// @param maxPriceLimit_ Maximum acceptable price for USCC (in oracle decimals, e.g., 1.10e6 for $1.10).
   function initialize(
     address owner_,
     address depositor_,
@@ -242,9 +224,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     address usdc_,
     address uscc_,
     address wuscc_,
-    address oracle_,
-    uint256 minPriceLimit_,
-    uint256 maxPriceLimit_
+    address oracle_
   ) public initializer {
     _checkNotZero(owner_);
     _checkNotZero(recipient_);
@@ -262,18 +242,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert InvalidOracle(oracle_);
     }
 
-    if (minPriceLimit_ >= maxPriceLimit_) {
-      revert InvalidPriceLimits();
-    }
-
     UsccFundStorage storage $ = _usccFundStorage();
     $.recipient = recipient_;
     $.usdc = usdc_;
     $.uscc = uscc_;
     $.wuscc = wuscc_;
     $.oracle = oracle_;
-    $.minPriceLimit = minPriceLimit_;
-    $.maxPriceLimit = maxPriceLimit_;
 
     _initializeOwner(owner_);
     _setRoles(depositor_, DEPOSITOR_ROLE);
@@ -420,20 +394,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     emit OracleUpdated(oracle, msg.sender);
   }
 
-  /// @notice Sets the acceptable price limits for USCC oracle.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Used for fat-finger protection - any price outside these bounds triggers ChainlinkFatFinger error.
-  /// @param minPrice The minimum acceptable price in oracle decimals (e.g., 0.90e6 for $0.90).
-  /// @param maxPrice The maximum acceptable price in oracle decimals (e.g., 1.10e6 for $1.10).
-  function setPriceLimits(uint256 minPrice, uint256 maxPrice) external onlyOwnerOrRoles(OPERATOR_ROLE) {
-    if (minPrice >= maxPrice) revert InvalidPriceLimits();
-    UsccFundStorage storage $ = _usccFundStorage();
-    $.minPriceLimit = minPrice;
-    $.maxPriceLimit = maxPrice;
-
-    emit PriceLimitsUpdated(minPrice, maxPrice);
-  }
-
   /// @notice Resolves the current order by setting its input and output amounts.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
@@ -478,10 +438,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
-  ///      Includes fat-finger protection by validating the oracle price is within configured bounds.
-  ///      For USCC (stablecoin), the price should remain close to $1.00.
-  ///      Any price outside the bounds (default: $0.90 - $1.10) indicates oracle malfunction or fat-finger error.
-  ///      This approach requires no state updates and works reliably even with frequent calls.
+  ///      Validates the oracle round data is consistent and complete.
   function totalAssets() external view override returns (uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
 
@@ -496,12 +453,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_answeredInRound < _roundId) revert ChainlinkStaleRound();
 
     uint256 _latestPrice = _answer.toUint256();
-
-    // Fat-finger protection: validate price is within reasonable absolute bounds
-    // Any price outside configured bounds indicates oracle malfunction or fat-finger error
-    if (_latestPrice < $.minPriceLimit || _latestPrice > $.maxPriceLimit) {
-      revert ChainlinkFatFinger();
-    }
 
     return $.uscc.balanceOf(address(this)).mulDiv(_latestPrice, _SCALED_UNIT);
   }

@@ -49,9 +49,8 @@ contract USCCFundFactoryTest is Test {
   }
 
   function test_Factory_DeploysUSCCFund() public {
-    address fundAddress = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
+    address fundAddress =
+      factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
     USCCFund fund = USCCFund(fundAddress);
     assertEq(fund.asset(), address(usdc), "usdc");
     assertEq(fund.share(), address(wuscc), "wuscc");
@@ -64,56 +63,43 @@ contract USCCFundFactoryTest is Test {
   }
 
   function test_Factory_ConfiguresRoles() public {
-    address fundAddress = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
+    address fundAddress =
+      factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
     USCCFund fund = USCCFund(fundAddress);
     assertEq(fund.rolesOf(depositor), fund.DEPOSITOR_ROLE(), "depositor");
   }
 
   function test_Factory_MultipleDeployments() public {
-    address fundOne = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
-    address fundTwo = factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
+    address fundOne =
+      factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
+    address fundTwo =
+      factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
 
     assertTrue(fundOne != fundTwo, "distinct funds");
   }
 
   function test_Factory_RevertsInvalidContracts() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, address(1), recipient, address(usdc), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
+    factory.createFund(owner, address(1), recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
   }
 
   function test_Factory_RevertsInvalidUsdc() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, depositor, recipient, address(1), address(uscc), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
+    factory.createFund(owner, depositor, recipient, address(1), address(uscc), address(wuscc), address(oracle));
   }
 
   function test_Factory_RevertsInvalidUscc() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, depositor, recipient, address(usdc), address(1), address(wuscc), address(oracle), 0.9e6, 1.1e6
-    );
+    factory.createFund(owner, depositor, recipient, address(usdc), address(1), address(wuscc), address(oracle));
   }
 
   function test_Factory_RevertsInvalidWrappedAsset() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(1), address(oracle), 0.9e6, 1.1e6
-    );
+    factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(1), address(oracle));
   }
 
   function test_Factory_RevertsInvalidOracle() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(1), 0.9e6, 1.1e6
-    );
+    factory.createFund(owner, depositor, recipient, address(usdc), address(uscc), address(wuscc), address(1));
   }
 }

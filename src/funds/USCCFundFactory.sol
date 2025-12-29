@@ -93,8 +93,6 @@ contract USCCFundFactory {
   /// @param uscc The USCC token contract address (must be a contract)
   /// @param wrappedAsset The WrappedAsset (wUSCC) token address (must be a contract, can be shared)
   /// @param oracle The Chainlink USCC price oracle address (must be a contract)
-  /// @param minPriceLimit Minimum acceptable price for USCC (in oracle decimals, e.g., 0.90e6 for $0.90)
-  /// @param maxPriceLimit Maximum acceptable price for USCC (in oracle decimals, e.g., 1.10e6 for $1.10)
   /// @return fund The address of the newly deployed USCCFund proxy
   function createFund(
     address owner,
@@ -103,9 +101,7 @@ contract USCCFundFactory {
     address usdc,
     address uscc,
     address wrappedAsset,
-    address oracle,
-    uint256 minPriceLimit,
-    uint256 maxPriceLimit
+    address oracle
   ) external returns (address fund) {
     if (depositor.code.length == 0) revert InvalidContract(depositor);
     if (usdc.code.length == 0) revert InvalidContract(usdc);
@@ -117,8 +113,7 @@ contract USCCFundFactory {
     fund = USCC_FUND_BEACON.deployERC1967BeaconProxy();
 
     // Initialize USCCFund
-    USCCFund(fund)
-      .initialize(owner, depositor, recipient, usdc, uscc, wrappedAsset, oracle, minPriceLimit, maxPriceLimit);
+    USCCFund(fund).initialize(owner, depositor, recipient, usdc, uscc, wrappedAsset, oracle);
 
     emit FundCreated(fund, wrappedAsset, usdc, uscc, recipient);
   }
