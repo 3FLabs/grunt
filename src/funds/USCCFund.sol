@@ -44,6 +44,40 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         IMMUTABLES                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice The USDC token contract address.
+  address public immutable USDC;
+
+  /// @notice The USCC token contract address.
+  address public immutable USCC;
+
+  /// @notice The wUSCC wrapped token contract address.
+  address public immutable WUSCC;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        CONSTRUCTOR                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Deploys the USCCFund contract with the required token addresses.
+  /// @param usdc The USDC token address.
+  /// @param uscc The USCC token address.
+  /// @param wuscc The wUSCC token address.
+  constructor(address usdc, address uscc, address wuscc) {
+    _checkContract(usdc);
+    _checkContract(uscc);
+    _checkContract(wuscc);
+    _checkDecimals(usdc);
+    _checkDecimals(uscc);
+    _checkDecimals(wuscc);
+
+    USDC = usdc;
+    USCC = uscc;
+    WUSCC = wuscc;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -169,22 +203,14 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param recipient The superstate address receiving USDC to mint USCC.
   /// @param currentOrder The current order being processed. We only handle one at a time.
   /// @param internalState The internal state of the current order.
-  /// @param usdc The address of the USDC token contract.
-  /// @param uscc The address of the USCC token contract.
-  /// @param wuscc The address of the wrapped USCC token contract.
   /// @param oracle The address of Chainlink USCC Oracle.
   /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
     State internalState;
-    address usdc;
-    address uscc;
-    address wuscc;
     address oracle;
     uint256 cachedBalance;
-    uint256 _reserved0;
-    uint256 _reserved1;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -213,29 +239,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
   /// @param recipient_ The superstate address receiving USDC to mint USCC.
-  /// @param usdc_ The address of the USDC token contract.
-  /// @param uscc_ The address of the USCC token contract.
-  /// @param wuscc_ The address of the wrapped USCC token contract.
   /// @param oracle_ The address of Chainlink USCC Oracle.
-  function initialize(
-    address owner_,
-    address depositor_,
-    address recipient_,
-    address usdc_,
-    address uscc_,
-    address wuscc_,
-    address oracle_
-  ) public initializer {
+  function initialize(address owner_, address depositor_, address recipient_, address oracle_) public initializer {
     _checkNotZero(owner_);
     _checkNotZero(recipient_);
     _checkContract(depositor_);
-    _checkContract(usdc_);
-    _checkContract(uscc_);
-    _checkContract(wuscc_);
     _checkContract(oracle_);
-    _checkDecimals(usdc_);
-    _checkDecimals(uscc_);
-    _checkDecimals(wuscc_);
 
     // Ensure oracle has 6 decimals
     if (AggregatorV3Interface(oracle_).decimals() != _DECIMALS) {
@@ -244,9 +253,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     UsccFundStorage storage $ = _usccFundStorage();
     $.recipient = recipient_;
-    $.usdc = usdc_;
-    $.uscc = uscc_;
-    $.wuscc = wuscc_;
     $.oracle = oracle_;
 
     _initializeOwner(owner_);
@@ -268,8 +274,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert PendingOrder();
 
     // Check allowlist permissions for this contract to deposit in USCC
-    if (!IAllowlist(ISuperstateToken($.uscc).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC"))
-    {
+    if (!IAllowlist(ISuperstateToken(USCC).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC")) {
       revert NotAllowedSuperstate();
     }
 
@@ -294,16 +299,16 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
-      $.usdc.safeTransferFrom(msg.sender, $.recipient, order.input);
+      USDC.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
       // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
-      IWrappedAsset($.wuscc).burn(msg.sender, order.input);
-      ISuperstateToken($.uscc).offchainRedeem(order.input);
+      IWrappedAsset(WUSCC).burn(msg.sender, order.input);
+      ISuperstateToken(USCC).offchainRedeem(order.input);
     }
 
     // Snapshot balance before receiving minted uscc or recovered uscc
     // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
-    $.cachedBalance = $.uscc.balanceOf(address(this));
+    $.cachedBalance = USCC.balanceOf(address(this));
 
     $.internalState = State.PROCESSING;
 
@@ -323,9 +328,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_currentState != State.RECOVERING) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
-      $.usdc.safeTransfer(msg.sender, _amount);
+      USDC.safeTransfer(msg.sender, _amount);
     } else {
-      IWrappedAsset($.wuscc).mint(msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
@@ -347,10 +352,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver and keep USCC in the contract
-      IWrappedAsset($.wuscc).mint(msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
-      $.usdc.safeTransfer(msg.sender, _amount);
+      USDC.safeTransfer(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
@@ -428,12 +433,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function asset() external view override returns (address) {
-    return _usccFundStorage().usdc;
+    return USDC;
   }
 
   /// @inheritdoc IFund
   function share() external view returns (address) {
-    return _usccFundStorage().wuscc;
+    return WUSCC;
   }
 
   /// @inheritdoc IFund
@@ -454,7 +459,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     uint256 _latestPrice = _answer.toUint256();
 
-    return $.uscc.balanceOf(address(this)).mulDiv(_latestPrice, _SCALED_UNIT);
+    return USCC.balanceOf(address(this)).mulDiv(_latestPrice, _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
@@ -464,7 +469,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return _usccFundStorage().wuscc.balanceOf(account);
+    return WUSCC.balanceOf(account);
   }
 
   /// @inheritdoc IFund
@@ -508,11 +513,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        _amount = $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
+        _amount = USCC.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
         return _amount >= order.output ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we received USDC
-        _amount = $.usdc.balanceOf(address(this));
+        _amount = USDC.balanceOf(address(this));
         return _amount >= order.output ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       }
     }
@@ -521,11 +526,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
-        _amount = $.usdc.balanceOf(address(this));
+        _amount = USDC.balanceOf(address(this));
         return _amount >= order.input ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we can recover USCC
-        _amount = $.uscc.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
+        _amount = USCC.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
         return _amount >= order.input ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       }
     }

@@ -19,10 +19,10 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///      - Multiple USCCFund instances can share the same WrappedAsset token
 ///
 ///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner
+///      1. Factory is deployed with an initial beacon owner and token addresses
 ///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
 ///      3. Users call `createFund()` to deploy new USCCFund instances
-///      4. Each fund is initialized with its parameters including a shared WrappedAsset address
+///      4. Each fund is initialized with per-fund parameters (recipient + oracle + roles)
 ///      5. **Post-deployment**: WrappedAsset owner must grant ISSUER_ROLE to the new fund
 ///
 ///      Upgrade Flow:
@@ -52,6 +52,15 @@ contract USCCFundFactory {
   /// @dev All USCCFund proxies deployed by this factory delegate to this beacon's implementation.
   address public immutable USCC_FUND_BEACON;
 
+  /// @notice The USDC token address used by all USCCFund instances created by this factory.
+  address public immutable USDC;
+
+  /// @notice The USCC token address used by all USCCFund instances created by this factory.
+  address public immutable USCC;
+
+  /// @notice The wUSCC token address used by all USCCFund instances created by this factory.
+  address public immutable WUSCC;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERRORS                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -68,8 +77,19 @@ contract USCCFundFactory {
   /// @dev Deploys one UpgradeableBeacon wrapping a freshly deployed USCCFund implementation.
   ///      The beacon owner can later upgrade the implementation for all proxies.
   /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
-  constructor(address initialBeaconOwner) {
-    USCC_FUND_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new USCCFund())));
+  /// @param usdc The USDC token address used by all funds.
+  /// @param uscc The USCC token address used by all funds.
+  /// @param wuscc The wUSCC token address used by all funds.
+  constructor(address initialBeaconOwner, address usdc, address uscc, address wuscc) {
+    if (usdc.code.length == 0) revert InvalidContract(usdc);
+    if (uscc.code.length == 0) revert InvalidContract(uscc);
+    if (wuscc.code.length == 0) revert InvalidContract(wuscc);
+
+    USDC = usdc;
+    USCC = uscc;
+    WUSCC = wuscc;
+
+    USCC_FUND_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new USCCFund(usdc, uscc, wuscc))));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -79,7 +99,7 @@ contract USCCFundFactory {
   /// @notice Creates a new USCCFund proxy.
   /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
   ///      1. Deploys USCCFund proxy pointing to USCC_FUND_BEACON
-  ///      2. Initializes the fund with all parameters including the shared WrappedAsset
+  ///      2. Initializes the fund with per-fund parameters (owner, depositor, recipient, oracle)
   ///
   ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
   ///      to the newly deployed fund address so it can mint/burn wrapped tokens.
@@ -89,32 +109,21 @@ contract USCCFundFactory {
   /// @param owner The address that will own the USCCFund (admin privileges)
   /// @param depositor The address that will have the depositor role (must be a contract)
   /// @param recipient The Superstate address receiving USDC to mint USCC
-  /// @param usdc The USDC token contract address (must be a contract)
-  /// @param uscc The USCC token contract address (must be a contract)
-  /// @param wrappedAsset The WrappedAsset (wUSCC) token address (must be a contract, can be shared)
   /// @param oracle The Chainlink USCC price oracle address (must be a contract)
   /// @return fund The address of the newly deployed USCCFund proxy
-  function createFund(
-    address owner,
-    address depositor,
-    address recipient,
-    address usdc,
-    address uscc,
-    address wrappedAsset,
-    address oracle
-  ) external returns (address fund) {
+  function createFund(address owner, address depositor, address recipient, address oracle)
+    external
+    returns (address fund)
+  {
     if (depositor.code.length == 0) revert InvalidContract(depositor);
-    if (usdc.code.length == 0) revert InvalidContract(usdc);
-    if (uscc.code.length == 0) revert InvalidContract(uscc);
-    if (wrappedAsset.code.length == 0) revert InvalidContract(wrappedAsset);
     if (oracle.code.length == 0) revert InvalidContract(oracle);
 
     // Deploy USCCFund proxy
     fund = USCC_FUND_BEACON.deployERC1967BeaconProxy();
 
     // Initialize USCCFund
-    USCCFund(fund).initialize(owner, depositor, recipient, usdc, uscc, wrappedAsset, oracle);
+    USCCFund(fund).initialize(owner, depositor, recipient, oracle);
 
-    emit FundCreated(fund, wrappedAsset, usdc, uscc, recipient);
+    emit FundCreated(fund, WUSCC, USDC, USCC, recipient);
   }
 }

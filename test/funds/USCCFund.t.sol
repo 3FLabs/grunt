@@ -82,10 +82,8 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     wuscc.initialize(owner, owner, "wUSCC", "Wrapped USCC", 6);
 
-    factory = new USCCFundFactory(owner);
-    address fundAddress = factory.createFund(
-      owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle)
-    );
+    factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
+    address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
     fund = USCCFund(fundAddress);
 
     allowlist.setAllowed(address(fund), "USCC", true);
@@ -107,70 +105,55 @@ contract USCCFundTest is Test {
   }
 
   function test_Initialize_RevertsInvalidContract() public {
-    USCCFund local = new USCCFund();
+    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0xBEEF)));
-    local.initialize(owner, address(0xBEEF), recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
+    local.initialize(owner, address(0xBEEF), recipient, address(oracle));
 
-    local = new USCCFund();
+    local = new USCCFund(address(usdc), address(uscc), address(wuscc));
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
-    local.initialize(owner, address(this), recipient, address(1), address(uscc), address(wuscc), address(oracle));
-
-    local = new USCCFund();
-    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(2)));
-    local.initialize(owner, address(this), recipient, address(usdc), address(2), address(wuscc), address(oracle));
-
-    local = new USCCFund();
-    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(3)));
-    local.initialize(owner, address(this), recipient, address(usdc), address(uscc), address(3), address(oracle));
-
-    local = new USCCFund();
-    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(4)));
-    local.initialize(owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(4));
+    local.initialize(owner, address(this), recipient, address(1));
   }
 
   function test_Initialize_RevertsInvalidOwner() public {
-    USCCFund local = new USCCFund();
+    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
     vm.expectRevert(AddressZero.selector);
-    local.initialize(
-      address(0), address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle)
-    );
+    local.initialize(address(0), address(this), recipient, address(oracle));
   }
 
   function test_Initialize_RevertsInvalidRecipient() public {
-    USCCFund local = new USCCFund();
+    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
     vm.expectRevert(AddressZero.selector);
-    local.initialize(owner, address(this), address(0), address(usdc), address(uscc), address(wuscc), address(oracle));
+    local.initialize(owner, address(this), address(0), address(oracle));
   }
 
-  function test_Initialize_RevertsDecimalsMismatch() public {
-    USCCFund local = new USCCFund();
+  function test_Constructor_RevertsUsdcDecimalsMismatch() public {
     MockERC20 badUsdc = new MockERC20("Bad USDC", "BUSDC", 18);
     vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
-    local.initialize(owner, address(this), recipient, address(badUsdc), address(uscc), address(wuscc), address(oracle));
-
-    local = new USCCFund();
-    MockERC20 badUscc = new MockERC20("Bad USCC", "BUSCC", 18);
-    vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
-    local.initialize(owner, address(this), recipient, address(usdc), address(badUscc), address(wuscc), address(oracle));
+    new USCCFund(address(badUsdc), address(uscc), address(wuscc));
   }
 
-  function test_Initialize_RevertsWrappedAssetDecimalsMismatch() public {
-    USCCFund local = new USCCFund();
+  function test_Constructor_RevertsUsccDecimalsMismatch() public {
+    MockERC20 badUscc = new MockERC20("Bad USCC", "BUSCC", 18);
+    vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
+    new USCCFund(address(usdc), address(badUscc), address(wuscc));
+  }
+
+  function test_Constructor_RevertsWrappedAssetDecimalsMismatch() public {
     MockERC20 badWuscc = new MockERC20("Bad WUSCC", "BWUSCC", 18);
     vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
-    local.initialize(owner, address(this), recipient, address(usdc), address(uscc), address(badWuscc), address(oracle));
+    new USCCFund(address(usdc), address(uscc), address(badWuscc));
   }
 
   function test_Initialize_RevertsInvalidOracleDecimals() public {
-    USCCFund local = new USCCFund();
+    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
     MockChainlinkOracle badOracle = new MockChainlinkOracle(8);
     vm.expectRevert(abi.encodeWithSelector(InvalidOracle.selector, address(badOracle)));
-    local.initialize(owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(badOracle));
+    local.initialize(owner, address(this), recipient, address(badOracle));
   }
 
   function test_Initialize_OnlyOnce() public {
     vm.expectRevert(InvalidInitialization.selector);
-    fund.initialize(owner, address(this), recipient, address(usdc), address(uscc), address(wuscc), address(oracle));
+    fund.initialize(owner, address(this), recipient, address(oracle));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

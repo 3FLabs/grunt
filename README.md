@@ -403,7 +403,3 @@ USCCFund integrates Superstate's USCC using a single-order state machine:
 ### WrappedAsset (wUSCC)
 
 `WrappedAsset` is an ERC20 wrapper minted/burned by authorized issuers. Multiple USCCFund instances can share the same wUSCC token; each new fund must be granted `ISSUER_ROLE`.
-
-### USCCFundFactory
-
-The factory deploys USCCFund instances as beacon proxies and initializes them with USDC/USCC addresses, the wUSCC token, and the oracle address.
