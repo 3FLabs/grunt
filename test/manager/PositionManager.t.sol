@@ -3,7 +3,13 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
-import {IPositionManager, SupplyQueueEntry, RebalancingData, RebalancingOperation, RebalancingOperationType} from "src/interfaces/manager/IPositionManager.sol";
+import {
+  IPositionManager,
+  SupplyQueueEntry,
+  RebalancingData,
+  RebalancingOperation,
+  RebalancingOperationType
+} from "src/interfaces/manager/IPositionManager.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
@@ -157,13 +163,7 @@ contract PositionManagerTest is Test {
     // Deploy PositionManager
     positionManager = new PositionManager();
     positionManager.initialize(
-      owner,
-      "Position Manager Shares",
-      "PMS",
-      18,
-      address(collateralToken),
-      address(debtToken),
-      POSITION_MANAGER_LLTV
+      owner, "Position Manager Shares", "PMS", 18, address(collateralToken), address(debtToken), POSITION_MANAGER_LLTV
     );
 
     // Grant minter role
@@ -173,10 +173,12 @@ contract PositionManagerTest is Test {
     // Deploy MorphoBorrowPositionFactory and create positions
     borrowPositionFactory = new MorphoBorrowPositionFactory(owner, preLiquidationFactory);
 
-    address bp1 = borrowPositionFactory.createBorrowPosition(morpho, marketId1, address(positionManager), preLiquidation1);
+    address bp1 =
+      borrowPositionFactory.createBorrowPosition(morpho, marketId1, address(positionManager), preLiquidation1);
     borrowPosition1 = MorphoBorrowPosition(bp1);
 
-    address bp2 = borrowPositionFactory.createBorrowPosition(morpho, marketId2, address(positionManager), preLiquidation2);
+    address bp2 =
+      borrowPositionFactory.createBorrowPosition(morpho, marketId2, address(positionManager), preLiquidation2);
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
     // Setup supply and withdrawal queues
@@ -615,24 +617,16 @@ contract PositionManagerTest is Test {
 
     RebalancingOperation[] memory ops = new RebalancingOperation[](4);
     ops[0] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.REPAY,
-      amount: debtToMove
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: debtToMove
     });
     ops[1] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.WITHDRAW,
-      amount: collateralToMove
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToMove
     });
     ops[2] = RebalancingOperation({
-      position: address(borrowPosition2),
-      operationType: RebalancingOperationType.SUPPLY,
-      amount: collateralToMove
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: collateralToMove
     });
     ops[3] = RebalancingOperation({
-      position: address(borrowPosition2),
-      operationType: RebalancingOperationType.BORROW,
-      amount: debtToMove
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: debtToMove
     });
 
     RebalancingData memory data = RebalancingData({
@@ -736,10 +730,7 @@ contract PositionManagerTest is Test {
       (uint256 collateralReceived,) = positionManager.burn(sharesToBurn);
 
       assertApproxEqRel(
-        collateralReceived,
-        collateral * burnRatio / 100,
-        0.01e18,
-        "Collateral received should be proportional"
+        collateralReceived, collateral * burnRatio / 100, 0.01e18, "Collateral received should be proportional"
       );
     }
   }
