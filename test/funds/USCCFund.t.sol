@@ -29,7 +29,6 @@ contract USCCFundTest is Test {
   error ChainlinkStaleRound();
   error InvalidOracle(address oracle);
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
-  error InvalidBps(uint256 bps);
   error InvalidInitialization();
   error Unauthorized();
 

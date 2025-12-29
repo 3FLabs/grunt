@@ -138,10 +138,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param decimalsB The decimals of the second token.
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
 
-  /// @notice Thrown when the provided basis points value is invalid (e.g., exceeds 10,000).
-  /// @param bps The invalid basis points value.
-  error InvalidBps(uint256 bps);
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
