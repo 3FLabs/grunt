@@ -33,6 +33,14 @@ struct RebalancingData {
   RebalancingOperation[] operations;
 }
 
+/// @notice Structure representing a position in the supply queue with its borrow cap.
+/// @param position The address of the IBorrowPosition contract
+/// @param maxBorrow The maximum amount that can be borrowed from this position in a single deposit
+struct SupplyQueueEntry {
+  address position;
+  uint96 maxBorrow;
+}
+
 /// @title IPositionManager
 /// @notice Interface for the PositionManager contract that aggregates multiple borrow positions
 ///         (IBorrowPosition) into a single unified interface. The PositionManager allows the owner
@@ -45,22 +53,105 @@ struct RebalancingData {
 ///      (collateral minus debt) of the aggregated position.
 interface IPositionManager {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           ERRORS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when the supply queue runs out of capacity during a deposit.
+  error InsufficientBorrowCapacity();
+
+  /// @notice Thrown when attempting to withdraw more collateral than is freely available.
+  error InsufficientFreeCollateral();
+
+  /// @notice Thrown when a zero amount is passed where non-zero is required.
+  error ZeroAmount();
+
+  /// @notice Thrown when share calculation results in zero shares.
+  error ZeroShares();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           EVENTS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted when the supply queue is updated.
+  /// @param queue The new supply queue entries
+  event SupplyQueueSet(SupplyQueueEntry[] queue);
+
+  /// @notice Emitted when the withdrawal queue is updated.
+  /// @param queue The new withdrawal queue (position addresses)
+  event WithdrawalQueueSet(address[] queue);
+
+  /// @notice Emitted when the LLTV is updated.
+  /// @param lltv The new LLTV value
+  event LLTVSet(uint256 lltv);
+
+  /// @notice Emitted when fee data is updated.
+  /// @param feeRecipient The address receiving fees
+  /// @param managementFee The management fee rate
+  /// @param performanceFee The performance fee rate
+  event FeeDataSet(address feeRecipient, uint24 managementFee, uint24 performanceFee);
+
+  /// @notice Emitted when fees are accrued and minted to the fee recipient.
+  /// @param feeRecipient The address receiving the fee shares
+  /// @param shares The amount of shares minted as fees
+  event FeesAccrued(address indexed feeRecipient, uint256 shares);
+
+  /// @notice Emitted when a deposit is made.
+  /// @param caller The address that initiated the deposit
+  /// @param collateral The amount of collateral deposited
+  /// @param debt The amount of debt borrowed
+  /// @param shares The amount of shares minted (positive) or burned (negative)
+  event Deposit(address indexed caller, uint256 collateral, uint256 debt, int256 shares);
+
+  /// @notice Emitted when a withdrawal is made.
+  /// @param caller The address that initiated the withdrawal
+  /// @param collateral The amount of collateral withdrawn
+  /// @param debt The amount of debt repaid
+  /// @param shares The amount of shares burned (negative) or minted (positive)
+  event Withdraw(address indexed caller, uint256 collateral, uint256 debt, int256 shares);
+
+  /// @notice Emitted when shares are burned.
+  /// @param caller The address that burned shares
+  /// @param shares The amount of shares burned
+  /// @param collateral The amount of collateral received
+  /// @param debt The amount of debt repaid
+  event Burn(address indexed caller, uint256 shares, uint256 collateral, uint256 debt);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEW                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the list of all borrow positions managed by this PositionManager.
-  /// @return Array of IBorrowPosition contract addresses
-  function borrowPositions() external view returns (address[] memory);
+  /// @notice Returns the supply queue used for deposits.
+  /// @return Array of SupplyQueueEntry structs (position address + max borrow)
+  function supplyQueue() external view returns (SupplyQueueEntry[] memory);
+
+  /// @notice Returns the withdrawal queue used for withdrawals.
+  /// @return Array of position addresses in withdrawal order
+  function withdrawalQueue() external view returns (address[] memory);
+
+  /// @notice Returns the LLTV used for free collateral calculations.
+  /// @dev This LLTV determines how much collateral can be withdrawn without repaying debt.
+  /// @return The LLTV value (WAD precision, 1e18 = 100%)
+  function lltv() external view returns (uint256);
 
   /// @notice Returns the total amount of collateral across all borrow positions.
-  /// @dev The collateral is quoted in the borrowed asset terms (as per IBorrowPosition.totalCollateral).
+  /// @dev The collateral is in raw collateral asset units.
   /// @return The total collateral amount across all positions
   function collateralAmount() external view returns (uint256);
+
+  /// @notice Returns the total amount of collateral quoted in debt asset terms.
+  /// @dev Uses each position's oracle to convert collateral to debt asset value.
+  /// @return The total collateral value in debt asset terms
+  function collateralAmountQuoted() external view returns (uint256);
 
   /// @notice Returns the total amount of debt across all borrow positions.
   /// @dev The debt represents the total borrowed amount across all aggregated positions.
   /// @return The total debt amount across all positions
   function debtAmount() external view returns (uint256);
+
+  /// @notice Returns the total assets (collateral value - debt) of the position manager.
+  /// @dev This is the net value that determines share pricing.
+  /// @return The total assets value in debt asset terms
+  function totalAssets() external view returns (uint256);
 
   /// @notice Returns the fee configuration data for this PositionManager.
   /// @dev Includes the fee recipient address and fee rates for management and performance fees.
@@ -71,68 +162,63 @@ interface IPositionManager {
   /// @return performanceFee The performance fee rate in basis points
   function feeData() external view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee);
 
-  /// @notice Returns the amount of pending fee shares that have accrued but not yet claimed.
-  /// @dev Fee shares accumulate based on the fee configuration and are typically claimable
-  ///      by the fee recipient. This represents shares that would be minted to the fee recipient
-  ///      if fees were to be collected at this moment.
-  /// @return The amount of pending fee shares
-  function pendingFeeShares() external view returns (uint256);
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Deposits collateral and borrows debt across the aggregated borrow positions.
-  /// @dev This function distributes the collateral and debt operations across all configured
-  ///      IBorrowPosition contracts. The share delta is calculated based on the net value change
-  ///      (collateral minus debt) after the operation. A positive sharesDelta means shares are
-  ///      minted (position value increased), while a negative sharesDelta means shares are burned
-  ///      (position value decreased).
-  /// @param collateral The total amount of collateral to deposit across all positions
-  /// @param debt The total amount of debt to borrow across all positions
-  /// @return sharesDelta The change in shares: positive for minting, negative for burning
-  function deposit(uint256 collateral, uint256 debt) external returns (int256 sharesDelta);
+  /// @dev Iterates through the supply queue, borrowing up to maxBorrow per entry and available
+  ///      liquidity. Collateral is deposited proportionally to the amount borrowed.
+  ///      - If debt is 0, all collateral goes to the first queue entry
+  ///      - If borrow capacity is exhausted, reverts with InsufficientBorrowCapacity
+  ///      - Accrues fees before the operation
+  ///      - Mints or burns shares based on the net value change (with virtual offset for security)
+  /// @param collateral The total amount of collateral to deposit (pulled from caller)
+  /// @param debt The total amount of debt to borrow (sent to caller)
+  /// @return shares Positive if shares minted, negative if shares burned
+  function deposit(uint256 collateral, uint256 debt) external returns (int256 shares);
 
   /// @notice Withdraws collateral and repays debt across the aggregated borrow positions.
-  /// @dev This function distributes the collateral withdrawal and debt repayment operations
-  ///      across all configured IBorrowPosition contracts. The share delta is calculated based
-  ///      on the net value change (collateral minus debt) after the operation. A negative
-  ///      sharesDelta means shares are burned (position value decreased), while a positive
-  ///      sharesDelta means shares are minted (position value increased).
-  /// @param collateral The total amount of collateral to withdraw across all positions
-  /// @param debt The total amount of debt to repay across all positions
-  /// @return sharesDelta The change in shares: negative for burning, positive for minting
-  function withdraw(uint256 collateral, uint256 debt) external returns (int256 sharesDelta);
+  /// @dev Iterates through the withdrawal queue. Repays debt first, then withdraws collateral.
+  ///      - If withdrawing collateral without full debt repayment, checks free collateral based on LLTV
+  ///      - Reverts with InsufficientFreeCollateral if attempting to withdraw locked collateral
+  ///      - Accrues fees before the operation
+  ///      - Burns shares based on the net value change
+  /// @param collateral The total amount of collateral to withdraw (sent to caller)
+  /// @param debt The total amount of debt to repay (pulled from caller)
+  /// @return shares Positive if shares minted, negative if shares burned
+  function withdraw(uint256 collateral, uint256 debt) external returns (int256 shares);
 
   /// @notice Burns shares by repaying debt and withdrawing collateral proportionally.
   /// @dev This function calculates the proportional amount of debt to repay and collateral
   ///      to withdraw based on the shares being burned, then executes these operations across
-  ///      all configured IBorrowPosition contracts. The amounts returned represent the total
-  ///      collateral withdrawn and debt repaid across all positions.
+  ///      all configured IBorrowPosition contracts. Uses the withdrawal queue for ordering.
+  ///      - Debt is repaid first to unlock collateral
+  ///      - Collateral is withdrawn proportionally after debt repayment
+  ///      - Caller receives collateral, caller provides debt repayment
   /// @param shares The amount of shares to burn
-  /// @return collateral The total amount of collateral withdrawn across all positions
-  /// @return debt The total amount of debt repaid across all positions
+  /// @return collateral The total amount of collateral withdrawn
+  /// @return debt The total amount of debt that needs to be repaid (pulled from caller)
   function burn(uint256 shares) external returns (uint256 collateral, uint256 debt);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Adds a new borrow position to the aggregated position manager.
-  /// @dev The position must implement IBorrowPosition. Only callable by the owner.
-  /// @param position The address of the IBorrowPosition contract to add
-  function addBorrowPosition(address position) external;
+  /// @notice Sets the supply queue used for deposits.
+  /// @dev Only callable by the owner. The queue determines deposit priority and borrow caps.
+  /// @param queue Array of SupplyQueueEntry structs
+  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external;
 
-  /// @notice Removes a borrow position from the aggregated position manager.
-  /// @dev The position must have zero collateral and zero debt before removal. Only callable by the owner.
-  /// @param position The address of the IBorrowPosition contract to remove
-  function removeBorrowPosition(address position) external;
+  /// @notice Sets the withdrawal queue used for withdrawals.
+  /// @dev Only callable by the owner. The queue determines withdrawal/repayment priority.
+  /// @param queue Array of position addresses
+  function setWithdrawalQueue(address[] calldata queue) external;
 
-  /// @notice Sets the maximum borrow amount for a specific borrow position.
-  /// @dev This limit is used when distributing borrow operations across positions. Only callable by the owner.
-  /// @param position The address of the IBorrowPosition contract
-  /// @param maxBorrowAmount The maximum amount that can be borrowed from this position
-  function setMaxBorrowAmount(address position, uint256 maxBorrowAmount) external;
+  /// @notice Sets the LLTV used for free collateral calculations.
+  /// @dev Only callable by the owner. Should be <= the minimum LLTV of all positions.
+  /// @param lltv_ The new LLTV value (WAD precision, 1e18 = 100%)
+  function setLLTV(uint256 lltv_) external;
 
   /// @notice Sets the fee configuration data for this PositionManager.
   /// @dev Before updating the fee configuration, this function must accrue and allocate any pending
@@ -154,24 +240,6 @@ interface IPositionManager {
   ///         - BORROW: Borrows debt from the specified position (receives debt asset)
   ///         - SUPPLY: Supplies collateral to the specified position (consumes collateral asset)
   ///      4. Returns any excess collateral and debt assets back to the caller
-  /// @dev Example: To balance a 70% LTV position with a 50% LTV position:
-  ///      ```
-  ///      RebalancingData({
-  ///        collateral: 0,  // No additional collateral needed
-  ///        debt: 1000,     // Need 1000 USDC to repay on position A
-  ///        operations: [
-  ///          RebalancingOperation({position: positionA, operationType: REPAY, amount: 1000}),
-  ///          RebalancingOperation({position: positionA, operationType: WITHDRAW, amount: 2000}),
-  ///          RebalancingOperation({position: positionB, operationType: SUPPLY, amount: 2000}),
-  ///          RebalancingOperation({position: positionB, operationType: BORROW, amount: 1000})
-  ///        ]
-  ///      })
-  ///      ```
-  ///      This will: repay 1000 USDC on A, withdraw 2000 collateral from A, supply 2000 collateral to B,
-  ///      borrow 1000 USDC from B, and return any excess USDC to the caller.
-  /// @dev This function can also be used to increase LTV by supplying more collateral and borrowing
-  ///      more debt. In this case, set `data.collateral` and `data.debt` to the amounts to provide,
-  ///      and include SUPPLY and BORROW operations in the operations array.
   /// @param data The rebalancing data containing amounts to pull from caller and operations to execute
   /// @return collateralExcess The excess collateral asset amount returned to the caller
   /// @return debtExcess The excess debt asset amount returned to the caller

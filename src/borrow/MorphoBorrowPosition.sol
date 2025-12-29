@@ -335,6 +335,34 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     return _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
   }
 
+  /// @inheritdoc IBorrowPosition
+  /// @dev Calculates free collateral as: totalCollateral - (debt * ORACLE_PRICE_SCALE) / (lltv * price)
+  ///      If no debt, returns all collateral. Returns 0 if position would be unhealthy.
+  function freeCollateral(uint256 lltv) external view override returns (uint256) {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    IMorpho _morpho = $.morpho;
+    Id _marketId = $.marketId;
+
+    Position memory _pos = _morpho.position(_marketId, address(this));
+
+    // If no debt, all collateral is free
+    if (_pos.borrowShares == 0) return uint256(_pos.collateral);
+
+    Market memory _mkt = _morpho.market(_marketId);
+    uint256 _collateralPrice = IOracle($.marketParams.oracle).price();
+
+    // Calculate borrowed amount (rounds up to be conservative)
+    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+
+    // Required collateral = borrowed * ORACLE_PRICE_SCALE / (lltv * price)
+    // This rounds up to be conservative (more collateral required = less free)
+    uint256 _requiredCollateral = _borrowed.mulDivUp(ORACLE_PRICE_SCALE, lltv.wMulDown(_collateralPrice));
+
+    // Return free collateral (0 if required > total)
+    if (_requiredCollateral >= uint256(_pos.collateral)) return 0;
+    return uint256(_pos.collateral) - _requiredCollateral;
+  }
+
   /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.
   ///      Health calculation:
   ///      1. If no borrow exists (borrowShares == 0), position is always healthy.

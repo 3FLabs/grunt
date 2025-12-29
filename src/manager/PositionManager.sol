@@ -6,58 +6,77 @@ import {
   IPositionManager,
   RebalancingData,
   RebalancingOperation,
-  RebalancingOperationType
+  RebalancingOperationType,
+  SupplyQueueEntry
 } from "../interfaces/manager/IPositionManager.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
-import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
-// the position manager contract transforms multiple
-
+/// @title PositionManager
+/// @notice Aggregates multiple borrow positions into a single vault with share-based accounting.
+/// @dev Uses supply/withdrawal queues for deposit/withdraw operations, implements fee accrual,
+///      and uses virtual share offset for inflation attack protection.
 contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable {
-  using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
 
-  uint256 internal constant _ROLE_MINTER = _ROLE_0;
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          STORAGE                            */
+  /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  uint256 internal constant _ROLE_MINTER = _ROLE_0;
+
+  /// @dev Virtual offset for share calculation to prevent inflation attacks.
+  ///      Using 1e6 as offset (similar to MetaMorpho's approach with decimalsOffset).
+  uint256 internal constant VIRTUAL_SHARES = 1e6;
+
+  /// @dev Virtual assets offset for share calculation.
+  uint256 internal constant VIRTUAL_ASSETS = 1;
+
+  /// @dev WAD precision (1e18 = 100%).
+  uint256 internal constant WAD = 1e18;
+
+  /// @dev Basis points precision (10000 = 100%).
+  uint256 internal constant BPS = 10_000;
+
+  /// @dev Seconds in a year for management fee calculation.
+  uint256 internal constant SECONDS_PER_YEAR = 365 days;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Fee configuration data.
   struct FeeData {
     address feeRecipient;
-    uint24 managementFees;
-    uint24 performanceFees;
+    uint24 managementFee; // In basis points per year (e.g., 200 = 2%)
+    uint24 performanceFee; // In basis points (e.g., 2000 = 20%)
   }
 
   /// @notice Storage struct containing all persistent state for the PositionManager contract.
-  /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
-  ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
-  /// @param positions Map of position address to max borrow amount
   struct PositionManagerStorage {
     FeeData feeData;
-    EnumerableMapLib.AddressToUint256Map positions;
+    SupplyQueueEntry[] supplyQueue;
+    address[] withdrawalQueue;
     string name;
     string symbol;
     uint8 decimals;
     address collateralAsset;
     address debtAsset;
+    uint256 lltv; // LLTV for free collateral calculation (WAD precision)
+    uint256 lastTotalAssets; // Snapshot for performance fee calculation
+    uint256 lastFeeAccrualTimestamp; // Timestamp of last fee accrual
   }
 
   /// @dev Storage slot for the PositionManager contract's main storage struct.
   ///      Computed as: keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))
-  ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
   bytes32 private constant _POSITION_MANAGER_STORAGE_SLOT =
     0x5214b8a11a99e3fe330cebe436fd1668609fe97b04b87c673ddbf614b1920c00;
 
   /// @dev Returns a reference to the contract's storage struct.
-  ///      Uses assembly to load the storage pointer from the fixed storage slot.
-  ///      This pattern ensures consistent storage layout when used behind proxies.
-  /// @return positionManagerStorage A storage pointer to the PositionManagerStorage struct
   function _positionManagerStorage() internal pure returns (PositionManagerStorage storage positionManagerStorage) {
     /// @solidity memory-safe-assembly
     assembly {
@@ -69,12 +88,20 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /*                        INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Initializes the PositionManager.
+  /// @param name_ The name of the share token
+  /// @param symbol_ The symbol of the share token
+  /// @param decimals_ The decimals of the share token
+  /// @param collateralAsset_ The collateral asset address
+  /// @param debtAsset_ The debt asset address
+  /// @param lltv_ The LLTV for free collateral calculation (WAD precision)
   function initialize(
     string memory name_,
     string memory symbol_,
     uint8 decimals_,
     address collateralAsset_,
-    address debtAsset_
+    address debtAsset_,
+    uint256 lltv_
   ) external initializer {
     PositionManagerStorage storage ps = _positionManagerStorage();
     ps.name = name_;
@@ -82,11 +109,12 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     ps.decimals = decimals_;
     ps.collateralAsset = collateralAsset_;
     ps.debtAsset = debtAsset_;
-    // TODO: add fee data and emit fee data event
+    ps.lltv = lltv_;
+    ps.lastFeeAccrualTimestamp = block.timestamp;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           VIEW                             */
+  /*                           VIEW                              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function name() public view override returns (string memory) {
@@ -101,236 +129,402 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     return _positionManagerStorage().decimals;
   }
 
-  function borrowPositions() public view override returns (address[] memory) {
-    return _positionManagerStorage().positions.keys();
+  /// @inheritdoc IPositionManager
+  function supplyQueue() public view returns (SupplyQueueEntry[] memory) {
+    return _positionManagerStorage().supplyQueue;
   }
 
-  function collateralAmount() public view override returns (uint256 amount) {
-    EnumerableMapLib.AddressToUint256Map storage positions = _positionManagerStorage().positions;
-    for (uint256 i = 0; i < positions.length(); i++) {
-      (address position,) = positions.at(i);
-      amount += IBorrowPosition(position).totalCollateralQuoted();
+  /// @inheritdoc IPositionManager
+  function withdrawalQueue() public view returns (address[] memory) {
+    return _positionManagerStorage().withdrawalQueue;
+  }
+
+  /// @inheritdoc IPositionManager
+  function lltv() public view returns (uint256) {
+    return _positionManagerStorage().lltv;
+  }
+
+  /// @inheritdoc IPositionManager
+  function collateralAmount() public view returns (uint256 amount) {
+    SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
+    for (uint256 i = 0; i < queue.length; i++) {
+      amount += IBorrowPosition(queue[i].position).totalCollateral();
     }
   }
 
-  function debtAmount() public view override returns (uint256 amount) {
-    EnumerableMapLib.AddressToUint256Map storage positions = _positionManagerStorage().positions;
-    for (uint256 i = 0; i < positions.length(); i++) {
-      (address position,) = positions.at(i);
-      amount += IBorrowPosition(position).totalBorrowed();
+  /// @inheritdoc IPositionManager
+  function collateralAmountQuoted() public view returns (uint256 amount) {
+    SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
+    for (uint256 i = 0; i < queue.length; i++) {
+      amount += IBorrowPosition(queue[i].position).totalCollateralQuoted();
     }
   }
 
-  function feeData()
-    public
-    view
-    override
-    returns (address feeRecipient, uint24 managementFees, uint24 performanceFees)
-  {
+  /// @inheritdoc IPositionManager
+  function debtAmount() public view returns (uint256 amount) {
+    SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
+    for (uint256 i = 0; i < queue.length; i++) {
+      amount += IBorrowPosition(queue[i].position).totalBorrowed();
+    }
+  }
+
+  /// @inheritdoc IPositionManager
+  function totalAssets() public view returns (uint256) {
+    return collateralAmountQuoted() - debtAmount();
+  }
+
+  /// @inheritdoc IPositionManager
+  function feeData() public view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee) {
     FeeData memory fd = _positionManagerStorage().feeData;
-    return (fd.feeRecipient, fd.managementFees, fd.performanceFees);
-  }
-
-  function pendingFeeShares() public view override returns (uint256 amount) {
-    return 0; // TODO: Implement pending fee shares
+    return (fd.feeRecipient, fd.managementFee, fd.performanceFee);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        OPERATIONS                          */
+  /*                      FEE ACCRUAL                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function deposit(uint256 collateral, uint256 debt)
-    public
-    override
-    onlyRoles(_ROLE_MINTER)
-    returns (int256 sharesDelta)
-  {
+  /// @dev Accrues fees (management + performance) and mints shares to the fee recipient.
+  ///      Returns the current total assets after fee accrual for use in share calculations.
+  /// @return currentTotalAssets The total assets after fee accrual
+  function _accrueFees() internal returns (uint256 currentTotalAssets) {
     PositionManagerStorage storage ps = _positionManagerStorage();
-    uint256 totalAssetsBefore = _totalAssets();
+    FeeData memory fd = ps.feeData;
 
-    if (collateral > 0) ps.collateralAsset.safeTransferFrom(msg.sender, address(this), collateral);
-    if (ps.positions.length() == 0) return 0;
+    currentTotalAssets = totalAssets();
 
-    uint256[] memory borrowCapacities = _calculateBorrowCapacities(ps);
-    _processDeposits(collateral, debt, borrowCapacities, ps);
+    if (fd.feeRecipient == address(0)) {
+      ps.lastTotalAssets = currentTotalAssets;
+      ps.lastFeeAccrualTimestamp = block.timestamp;
+      return currentTotalAssets;
+    }
 
-    return _calculateSharesDelta(totalAssetsBefore);
+    uint256 feeShares = 0;
+    uint256 _totalSupply = totalSupply();
+
+    // Management fee: based on time elapsed and total assets
+    if (fd.managementFee > 0 && _totalSupply > 0) {
+      uint256 elapsed = block.timestamp - ps.lastFeeAccrualTimestamp;
+      // Fee = totalAssets * managementFee * elapsed / (BPS * SECONDS_PER_YEAR)
+      uint256 managementFeeAssets = currentTotalAssets.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
+      if (managementFeeAssets > 0) {
+        // Convert assets to shares
+        feeShares += _convertToShares(managementFeeAssets, _totalSupply, currentTotalAssets);
+      }
+    }
+
+    // Performance fee: based on gains since last snapshot
+    if (fd.performanceFee > 0 && currentTotalAssets > ps.lastTotalAssets && _totalSupply > 0) {
+      uint256 gains = currentTotalAssets - ps.lastTotalAssets;
+      uint256 performanceFeeAssets = gains.mulDiv(fd.performanceFee, BPS);
+      if (performanceFeeAssets > 0) {
+        feeShares += _convertToShares(performanceFeeAssets, _totalSupply, currentTotalAssets);
+      }
+    }
+
+    // Mint fee shares
+    if (feeShares > 0) {
+      _mint(fd.feeRecipient, feeShares);
+      emit FeesAccrued(fd.feeRecipient, feeShares);
+    }
+
+    ps.lastFeeAccrualTimestamp = block.timestamp;
+
+    return currentTotalAssets;
   }
 
-  function _calculateBorrowCapacities(PositionManagerStorage storage ps)
+  /// @dev Updates the lastTotalAssets snapshot after an operation.
+  function _updateSnapshot() internal {
+    _positionManagerStorage().lastTotalAssets = totalAssets();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    SHARE CALCULATIONS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Converts assets to shares using virtual offset for inflation attack protection.
+  /// @param assets The amount of assets to convert
+  /// @param _totalSupply The current total supply of shares
+  /// @param _totalAssets The current total assets
+  /// @return shares The equivalent amount of shares
+  function _convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets)
     internal
-    view
-    returns (uint256[] memory capacities)
+    pure
+    returns (uint256 shares)
   {
-    uint256 len = ps.positions.length();
-    capacities = new uint256[](len);
-
-    for (uint256 i = 0; i < len; i++) {
-      (address position, uint256 maxBorrow) = ps.positions.at(i);
-      uint256 available = IBorrowPosition(position).availableLiquidity();
-      capacities[i] = available.min(maxBorrow);
-    }
+    return assets.mulDiv(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
   }
 
-  function _processDeposits(
-    uint256 collateral,
-    uint256 debt,
-    uint256[] memory borrowCapacities,
-    PositionManagerStorage storage ps
-  ) internal {
-    uint256 totalBorrowCap = 0;
-    for (uint256 i = 0; i < borrowCapacities.length; i++) {
-      totalBorrowCap += borrowCapacities[i];
-    }
-
-    uint256 collPerPos = collateral / ps.positions.length();
-    uint256 collRemainder = collateral % ps.positions.length();
-
-    for (uint256 i = 0; i < ps.positions.length(); i++) {
-      (address position,) = ps.positions.at(i);
-
-      uint256 collAmt = collPerPos;
-      if (i == ps.positions.length() - 1) collAmt += collRemainder;
-
-      if (collAmt > 0) _supply(position, ps.collateralAsset, collAmt);
-
-      if (debt > 0 && totalBorrowCap > 0) {
-        uint256 borrowAmt = debt.mulDiv(borrowCapacities[i], totalBorrowCap);
-        if (borrowAmt > 0) _borrow(position, borrowAmt);
-      }
-    }
-  }
-
-  function withdraw(uint256 collateral, uint256 debt)
-    public
-    override
-    onlyRoles(_ROLE_MINTER)
-    returns (int256 sharesDelta)
+  /// @dev Converts shares to assets using virtual offset for inflation attack protection.
+  /// @param shares The amount of shares to convert
+  /// @param _totalSupply The current total supply of shares
+  /// @param _totalAssets The current total assets
+  /// @return assets The equivalent amount of assets
+  function _convertToAssets(uint256 shares, uint256 _totalSupply, uint256 _totalAssets)
+    internal
+    pure
+    returns (uint256 assets)
   {
-    PositionManagerStorage storage ps = _positionManagerStorage();
-    uint256 totalAssetsBefore = _totalAssets();
-
-    if (debt > 0) ps.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
-    if (ps.positions.length() == 0) return 0;
-
-    _processWithdrawals(collateral, debt, ps);
-
-    sharesDelta = _calculateSharesDelta(totalAssetsBefore);
-
-    ps.collateralAsset.safeTransferAll(msg.sender);
-    ps.debtAsset.safeTransferAll(msg.sender);
+    return shares.mulDiv(_totalAssets + VIRTUAL_ASSETS, _totalSupply + VIRTUAL_SHARES);
   }
 
-  function _processWithdrawals(uint256 collateral, uint256 debt, PositionManagerStorage storage ps) internal {
-    uint256 totalDebt = debtAmount();
-    uint256 totalRawColl = _getTotalRawCollateral(ps);
-
-    for (uint256 i = 0; i < ps.positions.length(); i++) {
-      (address position,) = ps.positions.at(i);
-      IBorrowPosition bp = IBorrowPosition(position);
-
-      if (debt > 0 && totalDebt > 0) {
-        uint256 repayAmt = debt.mulDiv(bp.totalBorrowed(), totalDebt);
-        if (repayAmt > 0) _repay(position, ps.debtAsset, repayAmt);
-      }
-
-      if (collateral > 0 && totalRawColl > 0) {
-        uint256 withdrawAmt = collateral.mulDiv(bp.totalCollateral(), totalRawColl);
-        if (withdrawAmt > 0) _withdraw(position, withdrawAmt);
-      }
-    }
-  }
-
-  function _calculateSharesDelta(uint256 totalAssetsBefore) internal returns (int256 sharesDelta) {
-    uint256 totalAssetsAfter = _totalAssets();
+  /// @dev Settles share changes based on total assets delta.
+  ///      Mints shares if assets increased, burns shares if assets decreased.
+  /// @param totalAssetsBefore The total assets before the operation
+  /// @param _totalSupply The total supply before the operation
+  /// @return sharesDelta Positive if shares minted, negative if shares burned
+  function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
+    uint256 totalAssetsAfter = totalAssets();
 
     if (totalAssetsAfter > totalAssetsBefore) {
-      uint256 increase = totalAssetsAfter - totalAssetsBefore;
-      _mint(msg.sender, increase);
-      return int256(increase);
+      // Assets increased: mint shares to caller
+      uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
+      uint256 sharesToMint = _convertToShares(assetsAdded, _totalSupply, totalAssetsBefore);
+      if (sharesToMint == 0) revert ZeroShares();
+      _mint(msg.sender, sharesToMint);
+      sharesDelta = int256(sharesToMint);
     } else if (totalAssetsAfter < totalAssetsBefore) {
-      uint256 decrease = totalAssetsBefore - totalAssetsAfter;
-      _burn(msg.sender, decrease);
-      return -int256(decrease);
+      // Assets decreased: burn shares from caller
+      uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
+      uint256 sharesToBurn = _convertToShares(assetsRemoved, _totalSupply, totalAssetsBefore);
+      if (sharesToBurn == 0) revert ZeroShares();
+      _burn(msg.sender, sharesToBurn);
+      sharesDelta = -int256(sharesToBurn);
     }
+    // If equal, sharesDelta remains 0
+
+    // Update snapshot for performance fees
+    _updateSnapshot();
   }
 
-  function burn(uint256 shares) public override onlyRoles(_ROLE_MINTER) returns (uint256 collateral, uint256 debt) {
-    _burn(msg.sender, shares);
-    if (shares == 0 || shares > _totalAssets()) return (0, 0);
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        OPERATIONS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IPositionManager
+  function deposit(uint256 collateral, uint256 debt) external onlyRoles(_ROLE_MINTER) returns (int256 shares) {
+    if (collateral == 0 && debt == 0) revert ZeroAmount();
 
     PositionManagerStorage storage ps = _positionManagerStorage();
-    if (ps.positions.length() == 0) return (0, 0);
 
-    return _burnFromPositions(shares, ps);
-  }
+    // Accrue fees and get current total assets
+    uint256 totalAssetsBefore = _accrueFees();
+    uint256 _totalSupply = totalSupply();
 
-  function _burnFromPositions(uint256 shares, PositionManagerStorage storage ps)
-    internal
-    returns (uint256 collateral, uint256 debt)
-  {
-    uint256 totalDebt = debtAmount();
-    uint256 totalRawColl = _getTotalRawCollateral(ps);
-
-    for (uint256 i = 0; i < ps.positions.length(); i++) {
-      (uint256 coll, uint256 debtAmt) = _processPositionBurn(shares, totalDebt, totalRawColl, ps, i, debt);
-      collateral += coll;
-      debt += debtAmt;
+    // Pull collateral from caller
+    if (collateral > 0) {
+      ps.collateralAsset.safeTransferFrom(msg.sender, address(this), collateral);
     }
 
-    if (collateral > 0) ps.collateralAsset.safeTransfer(msg.sender, collateral);
-    ps.debtAsset.safeTransferAll(msg.sender);
-  }
-
-  function _getTotalRawCollateral(PositionManagerStorage storage ps) internal view returns (uint256 total) {
-    for (uint256 i = 0; i < ps.positions.length(); i++) {
-      (address pos,) = ps.positions.at(i);
-      total += IBorrowPosition(pos).totalCollateral();
-    }
-  }
-
-  function _processPositionBurn(
-    uint256 shares,
-    uint256 totalDebt,
-    uint256 totalRawColl,
-    PositionManagerStorage storage ps,
-    uint256 index,
-    uint256 debtSoFar
-  ) internal returns (uint256 collateral, uint256 debt) {
-    (address position,) = ps.positions.at(index);
-    IBorrowPosition bp = IBorrowPosition(position);
-
-    // Repay proportionally
-    if (totalDebt > 0) {
-      uint256 repayAmt = shares.mulDiv(bp.totalBorrowed(), totalDebt + totalRawColl);
-      if (repayAmt > bp.totalBorrowed()) repayAmt = bp.totalBorrowed();
-      if (repayAmt > 0) {
-        ps.debtAsset.safeTransferFrom(msg.sender, address(this), repayAmt);
-        _repay(position, ps.debtAsset, repayAmt);
-        debt = repayAmt;
+    // Process deposits through supply queue
+    if (debt == 0) {
+      // No debt: deposit all collateral to first position
+      if (ps.supplyQueue.length > 0 && collateral > 0) {
+        _supply(ps.supplyQueue[0].position, ps.collateralAsset, collateral);
       }
+    } else {
+      // With debt: iterate through queue
+      _processDeposit(collateral, debt, ps);
     }
 
-    // Withdraw proportionally
-    if (totalRawColl > 0) {
-      uint256 withdrawAmt = (shares + debtSoFar).mulDiv(bp.totalCollateral(), totalRawColl);
-      if (withdrawAmt > bp.totalCollateral()) withdrawAmt = bp.totalCollateral();
-      if (withdrawAmt > 0) {
-        _withdraw(position, withdrawAmt);
-        collateral = withdrawAmt;
+    // Send borrowed debt to caller
+    if (debt > 0) {
+      ps.debtAsset.safeTransfer(msg.sender, debt);
+    }
+
+    // Settle shares based on assets delta
+    shares = _settleShares(totalAssetsBefore, _totalSupply);
+
+    emit Deposit(msg.sender, collateral, debt, shares);
+  }
+
+  /// @dev Processes deposit through the supply queue.
+  function _processDeposit(uint256 collateral, uint256 debt, PositionManagerStorage storage ps) internal {
+    uint256 remainingCollateral = collateral;
+    uint256 remainingDebt = debt;
+
+    for (uint256 i = 0; i < ps.supplyQueue.length && remainingDebt > 0; i++) {
+      SupplyQueueEntry memory entry = ps.supplyQueue[i];
+      address position = entry.position;
+
+      // Calculate how much we can borrow from this position
+      uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
+      uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
+
+      if (toBorrow == 0) continue;
+
+      // Calculate proportional collateral
+      // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
+      uint256 collateralToSupply = remainingCollateral.mulDiv(toBorrow, remainingDebt);
+
+      // Supply collateral first (if any)
+      if (collateralToSupply > 0) {
+        _supply(position, ps.collateralAsset, collateralToSupply);
+        remainingCollateral -= collateralToSupply;
+      }
+
+      // Then borrow
+      _borrow(position, toBorrow);
+      remainingDebt -= toBorrow;
+    }
+
+    // If we couldn't borrow all the requested debt, revert
+    if (remainingDebt > 0) revert InsufficientBorrowCapacity();
+  }
+
+  /// @inheritdoc IPositionManager
+  function withdraw(uint256 collateral, uint256 debt) external onlyRoles(_ROLE_MINTER) returns (int256 shares) {
+    if (collateral == 0 && debt == 0) revert ZeroAmount();
+
+    PositionManagerStorage storage ps = _positionManagerStorage();
+
+    // Accrue fees and get current total assets
+    uint256 totalAssetsBefore = _accrueFees();
+    uint256 _totalSupply = totalSupply();
+
+    // Pull debt from caller for repayment
+    if (debt > 0) {
+      ps.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
+    }
+
+    // Process withdrawals through withdrawal queue
+    _processWithdrawal(collateral, debt, ps);
+
+    // Send collateral to caller
+    if (collateral > 0) {
+      ps.collateralAsset.safeTransfer(msg.sender, collateral);
+    }
+
+    // Settle shares based on assets delta
+    shares = _settleShares(totalAssetsBefore, _totalSupply);
+
+    emit Withdraw(msg.sender, collateral, debt, shares);
+  }
+
+  /// @dev Processes withdrawal through the withdrawal queue.
+  function _processWithdrawal(uint256 collateral, uint256 debt, PositionManagerStorage storage ps) internal {
+    uint256 remainingDebt = debt;
+    uint256 remainingCollateral = collateral;
+
+    // First pass: repay debt
+    for (uint256 i = 0; i < ps.withdrawalQueue.length && remainingDebt > 0; i++) {
+      address position = ps.withdrawalQueue[i];
+      uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
+
+      if (positionDebt == 0) continue;
+
+      uint256 toRepay = positionDebt.min(remainingDebt);
+      _repay(position, ps.debtAsset, toRepay);
+      remainingDebt -= toRepay;
+    }
+
+    // Second pass: withdraw collateral
+    for (uint256 i = 0; i < ps.withdrawalQueue.length && remainingCollateral > 0; i++) {
+      address position = ps.withdrawalQueue[i];
+
+      // Get free collateral for this position
+      uint256 freeCollat = IBorrowPosition(position).freeCollateral(ps.lltv);
+      uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
+
+      // We can withdraw up to the free collateral
+      uint256 toWithdraw = freeCollat.min(positionCollateral).min(remainingCollateral);
+
+      if (toWithdraw == 0) continue;
+
+      _withdraw(position, toWithdraw);
+      remainingCollateral -= toWithdraw;
+    }
+
+    // If we couldn't withdraw all requested collateral, revert
+    if (remainingCollateral > 0) revert InsufficientFreeCollateral();
+  }
+
+  /// @inheritdoc IPositionManager
+  function burn(uint256 shares) external onlyRoles(_ROLE_MINTER) returns (uint256 collateral, uint256 debt) {
+    if (shares == 0) revert ZeroAmount();
+
+    PositionManagerStorage storage ps = _positionManagerStorage();
+
+    // Accrue fees first
+    _accrueFees();
+
+    uint256 _totalSupply = totalSupply();
+    uint256 _totalCollateral = collateralAmount();
+    uint256 _totalDebt = debtAmount();
+
+    // Calculate proportional amounts to maintain average LTV
+    // Round down collateral (user gets less), round up debt (user repays more)
+    collateral = _totalCollateral.mulDiv(shares, _totalSupply);
+    debt = _totalDebt.mulDivUp(shares, _totalSupply);
+
+    // Burn shares first
+    _burn(msg.sender, shares);
+
+    // Pull debt from caller for repayment
+    if (debt > 0) {
+      ps.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
+    }
+
+    // Process burn through withdrawal queue - withdraws/repays proportionally on each position
+    _processBurn(collateral, debt, _totalCollateral, _totalDebt, ps);
+
+    // Send collateral to caller
+    if (collateral > 0) {
+      ps.collateralAsset.safeTransfer(msg.sender, collateral);
+    }
+
+    // Update snapshot for performance fees
+    _updateSnapshot();
+
+    emit Burn(msg.sender, shares, collateral, debt);
+  }
+
+  /// @dev Processes burn by repaying debt and withdrawing collateral proportionally from each position.
+  ///      This maintains the average LTV across all positions.
+  /// @param collateralToWithdraw Total collateral to withdraw
+  /// @param debtToRepay Total debt to repay
+  /// @param _totalCollateral Total collateral across all positions
+  /// @param _totalDebt Total debt across all positions
+  /// @param ps Storage pointer
+  function _processBurn(
+    uint256 collateralToWithdraw,
+    uint256 debtToRepay,
+    uint256 _totalCollateral,
+    uint256 _totalDebt,
+    PositionManagerStorage storage ps
+  ) internal {
+    uint256 remainingCollateral = collateralToWithdraw;
+    uint256 remainingDebt = debtToRepay;
+
+    for (uint256 i = 0; i < ps.withdrawalQueue.length; i++) {
+      address position = ps.withdrawalQueue[i];
+      uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
+      uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
+
+      // Repay proportionally
+      if (remainingDebt > 0 && positionDebt > 0 && _totalDebt > 0) {
+        uint256 toRepay = debtToRepay.mulDiv(positionDebt, _totalDebt);
+        if (toRepay > remainingDebt) toRepay = remainingDebt;
+        if (toRepay > 0) {
+          _repay(position, ps.debtAsset, toRepay);
+          remainingDebt -= toRepay;
+        }
+      }
+
+      // Withdraw proportionally
+      if (remainingCollateral > 0 && positionCollateral > 0 && _totalCollateral > 0) {
+        uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, _totalCollateral);
+        if (toWithdraw > remainingCollateral) toWithdraw = remainingCollateral;
+        if (toWithdraw > 0) {
+          _withdraw(position, toWithdraw);
+          remainingCollateral -= toWithdraw;
+        }
       }
     }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        internal functions                      */
+  /*                    INTERNAL HELPERS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Returns the total assets (collateral - debt) across all positions.
-  /// @return Total assets value in debt asset terms
-  function _totalAssets() internal view returns (uint256) {
-    return collateralAmount() - debtAmount();
-  }
 
   function _supply(address position, address token, uint256 amount) internal {
     token.safeApprove(position, amount);
@@ -356,28 +550,65 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /*                           ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function addBorrowPosition(address position) public override onlyOwner {
-    _positionManagerStorage().positions.set(position, 0);
-    // TODO: emit event if it was added otherwise revert
+  /// @inheritdoc IPositionManager
+  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external onlyOwner {
+    PositionManagerStorage storage ps = _positionManagerStorage();
+    delete ps.supplyQueue;
+    for (uint256 i = 0; i < queue.length; i++) {
+      ps.supplyQueue.push(queue[i]);
+    }
+    emit SupplyQueueSet(queue);
   }
 
-  function removeBorrowPosition(address position) public override onlyOwner {
-    _positionManagerStorage().positions.remove(position);
-    // TODO: emit event if it was removed otherwise revert
+  /// @inheritdoc IPositionManager
+  function setWithdrawalQueue(address[] calldata queue) external onlyOwner {
+    _positionManagerStorage().withdrawalQueue = queue;
+    emit WithdrawalQueueSet(queue);
   }
 
-  function setMaxBorrowAmount(address position, uint256 maxBorrowAmount) public override onlyOwner {
-    _positionManagerStorage().positions.set(position, maxBorrowAmount);
-    // TODO: emit event
+  /// @inheritdoc IPositionManager
+  function setLLTV(uint256 lltv_) external onlyOwner {
+    _positionManagerStorage().lltv = lltv_;
+    emit LLTVSet(lltv_);
   }
 
-  function setFeeData(address feeRecipient, uint24 managementFees, uint24 performanceFees) public override onlyOwner {
+  /// @inheritdoc IPositionManager
+  function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external onlyOwner {
+    // Accrue fees to current recipient first
+    _accrueFees();
+
     FeeData memory fd;
     fd.feeRecipient = feeRecipient;
-    fd.managementFees = managementFees;
-    fd.performanceFees = performanceFees;
+    fd.managementFee = managementFee;
+    fd.performanceFee = performanceFee;
     _positionManagerStorage().feeData = fd;
-    // TODO: emit event
+
+    emit FeeDataSet(feeRecipient, managementFee, performanceFee);
+  }
+
+  /// @inheritdoc IPositionManager
+  function rebalance(RebalancingData calldata data)
+    external
+    onlyOwner
+    returns (uint256 collateralExcess, uint256 debtExcess)
+  {
+    PositionManagerStorage storage ps = _positionManagerStorage();
+    address collateralAsset = ps.collateralAsset;
+    address debtAsset = ps.debtAsset;
+
+    if (data.collateral > 0) {
+      collateralAsset.safeTransferFrom(msg.sender, address(this), data.collateral);
+    }
+    if (data.debt > 0) {
+      debtAsset.safeTransferFrom(msg.sender, address(this), data.debt);
+    }
+
+    for (uint256 i = 0; i < data.operations.length; i++) {
+      _dispatchRebalancingOperation(data.operations[i], collateralAsset, debtAsset);
+    }
+
+    collateralExcess = collateralAsset.safeTransferAll(msg.sender);
+    debtExcess = debtAsset.safeTransferAll(msg.sender);
   }
 
   function _dispatchRebalancingOperation(
@@ -388,6 +619,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     address position = operation.position;
     uint256 amount = operation.amount;
     RebalancingOperationType operationType = operation.operationType;
+
     if (operationType == RebalancingOperationType.REPAY) {
       _repay(position, debtAsset, amount);
     } else if (operationType == RebalancingOperationType.WITHDRAW) {
@@ -397,27 +629,5 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     } else if (operationType == RebalancingOperationType.SUPPLY) {
       _supply(position, collateralAsset, amount);
     }
-  }
-
-  function rebalance(RebalancingData calldata data)
-    public
-    override
-    onlyOwner
-    returns (uint256 collateralExcess, uint256 debtExcess)
-  {
-    PositionManagerStorage storage ps = _positionManagerStorage();
-    address collateralAsset = ps.collateralAsset;
-    address debtAsset = ps.debtAsset;
-    if (data.collateral > 0) {
-      collateralAsset.safeTransferFrom(msg.sender, address(this), data.collateral);
-    }
-    if (data.debt > 0) {
-      debtAsset.safeTransferFrom(msg.sender, address(this), data.debt);
-    }
-    for (uint256 i = 0; i < data.operations.length; i++) {
-      _dispatchRebalancingOperation(data.operations[i], collateralAsset, debtAsset);
-    }
-    collateralExcess = collateralAsset.safeTransferAll(msg.sender);
-    debtExcess = debtAsset.safeTransferAll(msg.sender);
   }
 }
