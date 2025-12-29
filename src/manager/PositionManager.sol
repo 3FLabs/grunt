@@ -89,6 +89,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the PositionManager.
+  /// @param owner_ The owner of the contract
   /// @param name_ The name of the share token
   /// @param symbol_ The symbol of the share token
   /// @param decimals_ The decimals of the share token
@@ -96,6 +97,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /// @param debtAsset_ The debt asset address
   /// @param lltv_ The LLTV for free collateral calculation (WAD precision)
   function initialize(
+    address owner_,
     string memory name_,
     string memory symbol_,
     uint8 decimals_,
@@ -103,6 +105,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     address debtAsset_,
     uint256 lltv_
   ) external initializer {
+    _initializeOwner(owner_);
     PositionManagerStorage storage ps = _positionManagerStorage();
     ps.name = name_;
     ps.symbol = symbol_;

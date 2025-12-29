@@ -356,7 +356,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
     // Required collateral = borrowed * ORACLE_PRICE_SCALE / (lltv * price)
     // This rounds up to be conservative (more collateral required = less free)
-    uint256 _requiredCollateral = _borrowed.mulDivUp(ORACLE_PRICE_SCALE, lltv.wMulDown(_collateralPrice));
+    uint256 _requiredCollateral = MathLib.mulDivUp(_borrowed, ORACLE_PRICE_SCALE, lltv.wMulDown(_collateralPrice));
 
     // Return free collateral (0 if required > total)
     if (_requiredCollateral >= uint256(_pos.collateral)) return 0;
