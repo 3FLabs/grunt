@@ -246,13 +246,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     uint256 minPriceLimit_,
     uint256 maxPriceLimit_
   ) public initializer {
-    if (owner_ == address(0)) revert AddressZero();
-    if (recipient_ == address(0)) revert AddressZero();
-    if (depositor_.code.length == 0) revert InvalidContract(depositor_);
-    if (usdc_.code.length == 0) revert InvalidContract(usdc_);
-    if (uscc_.code.length == 0) revert InvalidContract(uscc_);
-    if (wuscc_.code.length == 0) revert InvalidContract(wuscc_);
-    if (oracle_.code.length == 0) revert InvalidContract(oracle_);
+    _checkNotZero(owner_);
+    _checkNotZero(recipient_);
+    _checkContract(depositor_);
+    _checkContract(usdc_);
+    _checkContract(uscc_);
+    _checkContract(wuscc_);
+    _checkContract(oracle_);
     _checkDecimals(usdc_);
     _checkDecimals(uscc_);
     _checkDecimals(wuscc_);
@@ -407,7 +407,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
   function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
-    if (oracle.code.length == 0) revert InvalidContract(oracle);
+    _checkContract(oracle);
 
     // Ensure oracle decimals match USCC decimals
     if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
@@ -600,6 +600,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert InvalidRoles(roles);
     }
     _updateRoles(user, roles, false);
+  }
+
+  /// @dev Reverts if the address is the zero address.
+  /// @param addr The address to check.
+  function _checkNotZero(address addr) internal pure {
+    if (addr == address(0)) revert AddressZero();
+  }
+
+  /// @dev Reverts if the address is not a contract.
+  /// @param addr The address to check.
+  function _checkContract(address addr) internal view {
+    if (addr.code.length == 0) revert InvalidContract(addr);
   }
 
   /// @dev Internal function to check that a token has the expected decimals (6).
