@@ -874,24 +874,16 @@ contract PositionManagerTest is Test {
 
     RebalancingOperation[] memory ops = new RebalancingOperation[](4);
     ops[0] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.REPAY,
-      amount: debtToMove
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: debtToMove
     });
     ops[1] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.WITHDRAW,
-      amount: collateralToMove
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToMove
     });
     ops[2] = RebalancingOperation({
-      position: address(borrowPosition2),
-      operationType: RebalancingOperationType.SUPPLY,
-      amount: collateralToMove
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: collateralToMove
     });
     ops[3] = RebalancingOperation({
-      position: address(borrowPosition2),
-      operationType: RebalancingOperationType.BORROW,
-      amount: debtToMove
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: debtToMove
     });
 
     RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
@@ -944,9 +936,7 @@ contract PositionManagerTest is Test {
     uint256 additionalCollateral = 1000e18;
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);
     ops[0] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.SUPPLY,
-      amount: additionalCollateral
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
     });
 
     RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
@@ -985,9 +975,7 @@ contract PositionManagerTest is Test {
     // Only supply half of what we provide
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);
     ops[0] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.SUPPLY,
-      amount: excessCollateral / 2
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: excessCollateral / 2
     });
 
     RebalancingData memory data = RebalancingData({collateral: excessCollateral, debt: excessDebt, operations: ops});
@@ -1014,9 +1002,7 @@ contract PositionManagerTest is Test {
       ownerCollateralBefore - excessCollateral + collateralExcess,
       "Owner should receive collateral excess"
     );
-    assertEq(
-      debtToken.balanceOf(owner), ownerDebtBefore - excessDebt + debtExcess, "Owner should receive debt excess"
-    );
+    assertEq(debtToken.balanceOf(owner), ownerDebtBefore - excessDebt + debtExcess, "Owner should receive debt excess");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1227,24 +1213,16 @@ contract PositionManagerTest is Test {
 
     RebalancingOperation[] memory ops = new RebalancingOperation[](4);
     ops[0] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.REPAY,
-      amount: debtToMove
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: debtToMove
     });
     ops[1] = RebalancingOperation({
-      position: address(borrowPosition1),
-      operationType: RebalancingOperationType.WITHDRAW,
-      amount: collateralToMove
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToMove
     });
     ops[2] = RebalancingOperation({
-      position: address(borrowPosition2),
-      operationType: RebalancingOperationType.SUPPLY,
-      amount: collateralToMove
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: collateralToMove
     });
     ops[3] = RebalancingOperation({
-      position: address(borrowPosition2),
-      operationType: RebalancingOperationType.BORROW,
-      amount: debtToMove
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: debtToMove
     });
 
     RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
@@ -1331,10 +1309,7 @@ contract PositionManagerTest is Test {
 
     // Proportions should be maintained
     assertApproxEqRel(
-      collateralReceived,
-      collateralBefore * sharesToBurn / sharesBefore,
-      0.01e18,
-      "Collateral proportional to shares"
+      collateralReceived, collateralBefore * sharesToBurn / sharesBefore, 0.01e18, "Collateral proportional to shares"
     );
   }
 

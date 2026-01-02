@@ -159,7 +159,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
       amount += IBorrowPosition(queue[i].position).totalCollateral();
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
   }
 
@@ -169,7 +171,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
       amount += IBorrowPosition(queue[i].position).totalCollateralQuoted();
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
   }
 
@@ -179,7 +183,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
       amount += IBorrowPosition(queue[i].position).totalBorrowed();
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
   }
 
@@ -387,7 +393,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
 
       if (toBorrow == 0) {
-        unchecked { ++i; }
+        unchecked {
+          ++i;
+        }
         continue;
       }
 
@@ -405,7 +413,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       _borrow(position, toBorrow);
       remainingDebt -= toBorrow;
 
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
 
     // If we couldn't borrow all the requested debt, revert
@@ -453,7 +463,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
 
       if (positionDebt == 0) {
-        unchecked { ++i; }
+        unchecked {
+          ++i;
+        }
         continue;
       }
 
@@ -461,7 +473,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       _repay(position, ps.debtAsset, toRepay);
       remainingDebt -= toRepay;
 
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
 
     // Second pass: withdraw collateral
@@ -476,14 +490,18 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       uint256 toWithdraw = freeCollat.min(positionCollateral).min(remainingCollateral);
 
       if (toWithdraw == 0) {
-        unchecked { ++i; }
+        unchecked {
+          ++i;
+        }
         continue;
       }
 
       _withdraw(position, toWithdraw);
       remainingCollateral -= toWithdraw;
 
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
 
     // If we couldn't withdraw all requested collateral, revert
@@ -573,7 +591,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
         }
       }
 
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
   }
 
@@ -612,7 +632,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
       ps.supplyQueue.push(queue[i]);
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
     emit SupplyQueueSet(queue);
   }
@@ -670,7 +692,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     uint256 opsLength = data.operations.length;
     for (uint256 i = 0; i < opsLength;) {
       _dispatchRebalancingOperation(data.operations[i], _collateralAsset, _debtAsset);
-      unchecked { ++i; }
+      unchecked {
+        ++i;
+      }
     }
 
     collateralExcess = _collateralAsset.safeTransferAll(msg.sender);
