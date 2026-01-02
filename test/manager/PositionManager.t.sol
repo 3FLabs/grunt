@@ -582,15 +582,15 @@ contract PositionManagerTest is Test {
     assertEq(newQueue[0], address(borrowPosition2));
   }
 
-  function test_setLLTV_onlyOwner() public {
+  function test_setLltv_onlyOwner() public {
     uint256 newLltv = 0.6e18;
 
     vm.prank(user);
     vm.expectRevert();
-    positionManager.setLLTV(newLltv);
+    positionManager.setLltv(newLltv);
 
     vm.prank(owner);
-    positionManager.setLLTV(newLltv);
+    positionManager.setLltv(newLltv);
 
     assertEq(positionManager.lltv(), newLltv);
   }

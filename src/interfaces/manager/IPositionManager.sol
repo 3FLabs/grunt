@@ -237,7 +237,7 @@ interface IPositionManager {
   /// @notice Sets the LLTV used for free collateral calculations.
   /// @dev Only callable by the owner. Should be <= the minimum LLTV of all positions.
   /// @param lltv_ The new LLTV value (WAD precision, 1e18 = 100%)
-  function setLLTV(uint256 lltv_) external;
+  function setLltv(uint256 lltv_) external;
 
   /// @notice Sets the fee configuration data for this PositionManager.
   /// @dev Before updating the fee configuration, this function must accrue and allocate any pending

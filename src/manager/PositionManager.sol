@@ -322,6 +322,8 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       uint256 sharesToMint = _convertToShares(assetsAdded, _totalSupply, totalAssetsBefore);
       if (sharesToMint == 0) revert ZeroShares();
       _mint(msg.sender, sharesToMint);
+      // Safe: sharesToMint is capped by total supply which fits in uint128
+      // forge-lint: disable-next-line(unsafe-typecast)
       sharesDelta = int256(sharesToMint);
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
@@ -329,6 +331,8 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       uint256 sharesToBurn = _convertToShares(assetsRemoved, _totalSupply, totalAssetsBefore);
       if (sharesToBurn == 0) revert ZeroShares();
       _burn(msg.sender, sharesToBurn);
+      // Safe: sharesToBurn is capped by total supply which fits in uint128
+      // forge-lint: disable-next-line(unsafe-typecast)
       sharesDelta = -int256(sharesToBurn);
     }
     // If equal, sharesDelta remains 0
@@ -646,7 +650,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   }
 
   /// @inheritdoc IPositionManager
-  function setLLTV(uint256 lltv_) external onlyOwner {
+  function setLltv(uint256 lltv_) external onlyOwner {
     _positionManagerStorage().lltv = lltv_;
     emit LLTVSet(lltv_);
   }
