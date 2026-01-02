@@ -36,13 +36,16 @@ contract USCCFundFactory {
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Emitted when the factory is deployed.
+  /// @param usdc The underlying USDC token address used by all funds.
+  /// @param uscc The underlying USCC token address used by all funds.
+  /// @param wrappedAsset The address of the WrappedAsset token used by all funds.
+  event FactoryDeployed(address indexed usdc, address indexed uscc, address indexed wrappedAsset);
+
   /// @notice Emitted when a new USCCFund is created.
   /// @param fund The address of the newly deployed USCCFund proxy
-  /// @param wrappedAsset The address of the WrappedAsset token used by this fund
-  /// @param usdc The underlying USDC token address
-  /// @param uscc The underlying USCC token address
   /// @param recipient The Superstate recipient address
-  event FundCreated(address indexed fund, address indexed wrappedAsset, address usdc, address uscc, address recipient);
+  event FundCreated(address indexed fund, address indexed recipient);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
@@ -90,6 +93,8 @@ contract USCCFundFactory {
     WUSCC = wuscc;
 
     USCC_FUND_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new USCCFund(usdc, uscc, wuscc))));
+
+    emit FactoryDeployed(usdc, uscc, wuscc);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -124,6 +129,6 @@ contract USCCFundFactory {
     // Initialize USCCFund
     USCCFund(fund).initialize(owner, depositor, recipient, oracle);
 
-    emit FundCreated(fund, WUSCC, USDC, USCC, recipient);
+    emit FundCreated(fund, recipient);
   }
 }

@@ -13,6 +13,9 @@ import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
 import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
 
 contract USCCFundFactoryTest is Test {
+  event FactoryDeployed(address indexed usdc, address indexed uscc, address indexed wrappedAsset);
+  event FundCreated(address indexed fund, address indexed recipient);
+
   error InvalidContract(address addr);
 
   USCCFundFactory public factory;
@@ -48,8 +51,24 @@ contract USCCFundFactoryTest is Test {
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
   }
 
+  function test_Factory_Deploy_EmitsFactoryDeployedEvent() public {
+    uint64 nonce = vm.getNonce(address(this));
+    address expectedFactory = vm.computeCreateAddress(address(this), uint256(nonce));
+
+    vm.expectEmit(true, true, true, false, expectedFactory);
+    emit FactoryDeployed(address(usdc), address(uscc), address(wuscc));
+
+    new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
+  }
+
   function test_Factory_DeploysUSCCFund() public {
+    uint64 nonce = vm.getNonce(address(factory));
+    address expectedFundAddress = vm.computeCreateAddress(address(factory), uint256(nonce));
+    vm.expectEmit(true, true, false, false, address(factory));
+    emit FundCreated(expectedFundAddress, recipient);
+
     address fundAddress = factory.createFund(owner, depositor, recipient, address(oracle));
+    assertEq(fundAddress, expectedFundAddress, "fund");
     USCCFund fund = USCCFund(fundAddress);
     assertEq(fund.asset(), address(usdc), "usdc");
     assertEq(fund.share(), address(wuscc), "wuscc");
