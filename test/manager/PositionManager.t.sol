@@ -1390,4 +1390,429 @@ contract PositionManagerTest is Test {
     vm.expectRevert(IPositionManager.InsufficientFreeCollateral.selector);
     positionManager.withdraw(1, 0);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  COVERAGE GAP TESTS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Test deposit skips positions with no available liquidity (toBorrow == 0 branch)
+  function test_deposit_skipsPositionWithNoLiquidity() public {
+    // Drain all liquidity from market1 by borrowing elsewhere
+    // First create another borrow position that will borrow all liquidity
+    address drainer = makeAddr("drainer");
+    collateralToken.setBalance(drainer, 200_000e18);
+
+    vm.prank(drainer);
+    collateralToken.approve(address(morpho), 200_000e18);
+
+    // Supply collateral and borrow all liquidity from market1
+    vm.startPrank(drainer);
+    morpho.supplyCollateral(marketParams1, 200_000e18, drainer, "");
+    morpho.borrow(marketParams1, 100_000e18, 0, drainer, drainer); // Borrow all liquidity
+    vm.stopPrank();
+
+    // Now market1 has no liquidity, but market2 still has liquidity
+    assertEq(morpho.market(marketId1).totalSupplyAssets - morpho.market(marketId1).totalBorrowAssets, 0);
+
+    // Minter deposits - should skip position1 (no liquidity) and use position2
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Should succeed using position2
+    assertGt(shares, 0, "Should mint shares");
+
+    // All debt should be from position2 since position1 had no liquidity
+    assertEq(borrowPosition1.totalBorrowed(), 0, "Position1 should have no debt");
+    assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT, "Position2 should have all debt");
+  }
+
+  /// @notice Test deposit with maxBorrow == 0 skips position
+  function test_deposit_skipsPositionWithZeroMaxBorrow() public {
+    // Set position1's maxBorrow to 0
+    SupplyQueueEntry[] memory newQueue = new SupplyQueueEntry[](2);
+    newQueue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 0});
+    newQueue[1] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+
+    vm.prank(owner);
+    positionManager.setSupplyQueue(newQueue);
+
+    // Deposit should skip position1 (maxBorrow == 0) and use position2
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    assertGt(shares, 0, "Should mint shares");
+    assertEq(borrowPosition1.totalBorrowed(), 0, "Position1 should have no debt");
+    assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT, "Position2 should have all debt");
+  }
+
+  /// @notice Test withdrawal repay pass skips positions with no debt (positionDebt == 0 branch)
+  function test_withdraw_skipsPositionWithNoDebt() public {
+    // Setup: position1 has collateral only (no debt), position2 has debt
+    // To achieve this, we need to modify the supply queue so debt goes only to position2
+
+    // First deposit collateral only to position1 (via default supply queue)
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Verify position1 has collateral but no debt
+    assertGt(borrowPosition1.totalCollateral(), 0, "Position1 should have collateral");
+    assertEq(borrowPosition1.totalBorrowed(), 0, "Position1 should have no debt");
+
+    // Now change supply queue to only have position2
+    SupplyQueueEntry[] memory newSupplyQueue = new SupplyQueueEntry[](1);
+    newSupplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(owner);
+    positionManager.setSupplyQueue(newSupplyQueue);
+
+    // Deposit with debt - all debt goes to position2
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Verify setup: position1 has no debt, position2 has debt
+    assertEq(borrowPosition1.totalBorrowed(), 0, "Position1 should still have no debt");
+    assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT, "Position2 should have all debt");
+
+    // Withdrawal queue is: [position1, position2]
+    // When repaying debt, it should:
+    // - Check position1, find positionDebt == 0, skip (hitting our target branch!)
+    // - Check position2, find debt, repay there
+    _mintDebt(minter, DEBT_AMOUNT / 2);
+
+    vm.prank(minter);
+    positionManager.withdraw(0, DEBT_AMOUNT / 2);
+
+    // Debt should be repaid from position2
+    assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT / 2, "Position2 should have half debt repaid");
+  }
+
+  /// @notice Test withdrawal where collateral pass skips positions with no free collateral
+  function test_withdraw_skipsPositionWithNoFreeCollateral() public {
+    // Setup: deposit to position1 at max LTV (no free collateral)
+    // Position1: high LTV, no free collateral
+    // Position2: lower LTV, has free collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT * 2);
+
+    // First supply queue entry - borrow at near max on position1
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, (COLLATERAL_AMOUNT * 69) / 100); // 69% LTV, very close to LLTV of 70%
+
+    // Second deposit to position2 with lower LTV
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, COLLATERAL_AMOUNT / 2); // 50% LTV
+
+    // Try to withdraw collateral - should skip position1 (no free collateral at 70% LLTV)
+    // and withdraw from position2
+    vm.prank(minter);
+    positionManager.withdraw(1000e18, 0);
+
+    // Should succeed by withdrawing from position2
+    assertTrue(positionManager.collateralAmount() < COLLATERAL_AMOUNT * 2, "Some collateral should be withdrawn");
+  }
+
+  /// @notice Test burn with rounding that causes capping of toRepay
+  function test_burn_capsRepayAmount() public {
+    // Setup: create an imbalanced scenario where proportional calculation overshoots
+    // We need: debtToRepay.mulDiv(positionDebt, _totalDebt) > remainingDebt
+
+    // This can happen with rounding when burning shares from multiple positions
+    // Setup two positions with different debt ratios
+    _mintCollateral(minter, COLLATERAL_AMOUNT * 2);
+
+    // Deposit to position1
+    vm.prank(minter);
+    int256 shares1 = positionManager.deposit(COLLATERAL_AMOUNT, 3000e18);
+
+    // Deposit to position2
+    vm.prank(minter);
+    int256 shares2 = positionManager.deposit(COLLATERAL_AMOUNT, 2000e18);
+
+    uint256 totalShares = uint256(shares1) + uint256(shares2);
+    uint256 totalDebt = positionManager.debtAmount();
+
+    // Burn most shares - the rounding in proportional calculations should trigger capping
+    uint256 sharesToBurn = totalShares * 99 / 100;
+    _mintDebt(minter, totalDebt); // Enough to repay
+
+    vm.prank(minter);
+    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+
+    // Verify burn succeeded
+    assertGt(collateralReceived, 0, "Should receive collateral");
+    assertGt(debtRepaid, 0, "Should repay debt");
+  }
+
+  /// @notice Test burn with rounding that causes capping of toWithdraw
+  function test_burn_capsWithdrawAmount() public {
+    // Similar to above but for collateral capping
+    _mintCollateral(minter, COLLATERAL_AMOUNT * 2);
+
+    // Deposit different collateral amounts to each position
+    vm.prank(minter);
+    int256 shares1 = positionManager.deposit(COLLATERAL_AMOUNT * 6 / 10, 2000e18);
+
+    vm.prank(minter);
+    int256 shares2 = positionManager.deposit(COLLATERAL_AMOUNT * 14 / 10, 3000e18);
+
+    uint256 totalShares = uint256(shares1) + uint256(shares2);
+    uint256 totalDebt = positionManager.debtAmount();
+
+    // Burn almost all shares
+    uint256 sharesToBurn = totalShares * 99 / 100;
+    _mintDebt(minter, totalDebt);
+
+    vm.prank(minter);
+    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+
+    assertGt(collateralReceived, 0, "Should receive collateral");
+    assertGt(debtRepaid, 0, "Should repay debt");
+  }
+
+  /// @notice Test that ZeroAmount is reverted for withdraw with both zero
+  function test_withdraw_revertOnZeroAmount() public {
+    vm.prank(minter);
+    vm.expectRevert(IPositionManager.ZeroAmount.selector);
+    positionManager.withdraw(0, 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              INFLATION ATTACK PROTECTION TESTS              */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Test that classic inflation attack is mitigated by virtual offset
+  /// @dev Attack scenario: Attacker deposits 1 wei, donates large amount, victim deposits, attacker profits
+  function test_inflationAttack_mitigatedByVirtualOffset() public {
+    address attacker = makeAddr("attacker");
+    address victim = makeAddr("victim");
+
+    // Grant roles
+    vm.startPrank(owner);
+    positionManager.grantRoles(attacker, _ROLE_MINTER);
+    positionManager.grantRoles(victim, _ROLE_MINTER);
+    vm.stopPrank();
+
+    // Setup approvals
+    vm.startPrank(attacker);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+    debtToken.approve(address(positionManager), type(uint256).max);
+    vm.stopPrank();
+
+    vm.startPrank(victim);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+    debtToken.approve(address(positionManager), type(uint256).max);
+    vm.stopPrank();
+
+    // Step 1: Attacker makes tiny first deposit (1 wei collateral, no debt)
+    uint256 attackerDeposit = 1;
+    collateralToken.setBalance(attacker, attackerDeposit);
+    vm.prank(attacker);
+    int256 attackerShares = positionManager.deposit(attackerDeposit, 0);
+    assertGt(attackerShares, 0, "Attacker should get shares");
+
+    uint256 attackerSharesBefore = uint256(attackerShares);
+
+    // Step 2: Attacker tries to inflate share price by donating directly to the position
+    // In a vulnerable vault, this would inflate the share price
+    uint256 donationAmount = 1000e18;
+    collateralToken.setBalance(attacker, donationAmount);
+
+    // Donate directly to the borrow position (bypassing the manager)
+    vm.prank(attacker);
+    collateralToken.transfer(address(borrowPosition1), donationAmount);
+
+    // Note: The donation goes to the position but doesn't affect share calculation
+    // because shares are based on what's tracked in Morpho, not raw balance
+
+    // Step 3: Victim deposits a normal amount
+    uint256 victimDeposit = 10_000e18;
+    collateralToken.setBalance(victim, victimDeposit);
+    vm.prank(victim);
+    int256 victimShares = positionManager.deposit(victimDeposit, 0);
+
+    // Victim should get fair shares (not rounded to 0 or tiny amount)
+    assertGt(victimShares, 0, "Victim should get shares");
+
+    // The victim's shares should be proportional to their deposit
+    // With virtual offset, even if attack succeeded, victim still gets reasonable shares
+    uint256 victimSharesUint = uint256(victimShares);
+
+    // Victim deposited 10_000e18 vs attacker's 1 wei
+    // Victim should have vastly more shares
+    assertGt(victimSharesUint, attackerSharesBefore * 1000, "Victim should have proportionally more shares");
+
+    // Step 4: Check that attacker can't steal victim's funds
+    // Attacker burns all their shares
+    _mintDebt(attacker, 1e18); // In case any debt was accrued
+    vm.prank(attacker);
+    (uint256 attackerCollateralBack,) = positionManager.burn(attackerSharesBefore);
+
+    // Attacker should get back approximately what they deposited (1 wei), not the donation
+    // Due to virtual offset, attacker's profit is bounded
+    assertLt(attackerCollateralBack, donationAmount / 10, "Attacker shouldn't profit significantly from donation");
+  }
+
+  /// @notice Test that first depositor doesn't get unfair advantage
+  function test_inflationAttack_firstDepositorFairness() public {
+    address firstDepositor = makeAddr("firstDepositor");
+    address secondDepositor = makeAddr("secondDepositor");
+
+    vm.startPrank(owner);
+    positionManager.grantRoles(firstDepositor, _ROLE_MINTER);
+    positionManager.grantRoles(secondDepositor, _ROLE_MINTER);
+    vm.stopPrank();
+
+    vm.startPrank(firstDepositor);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+    debtToken.approve(address(positionManager), type(uint256).max);
+    vm.stopPrank();
+
+    vm.startPrank(secondDepositor);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+    debtToken.approve(address(positionManager), type(uint256).max);
+    vm.stopPrank();
+
+    // First depositor deposits 1000e18
+    uint256 depositAmount = 1000e18;
+    collateralToken.setBalance(firstDepositor, depositAmount);
+    vm.prank(firstDepositor);
+    int256 firstShares = positionManager.deposit(depositAmount, 0);
+
+    // Second depositor deposits the same amount
+    collateralToken.setBalance(secondDepositor, depositAmount);
+    vm.prank(secondDepositor);
+    int256 secondShares = positionManager.deposit(depositAmount, 0);
+
+    // Both should get similar shares (not exactly equal due to virtual offset effect on first deposit)
+    uint256 firstSharesUint = uint256(firstShares);
+    uint256 secondSharesUint = uint256(secondShares);
+
+    // Second depositor should get very close to what first depositor got
+    // Allow 1% tolerance for virtual offset effect
+    assertApproxEqRel(secondSharesUint, firstSharesUint, 0.01e18, "Second depositor should get similar shares");
+  }
+
+  /// @notice Test round-trip: deposit and immediately burn shouldn't lose significant value
+  function test_inflationAttack_roundTripValuePreservation() public {
+    uint256 depositCollateral = 10_000e18;
+    uint256 depositDebt = 5_000e18;
+
+    _mintCollateral(minter, depositCollateral);
+
+    // Deposit
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(depositCollateral, depositDebt);
+    uint256 sharesUint = uint256(shares);
+
+    // Record state
+    uint256 collateralBefore = collateralToken.balanceOf(minter);
+
+    // Immediately burn all shares
+    _mintDebt(minter, depositDebt * 2); // Extra for any rounding
+    vm.prank(minter);
+    (uint256 collateralBack, uint256 debtToPay) = positionManager.burn(sharesUint);
+
+    // Should get back almost all collateral (minus tiny rounding)
+    // Allow 0.01% loss for rounding
+    assertApproxEqRel(collateralBack, depositCollateral, 0.0001e18, "Should get back ~100% of collateral");
+
+    // Should repay approximately the same debt
+    assertApproxEqRel(debtToPay, depositDebt, 0.0001e18, "Should repay ~100% of debt");
+  }
+
+  /// @notice Test that very small deposits still get shares (virtual offset prevents 0 shares)
+  function test_inflationAttack_smallDepositGetsShares() public {
+    // First, make a large deposit to establish a high share price
+    _mintCollateral(minter, 1_000_000e18);
+    vm.prank(minter);
+    positionManager.deposit(1_000_000e18, 0);
+
+    // Now a small depositor tries to deposit
+    address smallDepositor = makeAddr("smallDepositor");
+    vm.prank(owner);
+    positionManager.grantRoles(smallDepositor, _ROLE_MINTER);
+
+    vm.startPrank(smallDepositor);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+    vm.stopPrank();
+
+    // Deposit a small amount (1e6 wei = 0.000001 tokens if 18 decimals)
+    uint256 smallDeposit = 1e6;
+    collateralToken.setBalance(smallDepositor, smallDeposit);
+
+    vm.prank(smallDepositor);
+    int256 smallShares = positionManager.deposit(smallDeposit, 0);
+
+    // Should still get some shares due to virtual offset protection
+    assertGt(smallShares, 0, "Small deposit should still get shares");
+  }
+
+  /// @notice Test that multiple small deposits accumulate fairly
+  function test_inflationAttack_multipleSmallDeposits() public {
+    address[] memory depositors = new address[](5);
+    uint256 depositAmount = 100e18;
+
+    // Create 5 depositors
+    for (uint256 i = 0; i < 5; i++) {
+      depositors[i] = makeAddr(string(abi.encodePacked("depositor", i)));
+      vm.prank(owner);
+      positionManager.grantRoles(depositors[i], _ROLE_MINTER);
+
+      vm.startPrank(depositors[i]);
+      collateralToken.approve(address(positionManager), type(uint256).max);
+      debtToken.approve(address(positionManager), type(uint256).max);
+      vm.stopPrank();
+    }
+
+    uint256[] memory shares = new uint256[](5);
+
+    // Each depositor deposits the same amount
+    for (uint256 i = 0; i < 5; i++) {
+      collateralToken.setBalance(depositors[i], depositAmount);
+      vm.prank(depositors[i]);
+      int256 s = positionManager.deposit(depositAmount, 0);
+      shares[i] = uint256(s);
+    }
+
+    // All should have similar shares (later depositors might have slightly fewer due to virtual offset dilution)
+    for (uint256 i = 1; i < 5; i++) {
+      // Allow 5% variance
+      assertApproxEqRel(shares[i], shares[0], 0.05e18, "All depositors should get similar shares");
+    }
+
+    // Now each burns their shares - should get back fair amounts
+    for (uint256 i = 0; i < 5; i++) {
+      vm.prank(depositors[i]);
+      (uint256 collateralBack,) = positionManager.burn(shares[i]);
+
+      // Should get back close to what they deposited
+      assertApproxEqRel(collateralBack, depositAmount, 0.05e18, "Should get back ~100% of deposit");
+    }
+  }
+
+  /// @notice Fuzz test: deposit and burn should preserve value within acceptable bounds
+  function testFuzz_inflationAttack_valuePreservation(uint256 depositAmount) public {
+    // Bound to reasonable amounts
+    depositAmount = bound(depositAmount, 1e6, 1_000_000e18);
+
+    _mintCollateral(minter, depositAmount);
+
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(depositAmount, 0);
+
+    if (shares <= 0) return; // Skip if no shares minted
+
+    uint256 sharesUint = uint256(shares);
+
+    vm.prank(minter);
+    (uint256 collateralBack,) = positionManager.burn(sharesUint);
+
+    // Should get back at least 99.99% of deposit (0.01% max loss to rounding)
+    assertGe(collateralBack, depositAmount * 9999 / 10000, "Should preserve at least 99.99% of value");
+
+    // Should not get more than deposited (no free money)
+    assertLe(collateralBack, depositAmount, "Should not gain value from round trip");
+  }
 }

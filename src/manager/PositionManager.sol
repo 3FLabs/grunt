@@ -295,19 +295,6 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     return assets.mulDiv(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
   }
 
-  /// @dev Converts shares to assets using virtual offset for inflation attack protection.
-  /// @param shares The amount of shares to convert
-  /// @param _totalSupply The current total supply of shares
-  /// @param _totalAssets The current total assets
-  /// @return assets The equivalent amount of assets
-  function _convertToAssets(uint256 shares, uint256 _totalSupply, uint256 _totalAssets)
-    internal
-    pure
-    returns (uint256 assets)
-  {
-    return shares.mulDiv(_totalAssets + VIRTUAL_ASSETS, _totalSupply + VIRTUAL_SHARES);
-  }
-
   /// @dev Settles share changes based on total assets delta.
   ///      Mints shares if assets increased, burns shares if assets decreased.
   /// @param totalAssetsBefore The total assets before the operation
