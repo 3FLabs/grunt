@@ -45,6 +45,12 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /// @dev Seconds in a year for management fee calculation.
   uint256 internal constant SECONDS_PER_YEAR = 365 days;
 
+  /// @dev Maximum management fee: 50% per year (5000 basis points).
+  uint256 internal constant MAX_MANAGEMENT_FEE = 5000;
+
+  /// @dev Maximum performance fee: 50% (5000 basis points).
+  uint256 internal constant MAX_PERFORMANCE_FEE = 5000;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -150,36 +156,62 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /// @inheritdoc IPositionManager
   function collateralAmount() public view returns (uint256 amount) {
     SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
-    for (uint256 i = 0; i < queue.length; i++) {
+    uint256 queueLength = queue.length;
+    for (uint256 i = 0; i < queueLength;) {
       amount += IBorrowPosition(queue[i].position).totalCollateral();
+      unchecked { ++i; }
     }
   }
 
   /// @inheritdoc IPositionManager
   function collateralAmountQuoted() public view returns (uint256 amount) {
     SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
-    for (uint256 i = 0; i < queue.length; i++) {
+    uint256 queueLength = queue.length;
+    for (uint256 i = 0; i < queueLength;) {
       amount += IBorrowPosition(queue[i].position).totalCollateralQuoted();
+      unchecked { ++i; }
     }
   }
 
   /// @inheritdoc IPositionManager
   function debtAmount() public view returns (uint256 amount) {
     SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
-    for (uint256 i = 0; i < queue.length; i++) {
+    uint256 queueLength = queue.length;
+    for (uint256 i = 0; i < queueLength;) {
       amount += IBorrowPosition(queue[i].position).totalBorrowed();
+      unchecked { ++i; }
     }
   }
 
   /// @inheritdoc IPositionManager
   function totalAssets() public view returns (uint256) {
-    return collateralAmountQuoted() - debtAmount();
+    return collateralAmountQuoted().zeroFloorSub(debtAmount());
   }
 
   /// @inheritdoc IPositionManager
   function feeData() public view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee) {
     FeeData memory fd = _positionManagerStorage().feeData;
     return (fd.feeRecipient, fd.managementFee, fd.performanceFee);
+  }
+
+  /// @inheritdoc IPositionManager
+  function collateralAsset() public view returns (address) {
+    return _positionManagerStorage().collateralAsset;
+  }
+
+  /// @inheritdoc IPositionManager
+  function debtAsset() public view returns (address) {
+    return _positionManagerStorage().debtAsset;
+  }
+
+  /// @inheritdoc IPositionManager
+  function lastTotalAssets() public view returns (uint256) {
+    return _positionManagerStorage().lastTotalAssets;
+  }
+
+  /// @inheritdoc IPositionManager
+  function lastFeeAccrualTimestamp() public view returns (uint256) {
+    return _positionManagerStorage().lastFeeAccrualTimestamp;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -344,8 +376,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   function _processDeposit(uint256 collateral, uint256 debt, PositionManagerStorage storage ps) internal {
     uint256 remainingCollateral = collateral;
     uint256 remainingDebt = debt;
+    uint256 queueLength = ps.supplyQueue.length;
 
-    for (uint256 i = 0; i < ps.supplyQueue.length && remainingDebt > 0; i++) {
+    for (uint256 i = 0; i < queueLength && remainingDebt > 0;) {
       SupplyQueueEntry memory entry = ps.supplyQueue[i];
       address position = entry.position;
 
@@ -353,7 +386,10 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
       uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
 
-      if (toBorrow == 0) continue;
+      if (toBorrow == 0) {
+        unchecked { ++i; }
+        continue;
+      }
 
       // Calculate proportional collateral
       // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
@@ -368,6 +404,8 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       // Then borrow
       _borrow(position, toBorrow);
       remainingDebt -= toBorrow;
+
+      unchecked { ++i; }
     }
 
     // If we couldn't borrow all the requested debt, revert
@@ -407,21 +445,27 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   function _processWithdrawal(uint256 collateral, uint256 debt, PositionManagerStorage storage ps) internal {
     uint256 remainingDebt = debt;
     uint256 remainingCollateral = collateral;
+    uint256 queueLength = ps.withdrawalQueue.length;
 
     // First pass: repay debt
-    for (uint256 i = 0; i < ps.withdrawalQueue.length && remainingDebt > 0; i++) {
+    for (uint256 i = 0; i < queueLength && remainingDebt > 0;) {
       address position = ps.withdrawalQueue[i];
       uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
 
-      if (positionDebt == 0) continue;
+      if (positionDebt == 0) {
+        unchecked { ++i; }
+        continue;
+      }
 
       uint256 toRepay = positionDebt.min(remainingDebt);
       _repay(position, ps.debtAsset, toRepay);
       remainingDebt -= toRepay;
+
+      unchecked { ++i; }
     }
 
     // Second pass: withdraw collateral
-    for (uint256 i = 0; i < ps.withdrawalQueue.length && remainingCollateral > 0; i++) {
+    for (uint256 i = 0; i < queueLength && remainingCollateral > 0;) {
       address position = ps.withdrawalQueue[i];
 
       // Get free collateral for this position
@@ -431,10 +475,15 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       // We can withdraw up to the free collateral
       uint256 toWithdraw = freeCollat.min(positionCollateral).min(remainingCollateral);
 
-      if (toWithdraw == 0) continue;
+      if (toWithdraw == 0) {
+        unchecked { ++i; }
+        continue;
+      }
 
       _withdraw(position, toWithdraw);
       remainingCollateral -= toWithdraw;
+
+      unchecked { ++i; }
     }
 
     // If we couldn't withdraw all requested collateral, revert
@@ -497,8 +546,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   ) internal {
     uint256 remainingCollateral = collateralToWithdraw;
     uint256 remainingDebt = debtToRepay;
+    uint256 queueLength = ps.withdrawalQueue.length;
 
-    for (uint256 i = 0; i < ps.withdrawalQueue.length; i++) {
+    for (uint256 i = 0; i < queueLength;) {
       address position = ps.withdrawalQueue[i];
       uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
       uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
@@ -522,6 +572,8 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
           remainingCollateral -= toWithdraw;
         }
       }
+
+      unchecked { ++i; }
     }
   }
 
@@ -557,8 +609,10 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   function setSupplyQueue(SupplyQueueEntry[] calldata queue) external onlyOwner {
     PositionManagerStorage storage ps = _positionManagerStorage();
     delete ps.supplyQueue;
-    for (uint256 i = 0; i < queue.length; i++) {
+    uint256 queueLength = queue.length;
+    for (uint256 i = 0; i < queueLength;) {
       ps.supplyQueue.push(queue[i]);
+      unchecked { ++i; }
     }
     emit SupplyQueueSet(queue);
   }
@@ -577,6 +631,10 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
 
   /// @inheritdoc IPositionManager
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external onlyOwner {
+    if (managementFee > MAX_MANAGEMENT_FEE || performanceFee > MAX_PERFORMANCE_FEE) {
+      revert FeeExceedsMax();
+    }
+
     // Accrue fees to current recipient first
     _accrueFees();
 
@@ -595,42 +653,50 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     onlyOwner
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
+    // Accrue fees based on pre-rebalance state
+    _accrueFees();
+
     PositionManagerStorage storage ps = _positionManagerStorage();
-    address collateralAsset = ps.collateralAsset;
-    address debtAsset = ps.debtAsset;
+    address _collateralAsset = ps.collateralAsset;
+    address _debtAsset = ps.debtAsset;
 
     if (data.collateral > 0) {
-      collateralAsset.safeTransferFrom(msg.sender, address(this), data.collateral);
+      _collateralAsset.safeTransferFrom(msg.sender, address(this), data.collateral);
     }
     if (data.debt > 0) {
-      debtAsset.safeTransferFrom(msg.sender, address(this), data.debt);
+      _debtAsset.safeTransferFrom(msg.sender, address(this), data.debt);
     }
 
-    for (uint256 i = 0; i < data.operations.length; i++) {
-      _dispatchRebalancingOperation(data.operations[i], collateralAsset, debtAsset);
+    uint256 opsLength = data.operations.length;
+    for (uint256 i = 0; i < opsLength;) {
+      _dispatchRebalancingOperation(data.operations[i], _collateralAsset, _debtAsset);
+      unchecked { ++i; }
     }
 
-    collateralExcess = collateralAsset.safeTransferAll(msg.sender);
-    debtExcess = debtAsset.safeTransferAll(msg.sender);
+    collateralExcess = _collateralAsset.safeTransferAll(msg.sender);
+    debtExcess = _debtAsset.safeTransferAll(msg.sender);
+
+    // Update snapshot to post-rebalance state
+    _updateSnapshot();
   }
 
   function _dispatchRebalancingOperation(
     RebalancingOperation calldata operation,
-    address collateralAsset,
-    address debtAsset
+    address _collateralAsset,
+    address _debtAsset
   ) internal {
     address position = operation.position;
     uint256 amount = operation.amount;
     RebalancingOperationType operationType = operation.operationType;
 
     if (operationType == RebalancingOperationType.REPAY) {
-      _repay(position, debtAsset, amount);
+      _repay(position, _debtAsset, amount);
     } else if (operationType == RebalancingOperationType.WITHDRAW) {
       _withdraw(position, amount);
     } else if (operationType == RebalancingOperationType.BORROW) {
       _borrow(position, amount);
     } else if (operationType == RebalancingOperationType.SUPPLY) {
-      _supply(position, collateralAsset, amount);
+      _supply(position, _collateralAsset, amount);
     }
   }
 }

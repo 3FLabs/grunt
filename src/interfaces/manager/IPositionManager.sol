@@ -68,6 +68,9 @@ interface IPositionManager {
   /// @notice Thrown when share calculation results in zero shares.
   error ZeroShares();
 
+  /// @notice Thrown when fee value exceeds the maximum allowed.
+  error FeeExceedsMax();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -161,6 +164,22 @@ interface IPositionManager {
   /// @return managementFee The management fee rate in basis points per 365 days
   /// @return performanceFee The performance fee rate in basis points
   function feeData() external view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee);
+
+  /// @notice Returns the collateral asset address.
+  /// @return The address of the collateral asset token
+  function collateralAsset() external view returns (address);
+
+  /// @notice Returns the debt asset address.
+  /// @return The address of the debt asset token
+  function debtAsset() external view returns (address);
+
+  /// @notice Returns the last total assets snapshot used for performance fee calculation.
+  /// @return The last total assets value
+  function lastTotalAssets() external view returns (uint256);
+
+  /// @notice Returns the timestamp of the last fee accrual.
+  /// @return The last fee accrual timestamp
+  function lastFeeAccrualTimestamp() external view returns (uint256);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */
