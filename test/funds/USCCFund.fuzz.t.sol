@@ -541,9 +541,13 @@ contract USCCFundHandler is Test {
   uint256 public cachedUsccBalance;
   uint256 public expectedRecipientUsdc;
 
-  function initialize(USCCFund fund_, MockERC20 usdc_, MockSuperstateToken uscc_, WrappedAsset wuscc_, address recipient_)
-    external
-  {
+  function initialize(
+    USCCFund fund_,
+    MockERC20 usdc_,
+    MockSuperstateToken uscc_,
+    WrappedAsset wuscc_,
+    address recipient_
+  ) external {
     require(!initialized, "initialized");
     initialized = true;
 
