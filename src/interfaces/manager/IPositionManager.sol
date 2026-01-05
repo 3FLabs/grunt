@@ -74,6 +74,9 @@ interface IPositionManager {
   /// @notice Thrown when a queue contains a position that is not whitelisted.
   error UnauthorizedPosition();
 
+  /// @notice Thrown when rebalance causes total assets to decrease by more than maxRebalanceLoss.
+  error RebalanceLossExceedsMax();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -103,6 +106,10 @@ interface IPositionManager {
   /// @notice Emitted when a borrow module is removed from the whitelist.
   /// @param module The address of the borrow module removed
   event BorrowModuleRemoved(address indexed module);
+
+  /// @notice Emitted when the max rebalance loss is updated.
+  /// @param maxRebalanceLoss The new max rebalance loss value in basis points
+  event MaxRebalanceLossSet(uint16 maxRebalanceLoss);
 
   /// @notice Emitted when fees are accrued and minted to the fee recipient.
   /// @param feeRecipient The address receiving the fee shares
@@ -201,6 +208,11 @@ interface IPositionManager {
   /// @return The last fee accrual timestamp
   function lastFeeAccrualTimestamp() external view returns (uint256);
 
+  /// @notice Returns the maximum allowed loss during rebalance operations.
+  /// @dev Expressed in basis points (e.g., 100 = 1%)
+  /// @return The max rebalance loss value in basis points
+  function maxRebalanceLoss() external view returns (uint16);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -291,8 +303,14 @@ interface IPositionManager {
   ///         - BORROW: Borrows debt from the specified position (receives debt asset)
   ///         - SUPPLY: Supplies collateral to the specified position (consumes collateral asset)
   ///      4. Returns any excess collateral and debt assets back to the caller
+  ///      5. Verifies totalAssets didn't decrease by more than maxRebalanceLoss
   /// @param data The rebalancing data containing amounts to pull from caller and operations to execute
   /// @return collateralExcess The excess collateral asset amount returned to the caller
   /// @return debtExcess The excess debt asset amount returned to the caller
   function rebalance(RebalancingData calldata data) external returns (uint256 collateralExcess, uint256 debtExcess);
+
+  /// @notice Sets the maximum allowed loss during rebalance operations.
+  /// @dev Only callable by the owner. This limits how much totalAssets can decrease during a rebalance.
+  /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%)
+  function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external;
 }

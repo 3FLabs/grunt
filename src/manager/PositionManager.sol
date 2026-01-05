@@ -67,6 +67,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   }
 
   /// @notice Storage struct containing all persistent state for the PositionManager contract.
+  /// @dev Storage packing: lltv (uint64) + lastFeeAccrualTimestamp (uint40) + maxRebalanceLoss (uint16) = 15 bytes in one slot
   struct PositionManagerStorage {
     FeeData feeData;
     SupplyQueueEntry[] supplyQueue;
@@ -77,9 +78,10 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     uint8 decimals;
     address collateralAsset;
     address debtAsset;
-    uint256 lltv; // LLTV for free collateral calculation (WAD precision)
     uint256 lastTotalAssets; // Snapshot for performance fee calculation
-    uint256 lastFeeAccrualTimestamp; // Timestamp of last fee accrual
+    uint64 lltv; // LLTV for free collateral calculation (WAD precision, max ~1.8e19)
+    uint40 lastFeeAccrualTimestamp; // Timestamp of last fee accrual (max ~35,000 years)
+    uint16 maxRebalanceLoss; // Max allowed loss during rebalance in basis points
   }
 
   /// @dev Storage slot for the PositionManager contract's main storage struct.
@@ -123,8 +125,12 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     ps.decimals = decimals_;
     ps.collateralAsset = collateralAsset_;
     ps.debtAsset = debtAsset_;
-    ps.lltv = lltv_;
-    ps.lastFeeAccrualTimestamp = block.timestamp;
+    // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
+    // forge-lint: disable-next-line(unsafe-typecast)
+    ps.lltv = uint64(lltv_);
+    // Safe: block.timestamp fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -235,6 +241,11 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     return _positionManagerStorage().lastFeeAccrualTimestamp;
   }
 
+  /// @inheritdoc IPositionManager
+  function maxRebalanceLoss() public view returns (uint16) {
+    return _positionManagerStorage().maxRebalanceLoss;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      FEE ACCRUAL                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -250,7 +261,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
 
     if (fd.feeRecipient == address(0)) {
       ps.lastTotalAssets = currentTotalAssets;
-      ps.lastFeeAccrualTimestamp = block.timestamp;
+      // Safe: block.timestamp fits in uint40 for ~35,000 years
+      // forge-lint: disable-next-line(unsafe-typecast)
+      ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
       return currentTotalAssets;
     }
 
@@ -285,7 +298,9 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
 
     // Update snapshot to prevent double-counting performance fees on the same gains
     ps.lastTotalAssets = currentTotalAssets;
-    ps.lastFeeAccrualTimestamp = block.timestamp;
+    // Safe: block.timestamp fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
 
     return currentTotalAssets;
   }
@@ -676,8 +691,16 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
 
   /// @inheritdoc IPositionManager
   function setLltv(uint256 lltv_) external onlyOwner {
-    _positionManagerStorage().lltv = lltv_;
+    // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _positionManagerStorage().lltv = uint64(lltv_);
     emit LLTVSet(lltv_);
+  }
+
+  /// @inheritdoc IPositionManager
+  function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external onlyOwner {
+    _positionManagerStorage().maxRebalanceLoss = maxRebalanceLoss_;
+    emit MaxRebalanceLossSet(maxRebalanceLoss_);
   }
 
   /// @inheritdoc IPositionManager
@@ -704,8 +727,8 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     onlyRoles(_ROLE_REBALANCER)
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
-    // Accrue fees based on pre-rebalance state
-    _accrueFees();
+    // Accrue fees based on pre-rebalance state and capture totalAssets before operations
+    uint256 totalAssetsBefore = _accrueFees();
 
     PositionManagerStorage storage ps = _positionManagerStorage();
     address _collateralAsset = ps.collateralAsset;
@@ -730,7 +753,18 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     debtExcess = _debtAsset.safeTransferAll(msg.sender);
 
     // Update snapshot to post-rebalance state
-    _updateSnapshot();
+    uint256 totalAssetsAfter = totalAssets();
+    ps.lastTotalAssets = totalAssetsAfter;
+
+    // Check that totalAssets didn't decrease by more than maxRebalanceLoss
+    if (totalAssetsAfter < totalAssetsBefore) {
+      uint256 loss = totalAssetsBefore - totalAssetsAfter;
+      // loss * BPS / totalAssetsBefore > maxRebalanceLoss
+      // Rearranged to avoid division: loss * BPS > maxRebalanceLoss * totalAssetsBefore
+      if (loss * BPS > uint256(ps.maxRebalanceLoss) * totalAssetsBefore) {
+        revert RebalanceLossExceedsMax();
+      }
+    }
   }
 
   function _dispatchRebalancingOperation(

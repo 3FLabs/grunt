@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {
+  IPositionManager,
   RebalancingData,
   RebalancingOperation,
   RebalancingOperationType
@@ -155,5 +156,206 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
       rebalancerDebtBefore - excessDebt + debtExcess,
       "Rebalancer should receive debt excess"
     );
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                MAX REBALANCE LOSS TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setMaxRebalanceLoss() public {
+    uint16 maxLoss = 100; // 1%
+
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(maxLoss);
+
+    assertEq(positionManager.maxRebalanceLoss(), maxLoss, "Max rebalance loss should be set");
+  }
+
+  function test_setMaxRebalanceLoss_emitsEvent() public {
+    uint16 maxLoss = 100; // 1%
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit IPositionManager.MaxRebalanceLossSet(maxLoss);
+    positionManager.setMaxRebalanceLoss(maxLoss);
+  }
+
+  function test_setMaxRebalanceLoss_onlyOwner() public {
+    vm.prank(minter);
+    vm.expectRevert();
+    positionManager.setMaxRebalanceLoss(100);
+  }
+
+  function test_rebalance_revertOnExcessiveLoss() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set max rebalance loss to 1% (100 BPS)
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(100);
+
+    // Try to withdraw 5% of collateral (causing 5% loss in totalAssets)
+    uint256 collateralToWithdraw = COLLATERAL_AMOUNT * 5 / 100;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToWithdraw
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    vm.prank(rebalancer);
+    vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
+    positionManager.rebalance(data);
+  }
+
+  function test_rebalance_allowsLossWithinThreshold() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set max rebalance loss to 5% (500 BPS)
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(500);
+
+    // Withdraw 4% of collateral (within 5% threshold)
+    uint256 collateralToWithdraw = COLLATERAL_AMOUNT * 4 / 100;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToWithdraw
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    // Should not revert
+    vm.prank(rebalancer);
+    positionManager.rebalance(data);
+
+    // Verify collateral was withdrawn
+    assertEq(
+      borrowPosition1.totalCollateral(), COLLATERAL_AMOUNT - collateralToWithdraw, "Collateral should be withdrawn"
+    );
+  }
+
+  function test_rebalance_allowsExactThresholdLoss() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set max rebalance loss to exactly 5% (500 BPS)
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(500);
+
+    // Withdraw exactly 5% of collateral (at the exact threshold)
+    uint256 collateralToWithdraw = COLLATERAL_AMOUNT * 5 / 100;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToWithdraw
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    // Should not revert (exactly at threshold)
+    vm.prank(rebalancer);
+    positionManager.rebalance(data);
+  }
+
+  function test_rebalance_alwaysAllowsAssetIncrease() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set max rebalance loss to 0 (no loss allowed)
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(0);
+
+    // Supply more collateral (increases totalAssets)
+    uint256 additionalCollateral = 1000e18;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data);
+    vm.stopPrank();
+
+    // Should not revert because totalAssets increased
+    assertEq(
+      borrowPosition1.totalCollateral(), COLLATERAL_AMOUNT + additionalCollateral, "Collateral should be increased"
+    );
+  }
+
+  function test_rebalance_revertWithZeroMaxLossOnAnyLoss() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set max rebalance loss to 0 (no loss allowed)
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(0);
+
+    // Try to withdraw even 1 wei (should revert)
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: 1
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    vm.prank(rebalancer);
+    vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
+    positionManager.rebalance(data);
+  }
+
+  function test_maxRebalanceLoss_defaultIsZero() public view {
+    assertEq(positionManager.maxRebalanceLoss(), 0, "Default max rebalance loss should be 0");
+  }
+
+  function testFuzz_rebalance_lossThresholdEnforced(uint16 maxLossPercent, uint8 actualLossPercent) public {
+    // Bound inputs
+    maxLossPercent = uint16(bound(maxLossPercent, 0, 10000)); // 0-100%
+    actualLossPercent = uint8(bound(actualLossPercent, 1, 99)); // 1-99%
+
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set max rebalance loss
+    vm.prank(owner);
+    positionManager.setMaxRebalanceLoss(maxLossPercent);
+
+    // Calculate collateral to withdraw based on actual loss percent
+    uint256 collateralToWithdraw = COLLATERAL_AMOUNT * actualLossPercent / 100;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToWithdraw
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    // Convert actualLossPercent to BPS for comparison
+    uint16 actualLossBps = uint16(uint256(actualLossPercent) * 100);
+
+    vm.prank(rebalancer);
+    if (actualLossBps > maxLossPercent) {
+      vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
+    }
+    positionManager.rebalance(data);
   }
 }
