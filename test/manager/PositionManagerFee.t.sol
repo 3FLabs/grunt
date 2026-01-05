@@ -159,4 +159,65 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Should not revert, fees should be 0 since totalAssets is 0
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              PERFORMANCE FEE SNAPSHOT BUG TEST              */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Test that calling setFeeData multiple times does NOT mint infinite performance fees
+  /// @dev This test catches the bug where lastTotalAssets is not updated after accruing fees
+  ///      when there IS a fee recipient set
+  function test_setFeeData_cannotMintInfinitePerformanceFees() public {
+    // Step 1: Set performance fee FIRST (so feeRecipient is not address(0))
+    uint24 performanceFee = 2000; // 20%
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 0, performanceFee);
+
+    // Step 2: Deposit some collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Verify snapshot was updated by deposit
+    uint256 snapshotAfterDeposit = positionManager.lastTotalAssets();
+    assertEq(snapshotAfterDeposit, COLLATERAL_AMOUNT, "Snapshot should equal deposit amount");
+
+    // Step 3: Simulate gains by increasing oracle price (20% gain)
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+
+    // Total assets should now be higher
+    uint256 totalAssetsAfterGain = positionManager.totalAssets();
+    assertEq(totalAssetsAfterGain, COLLATERAL_AMOUNT * 120 / 100, "Total assets should reflect gain");
+
+    // Step 4: Call setFeeData - this triggers _accrueFees which should mint performance fees
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 0, performanceFee);
+
+    uint256 feeSharesAfterFirstSet = positionManager.balanceOf(feeRecipient);
+    assertGt(feeSharesAfterFirstSet, 0, "Fee shares should be minted for the gain");
+
+    // Step 5: Call setFeeData again - NO new gains occurred, so NO new fees should be minted
+    // If the bug exists (lastTotalAssets not updated), this would mint fees again!
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 0, performanceFee);
+
+    uint256 feeSharesAfterSecondSet = positionManager.balanceOf(feeRecipient);
+
+    // The fee shares should NOT increase - we already took fees on these gains
+    assertEq(
+      feeSharesAfterSecondSet, feeSharesAfterFirstSet, "Performance fees should NOT be minted again for the same gains"
+    );
+
+    // Step 6: Call setFeeData a third time to be absolutely sure
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 0, performanceFee);
+
+    uint256 feeSharesAfterThirdSet = positionManager.balanceOf(feeRecipient);
+
+    assertEq(
+      feeSharesAfterThirdSet,
+      feeSharesAfterFirstSet,
+      "Performance fees should still not increase after third setFeeData call"
+    );
+  }
 }

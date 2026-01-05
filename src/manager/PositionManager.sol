@@ -283,6 +283,8 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       emit FeesAccrued(fd.feeRecipient, feeShares);
     }
 
+    // Update snapshot to prevent double-counting performance fees on the same gains
+    ps.lastTotalAssets = currentTotalAssets;
     ps.lastFeeAccrualTimestamp = block.timestamp;
 
     return currentTotalAssets;
