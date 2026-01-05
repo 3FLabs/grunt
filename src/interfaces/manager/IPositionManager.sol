@@ -71,6 +71,9 @@ interface IPositionManager {
   /// @notice Thrown when fee value exceeds the maximum allowed.
   error FeeExceedsMax();
 
+  /// @notice Thrown when a queue contains a position that is not whitelisted.
+  error UnauthorizedPosition();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -92,6 +95,14 @@ interface IPositionManager {
   /// @param managementFee The management fee rate
   /// @param performanceFee The performance fee rate
   event FeeDataSet(address feeRecipient, uint24 managementFee, uint24 performanceFee);
+
+  /// @notice Emitted when a borrow module is added to the whitelist.
+  /// @param module The address of the borrow module added
+  event BorrowModuleAdded(address indexed module);
+
+  /// @notice Emitted when a borrow module is removed from the whitelist.
+  /// @param module The address of the borrow module removed
+  event BorrowModuleRemoved(address indexed module);
 
   /// @notice Emitted when fees are accrued and minted to the fee recipient.
   /// @param feeRecipient The address receiving the fee shares
@@ -130,6 +141,15 @@ interface IPositionManager {
   /// @notice Returns the withdrawal queue used for withdrawals.
   /// @return Array of position addresses in withdrawal order
   function withdrawalQueue() external view returns (address[] memory);
+
+  /// @notice Returns all whitelisted borrow modules.
+  /// @return Array of borrow module addresses
+  function borrowModules() external view returns (address[] memory);
+
+  /// @notice Checks if an address is a whitelisted borrow module.
+  /// @param module The address to check
+  /// @return True if the address is a whitelisted borrow module
+  function isBorrowModule(address module) external view returns (bool);
 
   /// @notice Returns the LLTV used for free collateral calculations.
   /// @dev This LLTV determines how much collateral can be withdrawn without repaying debt.
@@ -224,13 +244,25 @@ interface IPositionManager {
   /*                           ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Adds a borrow module to the whitelist.
+  /// @dev Only callable by the owner. Whitelisted modules can be used in supply/withdrawal queues.
+  /// @param module The address of the borrow module to add
+  function addBorrowModule(address module) external;
+
+  /// @notice Removes a borrow module from the whitelist.
+  /// @dev Only callable by the owner.
+  /// @param module The address of the borrow module to remove
+  function removeBorrowModule(address module) external;
+
   /// @notice Sets the supply queue used for deposits.
-  /// @dev Only callable by the owner. The queue determines deposit priority and borrow caps.
+  /// @dev Only callable by accounts with the curator role. The queue determines deposit priority and borrow caps.
+  ///      All positions in the queue must be whitelisted borrow modules.
   /// @param queue Array of SupplyQueueEntry structs
   function setSupplyQueue(SupplyQueueEntry[] calldata queue) external;
 
   /// @notice Sets the withdrawal queue used for withdrawals.
-  /// @dev Only callable by the owner. The queue determines withdrawal/repayment priority.
+  /// @dev Only callable by accounts with the curator role. The queue determines withdrawal/repayment priority.
+  ///      All positions in the queue must be whitelisted borrow modules.
   /// @param queue Array of position addresses
   function setWithdrawalQueue(address[] calldata queue) external;
 
@@ -249,7 +281,7 @@ interface IPositionManager {
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
   /// @notice Rebalances liquidity across borrow positions without minting or burning shares.
-  /// @dev This function allows the owner to redistribute collateral and debt across positions
+  /// @dev Only callable by accounts with the rebalancer role. This function allows redistribution of collateral and debt across positions
   ///      to achieve desired LTV ratios. The function executes the following steps:
   ///      1. Pulls `data.collateral` amount of collateral asset from the caller
   ///      2. Pulls `data.debt` amount of debt asset from the caller

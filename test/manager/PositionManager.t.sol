@@ -66,6 +66,8 @@ contract PositionManagerTest is Test {
 
   address public owner;
   address public minter;
+  address public curator;
+  address public rebalancer;
   address public feeRecipient;
   address public user;
 
@@ -81,6 +83,8 @@ contract PositionManagerTest is Test {
   uint256 constant DEBT_AMOUNT = 5_000e18;
   uint256 constant WAD = 1e18;
   uint256 constant _ROLE_MINTER = 1 << 0;
+  uint256 constant _ROLE_CURATOR = 1 << 1;
+  uint256 constant _ROLE_REBALANCER = 1 << 2;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -90,6 +94,8 @@ contract PositionManagerTest is Test {
     // Create test addresses
     owner = makeAddr("owner");
     minter = makeAddr("minter");
+    curator = makeAddr("curator");
+    rebalancer = makeAddr("rebalancer");
     feeRecipient = makeAddr("feeRecipient");
     user = makeAddr("user");
 
@@ -181,6 +187,14 @@ contract PositionManagerTest is Test {
       borrowPositionFactory.createBorrowPosition(morpho, marketId2, address(positionManager), preLiquidation2);
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
+    // Setup borrow modules whitelist and grant curator/rebalancer roles
+    vm.startPrank(owner);
+    positionManager.addBorrowModule(address(borrowPosition1));
+    positionManager.addBorrowModule(address(borrowPosition2));
+    positionManager.grantRoles(curator, _ROLE_CURATOR);
+    positionManager.grantRoles(rebalancer, _ROLE_REBALANCER);
+    vm.stopPrank();
+
     // Setup supply and withdrawal queues
     SupplyQueueEntry[] memory supplyQueue = new SupplyQueueEntry[](2);
     supplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
@@ -190,7 +204,7 @@ contract PositionManagerTest is Test {
     withdrawalQueue[0] = address(borrowPosition1);
     withdrawalQueue[1] = address(borrowPosition2);
 
-    vm.startPrank(owner);
+    vm.startPrank(curator);
     positionManager.setSupplyQueue(supplyQueue);
     positionManager.setWithdrawalQueue(withdrawalQueue);
     vm.stopPrank();
@@ -550,7 +564,7 @@ contract PositionManagerTest is Test {
   /*                     ADMIN FUNCTION TESTS                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setSupplyQueue_onlyOwner() public {
+  function test_setSupplyQueue_onlyCurator() public {
     SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
     queue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 1000e18});
 
@@ -558,7 +572,7 @@ contract PositionManagerTest is Test {
     vm.expectRevert();
     positionManager.setSupplyQueue(queue);
 
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setSupplyQueue(queue);
 
     SupplyQueueEntry[] memory newQueue = positionManager.supplyQueue();
@@ -566,7 +580,7 @@ contract PositionManagerTest is Test {
     assertEq(newQueue[0].maxBorrow, 1000e18);
   }
 
-  function test_setWithdrawalQueue_onlyOwner() public {
+  function test_setWithdrawalQueue_onlyCurator() public {
     address[] memory queue = new address[](1);
     queue[0] = address(borrowPosition2);
 
@@ -574,7 +588,7 @@ contract PositionManagerTest is Test {
     vm.expectRevert();
     positionManager.setWithdrawalQueue(queue);
 
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setWithdrawalQueue(queue);
 
     address[] memory newQueue = positionManager.withdrawalQueue();
@@ -593,6 +607,183 @@ contract PositionManagerTest is Test {
     positionManager.setLltv(newLltv);
 
     assertEq(positionManager.lltv(), newLltv);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  BORROW MODULE WHITELIST TESTS             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_addBorrowModule_onlyOwner() public {
+    address newModule = makeAddr("newModule");
+
+    vm.prank(user);
+    vm.expectRevert();
+    positionManager.addBorrowModule(newModule);
+
+    vm.prank(owner);
+    positionManager.addBorrowModule(newModule);
+
+    assertTrue(positionManager.isBorrowModule(newModule));
+  }
+
+  function test_removeBorrowModule_onlyOwner() public {
+    // borrowPosition1 is already whitelisted
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+
+    vm.prank(user);
+    vm.expectRevert();
+    positionManager.removeBorrowModule(address(borrowPosition1));
+
+    vm.prank(owner);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+
+    assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
+  }
+
+  function test_borrowModules_returnsWhitelistedModules() public view {
+    address[] memory modules = positionManager.borrowModules();
+    assertEq(modules.length, 2);
+    // Note: Order may vary based on EnumerableSet implementation
+    assertTrue(
+      (modules[0] == address(borrowPosition1) && modules[1] == address(borrowPosition2))
+        || (modules[0] == address(borrowPosition2) && modules[1] == address(borrowPosition1))
+    );
+  }
+
+  function test_isBorrowModule_correctlyReports() public view {
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition2)));
+    assertFalse(positionManager.isBorrowModule(address(0)));
+    assertFalse(positionManager.isBorrowModule(user));
+  }
+
+  function test_setSupplyQueue_revertOnUnauthorizedPosition() public {
+    address unauthorizedPosition = makeAddr("unauthorized");
+
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: unauthorizedPosition, maxBorrow: uint96(type(uint96).max)});
+
+    vm.prank(curator);
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.setSupplyQueue(queue);
+  }
+
+  function test_setWithdrawalQueue_revertOnUnauthorizedPosition() public {
+    address unauthorizedPosition = makeAddr("unauthorized");
+
+    address[] memory queue = new address[](1);
+    queue[0] = unauthorizedPosition;
+
+    vm.prank(curator);
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.setWithdrawalQueue(queue);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     CURATOR ROLE TESTS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setSupplyQueue_revertIfNotCurator() public {
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 1000e18});
+
+    // Owner cannot set supply queue (only curator)
+    vm.prank(owner);
+    vm.expectRevert();
+    positionManager.setSupplyQueue(queue);
+
+    // Rebalancer cannot set supply queue
+    vm.prank(rebalancer);
+    vm.expectRevert();
+    positionManager.setSupplyQueue(queue);
+
+    // Random user cannot set supply queue
+    vm.prank(user);
+    vm.expectRevert();
+    positionManager.setSupplyQueue(queue);
+  }
+
+  function test_setWithdrawalQueue_revertIfNotCurator() public {
+    address[] memory queue = new address[](1);
+    queue[0] = address(borrowPosition1);
+
+    // Owner cannot set withdrawal queue (only curator)
+    vm.prank(owner);
+    vm.expectRevert();
+    positionManager.setWithdrawalQueue(queue);
+
+    // Rebalancer cannot set withdrawal queue
+    vm.prank(rebalancer);
+    vm.expectRevert();
+    positionManager.setWithdrawalQueue(queue);
+
+    // Random user cannot set withdrawal queue
+    vm.prank(user);
+    vm.expectRevert();
+    positionManager.setWithdrawalQueue(queue);
+  }
+
+  function test_curator_canBeGrantedToMultipleAddresses() public {
+    address newCurator = makeAddr("newCurator");
+
+    vm.prank(owner);
+    positionManager.grantRoles(newCurator, _ROLE_CURATOR);
+
+    // Both original curator and new curator can set queues
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 1000e18});
+
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    vm.prank(newCurator);
+    positionManager.setSupplyQueue(queue);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   REBALANCER ROLE TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_rebalance_revertIfNotRebalancer() public {
+    RebalancingOperation[] memory ops = new RebalancingOperation[](0);
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    // Owner cannot rebalance (only rebalancer)
+    vm.prank(owner);
+    vm.expectRevert();
+    positionManager.rebalance(data);
+
+    // Curator cannot rebalance
+    vm.prank(curator);
+    vm.expectRevert();
+    positionManager.rebalance(data);
+
+    // Random user cannot rebalance
+    vm.prank(user);
+    vm.expectRevert();
+    positionManager.rebalance(data);
+  }
+
+  function test_rebalancer_canBeGrantedToMultipleAddresses() public {
+    // Setup: deposit collateral first
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    address newRebalancer = makeAddr("newRebalancer");
+
+    vm.prank(owner);
+    positionManager.grantRoles(newRebalancer, _ROLE_REBALANCER);
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](0);
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    // Both original rebalancer and new rebalancer can rebalance
+    vm.prank(rebalancer);
+    positionManager.rebalance(data);
+
+    vm.prank(newRebalancer);
+    positionManager.rebalance(data);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -635,9 +826,9 @@ contract PositionManagerTest is Test {
       operations: ops
     });
 
-    // Mint debt for owner to repay
-    _mintDebt(owner, debtToMove);
-    vm.startPrank(owner);
+    // Mint debt for rebalancer to repay
+    _mintDebt(rebalancer, debtToMove);
+    vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), debtToMove);
     (uint256 collateralExcess, uint256 debtExcess) = positionManager.rebalance(data);
     vm.stopPrank();
@@ -888,8 +1079,8 @@ contract PositionManagerTest is Test {
 
     RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
 
-    _mintDebt(owner, debtToMove);
-    vm.startPrank(owner);
+    _mintDebt(rebalancer, debtToMove);
+    vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), debtToMove);
     positionManager.rebalance(data);
     vm.stopPrank();
@@ -941,8 +1132,8 @@ contract PositionManagerTest is Test {
 
     RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
 
-    _mintCollateral(owner, additionalCollateral);
-    vm.startPrank(owner);
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
     collateralToken.approve(address(positionManager), additionalCollateral);
     positionManager.rebalance(data);
     vm.stopPrank();
@@ -980,13 +1171,13 @@ contract PositionManagerTest is Test {
 
     RebalancingData memory data = RebalancingData({collateral: excessCollateral, debt: excessDebt, operations: ops});
 
-    _mintCollateral(owner, excessCollateral);
-    _mintDebt(owner, excessDebt);
+    _mintCollateral(rebalancer, excessCollateral);
+    _mintDebt(rebalancer, excessDebt);
 
-    uint256 ownerCollateralBefore = collateralToken.balanceOf(owner);
-    uint256 ownerDebtBefore = debtToken.balanceOf(owner);
+    uint256 rebalancerCollateralBefore = collateralToken.balanceOf(rebalancer);
+    uint256 rebalancerDebtBefore = debtToken.balanceOf(rebalancer);
 
-    vm.startPrank(owner);
+    vm.startPrank(rebalancer);
     collateralToken.approve(address(positionManager), excessCollateral);
     debtToken.approve(address(positionManager), excessDebt);
     (uint256 collateralExcess, uint256 debtExcess) = positionManager.rebalance(data);
@@ -996,13 +1187,17 @@ contract PositionManagerTest is Test {
     assertEq(collateralExcess, excessCollateral / 2, "Should return unused collateral");
     assertEq(debtExcess, excessDebt, "Should return all unused debt");
 
-    // Verify owner received the excess back
+    // Verify rebalancer received the excess back
     assertEq(
-      collateralToken.balanceOf(owner),
-      ownerCollateralBefore - excessCollateral + collateralExcess,
-      "Owner should receive collateral excess"
+      collateralToken.balanceOf(rebalancer),
+      rebalancerCollateralBefore - excessCollateral + collateralExcess,
+      "Rebalancer should receive collateral excess"
     );
-    assertEq(debtToken.balanceOf(owner), ownerDebtBefore - excessDebt + debtExcess, "Owner should receive debt excess");
+    assertEq(
+      debtToken.balanceOf(rebalancer),
+      rebalancerDebtBefore - excessDebt + debtExcess,
+      "Rebalancer should receive debt excess"
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1052,7 +1247,7 @@ contract PositionManagerTest is Test {
   function test_deposit_emptySupplyQueue() public {
     // Clear supply queue
     SupplyQueueEntry[] memory emptyQueue = new SupplyQueueEntry[](0);
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setSupplyQueue(emptyQueue);
 
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -1070,7 +1265,7 @@ contract PositionManagerTest is Test {
   function test_deposit_emptySupplyQueue_withDebt_reverts() public {
     // Clear supply queue
     SupplyQueueEntry[] memory emptyQueue = new SupplyQueueEntry[](0);
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setSupplyQueue(emptyQueue);
 
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -1089,7 +1284,7 @@ contract PositionManagerTest is Test {
 
     // Clear withdrawal queue
     address[] memory emptyQueue = new address[](0);
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setWithdrawalQueue(emptyQueue);
 
     // Try to withdraw collateral - should revert
@@ -1227,8 +1422,8 @@ contract PositionManagerTest is Test {
 
     RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
 
-    _mintDebt(owner, debtToMove);
-    vm.startPrank(owner);
+    _mintDebt(rebalancer, debtToMove);
+    vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), debtToMove);
     positionManager.rebalance(data);
     vm.stopPrank();
@@ -1434,7 +1629,7 @@ contract PositionManagerTest is Test {
     newQueue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 0});
     newQueue[1] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
 
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setSupplyQueue(newQueue);
 
     // Deposit should skip position1 (maxBorrow == 0) and use position2
@@ -1464,7 +1659,7 @@ contract PositionManagerTest is Test {
     // Now change supply queue to only have position2
     SupplyQueueEntry[] memory newSupplyQueue = new SupplyQueueEntry[](1);
     newSupplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
-    vm.prank(owner);
+    vm.prank(curator);
     positionManager.setSupplyQueue(newSupplyQueue);
 
     // Deposit with debt - all debt goes to position2
@@ -1814,5 +2009,168 @@ contract PositionManagerTest is Test {
 
     // Should not get more than deposited (no free money)
     assertLe(collateralBack, depositAmount, "Should not gain value from round trip");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*               COVERAGE GAP EDGE CASE TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Test burn proportional capping when toRepay exceeds remainingDebt
+  /// @dev Covers line 583: if (toRepay > remainingDebt) toRepay = remainingDebt
+  function test_burn_capsRepayProportionalExcess() public {
+    // Create uneven debt distribution: position1 has almost all debt, position2 has minimal
+    // This can cause proportional calculation for position1 to exceed remainingDebt
+
+    // First deposit to position1 only (default queue starts with position1)
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Now rebalance to move a tiny bit of collateral and debt to position2
+    // This creates uneven distribution
+    uint256 tinyDebt = DEBT_AMOUNT / 1000; // 0.1%
+    uint256 tinyCollateral = COLLATERAL_AMOUNT / 1000;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](4);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: tinyDebt
+    });
+    ops[1] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: tinyCollateral
+    });
+    ops[2] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: tinyCollateral
+    });
+    ops[3] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: tinyDebt
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: tinyDebt, operations: ops});
+
+    _mintDebt(rebalancer, tinyDebt);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), tinyDebt);
+    positionManager.rebalance(data);
+    vm.stopPrank();
+
+    // Verify uneven distribution
+    uint256 pos1Debt = borrowPosition1.totalBorrowed();
+    uint256 pos2Debt = borrowPosition2.totalBorrowed();
+    assertGt(pos1Debt, pos2Debt * 100, "Position1 should have much more debt");
+
+    // Now burn a portion that when calculated proportionally for position1
+    // would exceed the actual debt we want to repay
+    // Burn small shares which corresponds to small debt repayment
+    uint256 sharesToBurn = positionManager.balanceOf(minter) / 100; // 1%
+
+    _mintDebt(minter, DEBT_AMOUNT);
+    vm.prank(minter);
+    positionManager.burn(sharesToBurn);
+
+    // Test passes if no revert - the capping logic handled the excess
+  }
+
+  /// @notice Test burn proportional capping when toWithdraw exceeds remainingCollateral
+  /// @dev Covers line 593: if (toWithdraw > remainingCollateral) toWithdraw = remainingCollateral
+  function test_burn_capsWithdrawProportionalExcess() public {
+    // Create uneven collateral distribution similar to debt test
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Move tiny amount of collateral to position2
+    uint256 tinyCollateral = COLLATERAL_AMOUNT / 1000;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](2);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: tinyCollateral
+    });
+    ops[1] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: tinyCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    vm.prank(rebalancer);
+    positionManager.rebalance(data);
+
+    // Verify uneven distribution
+    uint256 pos1Collateral = borrowPosition1.totalCollateral();
+    uint256 pos2Collateral = borrowPosition2.totalCollateral();
+    assertGt(pos1Collateral, pos2Collateral * 100, "Position1 should have much more collateral");
+
+    // Burn small shares to trigger proportional capping
+    uint256 sharesToBurn = positionManager.balanceOf(minter) / 100;
+
+    vm.prank(minter);
+    positionManager.burn(sharesToBurn);
+
+    // Test passes if no revert - the capping logic handled the excess
+  }
+
+  /// @notice Test ZeroShares revert when minting results in 0 shares due to donation attack
+  /// @dev Covers line 325: if (sharesToMint == 0) revert ZeroShares()
+  /// By donating assets directly to inflate totalAssets without minting shares,
+  /// a tiny deposit can result in 0 shares due to rounding.
+  function test_deposit_revertOnZeroSharesAfterDonation() public {
+    // Step 1: Initial small deposit to establish some shares
+    uint256 initialDeposit = 1e6; // Small deposit
+    _mintCollateral(minter, initialDeposit);
+    vm.prank(minter);
+    positionManager.deposit(initialDeposit, 0);
+
+    uint256 totalSupplyBefore = positionManager.totalSupply();
+    uint256 totalAssetsBefore = positionManager.totalAssets();
+
+    // Step 2: Donate massive amount directly to borrow position (bypassing PositionManager)
+    // This inflates totalAssets without minting shares
+    uint256 donationAmount = 1e30; // Massive donation
+
+    // Give PositionManager the tokens and have it supply directly
+    collateralToken.setBalance(address(positionManager), donationAmount);
+    vm.startPrank(address(positionManager));
+    collateralToken.approve(address(borrowPosition1), donationAmount);
+    borrowPosition1.supplyCollateral(donationAmount);
+    vm.stopPrank();
+
+    // Verify totalAssets increased but totalSupply unchanged
+    assertEq(positionManager.totalSupply(), totalSupplyBefore, "Total supply should be unchanged");
+    assertGt(
+      positionManager.totalAssets(), totalAssetsBefore + donationAmount / 2, "Total assets should have increased"
+    );
+
+    // Step 3: Try to deposit just 1 wei - should result in 0 shares and revert
+    // shares = 1 * (totalSupply + 1e6) / (totalAssets + 1)
+    // With totalAssets ≈ 1e30 and totalSupply ≈ 1e6, shares ≈ 0
+    _mintCollateral(minter, 1);
+
+    vm.prank(minter);
+    vm.expectRevert(IPositionManager.ZeroShares.selector);
+    positionManager.deposit(1, 0);
+  }
+
+  /// @notice Test ZeroShares revert when burning results in 0 shares due to donation attack
+  /// @dev Covers line 334: if (sharesToBurn == 0) revert ZeroShares()
+  function test_withdraw_revertOnZeroSharesAfterDonation() public {
+    // Step 1: Initial deposit with debt
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Step 2: Donate massive amount to inflate totalAssets
+    uint256 donationAmount = 1e30;
+
+    // Give PositionManager the tokens and have it supply directly
+    collateralToken.setBalance(address(positionManager), donationAmount);
+    vm.startPrank(address(positionManager));
+    collateralToken.approve(address(borrowPosition1), donationAmount);
+    borrowPosition1.supplyCollateral(donationAmount);
+    vm.stopPrank();
+
+    // Step 3: Try to withdraw just 1 wei of collateral
+    // The asset change is tiny relative to totalAssets, so shares calculation rounds to 0
+    vm.prank(minter);
+    vm.expectRevert(IPositionManager.ZeroShares.selector);
+    positionManager.withdraw(1, 0);
   }
 }

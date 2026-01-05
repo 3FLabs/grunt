@@ -14,6 +14,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
 /// @title PositionManager
 /// @notice Aggregates multiple borrow positions into a single vault with share-based accounting.
@@ -22,12 +23,15 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
+  using EnumerableSetLib for EnumerableSetLib.AddressSet;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 internal constant _ROLE_MINTER = _ROLE_0;
+  uint256 internal constant _ROLE_CURATOR = _ROLE_1;
+  uint256 internal constant _ROLE_REBALANCER = _ROLE_2;
 
   /// @dev Virtual offset for share calculation to prevent inflation attacks.
   ///      Using 1e6 as offset (similar to MetaMorpho's approach with decimalsOffset).
@@ -67,6 +71,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
     FeeData feeData;
     SupplyQueueEntry[] supplyQueue;
     address[] withdrawalQueue;
+    EnumerableSetLib.AddressSet borrowModules;
     string name;
     string symbol;
     uint8 decimals;
@@ -154,11 +159,21 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   }
 
   /// @inheritdoc IPositionManager
+  function borrowModules() public view returns (address[] memory) {
+    return _positionManagerStorage().borrowModules.values();
+  }
+
+  /// @inheritdoc IPositionManager
+  function isBorrowModule(address module) public view returns (bool) {
+    return _positionManagerStorage().borrowModules.contains(module);
+  }
+
+  /// @inheritdoc IPositionManager
   function collateralAmount() public view returns (uint256 amount) {
-    SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
-    uint256 queueLength = queue.length;
-    for (uint256 i = 0; i < queueLength;) {
-      amount += IBorrowPosition(queue[i].position).totalCollateral();
+    address[] memory modules = _positionManagerStorage().borrowModules.values();
+    uint256 modulesLength = modules.length;
+    for (uint256 i = 0; i < modulesLength;) {
+      amount += IBorrowPosition(modules[i]).totalCollateral();
       unchecked {
         ++i;
       }
@@ -167,10 +182,10 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
 
   /// @inheritdoc IPositionManager
   function collateralAmountQuoted() public view returns (uint256 amount) {
-    SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
-    uint256 queueLength = queue.length;
-    for (uint256 i = 0; i < queueLength;) {
-      amount += IBorrowPosition(queue[i].position).totalCollateralQuoted();
+    address[] memory modules = _positionManagerStorage().borrowModules.values();
+    uint256 modulesLength = modules.length;
+    for (uint256 i = 0; i < modulesLength;) {
+      amount += IBorrowPosition(modules[i]).totalCollateralQuoted();
       unchecked {
         ++i;
       }
@@ -179,10 +194,10 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
 
   /// @inheritdoc IPositionManager
   function debtAmount() public view returns (uint256 amount) {
-    SupplyQueueEntry[] memory queue = _positionManagerStorage().supplyQueue;
-    uint256 queueLength = queue.length;
-    for (uint256 i = 0; i < queueLength;) {
-      amount += IBorrowPosition(queue[i].position).totalBorrowed();
+    address[] memory modules = _positionManagerStorage().borrowModules.values();
+    uint256 modulesLength = modules.length;
+    for (uint256 i = 0; i < modulesLength;) {
+      amount += IBorrowPosition(modules[i]).totalBorrowed();
       unchecked {
         ++i;
       }
@@ -565,7 +580,6 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       // Repay proportionally
       if (remainingDebt > 0 && positionDebt > 0 && _totalDebt > 0) {
         uint256 toRepay = debtToRepay.mulDiv(positionDebt, _totalDebt);
-        if (toRepay > remainingDebt) toRepay = remainingDebt;
         if (toRepay > 0) {
           _repay(position, ps.debtAsset, toRepay);
           remainingDebt -= toRepay;
@@ -575,7 +589,6 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
       // Withdraw proportionally
       if (remainingCollateral > 0 && positionCollateral > 0 && _totalCollateral > 0) {
         uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, _totalCollateral);
-        if (toWithdraw > remainingCollateral) toWithdraw = remainingCollateral;
         if (toWithdraw > 0) {
           _withdraw(position, toWithdraw);
           remainingCollateral -= toWithdraw;
@@ -617,11 +630,25 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManager
-  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external onlyOwner {
+  function addBorrowModule(address module) external onlyOwner {
+    _positionManagerStorage().borrowModules.add(module);
+    emit BorrowModuleAdded(module);
+  }
+
+  /// @inheritdoc IPositionManager
+  function removeBorrowModule(address module) external onlyOwner {
+    _positionManagerStorage().borrowModules.remove(module);
+    emit BorrowModuleRemoved(module);
+  }
+
+  /// @inheritdoc IPositionManager
+  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external onlyRoles(_ROLE_CURATOR) {
     PositionManagerStorage storage ps = _positionManagerStorage();
+
     delete ps.supplyQueue;
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
+      if (!ps.borrowModules.contains(queue[i].position)) revert UnauthorizedPosition();
       ps.supplyQueue.push(queue[i]);
       unchecked {
         ++i;
@@ -631,8 +658,17 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   }
 
   /// @inheritdoc IPositionManager
-  function setWithdrawalQueue(address[] calldata queue) external onlyOwner {
-    _positionManagerStorage().withdrawalQueue = queue;
+  function setWithdrawalQueue(address[] calldata queue) external onlyRoles(_ROLE_CURATOR) {
+    PositionManagerStorage storage ps = _positionManagerStorage();
+
+    uint256 queueLength = queue.length;
+    for (uint256 i = 0; i < queueLength;) {
+      if (!ps.borrowModules.contains(queue[i])) revert UnauthorizedPosition();
+      unchecked {
+        ++i;
+      }
+    }
+    ps.withdrawalQueue = queue;
     emit WithdrawalQueueSet(queue);
   }
 
@@ -663,7 +699,7 @@ contract PositionManager is IPositionManager, OwnableRoles, ERC20, Initializable
   /// @inheritdoc IPositionManager
   function rebalance(RebalancingData calldata data)
     external
-    onlyOwner
+    onlyRoles(_ROLE_REBALANCER)
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
     // Accrue fees based on pre-rebalance state
