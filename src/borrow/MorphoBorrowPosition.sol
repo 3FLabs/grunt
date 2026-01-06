@@ -170,7 +170,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     _marketParams.collateralToken.safeTransferFrom(msg.sender, address(this), amount);
 
     // Approve Morpho to spend collateral
-    _marketParams.collateralToken.safeApprove(address(_morpho), amount);
+    _marketParams.collateralToken.safeApproveWithRetry(address(_morpho), amount);
 
     // Supply collateral to Morpho on behalf of this contract
     _morpho.supplyCollateral(_marketParams, amount, address(this), "");
@@ -240,7 +240,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     _marketParams.loanToken.safeTransferFrom(msg.sender, address(this), amount);
 
     // Approve Morpho to spend loan tokens
-    _marketParams.loanToken.safeApprove(address(_morpho), amount);
+    _marketParams.loanToken.safeApproveWithRetry(address(_morpho), amount);
 
     // Repay debt to Morpho
     _morpho.repay(_marketParams, amount, 0, address(this), "");
