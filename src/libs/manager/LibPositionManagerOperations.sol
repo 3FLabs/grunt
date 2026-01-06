@@ -54,6 +54,9 @@ library LibPositionManagerOperations {
 
       // If we couldn't borrow all the requested debt, revert
       if (remainingDebt > 0) revert IPositionManager.InsufficientBorrowCapacity();
+
+      // Note: remainingCollateral is guaranteed to be 0 here due to proportional math.
+      // When toBorrow == remainingDebt (final iteration), collateralToSupply = remainingCollateral.
     }
   }
 
