@@ -19,46 +19,42 @@ library LibPositionManagerOperations {
   /// @param collateral The amount of collateral to deposit
   /// @param debt The amount of debt to borrow
   function processDeposit(PositionManagerStorageData storage ps, uint256 collateral, uint256 debt) internal {
-    uint256 remainingCollateral = collateral;
-    uint256 remainingDebt = debt;
-    uint256 queueLength = ps.supplyQueue.length;
+    unchecked {
 
-    for (uint256 i = 0; i < queueLength && remainingDebt > 0;) {
-      SupplyQueueEntry memory entry = ps.supplyQueue[i];
-      address position = entry.position;
+      uint256 remainingCollateral = collateral;
+      uint256 remainingDebt = debt;
+      uint256 queueLength = ps.supplyQueue.length;
 
-      // Calculate how much we can borrow from this position
-      uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
-      uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
+      for (uint256 i = 0; i < queueLength && remainingDebt > 0; i++) {
+        SupplyQueueEntry memory entry = ps.supplyQueue[i];
+        address position = entry.position;
 
-      if (toBorrow == 0) {
-        unchecked {
-          ++i;
+        // Calculate how much we can borrow from this position
+        uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
+        uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
+
+        if (toBorrow == 0) {
+          continue;
         }
-        continue;
+
+        // Calculate proportional collateral
+        // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
+        uint256 collateralToSupply = remainingCollateral.mulDiv(toBorrow, remainingDebt);
+
+        // Supply collateral first (if any)
+        if (collateralToSupply > 0) {
+          position.supply(ps.collateralAsset, collateralToSupply);
+          remainingCollateral -= collateralToSupply;
+        }
+
+        // Then borrow
+        position.borrow(toBorrow);
+        remainingDebt -= toBorrow;
       }
 
-      // Calculate proportional collateral
-      // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
-      uint256 collateralToSupply = remainingCollateral.mulDiv(toBorrow, remainingDebt);
-
-      // Supply collateral first (if any)
-      if (collateralToSupply > 0) {
-        position.supply(ps.collateralAsset, collateralToSupply);
-        remainingCollateral -= collateralToSupply;
-      }
-
-      // Then borrow
-      position.borrow(toBorrow);
-      remainingDebt -= toBorrow;
-
-      unchecked {
-        ++i;
-      }
+      // If we couldn't borrow all the requested debt, revert
+      if (remainingDebt > 0) revert IPositionManager.InsufficientBorrowCapacity();
     }
-
-    // If we couldn't borrow all the requested debt, revert
-    if (remainingDebt > 0) revert IPositionManager.InsufficientBorrowCapacity();
   }
 
   /// @dev Processes withdrawal through the withdrawal queue.
@@ -66,59 +62,42 @@ library LibPositionManagerOperations {
   /// @param collateral The amount of collateral to withdraw
   /// @param debt The amount of debt to repay
   function processWithdrawal(PositionManagerStorageData storage ps, uint256 collateral, uint256 debt) internal {
-    uint256 remainingDebt = debt;
-    uint256 remainingCollateral = collateral;
-    uint256 queueLength = ps.withdrawalQueue.length;
+    unchecked {
+      uint256 remainingDebt = debt;
+      uint256 remainingCollateral = collateral;
+      uint256 queueLength = ps.withdrawalQueue.length;
 
-    // First pass: repay debt
-    for (uint256 i = 0; i < queueLength && remainingDebt > 0;) {
-      address position = ps.withdrawalQueue[i];
-      uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
+      address debtAsset = ps.debtAsset;
 
-      if (positionDebt == 0) {
-        unchecked {
-          ++i;
+      for (uint256 i = 0; i < queueLength && (remainingDebt > 0 || remainingCollateral > 0); i++) {
+        address position = ps.withdrawalQueue[i];
+
+        // Repay debt first (increases free collateral for withdrawal)
+        if (remainingDebt > 0) {
+          uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
+          if (positionDebt > 0) {
+            uint256 toRepay = positionDebt.min(remainingDebt);
+            position.repay(debtAsset, toRepay);
+            remainingDebt -= toRepay;
+          }
         }
-        continue;
-      }
 
-      uint256 toRepay = positionDebt.min(remainingDebt);
-      position.repay(ps.debtAsset, toRepay);
-      remainingDebt -= toRepay;
-
-      unchecked {
-        ++i;
-      }
-    }
-
-    // Second pass: withdraw collateral
-    for (uint256 i = 0; i < queueLength && remainingCollateral > 0;) {
-      address position = ps.withdrawalQueue[i];
-
-      // Get free collateral for this position
-      uint256 freeCollat = IBorrowPosition(position).freeCollateral(ps.lltv);
-      uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
-
-      // We can withdraw up to the free collateral
-      uint256 toWithdraw = freeCollat.min(positionCollateral).min(remainingCollateral);
-
-      if (toWithdraw == 0) {
-        unchecked {
-          ++i;
+        // Then withdraw collateral
+        if (remainingCollateral > 0) {
+          uint256 toWithdraw = IBorrowPosition(position).freeCollateral(ps.lltv).min(remainingCollateral);
+          if (toWithdraw > 0) {
+            position.withdraw(toWithdraw);
+            remainingCollateral -= toWithdraw;
+          }
         }
-        continue;
       }
 
-      position.withdraw(toWithdraw);
-      remainingCollateral -= toWithdraw;
+      // If we couldn't repay all debt, revert (would leave tokens stuck in contract)
+      if (remainingDebt > 0) revert IPositionManager.ExcessDebtRepay();
 
-      unchecked {
-        ++i;
-      }
+      // If we couldn't withdraw all requested collateral, revert
+      if (remainingCollateral > 0) revert IPositionManager.InsufficientFreeCollateral();
     }
-
-    // If we couldn't withdraw all requested collateral, revert
-    if (remainingCollateral > 0) revert IPositionManager.InsufficientFreeCollateral();
   }
 
   /// @dev Processes burn by repaying debt and withdrawing collateral proportionally from each position.
@@ -135,35 +114,33 @@ library LibPositionManagerOperations {
     uint256 totalCollateral,
     uint256 totalDebt
   ) internal {
-    uint256 remainingCollateral = collateralToWithdraw;
-    uint256 remainingDebt = debtToRepay;
-    uint256 queueLength = ps.withdrawalQueue.length;
+    unchecked {
+      uint256 remainingCollateral = collateralToWithdraw;
+      uint256 remainingDebt = debtToRepay;
+      uint256 queueLength = ps.withdrawalQueue.length;
 
-    for (uint256 i = 0; i < queueLength;) {
-      address position = ps.withdrawalQueue[i];
-      uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
-      uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
+      for (uint256 i = 0; i < queueLength; i++) {
+        address position = ps.withdrawalQueue[i];
+        uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
+        uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
 
-      // Repay proportionally
-      if (remainingDebt > 0 && positionDebt > 0 && totalDebt > 0) {
-        uint256 toRepay = debtToRepay.mulDiv(positionDebt, totalDebt);
-        if (toRepay > 0) {
-          position.repay(ps.debtAsset, toRepay);
-          remainingDebt -= toRepay;
+        // Repay proportionally
+        if (remainingDebt > 0 && positionDebt > 0 && totalDebt > 0) {
+          uint256 toRepay = debtToRepay.mulDiv(positionDebt, totalDebt);
+          if (toRepay > 0) {
+            position.repay(ps.debtAsset, toRepay);
+            remainingDebt -= toRepay;
+          }
         }
-      }
 
-      // Withdraw proportionally
-      if (remainingCollateral > 0 && positionCollateral > 0 && totalCollateral > 0) {
-        uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, totalCollateral);
-        if (toWithdraw > 0) {
-          position.withdraw(toWithdraw);
-          remainingCollateral -= toWithdraw;
+        // Withdraw proportionally
+        if (remainingCollateral > 0 && positionCollateral > 0 && totalCollateral > 0) {
+          uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, totalCollateral);
+          if (toWithdraw > 0) {
+            position.withdraw(toWithdraw);
+            remainingCollateral -= toWithdraw;
+          }
         }
-      }
-
-      unchecked {
-        ++i;
       }
     }
   }

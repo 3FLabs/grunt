@@ -165,4 +165,38 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     // Should succeed by withdrawing from position2
     assertTrue(positionManager.collateralAmount() < COLLATERAL_AMOUNT * 2, "Some collateral should be withdrawn");
   }
+
+  /// @notice Test that repaying more debt than exists reverts
+  function test_withdraw_revertOnExcessDebtRepay() public {
+    // Setup: deposit collateral and borrow some debt
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 totalDebt = positionManager.debtAmount();
+
+    // Try to repay more than total debt
+    uint256 excessRepay = totalDebt + 1000e18;
+    _mintDebt(minter, excessRepay);
+
+    vm.prank(minter);
+    vm.expectRevert(IPositionManager.ExcessDebtRepay.selector);
+    positionManager.withdraw(0, excessRepay);
+  }
+
+  /// @notice Test that contract doesn't end up with debt token balance after withdrawal
+  function test_withdraw_noResidualDebtBalance() public {
+    // Setup: deposit collateral and borrow
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Repay exact debt amount
+    _mintDebt(minter, DEBT_AMOUNT);
+    vm.prank(minter);
+    positionManager.withdraw(0, DEBT_AMOUNT);
+
+    // Contract should have no debt token balance
+    assertEq(debtToken.balanceOf(address(positionManager)), 0, "PM should have no debt token balance");
+  }
 }

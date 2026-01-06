@@ -77,6 +77,9 @@ interface IPositionManager {
   /// @notice Thrown when rebalance causes total assets to decrease by more than maxRebalanceLoss.
   error RebalanceLossExceedsMax();
 
+  /// @notice Thrown when attempting to repay more debt than exists across all positions.
+  error ExcessDebtRepay();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
