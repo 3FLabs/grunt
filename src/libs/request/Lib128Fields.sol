@@ -44,8 +44,7 @@ library Lib128Fields {
   /// @return ptField The first field stored in the lower 128 bits
   /// @return ytField The second field stored in the upper 128 bits
   function fromSlot(uint256 slot) internal view returns (uint128 ptField, uint128 ytField) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       let val := sload(slot)
       ptField := and(val, MAX_128_BITS)
       ytField := shr(128, val)
@@ -74,8 +73,7 @@ library Lib128Fields {
   /// @param ptField The first field to store in the lower 128 bits (must fit in uint128)
   /// @param ytField The second field to store in the upper 128 bits (must fit in uint128)
   function write(uint256 slot, uint128 ptField, uint128 ytField) internal {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       let val := or(ptField, shl(128, ytField))
       sstore(slot, val)
     }

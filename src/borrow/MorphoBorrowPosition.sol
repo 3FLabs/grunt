@@ -102,8 +102,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return borrowPositionStorage A storage pointer to the BorrowPositionStorage struct
   function _borrowPositionStorage() internal pure returns (BorrowPositionStorage storage borrowPositionStorage) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       borrowPositionStorage.slot := _MAIN_STORAGE_SLOT
     }
   }

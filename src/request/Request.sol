@@ -98,8 +98,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return requestStorage A storage pointer to the RequestStorage struct
   function _requestStorage() internal pure returns (RequestStorage storage requestStorage) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       requestStorage.slot := _MAIN_STORAGE_SLOT
     }
   }

@@ -10,8 +10,7 @@ import {PM_STORAGE_SLOT} from "./LibPositionManagerConstants.sol";
 library LibPositionManagerStorage {
   /// @dev Returns a reference to the contract's storage struct.
   function load() internal pure returns (PositionManagerStorageData storage positionManagerStorage) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       positionManagerStorage.slot := PM_STORAGE_SLOT
     }
   }

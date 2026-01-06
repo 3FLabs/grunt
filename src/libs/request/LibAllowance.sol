@@ -17,8 +17,7 @@ library LibAllowance {
   /// @param amount The amount to consume from the allowance (uint128)
   /// @return result The new allowance after consumption (uint128)
   function consume(uint128 allowance, uint128 amount) internal pure returns (uint128 result) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       result := sub(allowance, mul(amount, lt(allowance, MAX_128_BITS)))
     }
   }
@@ -30,8 +29,7 @@ library LibAllowance {
   /// @param allowance The uint128 allowance value to normalize
   /// @return result The normalized allowance as uint256 (either the original value or uint256.max)
   function normalize(uint128 allowance) internal pure returns (uint256 result) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       result := or(allowance, sub(0, eq(allowance, MAX_128_BITS)))
     }
   }

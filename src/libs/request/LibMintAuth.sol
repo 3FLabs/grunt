@@ -42,8 +42,7 @@ library LibMintAuth {
   /// @param minter The address to compute the mint authorization slot for
   /// @return slot The storage slot containing the packed PT and YT mint authorizations
   function mintAuthSlot(address minter) internal pure returns (uint256 slot) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       mstore(0x0c, _MINT_AUTH_SLOT_SEED)
       mstore(0x00, minter)
       slot := keccak256(0x0c, 0x20)

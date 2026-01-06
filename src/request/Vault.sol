@@ -57,8 +57,7 @@ contract Vault is ControlledVault, Initializable {
   ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return vaultStorage A storage pointer to the VaultStorage struct
   function _vaultStorage() internal pure returns (VaultStorage storage vaultStorage) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       vaultStorage.slot := _VAULT_STORAGE_SLOT
     }
   }

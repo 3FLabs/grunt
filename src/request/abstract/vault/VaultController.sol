@@ -89,8 +89,7 @@ abstract contract VaultController is TokenController, IVaultController {
   /// @param b Second value to check
   /// @return result True if a == 0 OR b == 0
   function _eitherIsZero(uint256 a, uint256 b) internal pure returns (bool result) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       result := or(iszero(a), iszero(b))
     }
   }
