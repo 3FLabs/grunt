@@ -391,14 +391,102 @@ isHealthy(lltv) = maxBorrow ≥ totalBorrowed
 
 The `PositionManager` aggregates multiple `IBorrowPosition` contracts into a single vault with ERC20 share-based accounting. It enables complex multi-protocol borrowing strategies while presenting a unified interface to users.
 
+### Architecture Overview
+
+The Position Manager is built with a modular architecture, split into abstract base contracts and libraries for separation of concerns:
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                   POSITION MANAGER ARCHITECTURE                   │
 └─────────────────────────────────────────────────────────────────┘
 
+                      ┌──────────────────────┐
+                      │   PositionManager    │  <-- Main entry point
+                      │   (ERC20 Shares)     │
+                      └──────────┬───────────┘
+                                 │ inherits
+        ┌────────────────────────┼────────────────────────┐
+        ▼                        ▼                        ▼
+┌───────────────────┐  ┌─────────────────────┐  ┌────────────────────────┐
+│PositionManager-   │  │PositionManager-     │  │PositionManager-        │
+│Shares             │  │Admin                │  │Rebalancing             │
+│ - Share calc      │  │ - Queue management  │  │ - Rebalance operations │
+│ - Virtual offset  │  │ - Borrow modules    │  │ - Max loss checks      │
+└────────┬──────────┘  │ - LLTV setting      │  └────────────────────────┘
+         │             └─────────────────────┘
+         ▼
+┌───────────────────┐
+│PositionManager-   │
+│Fees               │
+│ - Management fee  │
+│ - Performance fee │
+└───────────────────┘
+
+Libraries (stateless logic):
+┌─────────────────────────────────────────────────────────────────┐
+│ LibPositionManagerStorage   │ ERC-7201 storage accessor         │
+│ LibPositionManagerOperations│ Deposit/withdraw/burn logic       │
+│ LibPositionManagerView      │ View functions & conversions      │
+│ LibPositionExecutor         │ Low-level position interactions   │
+│ LibPositionManagerConstants │ Roles, virtual offsets, limits    │
+│ LibPositionManagerTypes     │ Struct definitions                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### File Structure
+
+```
+src/
+├── manager/
+│   ├── PositionManager.sol           # Main contract (start here)
+│   ├── PositionManagerFactory.sol    # Beacon proxy factory
+│   ├── base/
+│   │   ├── PositionManagerShares.sol     # Share calculation & settlement
+│   │   ├── PositionManagerAdmin.sol      # Admin functions & access control
+│   │   ├── PositionManagerFees.sol       # Fee accrual & management
+│   │   └── PositionManagerRebalancing.sol# Rebalancing operations
+│   └── rebalancer/
+│       └── MorphoRebalancer.sol      # Flash-loan based rebalancer
+├── libs/manager/
+│   ├── PositionManagerTypes.sol          # Type definitions
+│   ├── LibPositionManagerStorage.sol     # ERC-7201 storage
+│   ├── LibPositionManagerConstants.sol   # Constants & roles
+│   ├── LibPositionManagerOperations.sol  # Core operation logic
+│   ├── LibPositionManagerView.sol        # View functions
+│   └── LibPositionExecutor.sol           # Position interaction helpers
+└── interfaces/manager/
+    └── IPositionManager.sol          # Interface definition
+```
+
+**Reading Order:**
+1. `IPositionManager.sol` - Understand the interface
+2. `PositionManagerTypes.sol` - Learn the data structures
+3. `PositionManager.sol` - Main contract that ties everything together
+4. Base contracts in `base/` - Understand specific concerns
+5. Libraries in `libs/manager/` - Deep dive into implementation details
+
+### Role-Based Access Control
+
+The Position Manager uses Solady's `OwnableRoles` for granular permission management:
+
+| Role | Bit Flag | Permission |
+|------|----------|------------|
+| `PM_ROLE_MINTER` | `1 << 0` | Call `deposit`, `withdraw`, `burn` |
+| `PM_ROLE_CURATOR` | `1 << 1` | Set supply/withdrawal queues |
+| `PM_ROLE_REBALANCER` | `1 << 2` | Execute rebalancing operations |
+
+The **owner** has exclusive control over:
+- Adding/removing borrow modules (whitelisting)
+- Setting LLTV
+- Setting fee configuration
+- Setting max rebalance loss threshold
+- Granting/revoking roles
+
+### High-Level Design
+
+```
   ┌──────────────────────┐
   │   PositionManager    │
-  │   (ERC20 Shares)     │
   │                      │
   │  - Supply Queue      │──> [Position A, Position B, Position C]
   │  - Withdrawal Queue  │──> [Position C, Position B, Position A]
@@ -570,25 +658,32 @@ Fees are minted as shares to the fee recipient, diluting existing shareholders p
 ### Admin Functions
 
 ```solidity
-// Set the supply queue for deposits
-function setSupplyQueue(SupplyQueueEntry[] calldata queue) external;
+// Owner-only: Add/remove positions to the whitelist
+function addBorrowModule(address module) external;
+function removeBorrowModule(address module) external;
 
-// Set the withdrawal queue for withdrawals and burns
-function setWithdrawalQueue(address[] calldata queue) external;
+// Owner-only: Set the LLTV for free collateral calculations
+function setLltv(uint256 lltv) external;
 
-// Set the LLTV for free collateral calculations
-function setLLTV(uint256 lltv) external;
-
-// Set fee configuration (accrues pending fees first)
+// Owner-only: Set fee configuration (accrues pending fees first)
 function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
-// Rebalance positions without minting/burning shares
+// Owner-only: Set max allowed loss during rebalance (in basis points)
+function setMaxRebalanceLoss(uint16 maxRebalanceLoss) external;
+
+// Curator role: Set the supply queue for deposits
+function setSupplyQueue(SupplyQueueEntry[] calldata queue) external;
+
+// Curator role: Set the withdrawal queue for withdrawals and burns
+function setWithdrawalQueue(address[] calldata queue) external;
+
+// Rebalancer role: Rebalance positions without minting/burning shares
 function rebalance(RebalancingData calldata data) external returns (uint256 collateralExcess, uint256 debtExcess);
 ```
 
 ### Rebalancing
 
-The `rebalance` function allows the owner to redistribute collateral and debt across positions without affecting shares:
+The `rebalance` function allows accounts with the `PM_ROLE_REBALANCER` role to redistribute collateral and debt across positions without affecting shares:
 
 ```solidity
 struct RebalancingData {
@@ -626,3 +721,68 @@ RebalancingData({
 3. **LLTV Enforcement**: Withdrawals check free collateral to maintain position health
 4. **Fee Accrual**: Fees are always accrued before operations to ensure fair accounting
 5. **Access Control**: Operations restricted to MINTER role, admin functions to owner
+6. **Reentrancy Protection**: Uses `ReentrancyGuardTransient` on main operations
+7. **Whitelisted Positions**: Only positions in `borrowModules` set can be used in queues
+8. **Max Rebalance Loss**: Rebalancing reverts if total assets decrease beyond threshold
+
+### PositionManagerFactory
+
+Deploys Position Manager instances using the **beacon proxy pattern**:
+
+```
+┌────────────────────────┐
+│ PositionManagerFactory │
+│                        │
+│ BEACON ────────────────┼──> UpgradeableBeacon ──> PositionManager Implementation
+└────────────────────────┘
+           │
+           │ createPositionManager()
+           ▼
+    ┌────────────────┐
+    │ PM Proxy       │
+    │ (ERC1967)      │──> delegates to beacon
+    └────────────────┘
+```
+
+```solidity
+// Deploy factory
+PositionManagerFactory factory = new PositionManagerFactory(beaconOwner);
+
+// Create a new Position Manager
+address pm = factory.createPositionManager(
+    owner,           // Owner address
+    collateralAsset, // e.g., WETH
+    debtAsset,       // e.g., USDC
+    "PM Shares",     // Share token name
+    "PMS"            // Share token symbol
+);
+```
+
+### MorphoRebalancer
+
+A standalone rebalancer contract that uses Morpho flash loans to execute rebalancing operations without requiring upfront capital:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MORPHO REBALANCER FLOW                         │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Owner calls rebalance(positionManager, data)
+           │
+           ▼
+2. Initiate flash loan from Morpho for data.debt amount
+           │
+           ▼
+3. Morpho calls onMorphoFlashLoan() callback
+           │
+           ▼
+4. Callback executes positionManager.rebalance(data)
+           │
+           ▼
+5. Callback approves Morpho to pull back flash loaned amount
+```
+
+The rebalancer requires:
+- `PM_ROLE_REBALANCER` role on the Position Manager
+- Owner permission to initiate rebalances
+- Sufficient liquidity in Morpho for the flash loan
