@@ -26,7 +26,6 @@ import {MAX_128_BITS} from "../Constants.sol";
 ///      Safety Considerations:
 ///      - The caller MUST ensure that values fit within uint128 bounds
 ///      - No overflow checks are performed for maximum gas efficiency
-///      - Memory-safe assembly is used to prevent unintended memory corruption
 library Lib128Fields {
   /// @dev Reads two packed uint128 fields from a storage slot.
   ///      Uses optimized assembly to read a single storage slot and extract both uint128 values.
@@ -36,9 +35,6 @@ library Lib128Fields {
   ///      1. Reads the full uint256 value from storage using SLOAD
   ///      2. Extracts the lower 128 bits (ptField) using bitwise AND with _128_MASK
   ///      3. Extracts the upper 128 bits (ytField) using right shift by 128 bits
-  ///
-  ///      The assembly block is marked as memory-safe, indicating it doesn't access memory
-  ///      outside of designated regions and only performs stack-based operations.
   ///
   /// @param slot The storage slot to read from (can be any uint256 value representing a storage location)
   /// @return ptField The first field stored in the lower 128 bits
@@ -60,9 +56,6 @@ library Lib128Fields {
   ///      2. Shifts ytField left by 128 bits to place it in the upper 128 bits
   ///      3. Combines both fields using bitwise OR
   ///      4. Writes the packed value to storage using SSTORE
-  ///
-  ///      The assembly block is marked as memory-safe, indicating it doesn't access memory
-  ///      outside of designated regions and only performs stack-based operations.
   ///
   ///      Safety Considerations:
   ///      - The caller MUST ensure ptField and ytField are valid uint128 values
