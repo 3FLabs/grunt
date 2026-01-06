@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.20;
+
+/// @title LibPositionManagerConstants
+/// @notice Shared constants used across the PositionManager contracts.
+/// @dev This file contains compile-time constants that are inlined by the compiler for gas efficiency.
+///      Constants are defined at the file level (outside of contracts) to enable direct imports
+///      and avoid contract deployment overhead as well as enabling use in assembly blocks.
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                          ROLES                             */
+/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+/// @dev Role for minting/burning shares via deposit/withdraw/burn.
+/// @custom:value 1 (bit 0)
+uint256 constant PM_ROLE_MINTER = 1 << 0;
+
+/// @dev Role for setting supply/withdrawal queues.
+/// @custom:value 2 (bit 1)
+uint256 constant PM_ROLE_CURATOR = 1 << 1;
+
+/// @dev Role for executing rebalancing operations.
+/// @custom:value 4 (bit 2)
+uint256 constant PM_ROLE_REBALANCER = 1 << 2;
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                     SHARE CALCULATIONS                      */
+/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+/// @dev Virtual offset for share calculation to prevent inflation attacks.
+///      Using 1e6 as offset (similar to MetaMorpho's approach with decimalsOffset).
+/// @custom:value 1,000,000
+uint256 constant PM_VIRTUAL_SHARES = 1e6;
+
+/// @dev Virtual assets offset for share calculation.
+/// @custom:value 1
+uint256 constant PM_VIRTUAL_ASSETS = 1;
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                        PRECISION                           */
+/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+/// @dev WAD precision (1e18 = 100%).
+/// @custom:value 1,000,000,000,000,000,000
+uint256 constant PM_WAD = 1e18;
+
+/// @dev Basis points precision (10000 = 100%).
+/// @custom:value 10,000
+uint256 constant PM_BPS = 10_000;
+
+/// @dev Seconds in a year for management fee calculation.
+/// @custom:value 31,536,000 (365 days)
+uint256 constant PM_SECONDS_PER_YEAR = 365 days;
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                        FEE LIMITS                          */
+/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+/// @dev Maximum management fee: 50% per year (5000 basis points).
+/// @custom:value 5,000
+uint256 constant PM_MAX_MANAGEMENT_FEE = 5000;
+
+/// @dev Maximum performance fee: 50% (5000 basis points).
+/// @custom:value 5,000
+uint256 constant PM_MAX_PERFORMANCE_FEE = 5000;
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                         STORAGE                            */
+/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+/// @dev Storage slot for the PositionManager contract's main storage struct.
+///      Computed as: keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))
+/// @custom:value 0x5214b8a11a99e3fe330cebe436fd1668609fe97b04b87c673ddbf614b1920c00
+bytes32 constant PM_STORAGE_SLOT = 0x5214b8a11a99e3fe330cebe436fd1668609fe97b04b87c673ddbf614b1920c00;
