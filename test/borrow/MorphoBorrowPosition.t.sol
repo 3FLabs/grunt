@@ -1391,7 +1391,9 @@ contract MorphoBorrowPositionTest is Test {
 
     // Max borrow should now be reduced by the borrowed amount
     uint256 maxBorrowAfter = borrowPosition.maxBorrow(marketParams.lltv);
-    assertApproxEqAbs(maxBorrowAfter, maxBorrowBefore - borrowAmount, 1, "Max borrow should decrease by borrowed amount");
+    assertApproxEqAbs(
+      maxBorrowAfter, maxBorrowBefore - borrowAmount, 1, "Max borrow should decrease by borrowed amount"
+    );
   }
 
   function test_maxBorrow_ReturnsZeroWhenFullyUtilized() public {
