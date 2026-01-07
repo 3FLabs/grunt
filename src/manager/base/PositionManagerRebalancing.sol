@@ -44,7 +44,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
     // Accrue fees based on pre-rebalance state and capture totalAssets before operations
     uint256 totalAssetsBefore = _accrueFeesForRebalance();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
     address _collateralAsset = ps.collateralAsset;
     address _debtAsset = ps.debtAsset;
 

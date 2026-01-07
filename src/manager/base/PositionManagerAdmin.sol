@@ -27,19 +27,19 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function addBorrowModule(address module) external override onlyOwner {
-    LibPositionManagerStorage.load().borrowModules.add(module);
+    LibPositionManagerStorage.positionManagerStorage().borrowModules.add(module);
     emit IPositionManager.BorrowModuleAdded(module);
   }
 
   /// @inheritdoc IPositionManager
   function removeBorrowModule(address module) external override onlyOwner {
-    LibPositionManagerStorage.load().borrowModules.remove(module);
+    LibPositionManagerStorage.positionManagerStorage().borrowModules.remove(module);
     emit IPositionManager.BorrowModuleRemoved(module);
   }
 
   /// @inheritdoc IPositionManager
   function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(_ROLE_CURATOR) {
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
 
     delete ps.supplyQueue;
     uint256 queueLength = queue.length;
@@ -55,7 +55,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(_ROLE_CURATOR) {
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
 
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
@@ -72,13 +72,13 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   function setLltv(uint256 lltv_) external override onlyOwner {
     // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
     // forge-lint: disable-next-line(unsafe-typecast)
-    LibPositionManagerStorage.load().lltv = uint64(lltv_);
+    LibPositionManagerStorage.positionManagerStorage().lltv = uint64(lltv_);
     emit IPositionManager.LLTVSet(lltv_);
   }
 
   /// @inheritdoc IPositionManager
   function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external override onlyOwner {
-    LibPositionManagerStorage.load().maxRebalanceLoss = maxRebalanceLoss_;
+    LibPositionManagerStorage.positionManagerStorage().maxRebalanceLoss = maxRebalanceLoss_;
     emit IPositionManager.MaxRebalanceLossSet(maxRebalanceLoss_);
   }
 
@@ -95,7 +95,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
     fd.feeRecipient = feeRecipient;
     fd.managementFee = managementFee;
     fd.performanceFee = performanceFee;
-    LibPositionManagerStorage.load().feeData = fd;
+    LibPositionManagerStorage.positionManagerStorage().feeData = fd;
 
     emit IPositionManager.FeeDataSet(feeRecipient, managementFee, performanceFee);
   }

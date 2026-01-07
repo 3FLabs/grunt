@@ -65,7 +65,7 @@ contract PositionManager is
     uint256 lltv_
   ) external initializer {
     _initializeOwner(owner_);
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
     ps.name = name_;
     ps.symbol = symbol_;
     ps.decimals = decimals_;
@@ -85,93 +85,93 @@ contract PositionManager is
 
   /// @inheritdoc ERC20
   function name() public view override returns (string memory) {
-    return LibPositionManagerStorage.load().name;
+    return LibPositionManagerStorage.positionManagerStorage().name;
   }
 
   /// @inheritdoc ERC20
   function symbol() public view override returns (string memory) {
-    return LibPositionManagerStorage.load().symbol;
+    return LibPositionManagerStorage.positionManagerStorage().symbol;
   }
 
   /// @inheritdoc ERC20
   function decimals() public view override returns (uint8) {
-    return LibPositionManagerStorage.load().decimals;
+    return LibPositionManagerStorage.positionManagerStorage().decimals;
   }
 
   /// @inheritdoc IPositionManager
   function supplyQueue() public view returns (SupplyQueueEntry[] memory) {
-    return LibPositionManagerStorage.load().supplyQueue;
+    return LibPositionManagerStorage.positionManagerStorage().supplyQueue;
   }
 
   /// @inheritdoc IPositionManager
   function withdrawalQueue() public view returns (address[] memory) {
-    return LibPositionManagerStorage.load().withdrawalQueue;
+    return LibPositionManagerStorage.positionManagerStorage().withdrawalQueue;
   }
 
   /// @inheritdoc IPositionManager
   function lltv() public view returns (uint256) {
-    return LibPositionManagerStorage.load().lltv;
+    return LibPositionManagerStorage.positionManagerStorage().lltv;
   }
 
   /// @inheritdoc IPositionManager
   function borrowModules() public view returns (address[] memory) {
-    return LibPositionManagerStorage.load().borrowModules.values();
+    return LibPositionManagerStorage.positionManagerStorage().borrowModules.values();
   }
 
   /// @inheritdoc IPositionManager
   function isBorrowModule(address module) public view returns (bool) {
-    return LibPositionManagerStorage.load().borrowModules.contains(module);
+    return LibPositionManagerStorage.positionManagerStorage().borrowModules.contains(module);
   }
 
   /// @inheritdoc IPositionManager
   function collateralAmount() public view returns (uint256) {
-    return LibPositionManagerStorage.load().collateralAmount();
+    return LibPositionManagerStorage.positionManagerStorage().collateralAmount();
   }
 
   /// @inheritdoc IPositionManager
   function collateralAmountQuoted() public view returns (uint256) {
-    return LibPositionManagerStorage.load().collateralAmountQuoted();
+    return LibPositionManagerStorage.positionManagerStorage().collateralAmountQuoted();
   }
 
   /// @inheritdoc IPositionManager
   function debtAmount() public view returns (uint256) {
-    return LibPositionManagerStorage.load().debtAmount();
+    return LibPositionManagerStorage.positionManagerStorage().debtAmount();
   }
 
   /// @inheritdoc IPositionManager
   function totalAssets() public view returns (uint256) {
-    return LibPositionManagerStorage.load().totalAssets();
+    return LibPositionManagerStorage.positionManagerStorage().totalAssets();
   }
 
   /// @inheritdoc IPositionManager
   function feeData() public view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee) {
-    FeeData memory fd = LibPositionManagerStorage.load().feeData;
+    FeeData memory fd = LibPositionManagerStorage.positionManagerStorage().feeData;
     return (fd.feeRecipient, fd.managementFee, fd.performanceFee);
   }
 
   /// @inheritdoc IPositionManager
   function collateralAsset() public view returns (address) {
-    return LibPositionManagerStorage.load().collateralAsset;
+    return LibPositionManagerStorage.positionManagerStorage().collateralAsset;
   }
 
   /// @inheritdoc IPositionManager
   function debtAsset() public view returns (address) {
-    return LibPositionManagerStorage.load().debtAsset;
+    return LibPositionManagerStorage.positionManagerStorage().debtAsset;
   }
 
   /// @inheritdoc IPositionManager
   function lastTotalAssets() public view returns (uint256) {
-    return LibPositionManagerStorage.load().lastTotalAssets;
+    return LibPositionManagerStorage.positionManagerStorage().lastTotalAssets;
   }
 
   /// @inheritdoc IPositionManager
   function lastFeeAccrualTimestamp() public view returns (uint256) {
-    return LibPositionManagerStorage.load().lastFeeAccrualTimestamp;
+    return LibPositionManagerStorage.positionManagerStorage().lastFeeAccrualTimestamp;
   }
 
   /// @inheritdoc IPositionManager
   function maxRebalanceLoss() public view returns (uint16) {
-    return LibPositionManagerStorage.load().maxRebalanceLoss;
+    return LibPositionManagerStorage.positionManagerStorage().maxRebalanceLoss;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -187,7 +187,7 @@ contract PositionManager is
   {
     if (collateral == 0 && debt == 0) revert ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
 
     // Accrue fees and get current total assets
     uint256 totalAssetsBefore = _accrueFees();
@@ -229,7 +229,7 @@ contract PositionManager is
   {
     if (collateral == 0 && debt == 0) revert ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
 
     // Accrue fees and get current total assets
     uint256 totalAssetsBefore = _accrueFees();
@@ -263,7 +263,7 @@ contract PositionManager is
   {
     if (shares == 0) revert ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
 
     // Accrue fees first
     _accrueFees();

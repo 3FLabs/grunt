@@ -24,7 +24,7 @@ abstract contract PositionManagerShares is PositionManagerFees {
   /// @param _totalSupply The total supply before the operation
   /// @return sharesDelta Positive if shares minted, negative if shares burned
   function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
-    uint256 totalAssetsAfter = LibPositionManagerStorage.load().totalAssets();
+    uint256 totalAssetsAfter = LibPositionManagerStorage.positionManagerStorage().totalAssets();
 
     if (totalAssetsAfter > totalAssetsBefore) {
       // Assets increased: mint shares to caller

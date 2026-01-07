@@ -9,9 +9,9 @@ import {PM_STORAGE_SLOT} from "./LibPositionManagerConstants.sol";
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibPositionManagerStorage {
   /// @dev Returns a reference to the contract's storage struct.
-  function load() internal pure returns (PositionManagerStorageData storage positionManagerStorage) {
+  function positionManagerStorage() internal pure returns (PositionManagerStorageData storage data) {
     assembly ("memory-safe") {
-      positionManagerStorage.slot := PM_STORAGE_SLOT
+      data.slot := PM_STORAGE_SLOT
     }
   }
 }

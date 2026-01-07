@@ -25,7 +25,7 @@ abstract contract PositionManagerFees is ERC20 {
   ///      Returns the current total assets after fee accrual for use in share calculations.
   /// @return currentTotalAssets The total assets after fee accrual
   function _accrueFees() internal returns (uint256 currentTotalAssets) {
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
     FeeData memory fd = ps.feeData;
 
     currentTotalAssets = ps.totalAssets();
@@ -77,7 +77,7 @@ abstract contract PositionManagerFees is ERC20 {
 
   /// @dev Updates the lastTotalAssets snapshot after an operation.
   function _updateSnapshot() internal {
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
+    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
     ps.lastTotalAssets = ps.totalAssets();
   }
 }
