@@ -57,10 +57,11 @@ interface IBorrowPosition {
   /// @return True if the position is healthy, false otherwise.
   function isHealthy(uint256 lltv) external view returns (bool);
 
-  /// @notice Returns the maximum amount that can be borrowed from this position for a given LLTV
-  ///         (taking into account available liquidity).
+  /// @notice Returns the remaining borrow capacity for this position at a given LLTV.
+  /// @dev Calculates `(collateralValue * lltv) - alreadyBorrowed`, then takes the minimum
+  ///      with available market liquidity. Returns 0 if fully utilized or over-utilized.
   /// @param lltv The loan-to-liquidation value to consider.
-  /// @return The maximum borrowable amount.
+  /// @return The remaining amount that can be borrowed.
   function maxBorrow(uint256 lltv) external view returns (uint256);
 
   /// @notice Returns the available liquidity in the BorrowPosition market.

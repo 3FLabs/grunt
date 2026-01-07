@@ -319,10 +319,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     Position memory _pos = _morpho.position(_marketId, address(this));
     uint256 _collateralPrice = IOracle($.marketParams.oracle).price();
 
-    // Calculate max borrow: collateralValue * LLTV
-    // Return computed max borrow or available liquidity, whichever is lower
-    return
-      uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv).min(_availableLiquidity);
+    uint256 borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+
+    // Calculate remaining borrow capacity: (collateralValue * LLTV) - alreadyBorrowed
+    // Uses zeroFloorSub to return 0 instead of underflowing if already over-utilized
+    // Return remaining capacity or available liquidity, whichever is lower
+    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv)
+      .zeroFloorSub(borrowed).min(_availableLiquidity);
   }
 
   /// @inheritdoc IBorrowPosition

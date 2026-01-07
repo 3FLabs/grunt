@@ -1369,6 +1369,110 @@ contract MorphoBorrowPositionTest is Test {
     assertLt(maxBorrow, theoreticalMaxBorrow, "Max borrow should be less than theoretical max");
   }
 
+  function test_maxBorrow_DecreasesAfterBorrowing() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Calculate expected max borrow and supply sufficient liquidity
+    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, DEFAULT_LLTV);
+    _supplyLiquidity(expectedMaxBorrow * 2);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Check initial max borrow (should equal full capacity)
+    uint256 maxBorrowBefore = borrowPosition.maxBorrow(marketParams.lltv);
+    assertApproxEqAbs(maxBorrowBefore, expectedMaxBorrow, 1, "Initial max borrow should equal full capacity");
+
+    // Borrow 50% of max
+    uint256 borrowAmount = maxBorrowBefore / 2;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    // Max borrow should now be reduced by the borrowed amount
+    uint256 maxBorrowAfter = borrowPosition.maxBorrow(marketParams.lltv);
+    assertApproxEqAbs(maxBorrowAfter, maxBorrowBefore - borrowAmount, 1, "Max borrow should decrease by borrowed amount");
+  }
+
+  function test_maxBorrow_ReturnsZeroWhenFullyUtilized() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+    uint256 preLltv = preLiquidationParams.preLltv;
+
+    // Calculate expected max borrow at preLltv (the enforced threshold) and supply sufficient liquidity
+    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, preLltv);
+    _supplyLiquidity(expectedMaxBorrow * 2);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow full max capacity at preLltv (the enforced threshold)
+    uint256 maxBorrowBefore = borrowPosition.maxBorrow(preLltv);
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxBorrowBefore);
+
+    // Max borrow should now be 0 at preLltv
+    uint256 maxBorrowAfter = borrowPosition.maxBorrow(preLltv);
+    assertEq(maxBorrowAfter, 0, "Max borrow should be 0 when fully utilized");
+  }
+
+  function test_maxBorrow_ReturnsZeroWhenOverUtilized() public {
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+
+    // Calculate expected max borrow and supply sufficient liquidity
+    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, DEFAULT_LLTV);
+    _supplyLiquidity(expectedMaxBorrow * 2);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow 80% of max
+    uint256 maxBorrowBefore = borrowPosition.maxBorrow(marketParams.lltv);
+    uint256 borrowAmount = (maxBorrowBefore * 80) / 100;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    // Now drop the price by 50% - this makes the position over-utilized
+    // borrowed > (collateral * newPrice * LLTV)
+    oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
+
+    // Max borrow should be 0 (not revert due to underflow)
+    uint256 maxBorrowAfter = borrowPosition.maxBorrow(marketParams.lltv);
+    assertEq(maxBorrowAfter, 0, "Max borrow should be 0 when over-utilized (zeroFloorSub)");
+  }
+
+  function testFuzz_maxBorrow_RemainingCapacity(uint128 collateralAmount, uint96 borrowRatio) public {
+    collateralAmount = uint128(bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT));
+    borrowRatio = uint96(bound(borrowRatio, 1, 99)); // 1% to 99% of max
+
+    uint256 preLltv = preLiquidationParams.preLltv;
+
+    // Calculate expected max borrow at preLltv (the enforced threshold) and supply sufficient liquidity
+    uint256 expectedMaxBorrow = _calculateMaxBorrow(collateralAmount, DEFAULT_ORACLE_PRICE, preLltv);
+    _supplyLiquidity(expectedMaxBorrow * 2);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Use preLltv since that's the enforced threshold
+    uint256 maxBorrowBefore = borrowPosition.maxBorrow(preLltv);
+
+    // Borrow a portion
+    uint256 borrowAmount = (maxBorrowBefore * borrowRatio) / 100;
+    if (borrowAmount > 0) {
+      vm.prank(positionManager);
+      borrowPosition.borrow(borrowAmount);
+
+      uint256 maxBorrowAfter = borrowPosition.maxBorrow(preLltv);
+      uint256 expectedRemaining = maxBorrowBefore - borrowAmount;
+
+      // Allow for small rounding differences due to share conversion
+      assertApproxEqAbs(maxBorrowAfter, expectedRemaining, 2, "Remaining capacity should match expected");
+    }
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    MORPHO VIEW TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
