@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.8.19;
+pragma solidity ^0.8.20;
 
 /// @title IBorrowPosition
 /// @notice Interface for borrow position contracts that manages a single borrowing position (e.g. Morpho, Euler, etc.)
@@ -44,22 +44,34 @@ interface IBorrowPosition {
   /// @return The total borrowed asset amount.
   function totalBorrowed() external view returns (uint256);
 
-  /// @notice Returns the total amount of collateral of this position (quoted in borrowed asset).
-  /// @return The total collateral amount.
+  /// @notice Returns the total amount of collateral deposited in this position.
+  /// @return The total collateral amount (in collateral asset units).
   function totalCollateral() external view returns (uint256);
+
+  /// @notice Returns the total amount of collateral of this position (quoted in borrowed asset).
+  /// @return The total collateral amount quoted in borrowed asset.
+  function totalCollateralQuoted() external view returns (uint256);
 
   /// @notice Checks if the borrow position is healthy for a given LLTV.
   /// @param lltv The loan-to-liquidation value to check against.
   /// @return True if the position is healthy, false otherwise.
   function isHealthy(uint256 lltv) external view returns (bool);
 
-  /// @notice Returns the maximum amount that can be borrowed from this position for a given LLTV
-  ///         (taking into account available liquidity).
+  /// @notice Returns the remaining borrow capacity for this position at a given LLTV.
+  /// @dev Calculates `(collateralValue * lltv) - alreadyBorrowed`, then takes the minimum
+  ///      with available market liquidity. Returns 0 if fully utilized or over-utilized.
   /// @param lltv The loan-to-liquidation value to consider.
-  /// @return The maximum borrowable amount.
+  /// @return The remaining amount that can be borrowed.
   function maxBorrow(uint256 lltv) external view returns (uint256);
 
   /// @notice Returns the available liquidity in the BorrowPosition market.
   /// @return The amount of assets available for borrowing.
   function availableLiquidity() external view returns (uint256);
+
+  /// @notice Returns the amount of collateral that can be withdrawn without making the position unhealthy.
+  /// @dev Available collateral = collateral - (debt / lltv). If debt is 0, all collateral is available.
+  ///      The result is in collateral asset units (not quoted).
+  /// @param lltv The loan-to-liquidation value to use for the calculation.
+  /// @return The amount of available collateral in collateral asset units.
+  function availableCollateral(uint256 lltv) external view returns (uint256);
 }

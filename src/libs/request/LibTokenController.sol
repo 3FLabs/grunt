@@ -59,8 +59,7 @@ library LibTokenController {
   /// @param account The address to compute the balance slot for
   /// @return slot The storage slot containing the packed PT and YT balances
   function balanceSlot(address account) internal pure returns (uint256 slot) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       mstore(0x0c, _BALANCE_SLOT_SEED)
       mstore(0x00, account)
       slot := keccak256(0x0c, 0x20)
@@ -82,8 +81,7 @@ library LibTokenController {
   /// @param spender The address authorized to spend the tokens
   /// @return slot The storage slot containing the packed PT and YT allowances
   function allowanceSlot(address owner, address spender) internal pure returns (uint256 slot) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       mstore(0x20, spender)
       mstore(0x0c, _ALLOWANCE_SLOT_SEED)
       mstore(0x00, owner)

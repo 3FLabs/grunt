@@ -8,6 +8,10 @@ no_match_coverage = "mock|\\.s\\.sol$|lib/pre-liquidation|PreLiquidationBytecode
 # Enable auto-detection for multiple Solidity versions
 auto_detect_solc = true
 
+[profile.ci]
+optimizer = true
+optimizer_runs = 200
+
 [fmt]
 tab_width = 2
 

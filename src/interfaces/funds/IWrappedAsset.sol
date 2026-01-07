@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.8.19;
+pragma solidity ^0.8.20;
 
 /// @notice Interface for a wrapped asset token with minting and burning capabilities.
 /// @dev Not inheriting from IERC20 to avoid dependencies issues.

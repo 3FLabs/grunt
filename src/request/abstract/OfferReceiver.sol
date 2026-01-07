@@ -69,8 +69,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @dev Nonces start at 0 by default. Offers must use nonces > stored value (starting at 1).
   ///      The storage slot is computed using keccak256 with the nonce seed for gas-efficient lookups.
   function nonce(address owner) public view returns (uint256 result) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       mstore(0x0c, _NONCE_SEED)
       mstore(0x00, owner)
       result := sload(keccak256(0x0c, 0x20))
@@ -97,8 +96,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @param owner The maker address whose nonce to update
   /// @param newNonce The new nonce value to store
   function _setNonce(address owner, uint256 newNonce) internal {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       mstore(0x0c, _NONCE_SEED)
       mstore(0x00, owner)
       sstore(keccak256(0x0c, 0x20), newNonce)

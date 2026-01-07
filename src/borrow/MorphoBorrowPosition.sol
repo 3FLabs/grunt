@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.8.19;
+pragma solidity ^0.8.20;
 
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
@@ -102,8 +102,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return borrowPositionStorage A storage pointer to the BorrowPositionStorage struct
   function _borrowPositionStorage() internal pure returns (BorrowPositionStorage storage borrowPositionStorage) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       borrowPositionStorage.slot := _MAIN_STORAGE_SLOT
     }
   }
@@ -285,9 +284,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   }
 
   /// @inheritdoc IBorrowPosition
+  /// @dev Returns the raw collateral amount stored in the Morpho position.
+  function totalCollateral() external view override returns (uint256) {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    return uint256($.morpho.position($.marketId, address(this)).collateral);
+  }
+
+  /// @inheritdoc IBorrowPosition
   /// @dev Takes the raw collateral amount stored in the Morpho position and quotes it
   ///      in borrowed asset units.
-  function totalCollateral() external view override returns (uint256) {
+  function totalCollateralQuoted() external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     return uint256($.morpho.position($.marketId, address(this)).collateral)
       .mulDivDown(IOracle($.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
@@ -313,10 +319,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     Position memory _pos = _morpho.position(_marketId, address(this));
     uint256 _collateralPrice = IOracle($.marketParams.oracle).price();
 
-    // Calculate max borrow: collateralValue * LLTV
-    // Return computed max borrow or available liquidity, whichever is lower
-    return
-      uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv).min(_availableLiquidity);
+    uint256 borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+
+    // Calculate remaining borrow capacity: (collateralValue * LLTV) - alreadyBorrowed
+    // Uses zeroFloorSub to return 0 instead of underflowing if already over-utilized
+    // Return remaining capacity or available liquidity, whichever is lower
+    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv)
+      .zeroFloorSub(borrowed).min(_availableLiquidity);
   }
 
   /// @inheritdoc IBorrowPosition
@@ -326,6 +335,34 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // Get available liquidity in the market
     Market memory _mkt = $.morpho.market($.marketId);
     return _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
+  }
+
+  /// @inheritdoc IBorrowPosition
+  /// @dev Calculates available collateral as: totalCollateral - (debt * ORACLE_PRICE_SCALE) / (lltv * price)
+  ///      If no debt, returns all collateral. Returns 0 if position would be unhealthy.
+  function availableCollateral(uint256 lltv) external view override returns (uint256) {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    IMorpho _morpho = $.morpho;
+    Id _marketId = $.marketId;
+
+    Position memory _pos = _morpho.position(_marketId, address(this));
+
+    // If no debt, all collateral is available
+    if (_pos.borrowShares == 0) return uint256(_pos.collateral);
+
+    Market memory _mkt = _morpho.market(_marketId);
+    uint256 _collateralPrice = IOracle($.marketParams.oracle).price();
+
+    // Calculate borrowed amount (rounds up to be conservative)
+    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+
+    // Required collateral = borrowed * ORACLE_PRICE_SCALE / (lltv * price)
+    // This rounds up to be conservative (more collateral required = less available)
+    uint256 _requiredCollateral = MathLib.mulDivUp(_borrowed, ORACLE_PRICE_SCALE, lltv.wMulDown(_collateralPrice));
+
+    // Return available collateral (0 if required > total)
+    if (_requiredCollateral >= uint256(_pos.collateral)) return 0;
+    return uint256(_pos.collateral) - _requiredCollateral;
   }
 
   /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.

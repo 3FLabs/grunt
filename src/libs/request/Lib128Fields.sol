@@ -26,7 +26,6 @@ import {MAX_128_BITS} from "../Constants.sol";
 ///      Safety Considerations:
 ///      - The caller MUST ensure that values fit within uint128 bounds
 ///      - No overflow checks are performed for maximum gas efficiency
-///      - Memory-safe assembly is used to prevent unintended memory corruption
 library Lib128Fields {
   /// @dev Reads two packed uint128 fields from a storage slot.
   ///      Uses optimized assembly to read a single storage slot and extract both uint128 values.
@@ -37,15 +36,11 @@ library Lib128Fields {
   ///      2. Extracts the lower 128 bits (ptField) using bitwise AND with _128_MASK
   ///      3. Extracts the upper 128 bits (ytField) using right shift by 128 bits
   ///
-  ///      The assembly block is marked as memory-safe, indicating it doesn't access memory
-  ///      outside of designated regions and only performs stack-based operations.
-  ///
   /// @param slot The storage slot to read from (can be any uint256 value representing a storage location)
   /// @return ptField The first field stored in the lower 128 bits
   /// @return ytField The second field stored in the upper 128 bits
   function fromSlot(uint256 slot) internal view returns (uint128 ptField, uint128 ytField) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       let val := sload(slot)
       ptField := and(val, MAX_128_BITS)
       ytField := shr(128, val)
@@ -62,9 +57,6 @@ library Lib128Fields {
   ///      3. Combines both fields using bitwise OR
   ///      4. Writes the packed value to storage using SSTORE
   ///
-  ///      The assembly block is marked as memory-safe, indicating it doesn't access memory
-  ///      outside of designated regions and only performs stack-based operations.
-  ///
   ///      Safety Considerations:
   ///      - The caller MUST ensure ptField and ytField are valid uint128 values
   ///      - If either value exceeds uint128.max, the upper bits will be silently truncated
@@ -74,8 +66,7 @@ library Lib128Fields {
   /// @param ptField The first field to store in the lower 128 bits (must fit in uint128)
   /// @param ytField The second field to store in the upper 128 bits (must fit in uint128)
   function write(uint256 slot, uint128 ptField, uint128 ytField) internal {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       let val := or(ptField, shl(128, ytField))
       sstore(slot, val)
     }
