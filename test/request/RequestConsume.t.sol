@@ -100,6 +100,10 @@ contract RequestConsumeTest is Test {
   }
 
   function _signOffer(Offer memory offer) internal returns (bytes memory) {
+    return _signOfferWithWallet(offer, callbackSigner);
+  }
+
+  function _signOfferWithWallet(Offer memory offer, Vm.Wallet memory wallet) internal returns (bytes memory) {
     bytes32 structHash = keccak256(
       abi.encode(
         OFFER_TYPEHASH,
@@ -112,7 +116,7 @@ contract RequestConsumeTest is Test {
       )
     );
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _computeDomainSeparator(), structHash));
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(callbackSigner, digest);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(wallet, digest);
     return abi.encodePacked(r, s, v);
   }
 
@@ -306,6 +310,64 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     vm.expectRevert("MockRequestCallback: forced revert");
     request.consume(offer, signature, offerAmount);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    EOA MAKER TESTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_consume_eoaMaker_revertsWithUseCallbackTrue() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Create an EOA maker wallet
+    Vm.Wallet memory eoaMaker = vm.createWallet("eoaMaker");
+
+    // Create offer with useCallback=true (should revert because EOA has no code)
+    Offer memory offer = _createOffer(eoaMaker.addr, offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
+    bytes memory signature = _signOfferWithWallet(offer, eoaMaker);
+
+    // Fund the EOA maker and approve
+    asset.mint(eoaMaker.addr, offerAmount);
+    vm.prank(eoaMaker.addr);
+    asset.approve(address(request), offerAmount);
+
+    // Consume should revert because high-level call to EOA fails
+    vm.prank(owner);
+    vm.expectRevert();
+    request.consume(offer, signature, offerAmount);
+  }
+
+  function test_consume_eoaMaker_succeedsWithUseCallbackFalse() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Create an EOA maker wallet
+    Vm.Wallet memory eoaMaker = vm.createWallet("eoaMaker");
+
+    // Create offer with useCallback=false (should succeed)
+    Offer memory offer = _createOffer(eoaMaker.addr, offerAmount, expectedReturn, 1, block.timestamp + 1 days, false);
+    bytes memory signature = _signOfferWithWallet(offer, eoaMaker);
+
+    // Fund the EOA maker and approve
+    asset.mint(eoaMaker.addr, offerAmount);
+    vm.prank(eoaMaker.addr);
+    asset.approve(address(request), offerAmount);
+
+    // Consume should succeed
+    vm.prank(owner);
+    uint256 ytAmount = request.consume(offer, signature, offerAmount);
+
+    // Verify YT amount calculation
+    assertEq(ytAmount, expectedReturn);
+
+    // Verify token minting to EOA maker
+    assertEq(ptVault.balanceOf(eoaMaker.addr), offerAmount);
+    assertEq(ytVault.balanceOf(eoaMaker.addr), expectedReturn);
+
+    // Verify asset transfer to request
+    assertEq(asset.balanceOf(address(request)), offerAmount);
+    assertEq(asset.balanceOf(eoaMaker.addr), 0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
