@@ -56,7 +56,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     _mintDebt(rebalancer, debtToMove);
     vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), debtToMove);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Check balances moved
@@ -93,7 +93,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     _mintCollateral(rebalancer, additionalCollateral);
     vm.startPrank(rebalancer);
     collateralToken.approve(address(positionManager), additionalCollateral);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Verify fee recipient received management fees (accrued before rebalance)
@@ -134,7 +134,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.startPrank(rebalancer);
     collateralToken.approve(address(positionManager), excessCollateral);
     debtToken.approve(address(positionManager), excessDebt);
-    (uint256 collateralExcess, uint256 debtExcess) = positionManager.rebalance(data);
+    (uint256 collateralExcess, uint256 debtExcess) = positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Should return the unused amounts
@@ -204,7 +204,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
   }
 
   function test_rebalance_allowsLossWithinThreshold() public {
@@ -229,7 +229,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Should not revert
     vm.prank(rebalancer);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
 
     // Verify collateral was withdrawn
     assertEq(
@@ -259,7 +259,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Should not revert (exactly at threshold)
     vm.prank(rebalancer);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
   }
 
   function test_rebalance_alwaysAllowsAssetIncrease() public {
@@ -285,7 +285,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     _mintCollateral(rebalancer, additionalCollateral);
     vm.startPrank(rebalancer);
     collateralToken.approve(address(positionManager), additionalCollateral);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Should not revert because totalAssets increased
@@ -314,7 +314,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
   }
 
   function test_maxRebalanceLoss_defaultIsZero() public view {
@@ -352,6 +352,6 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     if (actualLossBps > maxLossPercent) {
       vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
     }
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
   }
 }

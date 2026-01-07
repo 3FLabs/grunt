@@ -289,17 +289,17 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     // Owner cannot rebalance (only rebalancer)
     vm.prank(owner);
     vm.expectRevert();
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
 
     // Curator cannot rebalance
     vm.prank(curator);
     vm.expectRevert();
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
 
     // Random user cannot rebalance
     vm.prank(user);
     vm.expectRevert();
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
   }
 
   function test_rebalancer_canBeGrantedToMultipleAddresses() public {
@@ -318,9 +318,9 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
     // Both original rebalancer and new rebalancer can rebalance
     vm.prank(rebalancer);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
 
     vm.prank(newRebalancer);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
   }
 }

@@ -107,7 +107,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     _mintDebt(rebalancer, debtToMove);
     vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), debtToMove);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Verify both positions have collateral and debt
@@ -220,7 +220,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     _mintDebt(rebalancer, tinyDebt);
     vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), tinyDebt);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Verify uneven distribution
@@ -262,7 +262,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     vm.prank(rebalancer);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
 
     // Verify uneven distribution
     uint256 pos1Collateral = borrowPosition1.totalCollateral();

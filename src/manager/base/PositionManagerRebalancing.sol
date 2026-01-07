@@ -35,7 +35,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManager
-  function rebalance(RebalancingData calldata data)
+  function rebalance(RebalancingData calldata data, address receiver)
     external
     override
     onlyRoles(REBALANCER_ROLE)
@@ -63,8 +63,8 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
       }
     }
 
-    collateralExcess = _collateralAsset.safeTransferAll(msg.sender);
-    debtExcess = _debtAsset.safeTransferAll(msg.sender);
+    collateralExcess = _collateralAsset.safeTransferAll(receiver);
+    debtExcess = _debtAsset.safeTransferAll(receiver);
 
     // Update snapshot to post-rebalance state
     uint256 totalAssetsAfter = ps.totalAssets();

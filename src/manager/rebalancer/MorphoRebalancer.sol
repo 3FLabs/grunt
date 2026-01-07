@@ -70,32 +70,33 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
 
   /// @notice Executes a rebalance operation using a Morpho flash loan.
   /// @dev Only callable by the owner. The flash loan amount is taken from data.debt.
-  ///      Collateral must be zero in the rebalancing data.
+  ///      Collateral must be zero in the rebalancing data. Any excess tokens from the
+  ///      rebalance operation are sent to the receiver after flash loan repayment.
   /// @param positionManager The PositionManager contract to rebalance
   /// @param data The rebalancing data to pass to the PositionManager (data.debt is used as flash loan amount)
-  /// @return debtExcess The excess debt returned from the rebalance
-  function rebalance(IPositionManager positionManager, RebalancingData calldata data)
+  /// @param receiver The address to receive any excess collateral and debt tokens
+  function rebalance(IPositionManager positionManager, RebalancingData calldata data, address receiver)
     external
     onlyOwner
     nonReentrant
-    returns (uint256 debtExcess)
   {
     // Collateral cannot be provided through this rebalancer
     if (data.collateral != 0) revert CollateralNotAllowed();
 
-    // Get debt asset from position manager
-    (, address debtAsset) = positionManager.assets();
+    // Get assets from position manager
+    (address collateralAsset, address debtAsset) = positionManager.assets();
 
-    // Encode position manager and rebalancing data for the callback
-    bytes memory callbackData = abi.encode(positionManager, data);
+    // Encode position manager, rebalancing data, and receiver for the callback
+    bytes memory callbackData = abi.encode(positionManager, data, receiver);
 
     // Initiate flash loan using data.debt as the amount - Morpho will call onMorphoFlashLoan
     MORPHO.flashLoan(debtAsset, data.debt, callbackData);
 
-    // Return excess debt tokens to owner
-    debtExcess = debtAsset.safeTransferAll(msg.sender);
+    // Transfer any excess tokens to receiver (after flash loan repayment)
+    collateralAsset.safeTransferAll(receiver);
+    debtAsset.safeTransferAll(receiver);
 
-    emit Rebalanced(address(positionManager), data.debt, debtExcess);
+    emit Rebalanced(address(positionManager), data.debt, 0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -105,14 +106,16 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
   /// @notice Callback called by Morpho during a flash loan.
   /// @dev This function executes the rebalancing operation and approves Morpho
   ///      to pull back the flash loaned amount. Only callable by Morpho.
+  ///      Excess tokens must come back to this contract to repay the flash loan,
+  ///      then any remaining excess is transferred to receiver after the callback.
   /// @param assets The amount of assets that was flash loaned
-  /// @param data The encoded PositionManager and RebalancingData
+  /// @param data The encoded PositionManager, RebalancingData, and receiver
   function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
     if (msg.sender != address(MORPHO)) revert UnauthorizedCaller();
 
-    // Decode the position manager and rebalancing data
-    (IPositionManager positionManager, RebalancingData memory rebalancingData) =
-      abi.decode(data, (IPositionManager, RebalancingData));
+    // Decode the position manager, rebalancing data, and receiver
+    (IPositionManager positionManager, RebalancingData memory rebalancingData,) =
+      abi.decode(data, (IPositionManager, RebalancingData, address));
 
     // Get debt asset from position manager
     (, address debtAsset) = positionManager.assets();
@@ -121,7 +124,8 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     debtAsset.safeApprove(address(positionManager), rebalancingData.debt);
 
     // Execute rebalance on PositionManager
-    positionManager.rebalance(rebalancingData);
+    // Excess tokens must come back here (address(this)) to repay flash loan
+    positionManager.rebalance(rebalancingData, address(this));
 
     // Clear any remaining approval to PositionManager
     debtAsset.safeApprove(address(positionManager), 0);

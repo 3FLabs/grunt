@@ -143,7 +143,7 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     _mintDebt(rebalancer, debtToMove);
     vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), debtToMove);
-    positionManager.rebalance(data);
+    positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
 
     // Verify both positions have roughly equal amounts

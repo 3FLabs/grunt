@@ -306,12 +306,15 @@ interface IPositionManager {
   ///         - WITHDRAW: Withdraws collateral from the specified position (receives collateral asset)
   ///         - BORROW: Borrows debt from the specified position (receives debt asset)
   ///         - SUPPLY: Supplies collateral to the specified position (consumes collateral asset)
-  ///      4. Returns any excess collateral and debt assets back to the caller
+  ///      4. Returns any excess collateral and debt assets to the receiver
   ///      5. Verifies totalAssets didn't decrease by more than maxRebalanceLoss
   /// @param data The rebalancing data containing amounts to pull from caller and operations to execute
-  /// @return collateralExcess The excess collateral asset amount returned to the caller
-  /// @return debtExcess The excess debt asset amount returned to the caller
-  function rebalance(RebalancingData calldata data) external returns (uint256 collateralExcess, uint256 debtExcess);
+  /// @param receiver The address to receive any excess collateral and debt assets
+  /// @return collateralExcess The excess collateral asset amount returned to the receiver
+  /// @return debtExcess The excess debt asset amount returned to the receiver
+  function rebalance(RebalancingData calldata data, address receiver)
+    external
+    returns (uint256 collateralExcess, uint256 debtExcess);
 
   /// @notice Sets the maximum allowed loss during rebalance operations.
   /// @dev Only callable by the owner. This limits how much totalAssets can decrease during a rebalance.

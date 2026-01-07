@@ -95,7 +95,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
 
     // Execute rebalance via flash loan
     vm.prank(owner);
-    morphoRebalancer.rebalance(positionManager, data);
+    morphoRebalancer.rebalance(positionManager, data, owner);
 
     // Verify positions were rebalanced
     assertApproxEqRel(borrowPosition1.totalCollateral(), collateralToMove, 0.01e18, "Position 1 collateral");
@@ -133,7 +133,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
     emit MorphoRebalancer.Rebalanced(address(positionManager), debtToMove, 0);
-    morphoRebalancer.rebalance(positionManager, data);
+    morphoRebalancer.rebalance(positionManager, data, owner);
   }
 
   function test_rebalance_returnsZeroExcessWhenFullyUsed() public {
@@ -158,10 +158,9 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     uint256 ownerDebtBefore = debtToken.balanceOf(owner);
 
     vm.prank(owner);
-    uint256 debtExcess = morphoRebalancer.rebalance(positionManager, data);
+    morphoRebalancer.rebalance(positionManager, data, owner);
 
     // No excess since borrowed amount exactly covers flash loan repayment
-    assertEq(debtExcess, 0, "Should return zero excess when fully used");
     assertEq(debtToken.balanceOf(owner), ownerDebtBefore, "Owner balance unchanged");
   }
 
@@ -175,7 +174,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
 
     vm.prank(owner);
     vm.expectRevert(MorphoRebalancer.CollateralNotAllowed.selector);
-    morphoRebalancer.rebalance(positionManager, data);
+    morphoRebalancer.rebalance(positionManager, data, owner);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -188,7 +187,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
 
     vm.prank(user);
     vm.expectRevert();
-    morphoRebalancer.rebalance(positionManager, data);
+    morphoRebalancer.rebalance(positionManager, data, owner);
   }
 
   function test_rescue_onlyOwner() public {
@@ -208,7 +207,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     RebalancingOperation[] memory ops = new RebalancingOperation[](0);
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
-    bytes memory callbackData = abi.encode(positionManager, data);
+    bytes memory callbackData = abi.encode(positionManager, data, owner);
 
     vm.prank(user);
     vm.expectRevert(MorphoRebalancer.UnauthorizedCaller.selector);
@@ -227,7 +226,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     RebalancingOperation[] memory ops = new RebalancingOperation[](0);
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
-    bytes memory callbackData = abi.encode(positionManager, data);
+    bytes memory callbackData = abi.encode(positionManager, data, owner);
 
     // This simulates Morpho calling the callback
     vm.prank(address(morpho));
@@ -327,7 +326,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
 
     vm.prank(owner);
-    morphoRebalancer.rebalance(positionManager, data);
+    morphoRebalancer.rebalance(positionManager, data, owner);
 
     // Verify total assets roughly unchanged
     uint256 totalCollateral = borrowPosition1.totalCollateral() + borrowPosition2.totalCollateral();
