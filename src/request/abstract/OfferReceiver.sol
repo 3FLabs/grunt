@@ -49,8 +49,8 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
 
   /// @notice EIP-712 typehash for the Offer struct.
   /// @dev Precomputed keccak256 of the Offer type string for gas efficiency.
-  ///      Type string: "Offer(address maker,uint256 amount,uint256 expectedReturn,uint256 nonce,uint256 expiration)"
-  uint256 internal constant _OFFER_TYPEHASH = 0x03babd1fc4fa7801a5697c2a66bd17ee1499bad98dbcb9901bdae479682e3229;
+  ///      Type string: "Offer(address maker,uint256 amount,uint256 expectedReturn,uint256 nonce,uint256 expiration,bool useCallback)"
+  uint256 internal constant _OFFER_TYPEHASH = 0x3ded0c963332962cf2d273c8fb4f3e69f4ef33407ca72484fcebb56263ad0664;
 
   /// @dev Seed used to derive nonce storage slots for each maker.
   ///      The nonce slot for a `maker` is computed using keccak256:

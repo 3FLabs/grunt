@@ -267,7 +267,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Only callable by the owner. This function implements the core offer consumption flow:
   ///      1. Validates the offer signature using EIP-712 (via `_validateOffer`)
   ///      2. Calculates the proportional YT amount based on the PT amount being consumed
-  ///      3. Calls the maker's `onRequestConsumed` callback to prepare funds
+  ///      3. If `offer.useCallback` is true, calls the maker's `onRequestConsumed` callback to prepare funds
   ///      4. Transfers the PT amount of underlying asset from owner to this contract
   ///      5. Mints PT and YT tokens to the offer maker
   ///
@@ -275,7 +275,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      This ensures proportional distribution when partially consuming an offer.
   ///
   ///      The callback allows the maker to prepare funds (e.g., withdraw from DeFi, set allowances)
-  ///      before the asset transfer occurs.
+  ///      before the asset transfer occurs. Set `offer.useCallback` to false for EOA makers or
+  ///      contracts that don't need the callback (e.g., have pre-approved allowances).
   ///
   /// @custom:reverts If the request has been repaid
   /// @custom:reverts If the offer signature is invalid
@@ -289,7 +290,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     if (_canWithdraw()) revert AlreadyRepaid();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
-    IRequestCallback(offer.maker).onRequestConsumed(offer, signature, ptAmount, ytAmount);
+    if (offer.useCallback) {
+      IRequestCallback(offer.maker).onRequestConsumed(offer, signature, ptAmount, ytAmount);
+    }
     _asset().safeTransferFrom(offer.maker, address(this), ptAmount);
     _mint(offer.maker, ptAmount, ytAmount);
   }
