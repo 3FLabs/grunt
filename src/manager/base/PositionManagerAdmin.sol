@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
-import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {PM_MAX_MANAGEMENT_FEE, PM_MAX_PERFORMANCE_FEE} from "../../libs/manager/LibPositionManagerConstants.sol";
+import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
+import {LibStorage} from "../../libs/manager/LibStorage.sol";
+import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
@@ -19,7 +19,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Role for setting supply/withdrawal queues.
-  uint256 internal constant _ROLE_CURATOR = _ROLE_1;
+  uint256 internal constant CURATOR_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                             */
@@ -27,19 +27,19 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function addBorrowModule(address module) external override onlyOwner {
-    LibPositionManagerStorage.positionManagerStorage().borrowModules.add(module);
+    LibStorage.positionManagerStorage().borrowModules.add(module);
     emit IPositionManager.BorrowModuleAdded(module);
   }
 
   /// @inheritdoc IPositionManager
   function removeBorrowModule(address module) external override onlyOwner {
-    LibPositionManagerStorage.positionManagerStorage().borrowModules.remove(module);
+    LibStorage.positionManagerStorage().borrowModules.remove(module);
     emit IPositionManager.BorrowModuleRemoved(module);
   }
 
   /// @inheritdoc IPositionManager
-  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(_ROLE_CURATOR) {
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
 
     delete ps.supplyQueue;
     uint256 queueLength = queue.length;
@@ -54,8 +54,8 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(_ROLE_CURATOR) {
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+  function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
 
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
@@ -72,19 +72,19 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   function setLltv(uint256 lltv_) external override onlyOwner {
     // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
     // forge-lint: disable-next-line(unsafe-typecast)
-    LibPositionManagerStorage.positionManagerStorage().lltv = uint64(lltv_);
+    LibStorage.positionManagerStorage().lltv = uint64(lltv_);
     emit IPositionManager.LLTVSet(lltv_);
   }
 
   /// @inheritdoc IPositionManager
   function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external override onlyOwner {
-    LibPositionManagerStorage.positionManagerStorage().maxRebalanceLoss = maxRebalanceLoss_;
+    LibStorage.positionManagerStorage().maxRebalanceLoss = maxRebalanceLoss_;
     emit IPositionManager.MaxRebalanceLossSet(maxRebalanceLoss_);
   }
 
   /// @inheritdoc IPositionManager
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external override onlyOwner {
-    if (managementFee > PM_MAX_MANAGEMENT_FEE || performanceFee > PM_MAX_PERFORMANCE_FEE) {
+    if (managementFee > MAX_MANAGEMENT_FEE || performanceFee > MAX_PERFORMANCE_FEE) {
       revert IPositionManager.FeeExceedsMax();
     }
 
@@ -95,7 +95,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
     fd.feeRecipient = feeRecipient;
     fd.managementFee = managementFee;
     fd.performanceFee = performanceFee;
-    LibPositionManagerStorage.positionManagerStorage().feeData = fd;
+    LibStorage.positionManagerStorage().feeData = fd;
 
     emit IPositionManager.FeeDataSet(feeRecipient, managementFee, performanceFee);
   }

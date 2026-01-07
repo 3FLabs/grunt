@@ -7,11 +7,11 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "../../interfaces/manager/IPositionManager.sol";
-import {PositionManagerStorageData} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerView} from "../../libs/manager/LibPositionManagerView.sol";
-import {PM_BPS} from "../../libs/manager/LibPositionManagerConstants.sol";
-import {LibPositionManagerExecutor} from "../../libs/manager/LibPositionManagerExecutor.sol";
+import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
+import {LibStorage} from "../../libs/manager/LibStorage.sol";
+import {LibView} from "../../libs/manager/LibView.sol";
+import {BPS} from "../../libs/manager/LibConstants.sol";
+import {LibExecutor} from "../../libs/manager/LibExecutor.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
@@ -20,15 +20,15 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 /// @dev Allows redistribution of collateral and debt across borrow positions.
 abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   using SafeTransferLib for address;
-  using LibPositionManagerExecutor for address;
-  using LibPositionManagerView for PositionManagerStorageData;
+  using LibExecutor for address;
+  using LibView for PositionManagerStorageData;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Role for executing rebalancing operations.
-  uint256 internal constant _ROLE_REBALANCER = _ROLE_2;
+  uint256 internal constant REBALANCER_ROLE = _ROLE_2;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       REBALANCING                          */
@@ -38,13 +38,13 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   function rebalance(RebalancingData calldata data)
     external
     override
-    onlyRoles(_ROLE_REBALANCER)
+    onlyRoles(REBALANCER_ROLE)
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
     // Accrue fees based on pre-rebalance state and capture totalAssets before operations
     uint256 totalAssetsBefore = _accrueFeesForRebalance();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     address _collateralAsset = ps.collateralAsset;
     address _debtAsset = ps.debtAsset;
 
@@ -75,7 +75,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
       uint256 loss = totalAssetsBefore - totalAssetsAfter;
       // loss * BPS / totalAssetsBefore > maxRebalanceLoss
       // Rearranged to avoid division: loss * BPS > maxRebalanceLoss * totalAssetsBefore
-      if (loss * PM_BPS > uint256(ps.maxRebalanceLoss) * totalAssetsBefore) {
+      if (loss * BPS > uint256(ps.maxRebalanceLoss) * totalAssetsBefore) {
         revert IPositionManager.RebalanceLossExceedsMax();
       }
     }

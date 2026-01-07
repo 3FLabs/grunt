@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
-import {PM_STORAGE_SLOT} from "./LibPositionManagerConstants.sol";
+import {STORAGE_SLOT} from "./LibConstants.sol";
 
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
@@ -33,14 +33,14 @@ struct PositionManagerStorageData {
   uint16 maxRebalanceLoss;
 }
 
-/// @title LibPositionManagerStorage
+/// @title LibStorage
 /// @notice Library providing storage accessor for PositionManager contracts.
 /// @dev Uses a custom storage slot pattern for upgradeability.
-library LibPositionManagerStorage {
+library LibStorage {
   /// @dev Returns a reference to the contract's storage struct.
   function positionManagerStorage() internal pure returns (PositionManagerStorageData storage data) {
     assembly ("memory-safe") {
-      data.slot := PM_STORAGE_SLOT
+      data.slot := STORAGE_SLOT
     }
   }
 }

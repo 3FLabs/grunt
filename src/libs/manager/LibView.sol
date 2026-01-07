@@ -2,15 +2,15 @@
 pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
-import {PositionManagerStorageData} from "./LibPositionManagerStorage.sol";
-import {PM_VIRTUAL_SHARES, PM_VIRTUAL_ASSETS} from "./LibPositionManagerConstants.sol";
+import {PositionManagerStorageData} from "./LibStorage.sol";
+import {VIRTUAL_SHARES, VIRTUAL_ASSETS} from "./LibConstants.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
-/// @title LibPositionManagerView
+/// @title LibView
 /// @notice Library for PositionManager view functions and share calculations.
-/// @dev Used with `using LibPositionManagerView for PositionManagerStorageData`.
-library LibPositionManagerView {
+/// @dev Used with `using LibView for PositionManagerStorageData`.
+library LibView {
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using FixedPointMathLib for uint256;
 
@@ -73,6 +73,6 @@ library LibPositionManagerView {
     pure
     returns (uint256 shares)
   {
-    return assets.mulDiv(_totalSupply + PM_VIRTUAL_SHARES, _totalAssets + PM_VIRTUAL_ASSETS);
+    return assets.mulDiv(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
   }
 }

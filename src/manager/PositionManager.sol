@@ -5,11 +5,11 @@ import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositio
 import {PositionManagerShares} from "./base/PositionManagerShares.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
-import {FeeData, PositionManagerStorageData} from "../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerStorage} from "../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerOperations} from "../libs/manager/LibPositionManagerOperations.sol";
-import {LibPositionManagerView} from "../libs/manager/LibPositionManagerView.sol";
-import {LibPositionManagerExecutor} from "../libs/manager/LibPositionManagerExecutor.sol";
+import {FeeData, PositionManagerStorageData} from "../libs/manager/LibStorage.sol";
+import {LibStorage} from "../libs/manager/LibStorage.sol";
+import {LibOperations} from "../libs/manager/LibOperations.sol";
+import {LibView} from "../libs/manager/LibView.sol";
+import {LibExecutor} from "../libs/manager/LibExecutor.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -32,16 +32,16 @@ contract PositionManager is
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
-  using LibPositionManagerExecutor for address;
-  using LibPositionManagerOperations for PositionManagerStorageData;
-  using LibPositionManagerView for PositionManagerStorageData;
+  using LibExecutor for address;
+  using LibOperations for PositionManagerStorageData;
+  using LibView for PositionManagerStorageData;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Role for minting/burning shares via deposit/withdraw/burn.
-  uint256 internal constant _ROLE_MINTER = _ROLE_0;
+  uint256 internal constant MINTER_ROLE = _ROLE_0;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INITIALIZATION                       */
@@ -65,7 +65,7 @@ contract PositionManager is
     uint256 lltv_
   ) external initializer {
     _initializeOwner(owner_);
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     ps.name = name_;
     ps.symbol = symbol_;
     ps.decimals = decimals_;
@@ -85,93 +85,93 @@ contract PositionManager is
 
   /// @inheritdoc ERC20
   function name() public view override returns (string memory) {
-    return LibPositionManagerStorage.positionManagerStorage().name;
+    return LibStorage.positionManagerStorage().name;
   }
 
   /// @inheritdoc ERC20
   function symbol() public view override returns (string memory) {
-    return LibPositionManagerStorage.positionManagerStorage().symbol;
+    return LibStorage.positionManagerStorage().symbol;
   }
 
   /// @inheritdoc ERC20
   function decimals() public view override returns (uint8) {
-    return LibPositionManagerStorage.positionManagerStorage().decimals;
+    return LibStorage.positionManagerStorage().decimals;
   }
 
   /// @inheritdoc IPositionManager
   function supplyQueue() public view returns (SupplyQueueEntry[] memory) {
-    return LibPositionManagerStorage.positionManagerStorage().supplyQueue;
+    return LibStorage.positionManagerStorage().supplyQueue;
   }
 
   /// @inheritdoc IPositionManager
   function withdrawalQueue() public view returns (address[] memory) {
-    return LibPositionManagerStorage.positionManagerStorage().withdrawalQueue;
+    return LibStorage.positionManagerStorage().withdrawalQueue;
   }
 
   /// @inheritdoc IPositionManager
   function lltv() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().lltv;
+    return LibStorage.positionManagerStorage().lltv;
   }
 
   /// @inheritdoc IPositionManager
   function borrowModules() public view returns (address[] memory) {
-    return LibPositionManagerStorage.positionManagerStorage().borrowModules.values();
+    return LibStorage.positionManagerStorage().borrowModules.values();
   }
 
   /// @inheritdoc IPositionManager
   function isBorrowModule(address module) public view returns (bool) {
-    return LibPositionManagerStorage.positionManagerStorage().borrowModules.contains(module);
+    return LibStorage.positionManagerStorage().borrowModules.contains(module);
   }
 
   /// @inheritdoc IPositionManager
   function collateralAmount() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().collateralAmount();
+    return LibStorage.positionManagerStorage().collateralAmount();
   }
 
   /// @inheritdoc IPositionManager
   function collateralAmountQuoted() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().collateralAmountQuoted();
+    return LibStorage.positionManagerStorage().collateralAmountQuoted();
   }
 
   /// @inheritdoc IPositionManager
   function debtAmount() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().debtAmount();
+    return LibStorage.positionManagerStorage().debtAmount();
   }
 
   /// @inheritdoc IPositionManager
   function totalAssets() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().totalAssets();
+    return LibStorage.positionManagerStorage().totalAssets();
   }
 
   /// @inheritdoc IPositionManager
   function feeData() public view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee) {
-    FeeData memory fd = LibPositionManagerStorage.positionManagerStorage().feeData;
+    FeeData memory fd = LibStorage.positionManagerStorage().feeData;
     return (fd.feeRecipient, fd.managementFee, fd.performanceFee);
   }
 
   /// @inheritdoc IPositionManager
   function collateralAsset() public view returns (address) {
-    return LibPositionManagerStorage.positionManagerStorage().collateralAsset;
+    return LibStorage.positionManagerStorage().collateralAsset;
   }
 
   /// @inheritdoc IPositionManager
   function debtAsset() public view returns (address) {
-    return LibPositionManagerStorage.positionManagerStorage().debtAsset;
+    return LibStorage.positionManagerStorage().debtAsset;
   }
 
   /// @inheritdoc IPositionManager
   function lastTotalAssets() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().lastTotalAssets;
+    return LibStorage.positionManagerStorage().lastTotalAssets;
   }
 
   /// @inheritdoc IPositionManager
   function lastFeeAccrualTimestamp() public view returns (uint256) {
-    return LibPositionManagerStorage.positionManagerStorage().lastFeeAccrualTimestamp;
+    return LibStorage.positionManagerStorage().lastFeeAccrualTimestamp;
   }
 
   /// @inheritdoc IPositionManager
   function maxRebalanceLoss() public view returns (uint16) {
-    return LibPositionManagerStorage.positionManagerStorage().maxRebalanceLoss;
+    return LibStorage.positionManagerStorage().maxRebalanceLoss;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -181,13 +181,13 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function deposit(uint256 collateral, uint256 debt)
     external
-    onlyRoles(_ROLE_MINTER)
+    onlyRoles(MINTER_ROLE)
     nonReentrant
     returns (int256 shares)
   {
     if (collateral == 0 && debt == 0) revert ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
 
     // Accrue fees and get current total assets
     uint256 totalAssetsBefore = _accrueFees();
@@ -223,13 +223,13 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function withdraw(uint256 collateral, uint256 debt)
     external
-    onlyRoles(_ROLE_MINTER)
+    onlyRoles(MINTER_ROLE)
     nonReentrant
     returns (int256 shares)
   {
     if (collateral == 0 && debt == 0) revert ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
 
     // Accrue fees and get current total assets
     uint256 totalAssetsBefore = _accrueFees();
@@ -257,13 +257,13 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function burn(uint256 shares)
     external
-    onlyRoles(_ROLE_MINTER)
+    onlyRoles(MINTER_ROLE)
     nonReentrant
     returns (uint256 collateral, uint256 debt)
   {
     if (shares == 0) revert ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibPositionManagerStorage.positionManagerStorage();
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
 
     // Accrue fees first
     _accrueFees();

@@ -2,17 +2,17 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
-import {PositionManagerStorageData} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {LibPositionManagerView} from "../../libs/manager/LibPositionManagerView.sol";
+import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
+import {LibStorage} from "../../libs/manager/LibStorage.sol";
+import {LibView} from "../../libs/manager/LibView.sol";
 import {PositionManagerFees} from "./PositionManagerFees.sol";
 
 /// @title PositionManagerShares
 /// @notice Abstract contract handling share calculations with inflation attack protection.
 /// @dev Uses virtual offset pattern for secure share/asset conversions.
 abstract contract PositionManagerShares is PositionManagerFees {
-  using LibPositionManagerView for PositionManagerStorageData;
-  using LibPositionManagerView for uint256;
+  using LibView for PositionManagerStorageData;
+  using LibView for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    SHARE CALCULATIONS                       */
@@ -24,7 +24,7 @@ abstract contract PositionManagerShares is PositionManagerFees {
   /// @param _totalSupply The total supply before the operation
   /// @return sharesDelta Positive if shares minted, negative if shares burned
   function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
-    uint256 totalAssetsAfter = LibPositionManagerStorage.positionManagerStorage().totalAssets();
+    uint256 totalAssetsAfter = LibStorage.positionManagerStorage().totalAssets();
 
     if (totalAssetsAfter > totalAssetsBefore) {
       // Assets increased: mint shares to caller
