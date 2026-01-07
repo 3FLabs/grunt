@@ -59,8 +59,8 @@ interface IPositionManager {
   /// @notice Thrown when the supply queue runs out of capacity during a deposit.
   error InsufficientBorrowCapacity();
 
-  /// @notice Thrown when attempting to withdraw more collateral than is freely available.
-  error InsufficientFreeCollateral();
+  /// @notice Thrown when attempting to withdraw more collateral than is available.
+  error InsufficientAvailableCollateral();
 
   /// @notice Thrown when a zero amount is passed where non-zero is required.
   error ZeroAmount();
@@ -161,7 +161,7 @@ interface IPositionManager {
   /// @return True if the address is a whitelisted borrow module
   function isBorrowModule(address module) external view returns (bool);
 
-  /// @notice Returns the LLTV used for free collateral calculations.
+  /// @notice Returns the LLTV used for available collateral calculations.
   /// @dev This LLTV determines how much collateral can be withdrawn without repaying debt.
   /// @return The LLTV value (WAD precision, 1e18 = 100%)
   function lltv() external view returns (uint256);
@@ -234,8 +234,8 @@ interface IPositionManager {
 
   /// @notice Withdraws collateral and repays debt across the aggregated borrow positions.
   /// @dev Iterates through the withdrawal queue. Repays debt first, then withdraws collateral.
-  ///      - If withdrawing collateral without full debt repayment, checks free collateral based on LLTV
-  ///      - Reverts with InsufficientFreeCollateral if attempting to withdraw locked collateral
+  ///      - If withdrawing collateral without full debt repayment, checks available collateral based on LLTV
+  ///      - Reverts with InsufficientAvailableCollateral if attempting to withdraw locked collateral
   ///      - Accrues fees before the operation
   ///      - Burns shares based on the net value change
   /// @param collateral The total amount of collateral to withdraw (sent to caller)
@@ -281,7 +281,7 @@ interface IPositionManager {
   /// @param queue Array of position addresses
   function setWithdrawalQueue(address[] calldata queue) external;
 
-  /// @notice Sets the LLTV used for free collateral calculations.
+  /// @notice Sets the LLTV used for available collateral calculations.
   /// @dev Only callable by the owner. Should be <= the minimum LLTV of all positions.
   /// @param lltv_ The new LLTV value (WAD precision, 1e18 = 100%)
   function setLltv(uint256 lltv_) external;

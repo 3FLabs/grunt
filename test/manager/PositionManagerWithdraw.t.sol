@@ -65,7 +65,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     assertEq(collateralToken.balanceOf(minter), withdrawAmount, "Should receive collateral");
   }
 
-  function test_withdraw_revertOnInsufficientFreeCollateral() public {
+  function test_withdraw_revertOnInsufficientAvailableCollateral() public {
     // Setup: deposit and borrow at high LTV
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
@@ -73,7 +73,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
 
     // Try to withdraw collateral without repaying (would exceed LLTV)
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.InsufficientFreeCollateral.selector);
+    vm.expectRevert(IPositionManager.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(5000e18, 0);
   }
 
@@ -96,7 +96,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
 
     // Try to withdraw collateral - should revert
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.InsufficientFreeCollateral.selector);
+    vm.expectRevert(IPositionManager.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(1000e18, 0);
   }
 
@@ -142,11 +142,11 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT / 2, "Position2 should have half debt repaid");
   }
 
-  /// @notice Test withdrawal where collateral pass skips positions with no free collateral
-  function test_withdraw_skipsPositionWithNoFreeCollateral() public {
-    // Setup: deposit to position1 at max LTV (no free collateral)
-    // Position1: high LTV, no free collateral
-    // Position2: lower LTV, has free collateral
+  /// @notice Test withdrawal where collateral pass skips positions with no available collateral
+  function test_withdraw_skipsPositionWithNoAvailableCollateral() public {
+    // Setup: deposit to position1 at max LTV (no available collateral)
+    // Position1: high LTV, no available collateral
+    // Position2: lower LTV, has available collateral
     _mintCollateral(minter, COLLATERAL_AMOUNT * 2);
 
     // First supply queue entry - borrow at near max on position1
@@ -157,7 +157,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, COLLATERAL_AMOUNT / 2); // 50% LTV
 
-    // Try to withdraw collateral - should skip position1 (no free collateral at 70% LLTV)
+    // Try to withdraw collateral - should skip position1 (no available collateral at 70% LLTV)
     // and withdraw from position2
     vm.prank(minter);
     positionManager.withdraw(1000e18, 0);

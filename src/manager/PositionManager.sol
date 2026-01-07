@@ -48,7 +48,7 @@ contract PositionManager is
   /// @param decimals_ The decimals of the share token
   /// @param collateralAsset_ The collateral asset address
   /// @param debtAsset_ The debt asset address
-  /// @param lltv_ The LLTV for free collateral calculation (WAD precision)
+  /// @param lltv_ The LLTV for available collateral calculation (WAD precision)
   function initialize(
     address owner_,
     string memory name_,

@@ -75,7 +75,7 @@ library LibPositionManagerOperations {
       for (uint256 i = 0; i < queueLength && (remainingDebt > 0 || remainingCollateral > 0); i++) {
         address position = ps.withdrawalQueue[i];
 
-        // Repay debt first (increases free collateral for withdrawal)
+        // Repay debt first (increases available collateral for withdrawal)
         if (remainingDebt > 0) {
           uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
           if (positionDebt > 0) {
@@ -87,7 +87,7 @@ library LibPositionManagerOperations {
 
         // Then withdraw collateral
         if (remainingCollateral > 0) {
-          uint256 toWithdraw = IBorrowPosition(position).freeCollateral(ps.lltv).min(remainingCollateral);
+          uint256 toWithdraw = IBorrowPosition(position).availableCollateral(ps.lltv).min(remainingCollateral);
           if (toWithdraw > 0) {
             position.withdraw(toWithdraw);
             remainingCollateral -= toWithdraw;
@@ -99,7 +99,7 @@ library LibPositionManagerOperations {
       if (remainingDebt > 0) revert IPositionManager.ExcessDebtRepay();
 
       // If we couldn't withdraw all requested collateral, revert
-      if (remainingCollateral > 0) revert IPositionManager.InsufficientFreeCollateral();
+      if (remainingCollateral > 0) revert IPositionManager.InsufficientAvailableCollateral();
     }
   }
 

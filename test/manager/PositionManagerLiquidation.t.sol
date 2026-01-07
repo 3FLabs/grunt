@@ -296,9 +296,9 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     // totalAssets should be 0 (underwater)
     assertEq(positionManager.totalAssets(), 0, "No assets left");
 
-    // Trying to withdraw should fail (no free collateral)
+    // Trying to withdraw should fail (no available collateral)
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.InsufficientFreeCollateral.selector);
+    vm.expectRevert(IPositionManager.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(1, 0);
   }
 }

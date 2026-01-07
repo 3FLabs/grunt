@@ -521,7 +521,7 @@ Where `collateralQuoted` is collateral value expressed in debt asset terms using
 
 **Withdrawal Queue**: Ordered list of position addresses, used for withdrawals and burns.
 
-**LLTV**: Loan-to-Liquidation-Threshold-Value used for calculating free collateral during withdrawals.
+**LLTV**: Loan-to-Liquidation-Threshold-Value used for calculating available collateral during withdrawals.
 
 ### Share Calculation
 
@@ -594,21 +594,21 @@ function withdraw(uint256 collateral, uint256 debt) external returns (int256 sha
 3. **First pass** - Repay debt through withdrawal queue:
    - For each position, repay up to `min(positionDebt, remainingDebt)`
 4. **Second pass** - Withdraw collateral through withdrawal queue:
-   - For each position, withdraw up to `min(freeCollateral(lltv), positionCollateral, remainingCollateral)`
-   - Reverts with `InsufficientFreeCollateral` if unable to withdraw requested amount
+   - For each position, withdraw up to `min(availableCollateral(lltv), positionCollateral, remainingCollateral)`
+   - Reverts with `InsufficientAvailableCollateral` if unable to withdraw requested amount
 5. Transfer collateral to caller
 6. Calculate share delta based on total assets change:
    - If assets decreased → burn shares (negative return)
    - If assets increased → mint shares (positive return)
 7. Update snapshot for performance fees
 
-**Free Collateral:**
+**Available Collateral:**
 ```
-freeCollateral = totalCollateral - requiredCollateral
+availableCollateral = totalCollateral - requiredCollateral
 requiredCollateral = debt × ORACLE_PRICE_SCALE / (lltv × collateralPrice)
 ```
 
-Only "free" collateral can be withdrawn without repaying debt, ensuring positions remain healthy.
+Only "available" collateral can be withdrawn without repaying debt, ensuring positions remain healthy.
 
 #### Burn
 
@@ -662,7 +662,7 @@ Fees are minted as shares to the fee recipient, diluting existing shareholders p
 function addBorrowModule(address module) external;
 function removeBorrowModule(address module) external;
 
-// Owner-only: Set the LLTV for free collateral calculations
+// Owner-only: Set the LLTV for available collateral calculations
 function setLltv(uint256 lltv) external;
 
 // Owner-only: Set fee configuration (accrues pending fees first)
@@ -718,7 +718,7 @@ RebalancingData({
 
 1. **Inflation Attack Protection**: Virtual share offset prevents first-depositor attacks
 2. **Conservative Rounding**: Debt rounds up, collateral rounds down to protect the vault
-3. **LLTV Enforcement**: Withdrawals check free collateral to maintain position health
+3. **LLTV Enforcement**: Withdrawals check available collateral to maintain position health
 4. **Fee Accrual**: Fees are always accrued before operations to ensure fair accounting
 5. **Access Control**: Operations restricted to MINTER role, admin functions to owner
 6. **Reentrancy Protection**: Uses `ReentrancyGuardTransient` on main operations

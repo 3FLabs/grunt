@@ -1996,31 +1996,31 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                   FREE COLLATERAL TESTS                    */
+  /*                AVAILABLE COLLATERAL TESTS                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_FreeCollateral_NoDebt_ReturnsAllCollateral() public {
+  function test_AvailableCollateral_NoDebt_ReturnsAllCollateral() public {
     // Supply collateral without borrowing
     collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
     vm.prank(positionManager);
     borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
 
     // With no debt, all collateral should be free at any LLTV
-    uint256 freeCollat = borrowPosition.freeCollateral(DEFAULT_LLTV);
+    uint256 freeCollat = borrowPosition.availableCollateral(DEFAULT_LLTV);
     assertEq(freeCollat, COLLATERAL_AMOUNT, "All collateral should be free when no debt");
 
     // Even at lower LLTV, all collateral is free
-    uint256 freeCollatLowLltv = borrowPosition.freeCollateral(0.5e18);
+    uint256 freeCollatLowLltv = borrowPosition.availableCollateral(0.5e18);
     assertEq(freeCollatLowLltv, COLLATERAL_AMOUNT, "All collateral should be free at any LLTV when no debt");
   }
 
-  function test_FreeCollateral_NoPosition_ReturnsZero() public {
+  function test_AvailableCollateral_NoPosition_ReturnsZero() public {
     // No collateral supplied, no debt
-    uint256 freeCollat = borrowPosition.freeCollateral(DEFAULT_LLTV);
-    assertEq(freeCollat, 0, "Free collateral should be 0 with no position");
+    uint256 freeCollat = borrowPosition.availableCollateral(DEFAULT_LLTV);
+    assertEq(freeCollat, 0, "Available collateral should be 0 with no position");
   }
 
-  function test_FreeCollateral_WithDebt_CalculatesCorrectly() public {
+  function test_AvailableCollateral_WithDebt_CalculatesCorrectly() public {
     // Supply 10,000 collateral and borrow 5,000 (50% LTV)
     _supplyLiquidity(LOAN_AMOUNT * 2);
     collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
@@ -2032,18 +2032,18 @@ contract MorphoBorrowPositionTest is Test {
 
     // At 80% LLTV with 1:1 price:
     // Required collateral = 5000 / 0.8 = 6250
-    // Free collateral = 10000 - 6250 = 3750
-    uint256 freeCollat = borrowPosition.freeCollateral(DEFAULT_LLTV);
-    assertEq(freeCollat, 3750e18, "Free collateral should be 3750 at 80% LLTV");
+    // Available collateral = 10000 - 6250 = 3750
+    uint256 freeCollat = borrowPosition.availableCollateral(DEFAULT_LLTV);
+    assertEq(freeCollat, 3750e18, "Available collateral should be 3750 at 80% LLTV");
 
     // At 50% LLTV:
     // Required collateral = 5000 / 0.5 = 10000
-    // Free collateral = 10000 - 10000 = 0
-    uint256 freeCollatLowLltv = borrowPosition.freeCollateral(0.5e18);
-    assertEq(freeCollatLowLltv, 0, "Free collateral should be 0 at 50% LLTV");
+    // Available collateral = 10000 - 10000 = 0
+    uint256 freeCollatLowLltv = borrowPosition.availableCollateral(0.5e18);
+    assertEq(freeCollatLowLltv, 0, "Available collateral should be 0 at 50% LLTV");
   }
 
-  function test_FreeCollateral_AtMaxLTV_ReturnsZero() public {
+  function test_AvailableCollateral_AtMaxLTV_ReturnsZero() public {
     // Supply collateral and borrow at exactly preLLTV (72%)
     // Note: We use preLLTV because that's the max the contract allows due to PreLiquidation
     uint256 preLltv = preLiquidationParams.preLltv;
@@ -2066,12 +2066,12 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     borrowPosition.borrow(maxBorrow);
 
-    // At exactly the preLLTV, free collateral should be 0
-    uint256 freeCollat = borrowPosition.freeCollateral(preLltv);
-    assertEq(freeCollat, 0, "Free collateral should be 0 when at max LTV");
+    // At exactly the preLLTV, available collateral should be 0
+    uint256 freeCollat = borrowPosition.availableCollateral(preLltv);
+    assertEq(freeCollat, 0, "Available collateral should be 0 when at max LTV");
   }
 
-  function test_FreeCollateral_OverLTV_ReturnsZero() public {
+  function test_AvailableCollateral_OverLTV_ReturnsZero() public {
     // Supply collateral and borrow at 50% LTV, then check at 40% LLTV
     _supplyLiquidity(LOAN_AMOUNT * 2);
     collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
@@ -2083,11 +2083,11 @@ contract MorphoBorrowPositionTest is Test {
 
     // At 40% LLTV, we're over-leveraged (50% > 40%)
     // Required collateral = 5000 / 0.4 = 12500, but we only have 10000
-    uint256 freeCollat = borrowPosition.freeCollateral(0.4e18);
-    assertEq(freeCollat, 0, "Free collateral should be 0 when over LLTV");
+    uint256 freeCollat = borrowPosition.availableCollateral(0.4e18);
+    assertEq(freeCollat, 0, "Available collateral should be 0 when over LLTV");
   }
 
-  function test_FreeCollateral_WithPriceChange() public {
+  function test_AvailableCollateral_WithPriceChange() public {
     // Supply 10,000 collateral and borrow 5,000
     _supplyLiquidity(LOAN_AMOUNT * 2);
     collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
@@ -2103,9 +2103,9 @@ contract MorphoBorrowPositionTest is Test {
     // At 80% LLTV with 2:1 price:
     // Collateral value = 10000 * 2 = 20000 (in debt terms)
     // Required collateral = 5000 / (0.8 * 2) = 3125 (in collateral units)
-    // Free collateral = 10000 - 3125 = 6875
-    uint256 freeCollat = borrowPosition.freeCollateral(DEFAULT_LLTV);
-    assertEq(freeCollat, 6875e18, "Free collateral should increase with higher price");
+    // Available collateral = 10000 - 3125 = 6875
+    uint256 freeCollat = borrowPosition.availableCollateral(DEFAULT_LLTV);
+    assertEq(freeCollat, 6875e18, "Available collateral should increase with higher price");
 
     // Halve the collateral price (0.5:1)
     oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
@@ -2114,11 +2114,11 @@ contract MorphoBorrowPositionTest is Test {
     // Collateral value = 10000 * 0.5 = 5000 (in debt terms)
     // Required collateral = 5000 / (0.8 * 0.5) = 12500 (in collateral units)
     // But we only have 10000, so free = 0
-    uint256 freeCollatLow = borrowPosition.freeCollateral(DEFAULT_LLTV);
-    assertEq(freeCollatLow, 0, "Free collateral should be 0 with lower price");
+    uint256 freeCollatLow = borrowPosition.availableCollateral(DEFAULT_LLTV);
+    assertEq(freeCollatLow, 0, "Available collateral should be 0 with lower price");
   }
 
-  function testFuzz_FreeCollateral(uint256 collateral, uint256 debt, uint256 lltv) public {
+  function testFuzz_AvailableCollateral(uint256 collateral, uint256 debt, uint256 lltv) public {
     // Bound inputs
     collateral = bound(collateral, 1e18, 1_000_000e18);
     lltv = bound(lltv, 0.1e18, 0.99e18); // LLTV between 10% and 99%
@@ -2141,28 +2141,28 @@ contract MorphoBorrowPositionTest is Test {
     }
     vm.stopPrank();
 
-    uint256 freeCollat = borrowPosition.freeCollateral(lltv);
+    uint256 freeCollat = borrowPosition.availableCollateral(lltv);
 
     if (debt == 0) {
       // No debt = all collateral is free
       assertEq(freeCollat, collateral, "All collateral should be free when no debt");
     } else {
-      // Calculate expected free collateral
+      // Calculate expected available collateral
       // Required = debt * ORACLE_PRICE_SCALE / (lltv * price)
       // With 1:1 price: required = debt / lltv
       uint256 required = debt.mulDivUp(1e18, lltv);
 
       if (required >= collateral) {
-        assertEq(freeCollat, 0, "Free collateral should be 0 when over-leveraged");
+        assertEq(freeCollat, 0, "Available collateral should be 0 when over-leveraged");
       } else {
         // Due to rounding, allow small delta
-        assertApproxEqAbs(freeCollat, collateral - required, 2, "Free collateral calculation mismatch");
+        assertApproxEqAbs(freeCollat, collateral - required, 2, "Available collateral calculation mismatch");
       }
     }
   }
 
-  function test_FreeCollateral_RoundingIsConservative() public {
-    // Test that rounding favors the protocol (less free collateral reported)
+  function test_AvailableCollateral_RoundingIsConservative() public {
+    // Test that rounding favors the protocol (less available collateral reported)
     // Use amounts that cause rounding
     uint256 collateral = 1000e18;
     uint256 debt = 333e18; // Creates non-round division
@@ -2176,14 +2176,14 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.borrow(debt);
     vm.stopPrank();
 
-    uint256 freeCollat = borrowPosition.freeCollateral(lltv);
+    uint256 freeCollat = borrowPosition.availableCollateral(lltv);
 
     // Required = 333 / 0.7 = 475.71... should round UP to 476
     // Free = 1000 - 476 = 524
-    // The actual free collateral should be <= theoretical due to conservative rounding
+    // The actual available collateral should be <= theoretical due to conservative rounding
     uint256 theoreticalRequired = (debt * 1e18) / lltv;
     uint256 theoreticalFree = collateral - theoreticalRequired;
 
-    assertLe(freeCollat, theoreticalFree + 1, "Free collateral should be conservatively rounded");
+    assertLe(freeCollat, theoreticalFree + 1, "Available collateral should be conservatively rounded");
   }
 }

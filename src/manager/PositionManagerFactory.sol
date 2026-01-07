@@ -40,7 +40,7 @@ contract PositionManagerFactory {
   /// @param owner The address of the position manager owner
   /// @param collateralAsset The collateral asset address
   /// @param debtAsset The debt asset address
-  /// @param lltv The LLTV for free collateral calculation
+  /// @param lltv The LLTV for available collateral calculation
   event PositionManagerCreated(
     address indexed positionManager,
     address indexed owner,
@@ -86,7 +86,7 @@ contract PositionManagerFactory {
   /// @param decimals The decimals of the share token
   /// @param collateralAsset The collateral asset address
   /// @param debtAsset The debt asset address
-  /// @param lltv The LLTV for free collateral calculation (WAD precision)
+  /// @param lltv The LLTV for available collateral calculation (WAD precision)
   /// @return positionManager The address of the newly deployed PositionManager proxy
   function createPositionManager(
     address owner,

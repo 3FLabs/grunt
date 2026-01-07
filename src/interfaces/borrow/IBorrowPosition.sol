@@ -68,9 +68,9 @@ interface IBorrowPosition {
   function availableLiquidity() external view returns (uint256);
 
   /// @notice Returns the amount of collateral that can be withdrawn without making the position unhealthy.
-  /// @dev Free collateral = collateral - (debt / lltv). If debt is 0, all collateral is free.
+  /// @dev Available collateral = collateral - (debt / lltv). If debt is 0, all collateral is available.
   ///      The result is in collateral asset units (not quoted).
   /// @param lltv The loan-to-liquidation value to use for the calculation.
-  /// @return The amount of free collateral in collateral asset units.
-  function freeCollateral(uint256 lltv) external view returns (uint256);
+  /// @return The amount of available collateral in collateral asset units.
+  function availableCollateral(uint256 lltv) external view returns (uint256);
 }

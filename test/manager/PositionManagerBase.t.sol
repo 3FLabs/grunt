@@ -76,7 +76,7 @@ abstract contract PositionManagerBaseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV
-  uint256 constant POSITION_MANAGER_LLTV = 0.7e18; // 70% LLTV for free collateral
+  uint256 constant POSITION_MANAGER_LLTV = 0.7e18; // 70% LLTV for available collateral
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36; // 1:1 price
   uint256 constant COLLATERAL_AMOUNT = 10_000e18;
