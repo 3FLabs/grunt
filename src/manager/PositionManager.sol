@@ -5,7 +5,7 @@ import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositio
 import {PositionManagerShares} from "./base/PositionManagerShares.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
-import {FeeData, PositionManagerStorageData} from "../libs/manager/PositionManagerTypes.sol";
+import {FeeData, PositionManagerStorageData} from "../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerStorage} from "../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerOperations} from "../libs/manager/LibPositionManagerOperations.sol";
 import {LibPositionManagerView} from "../libs/manager/LibPositionManagerView.sol";

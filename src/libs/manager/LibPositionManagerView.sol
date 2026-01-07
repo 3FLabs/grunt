@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
-import {PositionManagerStorageData} from "./PositionManagerTypes.sol";
+import {PositionManagerStorageData} from "./LibPositionManagerStorage.sol";
 import {PM_VIRTUAL_SHARES, PM_VIRTUAL_ASSETS} from "./LibPositionManagerConstants.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";

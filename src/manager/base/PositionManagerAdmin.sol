@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
-import {FeeData, PositionManagerStorageData} from "../../libs/manager/PositionManagerTypes.sol";
+import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
 import {PM_MAX_MANAGEMENT_FEE, PM_MAX_PERFORMANCE_FEE} from "../../libs/manager/LibPositionManagerConstants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";

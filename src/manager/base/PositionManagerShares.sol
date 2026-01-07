@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
-import {PositionManagerStorageData} from "../../libs/manager/PositionManagerTypes.sol";
+import {PositionManagerStorageData} from "../../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerView} from "../../libs/manager/LibPositionManagerView.sol";
 import {PositionManagerFees} from "./PositionManagerFees.sol";

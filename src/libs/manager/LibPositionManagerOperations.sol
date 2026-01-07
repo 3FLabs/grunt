@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
-import {PositionManagerStorageData} from "./PositionManagerTypes.sol";
+import {PositionManagerStorageData} from "./LibPositionManagerStorage.sol";
 import {LibPositionManagerExecutor} from "./LibPositionManagerExecutor.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
