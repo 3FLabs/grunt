@@ -243,4 +243,38 @@ abstract contract PositionManagerBaseTest is Test {
   function _mintDebt(address to, uint256 amount) internal {
     debtToken.setBalance(to, amount);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 CONSOLIDATED VIEW HELPERS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _lltv() internal view returns (uint256) {
+    (uint256 lltv_,) = positionManager.config();
+    return lltv_;
+  }
+
+  function _maxRebalanceLoss() internal view returns (uint16) {
+    (, uint16 maxRebalanceLoss_) = positionManager.config();
+    return maxRebalanceLoss_;
+  }
+
+  function _lastTotalAssets() internal view returns (uint256) {
+    (,,, uint256 lastTotalAssets_,) = positionManager.feeData();
+    return lastTotalAssets_;
+  }
+
+  function _lastFeeAccrualTimestamp() internal view returns (uint256) {
+    (,,,, uint256 lastFeeAccrualTimestamp_) = positionManager.feeData();
+    return lastFeeAccrualTimestamp_;
+  }
+
+  function _collateralAsset() internal view returns (address) {
+    (address collateralAsset_,) = positionManager.assets();
+    return collateralAsset_;
+  }
+
+  function _debtAsset() internal view returns (address) {
+    (, address debtAsset_) = positionManager.assets();
+    return debtAsset_;
+  }
 }

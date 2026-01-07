@@ -18,7 +18,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, managementFee, performanceFee);
 
-    (address recipient, uint24 mgmtFee, uint24 perfFee) = positionManager.feeData();
+    (address recipient, uint24 mgmtFee, uint24 perfFee,,) = positionManager.feeData();
     assertEq(recipient, feeRecipient);
     assertEq(mgmtFee, managementFee);
     assertEq(perfFee, performanceFee);
@@ -105,7 +105,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, maxManagementFee, maxPerformanceFee);
 
-    (address recipient, uint24 mgmtFee, uint24 perfFee) = positionManager.feeData();
+    (address recipient, uint24 mgmtFee, uint24 perfFee,,) = positionManager.feeData();
     assertEq(recipient, feeRecipient);
     assertEq(mgmtFee, maxManagementFee);
     assertEq(perfFee, maxPerformanceFee);
@@ -179,7 +179,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
     // Verify snapshot was updated by deposit
-    uint256 snapshotAfterDeposit = positionManager.lastTotalAssets();
+    uint256 snapshotAfterDeposit = _lastTotalAssets();
     assertEq(snapshotAfterDeposit, COLLATERAL_AMOUNT, "Snapshot should equal deposit amount");
 
     // Step 3: Simulate gains by increasing oracle price (20% gain)

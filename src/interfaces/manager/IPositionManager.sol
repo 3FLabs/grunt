@@ -77,6 +77,9 @@ interface IPositionManager {
   /// @notice Thrown when a queue contains a position that is not whitelisted.
   error UnauthorizedPosition();
 
+  /// @notice Thrown when attempting to remove a module that is still in a queue.
+  error ModuleStillInQueue();
+
   /// @notice Thrown when rebalance causes total assets to decrease by more than maxRebalanceLoss.
   error RebalanceLossExceedsMax();
 
@@ -164,10 +167,10 @@ interface IPositionManager {
   /// @return True if the address is a whitelisted borrow module
   function isBorrowModule(address module) external view returns (bool);
 
-  /// @notice Returns the LLTV used for available collateral calculations.
-  /// @dev This LLTV determines how much collateral can be withdrawn without repaying debt.
-  /// @return The LLTV value (WAD precision, 1e18 = 100%)
-  function lltv() external view returns (uint256);
+  /// @notice Returns the collateral and debt asset addresses.
+  /// @return collateralAsset The address of the collateral asset token
+  /// @return debtAsset The address of the debt asset token
+  function assets() external view returns (address collateralAsset, address debtAsset);
 
   /// @notice Returns the total amount of collateral across all borrow positions.
   /// @dev The collateral is in raw collateral asset units.
@@ -189,35 +192,27 @@ interface IPositionManager {
   /// @return The total assets value in debt asset terms
   function totalAssets() external view returns (uint256);
 
-  /// @notice Returns the fee configuration data for this PositionManager.
-  /// @dev Includes the fee recipient address and fee rates for management and performance fees.
-  ///      Management fee is expressed in basis points per 365 days (e.g., 200 = 2% per year).
-  ///      Performance fee is expressed in basis points (e.g., 2000 = 20%).
+  /// @notice Returns the fee configuration and accounting state.
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days
   /// @return performanceFee The performance fee rate in basis points
-  function feeData() external view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee);
+  /// @return lastTotalAssets The last total assets snapshot for performance fee calculation
+  /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
+  function feeData()
+    external
+    view
+    returns (
+      address feeRecipient,
+      uint24 managementFee,
+      uint24 performanceFee,
+      uint256 lastTotalAssets,
+      uint256 lastFeeAccrualTimestamp
+    );
 
-  /// @notice Returns the collateral asset address.
-  /// @return The address of the collateral asset token
-  function collateralAsset() external view returns (address);
-
-  /// @notice Returns the debt asset address.
-  /// @return The address of the debt asset token
-  function debtAsset() external view returns (address);
-
-  /// @notice Returns the last total assets snapshot used for performance fee calculation.
-  /// @return The last total assets value
-  function lastTotalAssets() external view returns (uint256);
-
-  /// @notice Returns the timestamp of the last fee accrual.
-  /// @return The last fee accrual timestamp
-  function lastFeeAccrualTimestamp() external view returns (uint256);
-
-  /// @notice Returns the maximum allowed loss during rebalance operations.
-  /// @dev Expressed in basis points (e.g., 100 = 1%)
-  /// @return The max rebalance loss value in basis points
-  function maxRebalanceLoss() external view returns (uint16);
+  /// @notice Returns the configuration parameters.
+  /// @return lltv The LLTV used for available collateral calculations (WAD precision)
+  /// @return maxRebalanceLoss The maximum allowed loss during rebalance in basis points
+  function config() external view returns (uint256 lltv, uint16 maxRebalanceLoss);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */

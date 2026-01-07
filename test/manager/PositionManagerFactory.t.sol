@@ -121,9 +121,11 @@ contract PositionManagerFactoryTest is Test {
     assertEq(pm.name(), "Test Position Manager", "Name should be set");
     assertEq(pm.symbol(), "TPM", "Symbol should be set");
     assertEq(pm.decimals(), 18, "Decimals should be set");
-    assertEq(pm.collateralAsset(), address(collateralToken), "Collateral asset should be set");
-    assertEq(pm.debtAsset(), address(debtToken), "Debt asset should be set");
-    assertEq(pm.lltv(), DEFAULT_LLTV, "LLTV should be set");
+    (address collateralAsset_, address debtAsset_) = pm.assets();
+    assertEq(collateralAsset_, address(collateralToken), "Collateral asset should be set");
+    assertEq(debtAsset_, address(debtToken), "Debt asset should be set");
+    (uint256 lltv_,) = pm.config();
+    assertEq(lltv_, DEFAULT_LLTV, "LLTV should be set");
   }
 
   function test_createPositionManager_emitsEvent() public {
@@ -248,6 +250,7 @@ contract PositionManagerFactoryTest is Test {
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
     assertEq(pm.decimals(), decimals);
-    assertEq(pm.lltv(), lltv);
+    (uint256 lltv_,) = pm.config();
+    assertEq(lltv_, lltv);
   }
 }

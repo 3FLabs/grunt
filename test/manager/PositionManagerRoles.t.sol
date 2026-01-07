@@ -59,7 +59,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setLltv(newLltv);
 
-    assertEq(positionManager.lltv(), newLltv);
+    assertEq(_lltv(), newLltv);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -83,10 +83,76 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     // borrowPosition1 is already whitelisted
     assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
 
+    // First, clear the queues to remove borrowPosition1
+    SupplyQueueEntry[] memory supplyQueue = new SupplyQueueEntry[](1);
+    supplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(supplyQueue);
+
+    address[] memory withdrawalQueue = new address[](1);
+    withdrawalQueue[0] = address(borrowPosition2);
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(withdrawalQueue);
+
+    // Non-owner cannot remove
     vm.prank(user);
     vm.expectRevert();
     positionManager.removeBorrowModule(address(borrowPosition1));
 
+    // Owner can remove after clearing from queues
+    vm.prank(owner);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+
+    assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
+  }
+
+  function test_removeBorrowModule_revertIfInSupplyQueue() public {
+    // borrowPosition1 is in supply queue, try to remove it
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+
+    // Clear only withdrawal queue
+    address[] memory withdrawalQueue = new address[](1);
+    withdrawalQueue[0] = address(borrowPosition2);
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(withdrawalQueue);
+
+    // Should revert because borrowPosition1 is still in supply queue
+    vm.prank(owner);
+    vm.expectRevert(IPositionManager.ModuleStillInQueue.selector);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+  }
+
+  function test_removeBorrowModule_revertIfInWithdrawalQueue() public {
+    // borrowPosition1 is in withdrawal queue, try to remove it
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+
+    // Clear only supply queue
+    SupplyQueueEntry[] memory supplyQueue = new SupplyQueueEntry[](1);
+    supplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(supplyQueue);
+
+    // Should revert because borrowPosition1 is still in withdrawal queue
+    vm.prank(owner);
+    vm.expectRevert(IPositionManager.ModuleStillInQueue.selector);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+  }
+
+  function test_removeBorrowModule_successAfterClearingQueues() public {
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+
+    // Clear both queues
+    SupplyQueueEntry[] memory supplyQueue = new SupplyQueueEntry[](1);
+    supplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(supplyQueue);
+
+    address[] memory withdrawalQueue = new address[](1);
+    withdrawalQueue[0] = address(borrowPosition2);
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(withdrawalQueue);
+
+    // Now removal should succeed
     vm.prank(owner);
     positionManager.removeBorrowModule(address(borrowPosition1));
 

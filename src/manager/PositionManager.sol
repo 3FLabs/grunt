@@ -109,11 +109,6 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function lltv() public view returns (uint256) {
-    return LibStorage.positionManagerStorage().lltv;
-  }
-
-  /// @inheritdoc IPositionManager
   function borrowModules() public view returns (address[] memory) {
     return LibStorage.positionManagerStorage().borrowModules.values();
   }
@@ -121,6 +116,13 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function isBorrowModule(address module) public view returns (bool) {
     return LibStorage.positionManagerStorage().borrowModules.contains(module);
+  }
+
+  /// @inheritdoc IPositionManager
+  function assets() public view returns (address collateralAsset, address debtAsset) {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    collateralAsset = ps.collateralAsset;
+    debtAsset = ps.debtAsset;
   }
 
   /// @inheritdoc IPositionManager
@@ -144,34 +146,31 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function feeData() public view returns (address feeRecipient, uint24 managementFee, uint24 performanceFee) {
-    FeeData memory fd = LibStorage.positionManagerStorage().feeData;
-    return (fd.feeRecipient, fd.managementFee, fd.performanceFee);
+  function feeData()
+    public
+    view
+    returns (
+      address feeRecipient,
+      uint24 managementFee,
+      uint24 performanceFee,
+      uint256 lastTotalAssets,
+      uint256 lastFeeAccrualTimestamp
+    )
+  {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    FeeData memory fd = ps.feeData;
+    feeRecipient = fd.feeRecipient;
+    managementFee = fd.managementFee;
+    performanceFee = fd.performanceFee;
+    lastTotalAssets = ps.lastTotalAssets;
+    lastFeeAccrualTimestamp = ps.lastFeeAccrualTimestamp;
   }
 
   /// @inheritdoc IPositionManager
-  function collateralAsset() public view returns (address) {
-    return LibStorage.positionManagerStorage().collateralAsset;
-  }
-
-  /// @inheritdoc IPositionManager
-  function debtAsset() public view returns (address) {
-    return LibStorage.positionManagerStorage().debtAsset;
-  }
-
-  /// @inheritdoc IPositionManager
-  function lastTotalAssets() public view returns (uint256) {
-    return LibStorage.positionManagerStorage().lastTotalAssets;
-  }
-
-  /// @inheritdoc IPositionManager
-  function lastFeeAccrualTimestamp() public view returns (uint256) {
-    return LibStorage.positionManagerStorage().lastFeeAccrualTimestamp;
-  }
-
-  /// @inheritdoc IPositionManager
-  function maxRebalanceLoss() public view returns (uint16) {
-    return LibStorage.positionManagerStorage().maxRebalanceLoss;
+  function config() public view returns (uint256 lltv, uint16 maxRebalanceLoss) {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    lltv = ps.lltv;
+    maxRebalanceLoss = ps.maxRebalanceLoss;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -75,8 +75,8 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    uint256 initialSnapshot = positionManager.lastTotalAssets();
-    uint256 initialTimestamp = positionManager.lastFeeAccrualTimestamp();
+    uint256 initialSnapshot = _lastTotalAssets();
+    uint256 initialTimestamp = _lastFeeAccrualTimestamp();
 
     // Advance time
     vm.warp(block.timestamp + 365 days);
@@ -100,15 +100,11 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     assertGt(positionManager.balanceOf(feeRecipient), 0, "Fee recipient should have received fees");
 
     // Verify timestamp was updated
-    assertGt(positionManager.lastFeeAccrualTimestamp(), initialTimestamp, "Timestamp should be updated");
+    assertGt(_lastFeeAccrualTimestamp(), initialTimestamp, "Timestamp should be updated");
 
     // Verify snapshot was updated to post-rebalance value
-    assertGt(positionManager.lastTotalAssets(), initialSnapshot, "Snapshot should reflect post-rebalance state");
-    assertEq(
-      positionManager.lastTotalAssets(),
-      COLLATERAL_AMOUNT + additionalCollateral,
-      "Snapshot should equal new total assets"
-    );
+    assertGt(_lastTotalAssets(), initialSnapshot, "Snapshot should reflect post-rebalance state");
+    assertEq(_lastTotalAssets(), COLLATERAL_AMOUNT + additionalCollateral, "Snapshot should equal new total assets");
   }
 
   function test_rebalance_returnsExcessCorrectly() public {
@@ -168,7 +164,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setMaxRebalanceLoss(maxLoss);
 
-    assertEq(positionManager.maxRebalanceLoss(), maxLoss, "Max rebalance loss should be set");
+    assertEq(_maxRebalanceLoss(), maxLoss, "Max rebalance loss should be set");
   }
 
   function test_setMaxRebalanceLoss_emitsEvent() public {
@@ -322,7 +318,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
   }
 
   function test_maxRebalanceLoss_defaultIsZero() public view {
-    assertEq(positionManager.maxRebalanceLoss(), 0, "Default max rebalance loss should be 0");
+    assertEq(_maxRebalanceLoss(), 0, "Default max rebalance loss should be 0");
   }
 
   function testFuzz_rebalance_lossThresholdEnforced(uint16 maxLossPercent, uint8 actualLossPercent) public {

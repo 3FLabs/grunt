@@ -84,7 +84,7 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     if (data.collateral != 0) revert CollateralNotAllowed();
 
     // Get debt asset from position manager
-    address debtAsset = positionManager.debtAsset();
+    (, address debtAsset) = positionManager.assets();
 
     // Encode position manager and rebalancing data for the callback
     bytes memory callbackData = abi.encode(positionManager, data);
@@ -115,7 +115,7 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
       abi.decode(data, (IPositionManager, RebalancingData));
 
     // Get debt asset from position manager
-    address debtAsset = positionManager.debtAsset();
+    (, address debtAsset) = positionManager.assets();
 
     // Approve PositionManager to pull debt tokens for rebalancing
     debtAsset.safeApprove(address(positionManager), rebalancingData.debt);

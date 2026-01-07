@@ -33,7 +33,27 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function removeBorrowModule(address module) external override onlyOwner {
-    LibStorage.positionManagerStorage().borrowModules.remove(module);
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+
+    // Check module is not in supply queue
+    uint256 supplyQueueLength = ps.supplyQueue.length;
+    for (uint256 i = 0; i < supplyQueueLength;) {
+      if (ps.supplyQueue[i].position == module) revert IPositionManager.ModuleStillInQueue();
+      unchecked {
+        ++i;
+      }
+    }
+
+    // Check module is not in withdrawal queue
+    uint256 withdrawalQueueLength = ps.withdrawalQueue.length;
+    for (uint256 i = 0; i < withdrawalQueueLength;) {
+      if (ps.withdrawalQueue[i] == module) revert IPositionManager.ModuleStillInQueue();
+      unchecked {
+        ++i;
+      }
+    }
+
+    ps.borrowModules.remove(module);
     emit IPositionManager.BorrowModuleRemoved(module);
   }
 

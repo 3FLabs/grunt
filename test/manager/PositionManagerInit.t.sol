@@ -15,7 +15,7 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     assertEq(positionManager.name(), "Position Manager Shares");
     assertEq(positionManager.symbol(), "PMS");
     assertEq(positionManager.decimals(), 18);
-    assertEq(positionManager.lltv(), POSITION_MANAGER_LLTV);
+    assertEq(_lltv(), POSITION_MANAGER_LLTV);
   }
 
   function test_supplyQueue() public view {
@@ -37,16 +37,16 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_collateralAsset() public view {
-    assertEq(positionManager.collateralAsset(), address(collateralToken));
+    assertEq(_collateralAsset(), address(collateralToken));
   }
 
   function test_debtAsset() public view {
-    assertEq(positionManager.debtAsset(), address(debtToken));
+    assertEq(_debtAsset(), address(debtToken));
   }
 
   function test_lastTotalAssets() public {
     // Initially should be 0
-    assertEq(positionManager.lastTotalAssets(), 0);
+    assertEq(_lastTotalAssets(), 0);
 
     // Deposit
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -54,11 +54,11 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
     // After deposit, lastTotalAssets should be updated
-    assertEq(positionManager.lastTotalAssets(), COLLATERAL_AMOUNT);
+    assertEq(_lastTotalAssets(), COLLATERAL_AMOUNT);
   }
 
   function test_lastFeeAccrualTimestamp() public {
-    uint256 initialTimestamp = positionManager.lastFeeAccrualTimestamp();
+    uint256 initialTimestamp = _lastFeeAccrualTimestamp();
     assertEq(initialTimestamp, block.timestamp);
 
     // Advance time
@@ -69,7 +69,7 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    assertEq(positionManager.lastFeeAccrualTimestamp(), block.timestamp);
+    assertEq(_lastFeeAccrualTimestamp(), block.timestamp);
   }
 
   function test_totalAssets() public {
