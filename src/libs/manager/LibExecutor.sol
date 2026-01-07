@@ -16,7 +16,7 @@ library LibExecutor {
   /// @param position The address of the contract that will be approved to spend the token.
   /// @param token The address of the ERC20 token to be approved.
   /// @param amount The amount of tokens to approve.
-  function _approvesBefore(address position, address token, uint256 amount) internal {
+  function _approvesBefore(address position, address token, uint256 amount) private {
     token.safeApprove(position, amount);
   }
 
@@ -24,7 +24,7 @@ library LibExecutor {
   /// @dev This function is defined to reduce contract code size by centralizing de-approval logic, as SafeTransferLib.safeApprove can be verbose if inlined multiple times.
   /// @param position The address of the contract whose approval is being reset.
   /// @param token The address of the ERC20 token whose approval is to be reset.
-  function _approvesAfter(address position, address token) internal {
+  function _approvesAfter(address position, address token) private {
     token.safeApprove(position, 0);
   }
 
