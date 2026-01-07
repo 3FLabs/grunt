@@ -9,12 +9,14 @@ pragma solidity ^0.8.20;
 /// @param expectedReturn The absolute return expected (principal + expectedReturn will be repaid)
 /// @param nonce Sequential number for offer management and cancellation (must be > stored nonce)
 /// @param expiration Unix timestamp after which the offer becomes invalid
+/// @param useCallback Whether to call the maker's onRequestConsumed callback before pulling funds
 struct Offer {
   address maker;
   uint256 amount;
   uint256 expectedReturn;
   uint256 nonce;
   uint256 expiration;
+  bool useCallback;
 }
 
 /// @title IOfferReceiver

@@ -31,7 +31,7 @@ contract RequestTest is Test {
   Vm.Wallet internal maker2;
 
   // Constants for EIP-712
-  bytes32 internal constant OFFER_TYPEHASH = 0x03babd1fc4fa7801a5697c2a66bd17ee1499bad98dbcb9901bdae479682e3229;
+  bytes32 internal constant OFFER_TYPEHASH = 0x3ded0c963332962cf2d273c8fb4f3e69f4ef33407ca72484fcebb56263ad0664;
   bytes32 internal constant TYPE_HASH =
     keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -253,12 +253,22 @@ contract RequestTest is Test {
   /*                    CONSUME TESTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function _createOffer(address maker_, uint256 amount, uint256 expectedReturn, uint256 nonce_, uint256 expiration)
-    internal
-    pure
-    returns (Offer memory)
-  {
-    return Offer({maker: maker_, amount: amount, expectedReturn: expectedReturn, nonce: nonce_, expiration: expiration});
+  function _createOffer(
+    address maker_,
+    uint256 amount,
+    uint256 expectedReturn,
+    uint256 nonce_,
+    uint256 expiration,
+    bool useCallback
+  ) internal pure returns (Offer memory) {
+    return Offer({
+      maker: maker_,
+      amount: amount,
+      expectedReturn: expectedReturn,
+      nonce: nonce_,
+      expiration: expiration,
+      useCallback: useCallback
+    });
   }
 
   function _computeDomainSeparator() internal view returns (bytes32) {
@@ -271,7 +281,15 @@ contract RequestTest is Test {
 
   function _signOffer(Offer memory offer, Vm.Wallet memory wallet) internal returns (bytes memory) {
     bytes32 structHash = keccak256(
-      abi.encode(OFFER_TYPEHASH, offer.maker, offer.amount, offer.expectedReturn, offer.nonce, offer.expiration)
+      abi.encode(
+        OFFER_TYPEHASH,
+        offer.maker,
+        offer.amount,
+        offer.expectedReturn,
+        offer.nonce,
+        offer.expiration,
+        offer.useCallback
+      )
     );
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _computeDomainSeparator(), structHash));
     (uint8 v, bytes32 r, bytes32 s) = vm.sign(wallet, digest);
@@ -1208,7 +1226,7 @@ contract RequestTest is Test {
     vm.warp(deadline + 1);
 
     // Consume should be blocked
-    Offer memory offer = _createOffer(address(0x123), 1_000_000e6, 100_000e6, 1, block.timestamp + 1 days);
+    Offer memory offer = _createOffer(address(0x123), 1_000_000e6, 100_000e6, 1, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
     vm.prank(owner);
