@@ -11,7 +11,7 @@ import {PositionManagerStorageData} from "../../libs/manager/PositionManagerType
 import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerView} from "../../libs/manager/LibPositionManagerView.sol";
 import {PM_BPS} from "../../libs/manager/LibPositionManagerConstants.sol";
-import {LibPositionExecutor} from "../../libs/manager/LibPositionExecutor.sol";
+import {LibPositionManagerExecutor} from "../../libs/manager/LibPositionManagerExecutor.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
@@ -20,7 +20,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 /// @dev Allows redistribution of collateral and debt across borrow positions.
 abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   using SafeTransferLib for address;
-  using LibPositionExecutor for address;
+  using LibPositionManagerExecutor for address;
   using LibPositionManagerView for PositionManagerStorageData;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -9,7 +9,7 @@ import {FeeData, PositionManagerStorageData} from "../libs/manager/PositionManag
 import {LibPositionManagerStorage} from "../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerOperations} from "../libs/manager/LibPositionManagerOperations.sol";
 import {LibPositionManagerView} from "../libs/manager/LibPositionManagerView.sol";
-import {LibPositionExecutor} from "../libs/manager/LibPositionExecutor.sol";
+import {LibPositionManagerExecutor} from "../libs/manager/LibPositionManagerExecutor.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -32,7 +32,7 @@ contract PositionManager is
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
-  using LibPositionExecutor for address;
+  using LibPositionManagerExecutor for address;
   using LibPositionManagerOperations for PositionManagerStorageData;
   using LibPositionManagerView for PositionManagerStorageData;
 

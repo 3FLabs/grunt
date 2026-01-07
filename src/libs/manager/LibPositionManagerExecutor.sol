@@ -4,11 +4,11 @@ pragma solidity ^0.8.20;
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
-/// @title LibPositionExecutor
+/// @title LibPositionManagerExecutor
 /// @notice Library providing low-level position interaction helpers.
 /// @dev Handles supply, withdraw, borrow, and repay operations on IBorrowPosition contracts.
-///      Use with `using LibPositionExecutor for address;`
-library LibPositionExecutor {
+///      Use with `using LibPositionManagerExecutor for address;`
+library LibPositionManagerExecutor {
   using SafeTransferLib for address;
 
   /// @notice Internal helper to safely approve a position contract for a token transfer before an operation.

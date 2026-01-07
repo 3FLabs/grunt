@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {PositionManagerStorageData} from "./PositionManagerTypes.sol";
-import {LibPositionExecutor} from "./LibPositionExecutor.sol";
+import {LibPositionManagerExecutor} from "./LibPositionManagerExecutor.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibPositionManagerOperations
@@ -12,7 +12,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 /// @dev Used with `using LibPositionManagerOperations for PositionManagerStorageData`.
 library LibPositionManagerOperations {
   using FixedPointMathLib for uint256;
-  using LibPositionExecutor for address;
+  using LibPositionManagerExecutor for address;
 
   /// @dev Processes deposit through the supply queue.
   /// @param ps The position manager storage data
