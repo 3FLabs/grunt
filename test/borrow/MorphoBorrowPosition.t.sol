@@ -2120,7 +2120,7 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(freeCollatLowLltv, COLLATERAL_AMOUNT, "All collateral should be free at any LLTV when no debt");
   }
 
-  function test_AvailableCollateral_NoPosition_ReturnsZero() public {
+  function test_AvailableCollateral_NoPosition_ReturnsZero() public view {
     // No collateral supplied, no debt
     uint256 freeCollat = borrowPosition.availableCollateral(DEFAULT_LLTV);
     assertEq(freeCollat, 0, "Available collateral should be 0 with no position");

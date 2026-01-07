@@ -59,7 +59,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     _mintDebt(minter, repayAmount);
 
     vm.prank(minter);
-    int256 sharesDelta = positionManager.withdraw(withdrawAmount, repayAmount);
+    positionManager.withdraw(withdrawAmount, repayAmount);
 
     assertEq(positionManager.debtAmount(), 0, "All debt should be repaid");
     assertEq(collateralToken.balanceOf(minter), withdrawAmount, "Should receive collateral");
