@@ -11,6 +11,10 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 library LibExecutor {
   using SafeTransferLib for address;
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       MODIFIERS                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Internal helper to safely approve a position contract for a token transfer before an operation.
   /// @dev This function is defined to reduce contract code size by centralizing approval logic, as SafeTransferLib.safeApprove can be verbose if inlined multiple times.
   /// @param position The address of the contract that will be approved to spend the token.
@@ -39,6 +43,10 @@ library LibExecutor {
     _;
     _approvesAfter(position, token);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       EXECUTORS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Supplies collateral to a borrow position.
   /// @param position The address of the IBorrowPosition contract
