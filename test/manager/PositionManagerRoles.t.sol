@@ -62,6 +62,25 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     assertEq(_lltv(), newLltv);
   }
 
+  function test_setLltv_revertOnZero() public {
+    vm.prank(owner);
+    vm.expectRevert(IPositionManager.InvalidLltv.selector);
+    positionManager.setLltv(0);
+  }
+
+  function test_setLltv_revertOnGreaterThanWad() public {
+    vm.prank(owner);
+    vm.expectRevert(IPositionManager.InvalidLltv.selector);
+    positionManager.setLltv(1e18 + 1);
+  }
+
+  function test_setLltv_allowsMaxWad() public {
+    vm.prank(owner);
+    positionManager.setLltv(1e18);
+
+    assertEq(_lltv(), 1e18);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  BORROW MODULE WHITELIST TESTS             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

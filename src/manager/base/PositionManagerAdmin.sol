@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
-import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
+import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE, WAD} from "../../libs/manager/LibConstants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
@@ -90,6 +90,9 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function setLltv(uint256 lltv_) external override onlyOwner {
+    // LLTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
+    if (lltv_ == 0 || lltv_ > WAD) revert IPositionManager.InvalidLltv();
+
     // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
     // forge-lint: disable-next-line(unsafe-typecast)
     LibStorage.positionManagerStorage().lltv = uint64(lltv_);

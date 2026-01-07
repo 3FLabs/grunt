@@ -86,6 +86,9 @@ interface IPositionManager {
   /// @notice Thrown when attempting to repay more debt than exists across all positions.
   error ExcessDebtRepay();
 
+  /// @notice Thrown when attempting to set an invalid LLTV value (zero or greater than WAD).
+  error InvalidLltv();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

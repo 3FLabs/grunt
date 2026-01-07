@@ -31,7 +31,7 @@ jobs:
         run: forge fmt --check
 
       - name: Run Forge build
-        run: forge build --sizes --skip Morpho
+        run: forge build --sizes
 
       - name: Run Forge tests
-        run: forge test -vvv --skip Morpho
+        run: forge test -vvv
