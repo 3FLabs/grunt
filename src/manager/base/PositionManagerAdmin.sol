@@ -4,11 +4,7 @@ pragma solidity ^0.8.20;
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/PositionManagerTypes.sol";
 import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
-import {
-  PM_ROLE_CURATOR,
-  PM_MAX_MANAGEMENT_FEE,
-  PM_MAX_PERFORMANCE_FEE
-} from "../../libs/manager/LibPositionManagerConstants.sol";
+import {PM_MAX_MANAGEMENT_FEE, PM_MAX_PERFORMANCE_FEE} from "../../libs/manager/LibPositionManagerConstants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
@@ -17,6 +13,13 @@ import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 /// @dev Manages borrow modules, supply/withdrawal queues, LLTV, and max rebalance loss.
 abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Role for setting supply/withdrawal queues.
+  uint256 internal constant _ROLE_CURATOR = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                             */
@@ -35,7 +38,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(PM_ROLE_CURATOR) {
+  function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(_ROLE_CURATOR) {
     PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
 
     delete ps.supplyQueue;
@@ -51,7 +54,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(PM_ROLE_CURATOR) {
+  function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(_ROLE_CURATOR) {
     PositionManagerStorageData storage ps = LibPositionManagerStorage.load();
 
     uint256 queueLength = queue.length;

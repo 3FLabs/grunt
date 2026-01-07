@@ -9,7 +9,6 @@ import {FeeData, PositionManagerStorageData} from "../libs/manager/PositionManag
 import {LibPositionManagerStorage} from "../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerOperations} from "../libs/manager/LibPositionManagerOperations.sol";
 import {LibPositionManagerView} from "../libs/manager/LibPositionManagerView.sol";
-import {PM_ROLE_MINTER} from "../libs/manager/LibPositionManagerConstants.sol";
 import {LibPositionExecutor} from "../libs/manager/LibPositionExecutor.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
@@ -36,6 +35,13 @@ contract PositionManager is
   using LibPositionExecutor for address;
   using LibPositionManagerOperations for PositionManagerStorageData;
   using LibPositionManagerView for PositionManagerStorageData;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Role for minting/burning shares via deposit/withdraw/burn.
+  uint256 internal constant _ROLE_MINTER = _ROLE_0;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INITIALIZATION                       */
@@ -175,7 +181,7 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function deposit(uint256 collateral, uint256 debt)
     external
-    onlyRoles(PM_ROLE_MINTER)
+    onlyRoles(_ROLE_MINTER)
     nonReentrant
     returns (int256 shares)
   {
@@ -217,7 +223,7 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function withdraw(uint256 collateral, uint256 debt)
     external
-    onlyRoles(PM_ROLE_MINTER)
+    onlyRoles(_ROLE_MINTER)
     nonReentrant
     returns (int256 shares)
   {
@@ -251,7 +257,7 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function burn(uint256 shares)
     external
-    onlyRoles(PM_ROLE_MINTER)
+    onlyRoles(_ROLE_MINTER)
     nonReentrant
     returns (uint256 collateral, uint256 debt)
   {

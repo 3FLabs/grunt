@@ -1,27 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-/// @title LibPositionManagerConstants
 /// @notice Shared constants used across the PositionManager contracts.
 /// @dev This file contains compile-time constants that are inlined by the compiler for gas efficiency.
 ///      Constants are defined at the file level (outside of contracts) to enable direct imports
 ///      and avoid contract deployment overhead as well as enabling use in assembly blocks.
-
-/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-/*                          ROLES                             */
-/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-/// @dev Role for minting/burning shares via deposit/withdraw/burn.
-/// @custom:value 1 (bit 0)
-uint256 constant PM_ROLE_MINTER = 1 << 0;
-
-/// @dev Role for setting supply/withdrawal queues.
-/// @custom:value 2 (bit 1)
-uint256 constant PM_ROLE_CURATOR = 1 << 1;
-
-/// @dev Role for executing rebalancing operations.
-/// @custom:value 4 (bit 2)
-uint256 constant PM_ROLE_REBALANCER = 1 << 2;
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                     SHARE CALCULATIONS                      */

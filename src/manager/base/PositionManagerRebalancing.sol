@@ -10,7 +10,7 @@ import {
 import {PositionManagerStorageData} from "../../libs/manager/PositionManagerTypes.sol";
 import {LibPositionManagerStorage} from "../../libs/manager/LibPositionManagerStorage.sol";
 import {LibPositionManagerView} from "../../libs/manager/LibPositionManagerView.sol";
-import {PM_ROLE_REBALANCER, PM_BPS} from "../../libs/manager/LibPositionManagerConstants.sol";
+import {PM_BPS} from "../../libs/manager/LibPositionManagerConstants.sol";
 import {LibPositionExecutor} from "../../libs/manager/LibPositionExecutor.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -24,6 +24,13 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   using LibPositionManagerView for PositionManagerStorageData;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Role for executing rebalancing operations.
+  uint256 internal constant _ROLE_REBALANCER = _ROLE_2;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       REBALANCING                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -31,7 +38,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   function rebalance(RebalancingData calldata data)
     external
     override
-    onlyRoles(PM_ROLE_REBALANCER)
+    onlyRoles(_ROLE_REBALANCER)
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
     // Accrue fees based on pre-rebalance state and capture totalAssets before operations
