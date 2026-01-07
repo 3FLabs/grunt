@@ -355,7 +355,8 @@ contract OfferReceiverTest is Test {
     nonce_ = bound(nonce_, 1, type(uint64).max);
     timeUntilExpiry = bound(timeUntilExpiry, 1, 365 days);
 
-    Offer memory offer = _createOffer(maker.addr, amount, expectedReturn, nonce_, block.timestamp + timeUntilExpiry, false);
+    Offer memory offer =
+      _createOffer(maker.addr, amount, expectedReturn, nonce_, block.timestamp + timeUntilExpiry, false);
     bytes memory signature = _signOffer(offer, maker);
 
     receiver.validateOffer(offer, signature);
@@ -411,7 +412,8 @@ contract OfferReceiverTest is Test {
     // Bound to be from 1 to block.timestamp to avoid underflow
     timeSinceExpiry = bound(timeSinceExpiry, 1, block.timestamp > 0 ? block.timestamp : 1);
 
-    Offer memory offer = _createOffer(maker.addr, amount, expectedReturn, nonce_, block.timestamp - timeSinceExpiry, false);
+    Offer memory offer =
+      _createOffer(maker.addr, amount, expectedReturn, nonce_, block.timestamp - timeSinceExpiry, false);
     bytes memory signature = _signOffer(offer, maker);
 
     vm.expectRevert(abi.encodeWithSelector(OfferExpired.selector));

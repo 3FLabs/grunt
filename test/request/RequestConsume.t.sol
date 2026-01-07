@@ -185,7 +185,8 @@ contract RequestConsumeTest is Test {
     // Fund the callback for both offers
     asset.mint(address(callback), offerAmount * 2);
 
-    Offer memory offer1 = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
+    Offer memory offer1 =
+      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
     bytes memory sig1 = _signOffer(offer1);
 
     vm.prank(owner);
@@ -194,7 +195,8 @@ contract RequestConsumeTest is Test {
     assertEq(ptVault.balanceOf(address(callback)), offerAmount);
 
     // Second offer (nonce must increase)
-    Offer memory offer2 = _createOffer(address(callback), offerAmount, expectedReturn, 2, block.timestamp + 1 days, true);
+    Offer memory offer2 =
+      _createOffer(address(callback), offerAmount, expectedReturn, 2, block.timestamp + 1 days, true);
     bytes memory sig2 = _signOffer(offer2);
 
     vm.prank(owner);
@@ -345,7 +347,8 @@ contract RequestConsumeTest is Test {
     asset.mint(address(callback), offerAmount * numConsumes);
 
     for (uint256 i = 1; i <= numConsumes; i++) {
-      Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, i, block.timestamp + 1 days, true);
+      Offer memory offer =
+        _createOffer(address(callback), offerAmount, expectedReturn, i, block.timestamp + 1 days, true);
       bytes memory signature = _signOffer(offer);
 
       vm.prank(owner);
@@ -418,7 +421,8 @@ contract RequestConsumeTest is Test {
     // Fund the callback (maker provides funds)
     asset.mint(address(callback), consumeAmount);
 
-    Offer memory offer = _createOffer(address(callback), consumeAmount, consumeReturn, 1, block.timestamp + 1 days, true);
+    Offer memory offer =
+      _createOffer(address(callback), consumeAmount, consumeReturn, 1, block.timestamp + 1 days, true);
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
