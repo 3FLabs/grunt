@@ -140,7 +140,7 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
     assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT, "Position2 should have all debt");
   }
 
-  function test_deposit_emptySupplyQueue() public {
+  function test_deposit_emptySupplyQueue_revertOnCollateral() public {
     // Clear supply queue
     SupplyQueueEntry[] memory emptyQueue = new SupplyQueueEntry[](0);
     vm.prank(curator);
@@ -148,12 +148,10 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
 
     _mintCollateral(minter, COLLATERAL_AMOUNT);
 
-    // Deposit with no debt should still work (no positions to deposit to though)
+    // Deposit with collateral should revert when supply queue is empty
     vm.prank(minter);
-    int256 shares = positionManager.deposit(COLLATERAL_AMOUNT, 0);
-
-    // Shares should be 0 since no collateral was actually deposited anywhere
-    assertEq(shares, 0, "No shares minted with empty queue and no debt");
+    vm.expectRevert(IPositionManager.EmptySupplyQueue.selector);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
   }
 
   function test_deposit_emptySupplyQueue_withDebt_reverts() public {

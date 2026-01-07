@@ -59,6 +59,9 @@ interface IPositionManager {
   /// @notice Thrown when the supply queue runs out of capacity during a deposit.
   error InsufficientBorrowCapacity();
 
+  /// @notice Thrown when attempting to deposit collateral but the supply queue is empty.
+  error EmptySupplyQueue();
+
   /// @notice Thrown when attempting to withdraw more collateral than is available.
   error InsufficientAvailableCollateral();
 

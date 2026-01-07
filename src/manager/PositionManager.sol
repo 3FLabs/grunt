@@ -201,7 +201,8 @@ contract PositionManager is
     // Process deposits through supply queue
     if (debt == 0) {
       // No debt: deposit all collateral to first position
-      if (ps.supplyQueue.length > 0 && collateral > 0) {
+      if (collateral > 0) {
+        if (ps.supplyQueue.length == 0) revert EmptySupplyQueue();
         ps.supplyQueue[0].position.supply(ps.collateralAsset, collateral);
       }
     } else {
