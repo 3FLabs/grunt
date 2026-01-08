@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry, RebalancingData} from "../interfaces/manager/IPositionManager.sol";
 import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerShares} from "./base/PositionManagerShares.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
@@ -299,6 +299,19 @@ contract PositionManager is
     _updateSnapshot();
 
     emit Burn(msg.sender, shares, collateral, debt);
+  }
+
+  /// @inheritdoc IPositionManager
+  /// @dev Protected by nonReentrant to prevent malicious modules from manipulating
+  ///      guard state (pause/unpause) mid-transaction via callbacks.
+  function rebalance(RebalancingData calldata data, address receiver)
+    public
+    override(IPositionManager, PositionManagerRebalancing)
+    onlyRoles(REBALANCER_ROLE)
+    nonReentrant
+    returns (uint256 collateralExcess, uint256 debtExcess)
+  {
+    return super.rebalance(data, receiver);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

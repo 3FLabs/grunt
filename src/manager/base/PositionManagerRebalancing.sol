@@ -37,7 +37,8 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function rebalance(RebalancingData calldata data, address receiver)
-    external
+    public
+    virtual
     override
     onlyRoles(REBALANCER_ROLE)
     returns (uint256 collateralExcess, uint256 debtExcess)

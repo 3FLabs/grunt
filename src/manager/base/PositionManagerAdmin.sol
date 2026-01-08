@@ -106,6 +106,8 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
+  /// @dev Setting transferGuard_ to address(0) disables transfer restrictions,
+  ///      allowing all transfers without validation. This is intentional behavior.
   function setTransferGuard(address transferGuard_) external override onlyOwner {
     LibStorage.positionManagerStorage().transferGuard = transferGuard_;
     emit IPositionManager.TransferGuardSet(transferGuard_);

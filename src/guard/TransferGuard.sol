@@ -46,6 +46,8 @@ struct TokenConfig {
 ///      - Maximum threshold: ~3.09e32 (more than enough for any token)
 ///      - When setting threshold, pass the actual threshold value; it will be divided by 1e6
 ///      - Thresholds are rounded down to the nearest 1e6
+///      - IMPORTANT: Thresholds below THRESHOLD_SCALE (1e6) round down to 0, effectively disabling
+///        large transfer restrictions. To enforce a threshold, use values >= 1e6.
 ///
 ///      **Address status behavior:**
 ///      - NONE: Check validator contract. If validator is address(0), allow transfer.
@@ -105,6 +107,14 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param threshold The actual (unscaled) threshold value
   /// @param validator The validator contract address
   event TokenConfigSet(address indexed token, bool paused, uint256 threshold, address validator);
+
+  /// @notice Emitted when a token is paused.
+  /// @param token The token that was paused
+  event TokenPaused(address indexed token);
+
+  /// @notice Emitted when a token is unpaused.
+  /// @param token The token that was unpaused
+  event TokenUnpaused(address indexed token);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -229,16 +239,14 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param token The token to pause
   function pause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
     tokenConfig[token].paused = true;
-    uint256 actualThreshold = uint256(tokenConfig[token].scaledThreshold) * THRESHOLD_SCALE;
-    emit TokenConfigSet(token, true, actualThreshold, tokenConfig[token].validator);
+    emit TokenPaused(token);
   }
 
   /// @notice Unpauses transfers for a token.
   /// @param token The token to unpause
   function unpause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
     tokenConfig[token].paused = false;
-    uint256 actualThreshold = uint256(tokenConfig[token].scaledThreshold) * THRESHOLD_SCALE;
-    emit TokenConfigSet(token, false, actualThreshold, tokenConfig[token].validator);
+    emit TokenUnpaused(token);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -248,9 +256,11 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Sets the full configuration for a token.
   /// @dev The threshold is scaled down by THRESHOLD_SCALE (1e6) for storage.
   ///      Effective threshold will be rounded down to the nearest multiple of THRESHOLD_SCALE.
+  ///      WARNING: Values below THRESHOLD_SCALE (1e6) will round to 0, disabling large transfer restrictions.
   /// @param token The token to configure
   /// @param paused_ Whether transfers should be paused
   /// @param threshold_ Actual transfer threshold (0 to disable). Will be divided by THRESHOLD_SCALE for storage.
+  ///                   Must be >= THRESHOLD_SCALE (1e6) to take effect, or 0 to disable.
   /// @param validator_ Validator contract for NONE status addresses (address(0) to allow by default)
   function setTokenConfig(address token, bool paused_, uint256 threshold_, address validator_) external onlyOwner {
     // Scale down threshold for storage (rounds down, reverts on overflow)
