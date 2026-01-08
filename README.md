@@ -758,6 +758,27 @@ address pm = factory.createPositionManager(
 );
 ```
 
+### Transfer Guard
+
+The Position Manager supports an optional `TransferGuard` for compliance controls on share transfers. When set, all transfers (including mints and burns) are validated through the guard.
+
+**Setting the Guard:**
+```solidity
+// Owner sets the transfer guard (address(0) disables)
+positionManager.setTransferGuard(address(guard));
+
+// Query current guard
+(,, address transferGuard) = positionManager.config();
+```
+
+**Pause Integration:**
+The guard's pause status is also checked before rebalancing operations. When paused:
+- All share transfers are blocked
+- Deposits/withdrawals are blocked (they mint/burn shares)
+- Rebalancing operations revert with `Paused()`
+
+See the [Transfer Guard](#transfer-guard-1) section for full documentation.
+
 ### MorphoRebalancer
 
 A standalone rebalancer contract that uses Morpho flash loans to execute rebalancing operations without requiring upfront capital:
@@ -803,3 +824,196 @@ USCCFund integrates Superstate's USCC using a single-order state machine:
 ### WrappedAsset (wUSCC)
 
 `WrappedAsset` is an ERC20 wrapper minted/burned by authorized issuers. Multiple USCCFund instances can share the same wUSCC token; each new fund must be granted `ISSUER_ROLE`.
+
+## Transfer Guard
+
+The `TransferGuard` contract provides compliance controls for token transfers, supporting blocklists, whitelists, large transfer thresholds, and pause functionality.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TRANSFER GUARD ARCHITECTURE                    │
+└─────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────┐
+  │  TransferGuardFactory    │
+  │                          │
+  │  BEACON ─────────────────┼──> UpgradeableBeacon ──> TransferGuard Implementation
+  └──────────────────────────┘
+             │
+             │ createTransferGuard()
+             ▼
+      ┌────────────────┐
+      │ Guard Proxy    │
+      │ (ERC1967)      │──> delegates to beacon
+      └────────────────┘
+             │
+             │ canTransfer()
+             ▼
+  ┌──────────────────────────┐
+  │    PositionManager       │
+  │                          │
+  │  _beforeTokenTransfer()  │──> Validates via guard
+  │  rebalance()             │──> Checks pause status
+  └──────────────────────────┘
+```
+
+### Address Status
+
+Each address can have one of four statuses per guard:
+
+| Status | Value | Behavior |
+|--------|-------|----------|
+| `NONE` | 0 | Default - subject to threshold checks and validator |
+| `WHITELIST` | 1 | Allowed for transfers below threshold |
+| `BLOCKLIST` | 2 | Always blocked from transfers |
+| `WHITELIST_ALL_AMOUNTS` | 3 | Allowed for any transfer amount |
+
+### Token Configuration
+
+Each token registered with the guard has:
+- **paused**: Whether all transfers are blocked
+- **threshold**: Minimum amount considered a "large transfer" (scaled by 1e6)
+- **validator**: Optional external contract for NONE-status addresses
+
+```solidity
+// Set token configuration
+guard.setTokenConfig(
+    tokenAddress,
+    false,           // paused
+    1_000_000e18,    // threshold (1M tokens)
+    address(0)       // validator (none)
+);
+
+// Pause/unpause a token
+guard.pause(tokenAddress);
+guard.unpause(tokenAddress);
+```
+
+**Threshold Scaling:**
+Thresholds are stored scaled down by `THRESHOLD_SCALE` (1e6) for storage efficiency:
+- Minimum granularity: 1e6 (values below this round to 0, disabling the threshold)
+- Maximum threshold: ~3.09e32
+
+### Transfer Validation Logic
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TRANSFER VALIDATION FLOW                       │
+└─────────────────────────────────────────────────────────────────┘
+
+canTransfer(token, from, to, amount)
+           │
+           ▼
+    ┌──────────────┐
+    │ Token Paused?│──Yes──> BLOCK
+    └──────┬───────┘
+           │ No
+           ▼
+    ┌──────────────┐
+    │ Is Mint?     │──Yes──> Check only 'to' address
+    │ (from == 0)  │
+    └──────┬───────┘
+           │ No
+           ▼
+    ┌──────────────┐
+    │ Is Burn?     │──Yes──> Check only 'from' address
+    │ (to == 0)    │
+    └──────┬───────┘
+           │ No (Regular Transfer)
+           ▼
+    Check both 'from' AND 'to' addresses
+           │
+           ▼
+    ┌──────────────────────────────────┐
+    │ For each address:                │
+    │                                  │
+    │ BLOCKLIST ──────────────> BLOCK  │
+    │ WHITELIST_ALL_AMOUNTS ──> ALLOW  │
+    │ WHITELIST + small ──────> ALLOW  │
+    │ WHITELIST + large ──────> BLOCK  │
+    │ NONE + no validator ────> ALLOW  │
+    │ NONE + validator ───────> ASK    │
+    └──────────────────────────────────┘
+```
+
+### Role-Based Access Control
+
+| Role | Bit Flag | Permission |
+|------|----------|------------|
+| `PAUSER_ROLE` | `1 << 1` | Pause/unpause tokens |
+| `COMPLIANCE_ROLE` | `1 << 0` | Set address statuses |
+
+The **owner** has exclusive control over:
+- Setting token configuration (threshold, validator)
+- Granting/revoking roles
+
+### External Validator
+
+For addresses with `NONE` status, an optional validator contract can be configured:
+
+```solidity
+interface ITransferGuardValidator {
+    function isAuthorized(address account) external view returns (bool);
+}
+
+// Set validator for a token
+guard.setTokenConfig(token, false, threshold, validatorAddress);
+```
+
+If no validator is set (`address(0)`), NONE-status addresses are allowed by default.
+
+### Usage Example
+
+```solidity
+// Deploy guard via factory
+TransferGuardFactory factory = new TransferGuardFactory(beaconOwner);
+address guard = factory.createTransferGuard(guardOwner);
+
+// Configure the guard
+TransferGuard(guard).setTokenConfig(
+    address(positionManager),
+    false,        // not paused
+    100_000e18,   // 100k threshold
+    address(0)    // no validator
+);
+
+// Set address statuses
+TransferGuard(guard).setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
+TransferGuard(guard).setAddressStatus(whitelistedUser, AddressStatus.WHITELIST_ALL_AMOUNTS);
+
+// Batch updates
+address[] memory accounts = new address[](2);
+accounts[0] = user1;
+accounts[1] = user2;
+AddressStatus[] memory statuses = new AddressStatus[](2);
+statuses[0] = AddressStatus.WHITELIST;
+statuses[1] = AddressStatus.WHITELIST;
+TransferGuard(guard).setAddressStatusBatch(accounts, statuses);
+
+// Connect to Position Manager
+positionManager.setTransferGuard(guard);
+```
+
+### TransferGuardFactory
+
+Deploys TransferGuard instances using the **beacon proxy pattern**:
+
+```solidity
+// Deploy factory
+TransferGuardFactory factory = new TransferGuardFactory(beaconOwner);
+
+// Create a new guard
+address guard = factory.createTransferGuard(owner);
+
+// Upgrade all guards (beacon owner only)
+UpgradeableBeacon(factory.BEACON()).upgradeTo(newImplementation);
+```
+
+### Security Considerations
+
+1. **Centralization Risk**: Guard owner can blocklist any address. Use multisig/timelock for production.
+2. **Reentrancy Protection**: Position Manager's `rebalance` function uses `nonReentrant` to prevent guard state manipulation via callbacks.
+3. **Validator Trust**: External validators are called during transfers. Only use trusted validator contracts.
+4. **Threshold Granularity**: Thresholds below 1e6 round to 0, effectively disabling large transfer restrictions.
