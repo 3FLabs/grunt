@@ -21,15 +21,15 @@ enum AddressStatus {
 }
 
 /// @notice Per-token configuration packed into a single storage slot.
+/// @param paused Whether transfers are paused for this token.
+/// @param scaledThreshold Transfer threshold scaled down by THRESHOLD_SCALE. Actual threshold = scaledThreshold * THRESHOLD_SCALE.
+/// @param validator Validator contract for NONE status addresses. address(0) = allow by default.
 /// @dev Layout: paused (8 bits) + scaledThreshold (88 bits) + validator (160 bits) = 256 bits
 ///      The threshold is stored scaled down by THRESHOLD_SCALE (1e6) to fit in 88 bits.
 ///      Max representable threshold = 2^88 * 1e6 ≈ 3.09e32, which supports any realistic token amount.
 struct TokenConfig {
-  /// @notice Whether transfers are paused for this token.
   bool paused;
-  /// @notice Transfer threshold scaled down by THRESHOLD_SCALE. Actual threshold = scaledThreshold * THRESHOLD_SCALE.
   uint88 scaledThreshold;
-  /// @notice Validator contract for NONE status addresses. address(0) = allow by default.
   address validator;
 }
 
