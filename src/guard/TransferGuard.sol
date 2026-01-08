@@ -50,7 +50,7 @@ struct TokenConfig {
 ///        large transfer restrictions. To enforce a threshold, use values >= 1e6.
 ///
 ///      **Address status behavior:**
-///      - NONE: Check validator contract. If validator is address(0), allow transfer.
+///      - NONE: Check validator contract. If validator is address(0), blocked if amount >= threshold.
 ///      - WHITELIST: Allowed for amounts below threshold. Blocked if amount >= threshold.
 ///      - BLOCKLIST: Always blocked.
 ///      - WHITELIST_ALL_AMOUNTS: Always allowed (for large transfers).
