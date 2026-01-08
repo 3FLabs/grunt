@@ -16,8 +16,9 @@ import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Inte
 import {Order, State, Id, Mode} from "../libs/Order.sol";
 
 /// @notice Wrapper of Superstate USCC fund.
-/// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
-///        The USCC tokens are held by this contract. Only wUSCC are sent to users.
+/// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Multiple USCCFund instances can mint wUSCC.
+///        The underlying USCC tokens are held centrally by the wUSCC contract (not by individual funds).
+///        This enables shared state across all funds via wUSCC.totalSupply().
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
@@ -297,8 +298,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       // Depositing: transfer USDC to recipient to mint USCC
       USDC.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
-      // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
-      IWrappedAsset(WUSCC).burn(msg.sender, order.input);
+      // Redeeming: burn wUSCC (sends USCC to this contract), then call offchain redeem on USCC
+      IWrappedAsset(WUSCC).burn(msg.sender, address(this), order.input);
       ISuperstateToken(USCC).offchainRedeem(order.input);
     }
 
@@ -326,7 +327,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       USDC.safeTransfer(msg.sender, _amount);
     } else {
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      // Mint wUSCC back to depositor (pulls USCC from this contract)
+      USCC.safeApprove(WUSCC, _amount);
+      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
@@ -347,8 +350,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_currentState != State.UNLOCKING) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
-      // Mint wUSCC to receiver and keep USCC in the contract
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
+      USCC.safeApprove(WUSCC, _amount);
+      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
       USDC.safeTransfer(msg.sender, _amount);
@@ -455,7 +459,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     uint256 _latestPrice = _answer.toUint256();
 
-    return USCC.balanceOf(address(this)).mulDiv(_latestPrice, _SCALED_UNIT);
+    return WUSCC.totalSupply().mulDiv(_latestPrice, _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund

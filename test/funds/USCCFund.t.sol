@@ -79,7 +79,7 @@ contract USCCFundTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
@@ -264,12 +264,11 @@ contract USCCFundTest is Test {
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), order.input);
+    // Mint wUSCC to this test contract (wraps USCC into wUSCC contract)
+    _mintWuscc(address(this), order.input);
 
-    // Mint USCC to fund so it can burn it during offchainRedeem
-    // In real scenario, fund would have USCC from previous deposits
-    uscc.mint(address(fund), order.input);
+    // Approve fund to burn wUSCC from this contract
+    wuscc.approve(address(fund), order.input);
 
     uint256 balanceBefore = wuscc.balanceOf(address(this));
     (State state,) = fund.commit(order);
@@ -339,10 +338,8 @@ contract USCCFundTest is Test {
   function test_Unlock_RedeemSuccess() public {
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.prank(owner);
-    wuscc.mint(address(this), order.input);
-    // Mint USCC to fund so it can burn during offchainRedeem
-    uscc.mint(address(fund), order.input);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
     fund.commit(order);
     usdc.mint(address(fund), order.output);
 
@@ -421,19 +418,19 @@ contract USCCFundTest is Test {
   function test_Recover_RedeemSuccess() public {
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.prank(owner);
-    wuscc.mint(address(this), order.input);
-    // Mint USCC to fund so it can burn during offchainRedeem
-    uscc.mint(address(fund), order.input);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
     fund.commit(order);
 
     vm.prank(owner);
     fund.recovering();
+    // Superstate returns USCC to fund
     uscc.mint(address(fund), order.input);
 
     (State state, uint256 amount) = fund.recover(order);
     assertEq(uint256(state), uint256(State.ENDED), "state");
     assertEq(amount, order.input, "amount");
+    // User receives wUSCC back (their original input is re-wrapped)
     assertEq(wuscc.balanceOf(address(this)), order.input, "minted");
   }
 
@@ -664,7 +661,8 @@ contract USCCFundTest is Test {
   }
 
   function test_TotalAssets_ValidPrice() public {
-    uscc.mint(address(fund), 5 * ONE_USDC);
+    // totalAssets is now based on wUSCC.totalSupply() * oracle price
+    _mintWuscc(address(this), 5 * ONE_USDC);
     uint256 totalAssets = fund.totalAssets();
     assertEq(totalAssets, 5 * ONE_USDC, "totalAssets");
   }
@@ -732,8 +730,7 @@ contract USCCFundTest is Test {
   }
 
   function test_MaxRedeem_ReturnsBalance() public {
-    vm.prank(owner);
-    wuscc.mint(address(this), ONE_USDC);
+    _mintWuscc(address(this), ONE_USDC);
     assertEq(fund.maxRedeem(address(this)), ONE_USDC, "max redeem");
   }
 
@@ -798,10 +795,8 @@ contract USCCFundTest is Test {
   function test_StateMachine_FullRedeemFlow() public {
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.prank(owner);
-    wuscc.mint(address(this), order.input);
-    // Mint USCC to fund so it can burn during offchainRedeem
-    uscc.mint(address(fund), order.input);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
     fund.commit(order);
     usdc.mint(address(fund), order.output);
     fund.unlock(order);
@@ -917,18 +912,19 @@ contract USCCFundTest is Test {
     // Unlock should transfer the full excess amount
     fund.unlock(order);
 
-    // User receives all the excess
+    // User receives all the excess as wUSCC
     assertEq(wuscc.balanceOf(address(this)), excessAmount, "user receives excess wUSCC");
-    assertEq(uscc.balanceOf(address(fund)), excessAmount, "fund holds excess USCC");
+    // USCC is now held by wUSCC contract (not the fund)
+    assertEq(uscc.balanceOf(address(wuscc)), excessAmount, "wUSCC holds USCC");
+    assertEq(uscc.balanceOf(address(fund)), 0, "fund has no USCC");
   }
 
   function test_Edge_ExcessFunds_RedeemUnlock() public {
     // Test that excess USDC received on redeem is transferred to user
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.prank(owner);
-    wuscc.mint(address(this), order.input);
-    uscc.mint(address(fund), order.input);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
     fund.commit(order);
 
     // Superstate sends 10% more USDC than expected
@@ -973,9 +969,8 @@ contract USCCFundTest is Test {
     // Test that excess USCC returned during recovery is transferred to user
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.prank(owner);
-    wuscc.mint(address(this), order.input);
-    uscc.mint(address(fund), order.input);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
     fund.commit(order);
 
     // Set to recovering state (owner can call this)
@@ -1042,5 +1037,14 @@ contract USCCFundTest is Test {
 
   function _cachedBalance() internal view returns (uint256) {
     return uint256(vm.load(address(fund), bytes32(uint256(_MAIN_STORAGE_SLOT) + 6)));
+  }
+
+  /// @dev Helper to mint wUSCC to a recipient. Wraps USCC into wUSCC.
+  function _mintWuscc(address to, uint256 amount) internal {
+    uscc.mint(owner, amount);
+    vm.prank(owner);
+    uscc.approve(address(wuscc), amount);
+    vm.prank(owner);
+    wuscc.mint(owner, to, amount);
   }
 }

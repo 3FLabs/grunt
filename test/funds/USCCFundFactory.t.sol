@@ -46,7 +46,7 @@ contract USCCFundFactoryTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
   }
