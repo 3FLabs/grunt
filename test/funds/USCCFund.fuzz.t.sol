@@ -56,6 +56,10 @@ contract USCCFundFuzzTest is Test {
     uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
     wuscc.grantRoles(address(fund), issuerRole);
+
+    uint256 senderRole = wuscc.SENDER_ROLE();
+    vm.prank(owner);
+    wuscc.grantRoles(address(this), senderRole);
   }
 
   function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(
@@ -786,6 +790,10 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
     wuscc.grantRoles(address(fund), issuerRole);
+
+    uint256 senderRole = wuscc.SENDER_ROLE();
+    vm.prank(owner);
+    wuscc.grantRoles(address(handler), senderRole);
 
     uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);

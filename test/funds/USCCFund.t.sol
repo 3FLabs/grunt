@@ -88,6 +88,10 @@ contract USCCFundTest is Test {
     uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
     wuscc.grantRoles(address(fund), issuerRole);
+
+    uint256 senderRole = wuscc.SENDER_ROLE();
+    vm.prank(owner);
+    wuscc.grantRoles(address(this), senderRole);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

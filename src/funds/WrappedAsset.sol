@@ -12,7 +12,8 @@ import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 /// @dev This contract holds the underlying asset and mints/burns wrapper tokens.
 ///      - mint(): Pulls underlying from `from`, mints wrapper to `to`
 ///      - burn(): Burns wrapper from `from`, sends underlying to `to`
-///      Multiple issuers (e.g., USCCFund instances) can mint/burn via ISSUER_ROLE.
+///      Multiple issuers (e.g., USCCFund instances) can mint via ISSUER_ROLE.
+///      Transfers (including burns) require the token `from` address to have SENDER_ROLE.
 ///      The underlying asset is held centrally in this contract.
 contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   using SafeTransferLib for address;
@@ -23,6 +24,9 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
 
   /// @notice Role for asset issuers authorized to mint tokens.
   uint256 public constant ISSUER_ROLE = _ROLE_0;
+
+  /// @notice Role for addresses authorized to send (transfer/burn) wrapper tokens.
+  uint256 public constant SENDER_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
@@ -75,7 +79,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @notice Initializes the WrappedAsset contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
   /// @param owner_ The address that will own this contract (managing roles).
-  /// @param initialIssuer_ The address to be granted the ISSUER_ROLE initially.
+  /// @param initialIssuer_ The address to be granted the ISSUER_ROLE and SENDER_ROLE initially.
   /// @param underlying_ The address of the underlying asset to wrap.
   /// @param symbol_ The symbol of the wrapped asset token.
   /// @param name_ The name of the wrapped asset token.
@@ -95,7 +99,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
     $.underlying = underlying_;
 
     _initializeOwner(owner_);
-    _setRoles(initialIssuer_, ISSUER_ROLE);
+    _setRoles(initialIssuer_, ISSUER_ROLE | SENDER_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -152,5 +156,16 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @inheritdoc ERC20
   function decimals() public view override returns (uint8) {
     return _wrappedAssetStorage().decimals;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          ERC20 HOOK                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Enforces that token transfers (including burns) can only originate from addresses with SENDER_ROLE.
+  ///      Minting is excluded (`from == address(0)`).
+  function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+    if (from != address(0) && !hasAllRoles(from, SENDER_ROLE)) revert Unauthorized();
+    super._beforeTokenTransfer(from, to, amount);
   }
 }
