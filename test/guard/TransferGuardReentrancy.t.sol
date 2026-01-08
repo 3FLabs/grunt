@@ -118,11 +118,7 @@ contract ReentrantBorrowModule is IBorrowPosition {
     if (shouldReenter && !reentryAttempted) {
       reentryAttempted = true;
       // Attempt to re-enter rebalance - this should fail with reentrancy guard
-      RebalancingData memory data = RebalancingData({
-        collateral: 0,
-        debt: 0,
-        operations: new RebalancingOperation[](0)
-      });
+      RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: new RebalancingOperation[](0)});
       try positionManager.rebalance(data, rebalancer) {
         reentrySucceeded = true;
       } catch {
@@ -133,15 +129,42 @@ contract ReentrantBorrowModule is IBorrowPosition {
 
   function borrow(uint256) external override {}
   function repay(uint256) external override {}
-  function borrowAsset() external pure override returns (address) { return address(0); }
-  function collateralAsset() external pure override returns (address) { return address(0); }
-  function totalBorrowed() external pure override returns (uint256) { return 0; }
-  function totalCollateral() external pure override returns (uint256) { return 0; }
-  function totalCollateralQuoted() external pure override returns (uint256) { return 0; }
-  function isHealthy(uint256) external pure override returns (bool) { return true; }
-  function maxBorrow(uint256) external pure override returns (uint256) { return 0; }
-  function availableLiquidity() external pure override returns (uint256) { return 0; }
-  function availableCollateral(uint256) external pure override returns (uint256) { return 0; }
+
+  function borrowAsset() external pure override returns (address) {
+    return address(0);
+  }
+
+  function collateralAsset() external pure override returns (address) {
+    return address(0);
+  }
+
+  function totalBorrowed() external pure override returns (uint256) {
+    return 0;
+  }
+
+  function totalCollateral() external pure override returns (uint256) {
+    return 0;
+  }
+
+  function totalCollateralQuoted() external pure override returns (uint256) {
+    return 0;
+  }
+
+  function isHealthy(uint256) external pure override returns (bool) {
+    return true;
+  }
+
+  function maxBorrow(uint256) external pure override returns (uint256) {
+    return 0;
+  }
+
+  function availableLiquidity() external pure override returns (uint256) {
+    return 0;
+  }
+
+  function availableCollateral(uint256) external pure override returns (uint256) {
+    return 0;
+  }
 }
 
 /// @title TransferGuardReentrancyTest
@@ -211,10 +234,7 @@ contract TransferGuardReentrancyTest is Test {
     );
 
     // Deploy malicious module
-    maliciousModule = new MaliciousBorrowModule(
-      address(guard),
-      address(positionManager)
-    );
+    maliciousModule = new MaliciousBorrowModule(address(guard), address(positionManager));
 
     // Grant PAUSER_ROLE to malicious module (simulating compromised trusted module)
     vm.prank(guardOwner);
@@ -272,16 +292,10 @@ contract TransferGuardReentrancyTest is Test {
     // Create rebalance operation that triggers the malicious callback
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);
     ops[0] = RebalancingOperation({
-      position: address(maliciousModule),
-      amount: 0,
-      operationType: RebalancingOperationType.WITHDRAW
+      position: address(maliciousModule), amount: 0, operationType: RebalancingOperationType.WITHDRAW
     });
 
-    RebalancingData memory data = RebalancingData({
-      collateral: 0,
-      debt: 0,
-      operations: ops
-    });
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     // Execute rebalance - this should succeed even though guard gets paused mid-tx
     vm.prank(rebalancer);
@@ -305,11 +319,7 @@ contract TransferGuardReentrancyTest is Test {
     assertTrue(guard.paused(address(positionManager)), "Guard should be paused");
 
     // Create empty rebalance operation
-    RebalancingData memory data = RebalancingData({
-      collateral: 0,
-      debt: 0,
-      operations: new RebalancingOperation[](0)
-    });
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: new RebalancingOperation[](0)});
 
     // Rebalance should fail because guard is paused at the start
     vm.prank(rebalancer);
@@ -348,10 +358,7 @@ contract TransferGuardReentrancyTest is Test {
   /// @dev A malicious module that tries to re-enter rebalance will fail due to nonReentrant
   function test_reentrancyGuardPreventsReentry() public {
     // Deploy reentrant module
-    ReentrantBorrowModule reentrantModule = new ReentrantBorrowModule(
-      address(positionManager),
-      rebalancer
-    );
+    ReentrantBorrowModule reentrantModule = new ReentrantBorrowModule(address(positionManager), rebalancer);
 
     // Add reentrant module and grant it rebalancer role (to attempt re-entry)
     vm.startPrank(owner);
@@ -365,16 +372,10 @@ contract TransferGuardReentrancyTest is Test {
     // Create rebalance operation that triggers the reentrant callback
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);
     ops[0] = RebalancingOperation({
-      position: address(reentrantModule),
-      amount: 0,
-      operationType: RebalancingOperationType.WITHDRAW
+      position: address(reentrantModule), amount: 0, operationType: RebalancingOperationType.WITHDRAW
     });
 
-    RebalancingData memory data = RebalancingData({
-      collateral: 0,
-      debt: 0,
-      operations: ops
-    });
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     // Execute rebalance - the module will try to re-enter but fail
     vm.prank(rebalancer);
