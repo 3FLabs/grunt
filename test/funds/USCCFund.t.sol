@@ -23,7 +23,6 @@ contract USCCFundTest is Test {
   error InvalidState(State actual);
   error InvalidOrder(Id orderId);
   error NotAllowedSuperstate();
-  error InvalidRoles(uint256 roles);
   error ChainlinkInvalidAnswer();
   error ChainlinkIncompleteRound();
   error ChainlinkStaleRound();
@@ -830,26 +829,6 @@ contract USCCFundTest is Test {
   /*                            ROLES                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_Roles_DepositorImmutable() public {
-    uint256 depositorRole = fund.DEPOSITOR_ROLE();
-    vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, depositorRole));
-    fund.grantRoles(outsider, depositorRole);
-  }
-
-  function test_Roles_DepositorNotRevokable() public {
-    uint256 depositorRole = fund.DEPOSITOR_ROLE();
-    vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, depositorRole));
-    fund.revokeRoles(address(this), depositorRole);
-  }
-
-  function test_Roles_DepositorNotRenounceable() public {
-    uint256 depositorRole = fund.DEPOSITOR_ROLE();
-    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, depositorRole));
-    fund.renounceRoles(depositorRole);
-  }
-
   function test_Roles_OperatorGrantable() public {
     uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
@@ -861,15 +840,6 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     fund.transferOwnership(operator);
     assertEq(fund.owner(), operator, "new owner");
-  }
-
-  function test_Roles_DepositorInCombinedRoles() public {
-    uint256 depositorRole = fund.DEPOSITOR_ROLE();
-    uint256 operatorRole = fund.OPERATOR_ROLE();
-    uint256 combinedRoles = depositorRole | operatorRole;
-    vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidRoles.selector, combinedRoles));
-    fund.grantRoles(outsider, combinedRoles);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

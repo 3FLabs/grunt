@@ -112,9 +112,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
 
-  /// @notice Thrown when attempting to grant invalid roles (e.g., immutable roles).
-  error InvalidRoles(uint256 roles);
-
   /// @notice Thrown when the Chainlink oracle returns a non-positive price.
   /// @dev Indicates an invalid or paused oracle feed, or corrupted round data.
   ///      Triggered if `answer <= 0` from `latestRoundData()`.
@@ -289,6 +286,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial commits, always goes to PROCESSING.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
     UsccFundStorage storage $ = _usccFundStorage();
     Id _currentOrder = $.currentOrder;
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
@@ -317,6 +316,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED.
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
     UsccFundStorage storage $ = _usccFundStorage();
     Id _currentOrder = $.currentOrder;
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
@@ -342,6 +343,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED.
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
     UsccFundStorage storage $ = _usccFundStorage();
     Id _currentOrder = $.currentOrder;
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
@@ -536,26 +539,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
-  }
-
-  /// @inheritdoc OwnableRoles
-  /// @dev Set DEPOSITOR_ROLE as immutable (only set in initialize).
-  function _grantRoles(address user, uint256 roles) internal override {
-    // Check if DEPOSITOR_ROLE is included in the roles bitmap
-    if ((roles & DEPOSITOR_ROLE) != 0) {
-      revert InvalidRoles(roles);
-    }
-    _updateRoles(user, roles, true);
-  }
-
-  /// @inheritdoc OwnableRoles
-  /// @dev Prevent DEPOSITOR_ROLE from being removed after initialization.
-  function _removeRoles(address user, uint256 roles) internal override {
-    // Check if DEPOSITOR_ROLE is included in the roles bitmap
-    if ((roles & DEPOSITOR_ROLE) != 0) {
-      revert InvalidRoles(roles);
-    }
-    _updateRoles(user, roles, false);
   }
 
   /// @dev Reverts if the address is the zero address.
