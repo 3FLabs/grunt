@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositionManager.sol";
+import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerShares} from "./base/PositionManagerShares.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
@@ -173,6 +174,11 @@ contract PositionManager is
     maxRebalanceLoss = ps.maxRebalanceLoss;
   }
 
+  /// @inheritdoc IPositionManager
+  function transferGuard() public view returns (address) {
+    return LibStorage.positionManagerStorage().transferGuard;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -311,5 +317,16 @@ contract PositionManager is
   /// @inheritdoc PositionManagerRebalancing
   function _accrueFeesForRebalance() internal override returns (uint256 totalAssetsBefore) {
     return _accrueFees();
+  }
+
+  /// @inheritdoc ERC20
+  /// @dev Validates transfers through the transfer guard if one is set.
+  function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+    address guard = LibStorage.positionManagerStorage().transferGuard;
+    if (guard != address(0)) {
+      if (!ITransferGuard(guard).canTransfer(address(this), from, to, amount)) {
+        revert IPositionManager.TransferBlocked();
+      }
+    }
   }
 }

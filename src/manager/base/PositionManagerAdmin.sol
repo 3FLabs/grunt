@@ -106,6 +106,12 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
+  function setTransferGuard(address transferGuard_) external override onlyOwner {
+    LibStorage.positionManagerStorage().transferGuard = transferGuard_;
+    emit IPositionManager.TransferGuardSet(transferGuard_);
+  }
+
+  /// @inheritdoc IPositionManager
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external override onlyOwner {
     if (managementFee > MAX_MANAGEMENT_FEE || performanceFee > MAX_PERFORMANCE_FEE) {
       revert IPositionManager.FeeExceedsMax();
