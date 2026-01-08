@@ -28,7 +28,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   /*                          CONSTANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  uint88 constant LARGE_TRANSFER_THRESHOLD = 1_000e18;
+  uint256 constant LARGE_TRANSFER_THRESHOLD = 1_000e18;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -75,7 +75,8 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_setTransferGuard() public view {
-    assertEq(positionManager.transferGuard(), address(guard));
+    (,, address guard_) = positionManager.config();
+    assertEq(guard_, address(guard));
   }
 
   function test_setTransferGuard_onlyOwner() public {
@@ -88,7 +89,8 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setTransferGuard(address(0));
 
-    assertEq(positionManager.transferGuard(), address(0));
+    (,, address guard_) = positionManager.config();
+    assertEq(guard_, address(0));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

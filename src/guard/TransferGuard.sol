@@ -5,6 +5,7 @@ import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {ITransferGuardValidator} from "../interfaces/guard/ITransferGuardValidator.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 /// @notice Status of an address in the transfer guard.
 /// @dev NONE must be 0 so unset mappings default to checking the validator.
@@ -20,12 +21,14 @@ enum AddressStatus {
 }
 
 /// @notice Per-token configuration packed into a single storage slot.
-/// @dev Layout: paused (8 bits) + threshold (88 bits) + validator (160 bits) = 256 bits
+/// @dev Layout: paused (8 bits) + scaledThreshold (88 bits) + validator (160 bits) = 256 bits
+///      The threshold is stored scaled down by THRESHOLD_SCALE (1e6) to fit in 88 bits.
+///      Max representable threshold = 2^88 * 1e6 ≈ 3.09e32, which supports any realistic token amount.
 struct TokenConfig {
   /// @notice Whether transfers are paused for this token.
   bool paused;
-  /// @notice Transfer threshold. Transfers >= threshold require WHITELIST_ALL_AMOUNTS.
-  uint88 threshold;
+  /// @notice Transfer threshold scaled down by THRESHOLD_SCALE. Actual threshold = scaledThreshold * THRESHOLD_SCALE.
+  uint88 scaledThreshold;
   /// @notice Validator contract for NONE status addresses. address(0) = allow by default.
   address validator;
 }
@@ -35,6 +38,14 @@ struct TokenConfig {
 /// @dev Uses a single mapping with enum status instead of separate blocklist/allowlist mappings.
 ///      Token config (paused, threshold, validator) is packed into a single slot per token.
 ///      Deployable via beacon proxy pattern for upgradeability.
+///
+///      **Threshold scaling:**
+///      The threshold is stored scaled down by THRESHOLD_SCALE (1e6) to maximize the range
+///      of representable values in 88 bits. This means:
+///      - Minimum granularity: 1e6 (1 token for 6-decimal tokens, 0.000001 for 18-decimal)
+///      - Maximum threshold: ~3.09e32 (more than enough for any token)
+///      - When setting threshold, pass the actual threshold value; it will be divided by 1e6
+///      - Thresholds are rounded down to the nearest 1e6
 ///
 ///      **Address status behavior:**
 ///      - NONE: Check validator contract. If validator is address(0), allow transfer.
@@ -57,6 +68,13 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Scale factor for threshold storage.
+  /// @dev Threshold is stored as (actualThreshold / THRESHOLD_SCALE) to fit in 88 bits.
+  ///      This gives us 1e6 granularity, which is sufficient since no common token has
+  ///      less than 6 decimals. For 18-decimal tokens, minimum threshold granularity is 0.000001 tokens.
+  ///      Maximum representable threshold: 2^88 * 1e6 ≈ 3.09e32
+  uint256 public constant THRESHOLD_SCALE = 1e6;
+
   /// @dev Role for managing address statuses.
   uint256 public constant COMPLIANCE_ROLE = _ROLE_0;
 
@@ -70,7 +88,8 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Status of each address (blocklist, whitelist, or delegate to validator).
   mapping(address account => AddressStatus status) public addressStatus;
 
-  /// @notice Per-token configuration (paused, threshold, validator) packed in one slot.
+  /// @notice Per-token configuration (paused, scaledThreshold, validator) packed in one slot.
+  /// @dev Use getThreshold() to get the actual (unscaled) threshold value.
   mapping(address token => TokenConfig config) public tokenConfig;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -81,7 +100,11 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   event AddressStatusSet(address indexed account, AddressStatus status);
 
   /// @notice Emitted when a token's configuration is updated.
-  event TokenConfigSet(address indexed token, bool paused, uint88 threshold, address validator);
+  /// @param token The token address
+  /// @param paused Whether the token is paused
+  /// @param threshold The actual (unscaled) threshold value
+  /// @param validator The validator contract address
+  event TokenConfigSet(address indexed token, bool paused, uint256 threshold, address validator);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -105,7 +128,9 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     // Check pause status
     if (config.paused) return false;
 
-    bool isLargeTransfer = config.threshold > 0 && amount >= config.threshold;
+    // Scale up threshold for comparison
+    uint256 actualThreshold = uint256(config.scaledThreshold) * THRESHOLD_SCALE;
+    bool isLargeTransfer = actualThreshold > 0 && amount >= actualThreshold;
 
     // Check sender (skip for mints)
     if (from != address(0) && !_isAllowed(from, isLargeTransfer, config.validator)) {
@@ -123,6 +148,13 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @inheritdoc ITransferGuard
   function paused(address token) external view returns (bool) {
     return tokenConfig[token].paused;
+  }
+
+  /// @notice Returns the actual (unscaled) threshold for a token.
+  /// @param token The token address
+  /// @return The actual threshold value (scaledThreshold * THRESHOLD_SCALE)
+  function getThreshold(address token) external view returns (uint256) {
+    return uint256(tokenConfig[token].scaledThreshold) * THRESHOLD_SCALE;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -197,14 +229,16 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param token The token to pause
   function pause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
     tokenConfig[token].paused = true;
-    emit TokenConfigSet(token, true, tokenConfig[token].threshold, tokenConfig[token].validator);
+    uint256 actualThreshold = uint256(tokenConfig[token].scaledThreshold) * THRESHOLD_SCALE;
+    emit TokenConfigSet(token, true, actualThreshold, tokenConfig[token].validator);
   }
 
   /// @notice Unpauses transfers for a token.
   /// @param token The token to unpause
   function unpause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
     tokenConfig[token].paused = false;
-    emit TokenConfigSet(token, false, tokenConfig[token].threshold, tokenConfig[token].validator);
+    uint256 actualThreshold = uint256(tokenConfig[token].scaledThreshold) * THRESHOLD_SCALE;
+    emit TokenConfigSet(token, false, actualThreshold, tokenConfig[token].validator);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -212,12 +246,17 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets the full configuration for a token.
+  /// @dev The threshold is scaled down by THRESHOLD_SCALE (1e6) for storage.
+  ///      Effective threshold will be rounded down to the nearest multiple of THRESHOLD_SCALE.
   /// @param token The token to configure
   /// @param paused_ Whether transfers should be paused
-  /// @param threshold_ Transfer threshold (0 to disable large transfer restrictions)
+  /// @param threshold_ Actual transfer threshold (0 to disable). Will be divided by THRESHOLD_SCALE for storage.
   /// @param validator_ Validator contract for NONE status addresses (address(0) to allow by default)
-  function setTokenConfig(address token, bool paused_, uint88 threshold_, address validator_) external onlyOwner {
-    tokenConfig[token] = TokenConfig({paused: paused_, threshold: threshold_, validator: validator_});
-    emit TokenConfigSet(token, paused_, threshold_, validator_);
+  function setTokenConfig(address token, bool paused_, uint256 threshold_, address validator_) external onlyOwner {
+    // Scale down threshold for storage (rounds down, reverts on overflow)
+    uint88 scaledThreshold = SafeCastLib.toUint88(threshold_ / THRESHOLD_SCALE);
+    tokenConfig[token] = TokenConfig({paused: paused_, scaledThreshold: scaledThreshold, validator: validator_});
+    // Emit actual threshold (may be slightly less than input due to rounding)
+    emit TokenConfigSet(token, paused_, uint256(scaledThreshold) * THRESHOLD_SCALE, validator_);
   }
 }

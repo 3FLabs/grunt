@@ -176,9 +176,9 @@ contract TransferGuardFactoryTest is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
-    // Set token config
+    // Set token config (threshold is uint256, will be scaled down internally)
     vm.prank(guardOwner);
-    tg.setTokenConfig(token, false, 100_000e18, address(0));
+    tg.setTokenConfig(token, false, uint256(100_000e18), address(0));
 
     // Set address status for both parties
     vm.startPrank(guardOwner);

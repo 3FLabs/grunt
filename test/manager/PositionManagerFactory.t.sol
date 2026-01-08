@@ -124,7 +124,7 @@ contract PositionManagerFactoryTest is Test {
     (address collateralAsset_, address debtAsset_) = pm.assets();
     assertEq(collateralAsset_, address(collateralToken), "Collateral asset should be set");
     assertEq(debtAsset_, address(debtToken), "Debt asset should be set");
-    (uint256 lltv_,) = pm.config();
+    (uint256 lltv_,,) = pm.config();
     assertEq(lltv_, DEFAULT_LLTV, "LLTV should be set");
   }
 
@@ -250,7 +250,7 @@ contract PositionManagerFactoryTest is Test {
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
     assertEq(pm.decimals(), decimals);
-    (uint256 lltv_,) = pm.config();
+    (uint256 lltv_,,) = pm.config();
     assertEq(lltv_, lltv);
   }
 }

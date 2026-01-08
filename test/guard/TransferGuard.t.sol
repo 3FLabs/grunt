@@ -48,14 +48,15 @@ contract TransferGuardTest is Test {
 
   uint256 constant COMPLIANCE_ROLE = 1 << 0;
   uint256 constant PAUSER_ROLE = 1 << 1;
-  uint88 constant LARGE_TRANSFER_THRESHOLD = 100_000e18;
+  uint256 constant THRESHOLD_SCALE = 1e6;
+  uint256 constant LARGE_TRANSFER_THRESHOLD = 100_000e18;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   event AddressStatusSet(address indexed account, AddressStatus status);
-  event TokenConfigSet(address indexed token, bool paused, uint88 threshold, address validator);
+  event TokenConfigSet(address indexed token, bool paused, uint256 threshold, address validator);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -153,16 +154,52 @@ contract TransferGuardTest is Test {
     vm.prank(owner);
     guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
 
-    (bool paused, uint88 threshold, address val) = guard.tokenConfig(token);
+    // tokenConfig returns scaled threshold
+    (bool paused, uint88 scaledThreshold, address val) = guard.tokenConfig(token);
     assertEq(paused, false);
-    assertEq(threshold, LARGE_TRANSFER_THRESHOLD);
+    assertEq(scaledThreshold, LARGE_TRANSFER_THRESHOLD / THRESHOLD_SCALE);
     assertEq(val, address(validator));
+
+    // getThreshold returns actual threshold
+    assertEq(guard.getThreshold(token), LARGE_TRANSFER_THRESHOLD);
   }
 
   function test_setTokenConfig_revertsNonOwner() public {
     vm.prank(compliance);
     vm.expectRevert();
     guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
+  }
+
+  function test_setTokenConfig_thresholdScaling() public {
+    // Test that threshold is scaled correctly
+    uint256 threshold = 123_456_789e18;
+    uint256 expectedScaled = threshold / THRESHOLD_SCALE;
+    uint256 expectedActual = expectedScaled * THRESHOLD_SCALE;
+
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, threshold, address(0));
+
+    // Check stored value is scaled
+    (, uint88 scaledThreshold,) = guard.tokenConfig(token);
+    assertEq(scaledThreshold, expectedScaled);
+
+    // Check getter returns scaled-up value (rounded down)
+    assertEq(guard.getThreshold(token), expectedActual);
+  }
+
+  function test_setTokenConfig_thresholdRoundsDown() public {
+    // Set threshold that's not a multiple of THRESHOLD_SCALE
+    uint256 threshold = 100e18 + 500_000; // 100e18 + 0.5e6
+    uint256 expectedActual = 100e18; // Rounds down to 100e18
+
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, threshold, address(0));
+
+    assertEq(guard.getThreshold(token), expectedActual);
+  }
+
+  function test_thresholdScale_constant() public view {
+    assertEq(guard.THRESHOLD_SCALE(), 1e6);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
