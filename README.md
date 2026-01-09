@@ -469,11 +469,11 @@ src/
 
 The Position Manager uses Solady's `OwnableRoles` for granular permission management:
 
-| Role | Bit Flag | Permission |
-|------|----------|------------|
-| `PM_ROLE_MINTER` | `1 << 0` | Call `deposit`, `withdraw`, `burn` |
-| `PM_ROLE_CURATOR` | `1 << 1` | Set supply/withdrawal queues |
-| `PM_ROLE_REBALANCER` | `1 << 2` | Execute rebalancing operations |
+| Role                 | Bit Flag | Permission                         |
+| -------------------- | -------- | ---------------------------------- |
+| `PM_ROLE_MINTER`     | `1 << 0` | Call `deposit`, `withdraw`, `burn` |
+| `PM_ROLE_CURATOR`    | `1 << 1` | Set supply/withdrawal queues       |
+| `PM_ROLE_REBALANCER` | `1 << 2` | Execute rebalancing operations     |
 
 The **owner** has exclusive control over:
 - Adding/removing borrow modules (whitelisting)
@@ -810,7 +810,7 @@ The rebalancer requires:
 
 ## Funds Module (USCC)
 
-The funds module wraps external assets behind a standardized order lifecycle (`IFund`) with create/commit/unlock/recover operations.
+The funds module wraps external assets behind a standardized order lifecycle (`IFund`) with create/cancel/commit/unlock/recover operations.
 
 ### USCCFund
 
@@ -863,12 +863,12 @@ The `TransferGuard` contract provides compliance controls for token transfers, s
 
 Each address can have one of four statuses per guard:
 
-| Status | Value | Behavior |
-|--------|-------|----------|
-| `NONE` | 0 | Default - subject to threshold checks and validator |
-| `WHITELIST` | 1 | Allowed for transfers below threshold |
-| `BLOCKLIST` | 2 | Always blocked from transfers |
-| `WHITELIST_ALL_AMOUNTS` | 3 | Allowed for any transfer amount |
+| Status                  | Value | Behavior                                            |
+| ----------------------- | ----- | --------------------------------------------------- |
+| `NONE`                  | 0     | Default - subject to threshold checks and validator |
+| `WHITELIST`             | 1     | Allowed for transfers below threshold               |
+| `BLOCKLIST`             | 2     | Always blocked from transfers                       |
+| `WHITELIST_ALL_AMOUNTS` | 3     | Allowed for any transfer amount                     |
 
 ### Token Configuration
 
@@ -940,9 +940,9 @@ canTransfer(token, from, to, amount)
 
 ### Role-Based Access Control
 
-| Role | Bit Flag | Permission |
-|------|----------|------------|
-| `PAUSER_ROLE` | `1 << 1` | Pause/unpause tokens |
+| Role              | Bit Flag | Permission           |
+| ----------------- | -------- | -------------------- |
+| `PAUSER_ROLE`     | `1 << 1` | Pause/unpause tokens |
 | `COMPLIANCE_ROLE` | `1 << 0` | Set address statuses |
 
 The **owner** has exclusive control over:

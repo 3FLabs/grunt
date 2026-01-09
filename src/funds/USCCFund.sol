@@ -20,6 +20,7 @@ import {Order, State, Id, Mode} from "../libs/Order.sol";
 ///        The underlying USCC tokens are held centrally by the wUSCC contract (not by individual funds).
 ///        This enables shared state across all funds via wUSCC.totalSupply().
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
+///      - ACCEPTED / PENDING orders can be canceled back to EMPTY via cancel() before any assets/shares are committed.
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
 ///        on asset balances to determine state transitions.
@@ -281,6 +282,25 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
     return State.ACCEPTED;
+  }
+
+  /// @inheritdoc IFund
+  function cancel(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
+    UsccFundStorage storage $ = _usccFundStorage();
+    Id _currentOrder = $.currentOrder;
+    Id _orderId = order.toId(address(this));
+    if (!_orderId.eq(_currentOrder)) revert InvalidOrder(_orderId);
+
+    State _internalState = $.internalState;
+    if (_internalState != State.ACCEPTED && _internalState != State.PENDING) revert InvalidState(_internalState);
+
+    $.currentOrder = Id.wrap(bytes32(0));
+    $.internalState = State.EMPTY;
+    $.cachedBalance = 0;
+
+    return State.EMPTY;
   }
 
   /// @inheritdoc IFund

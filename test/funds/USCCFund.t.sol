@@ -241,6 +241,50 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                             CANCEL                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_Cancel_Success() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    State state = fund.cancel(order);
+    assertEq(uint256(state), uint256(State.EMPTY), "state");
+    assertEq(uint256(fund.state(order)), uint256(State.EMPTY), "order state");
+
+    State next = fund.create(order);
+    assertEq(uint256(next), uint256(State.ACCEPTED), "accepted");
+  }
+
+  function test_Cancel_RevertsInvalidOrder() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    Order memory wrongOrder = order;
+    wrongOrder.salt = keccak256("wrong");
+    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    fund.cancel(wrongOrder);
+  }
+
+  function test_Cancel_RevertsInvalidState() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.PROCESSING));
+    fund.cancel(order);
+  }
+
+  function test_Cancel_OnlyDepositorRole() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.cancel(order);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          COMMIT                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
