@@ -172,6 +172,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param receiver The address receiving the unlocked funds.
   event OrderUnlocked(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
+  /// @notice Emitted when an order is canceled before commitment.
+  /// @param orderId The unique identifier of the order.
+  /// @param mode The mode of the order (DEPOSIT or REDEEM).
+  /// @param owner The owner of the canceled order.
+  event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
+
   /// @notice Emitted when the internal state is manually set to RECOVERING.
   /// @param orderId The unique identifier of the order being recovered.
   event OrderRecovering(Id indexed orderId);
@@ -299,6 +305,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     $.currentOrder = Id.wrap(bytes32(0));
     $.internalState = State.EMPTY;
     $.cachedBalance = 0;
+
+    emit OrderCanceled(_orderId, order.mode, order.owner);
 
     return State.EMPTY;
   }
