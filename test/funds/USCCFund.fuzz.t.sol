@@ -46,7 +46,7 @@ contract USCCFundFuzzTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
@@ -56,6 +56,10 @@ contract USCCFundFuzzTest is Test {
     uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
     wuscc.grantRoles(address(fund), issuerRole);
+
+    uint256 senderRole = wuscc.SENDER_ROLE();
+    vm.prank(owner);
+    wuscc.grantRoles(address(this), senderRole);
   }
 
   function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(
@@ -86,7 +90,9 @@ contract USCCFundFuzzTest is Test {
     fund.unlock(order);
 
     assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
-    assertEq(uscc.balanceOf(address(fund)), preExistingAmount + receivedAmount, "uscc held");
+    // USCC is now held by wUSCC contract after unlock (not fund)
+    assertEq(uscc.balanceOf(address(wuscc)), receivedAmount, "uscc in wuscc");
+    assertEq(uscc.balanceOf(address(fund)), preExistingAmount, "fund pre-existing uscc");
     assertEq(usdc.balanceOf(recipient), inputAmount, "usdc recipient");
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
   }
@@ -184,9 +190,8 @@ contract USCCFundFuzzTest is Test {
     Order memory order = _redeemOrder(inputAmount, outputAmount);
     fund.create(order);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), inputAmount);
-    uscc.mint(address(fund), inputAmount);
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
 
     fund.commit(order);
 
@@ -211,9 +216,8 @@ contract USCCFundFuzzTest is Test {
     Order memory order = _redeemOrder(inputAmount, outputAmount);
     fund.create(order);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), inputAmount);
-    uscc.mint(address(fund), inputAmount);
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
 
     fund.commit(order);
 
@@ -237,20 +241,26 @@ contract USCCFundFuzzTest is Test {
     uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 returnedAmount = bound(uint256(returnedUscc), inputAmount, maxAmount);
 
-    if (preExistingAmount > 0) uscc.mint(address(fund), preExistingAmount);
+    // Pre-existing USCC goes to wUSCC (simulating prior wraps)
+    if (preExistingAmount > 0) {
+      uscc.mint(owner, preExistingAmount);
+      vm.prank(owner);
+      uscc.approve(address(wuscc), preExistingAmount);
+      vm.prank(owner);
+      wuscc.mint(owner, owner, preExistingAmount);
+    }
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
     fund.create(order);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), inputAmount);
-
-    uscc.mint(address(fund), inputAmount);
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
     fund.commit(order);
 
     vm.prank(owner);
     fund.recovering();
 
+    // Superstate returns USCC to fund
     uscc.mint(address(fund), returnedAmount);
 
     assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
@@ -258,7 +268,8 @@ contract USCCFundFuzzTest is Test {
     fund.recover(order);
 
     assertEq(wuscc.balanceOf(address(this)), returnedAmount, "wuscc recovered");
-    assertEq(uscc.balanceOf(address(fund)), preExistingAmount + returnedAmount, "uscc held");
+    // USCC is now held by wUSCC contract (inputAmount was burned during offchainRedeem in commit)
+    assertEq(uscc.balanceOf(address(wuscc)), preExistingAmount + returnedAmount, "uscc in wuscc");
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
   }
 
@@ -274,15 +285,20 @@ contract USCCFundFuzzTest is Test {
     uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 returnedAmount = bound(uint256(returnedUscc), 0, inputAmount - 1);
 
-    if (preExistingAmount > 0) uscc.mint(address(fund), preExistingAmount);
+    // Pre-existing USCC goes to wUSCC
+    if (preExistingAmount > 0) {
+      uscc.mint(owner, preExistingAmount);
+      vm.prank(owner);
+      uscc.approve(address(wuscc), preExistingAmount);
+      vm.prank(owner);
+      wuscc.mint(owner, owner, preExistingAmount);
+    }
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
     fund.create(order);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), inputAmount);
-
-    uscc.mint(address(fund), inputAmount);
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
     fund.commit(order);
 
     vm.prank(owner);
@@ -412,9 +428,8 @@ contract USCCFundFuzzTest is Test {
     Order memory original = _redeemOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
     fund.create(original);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), inputAmount);
-    uscc.mint(address(fund), inputAmount);
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
     fund.commit(original);
 
     uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
@@ -463,9 +478,8 @@ contract USCCFundFuzzTest is Test {
     Order memory original = _redeemOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
     fund.create(original);
 
-    vm.prank(owner);
-    wuscc.mint(address(this), inputAmount);
-    uscc.mint(address(fund), inputAmount);
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
     fund.commit(original);
 
     vm.prank(owner);
@@ -500,7 +514,9 @@ contract USCCFundFuzzTest is Test {
     fund.recover(resolved);
 
     assertEq(wuscc.balanceOf(address(this)), returnedAmount, "wuscc recovered");
-    assertEq(uscc.balanceOf(address(fund)), returnedAmount, "uscc held");
+    // USCC is now held by wUSCC contract (inputAmount was burned during offchainRedeem in commit)
+    assertEq(uscc.balanceOf(address(wuscc)), returnedAmount, "uscc in wuscc");
+    assertEq(uscc.balanceOf(address(fund)), 0, "fund has no uscc");
     assertEq(uint256(fund.state(resolved)), uint256(State.ENDED), "ended");
   }
 
@@ -524,6 +540,15 @@ contract USCCFundFuzzTest is Test {
       mode: Mode.REDEEM,
       salt: keccak256("redeem")
     });
+  }
+
+  /// @dev Helper to mint wUSCC to a recipient. Wraps USCC into wUSCC.
+  function _mintWuscc(address to, uint256 amount) internal {
+    uscc.mint(owner, amount);
+    vm.prank(owner);
+    uscc.approve(address(wuscc), amount);
+    vm.prank(owner);
+    wuscc.mint(owner, to, amount);
   }
 }
 
@@ -752,7 +777,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
 
     handler = new USCCFundHandler();
 
@@ -765,6 +790,10 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
     wuscc.grantRoles(address(fund), issuerRole);
+
+    uint256 senderRole = wuscc.SENDER_ROLE();
+    vm.prank(owner);
+    wuscc.grantRoles(address(handler), senderRole);
 
     uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
@@ -795,8 +824,10 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     assertEq(usdc.balanceOf(recipient), handler.expectedRecipientUsdc(), "recipient usdc mismatch");
   }
 
-  function invariant_TotalAssetsTracksUsccWhenPriceIsOne() public view {
-    assertEq(fund.totalAssets(), uscc.balanceOf(address(fund)), "totalAssets mismatch");
+  function invariant_TotalAssetsTracksWusccSupplyWhenPriceIsOne() public view {
+    // totalAssets is now based on wUSCC.totalSupply() * oracle price
+    // With oracle price = 1, totalAssets should equal wUSCC.totalSupply()
+    assertEq(fund.totalAssets(), wuscc.totalSupply(), "totalAssets mismatch");
   }
 
   function invariant_StateMatchesModel() public view {

@@ -107,7 +107,7 @@ contract USCCFundFactory {
   ///      2. Initializes the fund with per-fund parameters (owner, depositor, recipient, oracle)
   ///
   ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
-  ///      to the newly deployed fund address so it can mint/burn wrapped tokens.
+  ///      to the newly deployed fund address so it can mint wrapped tokens.
   ///
   ///      The depositor receives DEPOSITOR_ROLE on the fund (can execute orders).
   ///      Emits a {FundCreated} event.

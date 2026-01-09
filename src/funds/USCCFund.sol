@@ -16,8 +16,9 @@ import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Inte
 import {Order, State, Id, Mode} from "../libs/Order.sol";
 
 /// @notice Wrapper of Superstate USCC fund.
-/// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Since multiple USCCFund can mint wUSCC.
-///        The USCC tokens are held by this contract. Only wUSCC are sent to users.
+/// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Multiple USCCFund instances can mint wUSCC.
+///        The underlying USCC tokens are held centrally by the wUSCC contract (not by individual funds).
+///        This enables shared state across all funds via wUSCC.totalSupply().
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
@@ -110,9 +111,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
-
-  /// @notice Thrown when attempting to grant invalid roles (e.g., immutable roles).
-  error InvalidRoles(uint256 roles);
 
   /// @notice Thrown when the Chainlink oracle returns a non-positive price.
   /// @dev Indicates an invalid or paused oracle feed, or corrupted round data.
@@ -288,6 +286,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial commits, always goes to PROCESSING.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
     UsccFundStorage storage $ = _usccFundStorage();
     Id _currentOrder = $.currentOrder;
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
@@ -297,8 +297,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       // Depositing: transfer USDC to recipient to mint USCC
       USDC.safeTransferFrom(msg.sender, $.recipient, order.input);
     } else {
-      // Redeeming: burn wUSCC and call offchain redeem on USCC (will burn USCC)
-      IWrappedAsset(WUSCC).burn(msg.sender, order.input);
+      // Redeeming: burn wUSCC (sends USCC to this contract), then call offchain redeem on USCC
+      IWrappedAsset(WUSCC).burn(msg.sender, address(this), order.input);
       ISuperstateToken(USCC).offchainRedeem(order.input);
     }
 
@@ -316,6 +316,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED.
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
     UsccFundStorage storage $ = _usccFundStorage();
     Id _currentOrder = $.currentOrder;
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
@@ -326,7 +328,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       USDC.safeTransfer(msg.sender, _amount);
     } else {
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      // Mint wUSCC back to depositor (pulls USCC from this contract)
+      USCC.safeApproveWithRetry(WUSCC, _amount);
+      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
@@ -339,6 +343,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED.
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
     UsccFundStorage storage $ = _usccFundStorage();
     Id _currentOrder = $.currentOrder;
     if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
@@ -347,8 +353,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_currentState != State.UNLOCKING) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
-      // Mint wUSCC to receiver and keep USCC in the contract
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
+      USCC.safeApproveWithRetry(WUSCC, _amount);
+      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
       USDC.safeTransfer(msg.sender, _amount);
@@ -455,7 +462,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     uint256 _latestPrice = _answer.toUint256();
 
-    return USCC.balanceOf(address(this)).mulDiv(_latestPrice, _SCALED_UNIT);
+    return WUSCC.totalSupply().mulDiv(_latestPrice, _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
@@ -532,26 +539,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
-  }
-
-  /// @inheritdoc OwnableRoles
-  /// @dev Set DEPOSITOR_ROLE as immutable (only set in initialize).
-  function _grantRoles(address user, uint256 roles) internal override {
-    // Check if DEPOSITOR_ROLE is included in the roles bitmap
-    if ((roles & DEPOSITOR_ROLE) != 0) {
-      revert InvalidRoles(roles);
-    }
-    _updateRoles(user, roles, true);
-  }
-
-  /// @inheritdoc OwnableRoles
-  /// @dev Prevent DEPOSITOR_ROLE from being removed after initialization.
-  function _removeRoles(address user, uint256 roles) internal override {
-    // Check if DEPOSITOR_ROLE is included in the roles bitmap
-    if ((roles & DEPOSITOR_ROLE) != 0) {
-      revert InvalidRoles(roles);
-    }
-    _updateRoles(user, roles, false);
   }
 
   /// @dev Reverts if the address is the zero address.
