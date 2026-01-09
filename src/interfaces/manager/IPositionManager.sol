@@ -89,6 +89,12 @@ interface IPositionManager {
   /// @notice Thrown when attempting to set an invalid LLTV value (zero or greater than WAD).
   error InvalidLltv();
 
+  /// @notice Thrown when a transfer is blocked by the transfer guard.
+  error TransferBlocked();
+
+  /// @notice Thrown when an operation is attempted while the contract is paused.
+  error Paused();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -122,6 +128,10 @@ interface IPositionManager {
   /// @notice Emitted when the max rebalance loss is updated.
   /// @param maxRebalanceLoss The new max rebalance loss value in basis points
   event MaxRebalanceLossSet(uint16 maxRebalanceLoss);
+
+  /// @notice Emitted when the transfer guard is updated.
+  /// @param transferGuard The new transfer guard address (address(0) to disable)
+  event TransferGuardSet(address indexed transferGuard);
 
   /// @notice Emitted when fees are accrued and minted to the fee recipient.
   /// @param feeRecipient The address receiving the fee shares
@@ -215,7 +225,8 @@ interface IPositionManager {
   /// @notice Returns the configuration parameters.
   /// @return lltv The LLTV used for available collateral calculations (WAD precision)
   /// @return maxRebalanceLoss The maximum allowed loss during rebalance in basis points
-  function config() external view returns (uint256 lltv, uint16 maxRebalanceLoss);
+  /// @return transferGuard The address of the transfer guard contract (address(0) if disabled)
+  function config() external view returns (uint256 lltv, uint16 maxRebalanceLoss, address transferGuard);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */
@@ -320,4 +331,9 @@ interface IPositionManager {
   /// @dev Only callable by the owner. This limits how much totalAssets can decrease during a rebalance.
   /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%)
   function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external;
+
+  /// @notice Sets the transfer guard contract.
+  /// @dev Only callable by the owner. Set to address(0) to disable transfer restrictions.
+  /// @param transferGuard_ The address of the transfer guard contract
+  function setTransferGuard(address transferGuard_) external;
 }

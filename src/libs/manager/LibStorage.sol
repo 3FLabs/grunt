@@ -16,7 +16,6 @@ struct FeeData {
 }
 
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
-/// @dev Storage packing: lltv (uint64) + lastFeeAccrualTimestamp (uint40) + maxRebalanceLoss (uint16) = 15 bytes in one slot
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -31,6 +30,7 @@ struct PositionManagerStorageData {
   uint64 lltv;
   uint40 lastFeeAccrualTimestamp;
   uint16 maxRebalanceLoss;
+  address transferGuard;
 }
 
 /// @title LibStorage

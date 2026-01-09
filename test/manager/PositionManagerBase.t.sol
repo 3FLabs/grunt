@@ -249,12 +249,12 @@ abstract contract PositionManagerBaseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function _lltv() internal view returns (uint256) {
-    (uint256 lltv_,) = positionManager.config();
+    (uint256 lltv_,,) = positionManager.config();
     return lltv_;
   }
 
   function _maxRebalanceLoss() internal view returns (uint16) {
-    (, uint16 maxRebalanceLoss_) = positionManager.config();
+    (, uint16 maxRebalanceLoss_,) = positionManager.config();
     return maxRebalanceLoss_;
   }
 

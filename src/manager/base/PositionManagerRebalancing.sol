@@ -7,6 +7,7 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "../../interfaces/manager/IPositionManager.sol";
+import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
@@ -36,15 +37,23 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
 
   /// @inheritdoc IPositionManager
   function rebalance(RebalancingData calldata data, address receiver)
-    external
+    public
+    virtual
     override
     onlyRoles(REBALANCER_ROLE)
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+
+    // Check if paused via transfer guard
+    address guard = ps.transferGuard;
+    if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
+      revert IPositionManager.Paused();
+    }
+
     // Accrue fees based on pre-rebalance state and capture totalAssets before operations
     uint256 totalAssetsBefore = _accrueFeesForRebalance();
 
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     address _collateralAsset = ps.collateralAsset;
     address _debtAsset = ps.debtAsset;
 

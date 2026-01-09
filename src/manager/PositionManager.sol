@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry, RebalancingData} from "../interfaces/manager/IPositionManager.sol";
+import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerShares} from "./base/PositionManagerShares.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
@@ -167,10 +168,11 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function config() public view returns (uint256 lltv, uint16 maxRebalanceLoss) {
+  function config() public view returns (uint256 lltv, uint16 maxRebalanceLoss, address transferGuard) {
     PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     lltv = ps.lltv;
     maxRebalanceLoss = ps.maxRebalanceLoss;
+    transferGuard = ps.transferGuard;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -299,6 +301,19 @@ contract PositionManager is
     emit Burn(msg.sender, shares, collateral, debt);
   }
 
+  /// @inheritdoc IPositionManager
+  /// @dev Protected by nonReentrant to prevent malicious modules from manipulating
+  ///      guard state (pause/unpause) mid-transaction via callbacks.
+  function rebalance(RebalancingData calldata data, address receiver)
+    public
+    override(IPositionManager, PositionManagerRebalancing)
+    onlyRoles(REBALANCER_ROLE)
+    nonReentrant
+    returns (uint256 collateralExcess, uint256 debtExcess)
+  {
+    return super.rebalance(data, receiver);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INTERNAL OVERRIDES                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -311,5 +326,16 @@ contract PositionManager is
   /// @inheritdoc PositionManagerRebalancing
   function _accrueFeesForRebalance() internal override returns (uint256 totalAssetsBefore) {
     return _accrueFees();
+  }
+
+  /// @inheritdoc ERC20
+  /// @dev Validates transfers through the transfer guard if one is set.
+  function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+    address guard = LibStorage.positionManagerStorage().transferGuard;
+    if (guard != address(0)) {
+      if (!ITransferGuard(guard).canTransfer(address(this), from, to, amount)) {
+        revert IPositionManager.TransferBlocked();
+      }
+    }
   }
 }

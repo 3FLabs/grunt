@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
+import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
+import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
+
+/// @title TransferGuardFactoryTest
+/// @notice Test suite for TransferGuardFactory contract
+contract TransferGuardFactoryTest is Test {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        TEST CONTRACTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  TransferGuardFactory public factory;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        TEST ADDRESSES                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  address public beaconOwner;
+  address public guardOwner;
+  address public user;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          EVENTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  event TransferGuardCreated(address indexed transferGuard, address indexed owner);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                            SETUP                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function setUp() public {
+    beaconOwner = makeAddr("beaconOwner");
+    guardOwner = makeAddr("guardOwner");
+    user = makeAddr("user");
+
+    factory = new TransferGuardFactory(beaconOwner);
+    vm.label(address(factory), "TransferGuardFactory");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     CONSTRUCTOR TESTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_constructor_deploysBeacon() public view {
+    address beacon = factory.TRANSFER_GUARD_BEACON();
+    assertTrue(beacon != address(0), "Beacon should be deployed");
+  }
+
+  function test_constructor_beaconHasCorrectOwner() public view {
+    address beacon = factory.TRANSFER_GUARD_BEACON();
+    assertEq(UpgradeableBeacon(beacon).owner(), beaconOwner, "Beacon owner should be set correctly");
+  }
+
+  function test_constructor_beaconHasImplementation() public view {
+    address beacon = factory.TRANSFER_GUARD_BEACON();
+    address implementation = UpgradeableBeacon(beacon).implementation();
+    assertTrue(implementation != address(0), "Beacon should have implementation");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 CREATE TRANSFER GUARD TESTS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_createTransferGuard_deploysProxy() public {
+    address guard = factory.createTransferGuard(guardOwner);
+
+    assertTrue(guard != address(0), "Transfer guard should be deployed");
+  }
+
+  function test_createTransferGuard_initializesCorrectly() public {
+    address guard = factory.createTransferGuard(guardOwner);
+
+    TransferGuard tg = TransferGuard(guard);
+    assertEq(tg.owner(), guardOwner, "Owner should be set");
+  }
+
+  function test_createTransferGuard_emitsEvent() public {
+    vm.expectEmit(false, true, false, false);
+    emit TransferGuardCreated(address(0), guardOwner);
+
+    factory.createTransferGuard(guardOwner);
+  }
+
+  function test_createTransferGuard_multipleDeployments() public {
+    address guard1 = factory.createTransferGuard(guardOwner);
+    address guard2 = factory.createTransferGuard(user);
+
+    assertTrue(guard1 != guard2, "Each deployment should create a unique address");
+    assertEq(TransferGuard(guard1).owner(), guardOwner, "Guard1 owner correct");
+    assertEq(TransferGuard(guard2).owner(), user, "Guard2 owner correct");
+  }
+
+  function test_createTransferGuard_anyoneCanCall() public {
+    vm.prank(user);
+    address guard = factory.createTransferGuard(guardOwner);
+
+    assertTrue(guard != address(0), "Anyone should be able to create transfer guard");
+    assertEq(TransferGuard(guard).owner(), guardOwner);
+  }
+
+  function test_createTransferGuard_cannotReinitialize() public {
+    address guard = factory.createTransferGuard(guardOwner);
+
+    vm.expectRevert();
+    TransferGuard(guard).initialize(user);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      UPGRADE TESTS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_beaconUpgrade_onlyOwner() public {
+    address beacon = factory.TRANSFER_GUARD_BEACON();
+
+    // Deploy new implementation
+    TransferGuard newImplementation = new TransferGuard();
+
+    // Non-owner cannot upgrade
+    vm.prank(user);
+    vm.expectRevert();
+    UpgradeableBeacon(beacon).upgradeTo(address(newImplementation));
+
+    // Owner can upgrade
+    vm.prank(beaconOwner);
+    UpgradeableBeacon(beacon).upgradeTo(address(newImplementation));
+
+    assertEq(UpgradeableBeacon(beacon).implementation(), address(newImplementation), "Implementation should be updated");
+  }
+
+  function test_beaconUpgrade_affectsAllProxies() public {
+    // Create two guards
+    address guard1 = factory.createTransferGuard(guardOwner);
+    address guard2 = factory.createTransferGuard(user);
+
+    // Set some state
+    vm.prank(guardOwner);
+    TransferGuard(guard1).setAddressStatus(user, AddressStatus.BLOCKLIST);
+
+    vm.prank(user);
+    TransferGuard(guard2).setAddressStatus(guardOwner, AddressStatus.WHITELIST);
+
+    // Verify state before upgrade
+    assertEq(uint8(TransferGuard(guard1).addressStatus(user)), uint8(AddressStatus.BLOCKLIST));
+    assertEq(uint8(TransferGuard(guard2).addressStatus(guardOwner)), uint8(AddressStatus.WHITELIST));
+
+    // Upgrade beacon
+    address beacon = factory.TRANSFER_GUARD_BEACON();
+    TransferGuard newImplementation = new TransferGuard();
+
+    vm.prank(beaconOwner);
+    UpgradeableBeacon(beacon).upgradeTo(address(newImplementation));
+
+    // State should be preserved after upgrade
+    assertEq(uint8(TransferGuard(guard1).addressStatus(user)), uint8(AddressStatus.BLOCKLIST));
+    assertEq(uint8(TransferGuard(guard2).addressStatus(guardOwner)), uint8(AddressStatus.WHITELIST));
+
+    // Functions should still work
+    assertEq(TransferGuard(guard1).owner(), guardOwner);
+    assertEq(TransferGuard(guard2).owner(), user);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   FUNCTIONAL TESTS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deployedGuard_fullyFunctional() public {
+    address guard = factory.createTransferGuard(guardOwner);
+    TransferGuard tg = TransferGuard(guard);
+
+    address token = makeAddr("token");
+    address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
+
+    // Set token config (threshold is uint256, will be scaled down internally)
+    vm.prank(guardOwner);
+    tg.setTokenConfig(token, false, uint256(100_000e18), address(0));
+
+    // Set address status for both parties
+    vm.startPrank(guardOwner);
+    tg.setAddressStatus(alice, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    tg.setAddressStatus(bob, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    vm.stopPrank();
+
+    // Test canTransfer
+    assertTrue(tg.canTransfer(token, alice, bob, 200_000e18));
+
+    // Test pause
+    vm.prank(guardOwner);
+    tg.pause(token);
+    assertFalse(tg.canTransfer(token, alice, bob, 1000e18));
+
+    // Test unpause
+    vm.prank(guardOwner);
+    tg.unpause(token);
+    assertTrue(tg.canTransfer(token, alice, bob, 200_000e18));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        FUZZ TESTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function testFuzz_createTransferGuard(address owner) public {
+    vm.assume(owner != address(0));
+
+    address guard = factory.createTransferGuard(owner);
+
+    assertEq(TransferGuard(guard).owner(), owner);
+  }
+
+  function testFuzz_multipleDeployments(uint8 count) public {
+    count = uint8(bound(count, 1, 50));
+
+    address[] memory guards = new address[](count);
+    for (uint8 i = 0; i < count; i++) {
+      guards[i] = factory.createTransferGuard(makeAddr(string(abi.encodePacked("owner", i))));
+    }
+
+    // Verify all unique
+    for (uint8 i = 0; i < count; i++) {
+      for (uint8 j = i + 1; j < count; j++) {
+        assertTrue(guards[i] != guards[j], "All guards should be unique");
+      }
+    }
+  }
+}
