@@ -172,9 +172,6 @@ contract WrappedAssetTest is Test {
     token.mint(issuer, user, 100);
 
     // User burns their own tokens
-    uint256 senderRole = token.SENDER_ROLE();
-    vm.prank(owner);
-    token.grantRoles(user, senderRole);
     vm.prank(user);
     token.burn(user, user, 40);
 
@@ -184,7 +181,7 @@ contract WrappedAssetTest is Test {
     assertEq(underlying.balanceOf(address(token)), 60, "underlying held by wrapper");
   }
 
-  function test_Burn_RequiresSenderRole() public {
+  function test_Burn_DoesNotRequireSenderRole() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint to user
@@ -194,14 +191,7 @@ contract WrappedAssetTest is Test {
     vm.prank(issuer);
     token.mint(issuer, user, 100);
 
-    // User cannot burn without SENDER_ROLE
-    vm.prank(user);
-    vm.expectRevert(Unauthorized.selector);
-    token.burn(user, user, 50);
-
-    uint256 senderRole = token.SENDER_ROLE();
-    vm.prank(owner);
-    token.grantRoles(user, senderRole);
+    // User can burn without SENDER_ROLE
     vm.prank(user);
     token.burn(user, user, 50);
 
@@ -265,10 +255,6 @@ contract WrappedAssetTest is Test {
     vm.prank(user);
     token.approve(thirdParty, 50);
 
-    uint256 senderRole = token.SENDER_ROLE();
-    vm.prank(owner);
-    token.grantRoles(user, senderRole);
-
     // Third party burns user's tokens
     vm.prank(thirdParty);
     token.burn(user, thirdParty, 50);
@@ -288,9 +274,6 @@ contract WrappedAssetTest is Test {
     token.mint(issuer, user, 100);
 
     // User burns and sends underlying to owner
-    uint256 senderRole = token.SENDER_ROLE();
-    vm.prank(owner);
-    token.grantRoles(user, senderRole);
     vm.prank(user);
     token.burn(user, owner, 40);
 

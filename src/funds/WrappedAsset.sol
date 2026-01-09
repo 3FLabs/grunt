@@ -13,7 +13,7 @@ import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 ///      - mint(): Pulls underlying from `from`, mints wrapper to `to`
 ///      - burn(): Burns wrapper from `from`, sends underlying to `to`
 ///      Multiple issuers (e.g., USCCFund instances) can mint via ISSUER_ROLE.
-///      Transfers (including burns) require the token `from` address to have SENDER_ROLE.
+///      Transfers require the token `from` address to have SENDER_ROLE (burns and mints are excluded).
 ///      The underlying asset is held centrally in this contract.
 contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   using SafeTransferLib for address;
@@ -25,7 +25,9 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @notice Role for asset issuers authorized to mint tokens.
   uint256 public constant ISSUER_ROLE = _ROLE_0;
 
-  /// @notice Role for addresses authorized to send (transfer/burn) wrapper tokens.
+  /// @notice Role for addresses authorized to send wrapper tokens.
+  /// @dev Restricts transfers to protocol contracts and authorized lending protocols to prevent unauthorized movement.
+  ///      Liquidators can still burn tokens to receive underlying and complete liquidations.
   uint256 public constant SENDER_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -133,9 +135,8 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the address of the underlying asset.
-  /// @return The underlying asset address.
-  function underlying() external view returns (address) {
+  /// @inheritdoc IWrappedAsset
+  function underlying() external view override returns (address) {
     return _wrappedAssetStorage().underlying;
   }
 
@@ -162,10 +163,9 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /*                          ERC20 HOOK                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Enforces that token transfers (including burns) can only originate from addresses with SENDER_ROLE.
-  ///      Minting is excluded (`from == address(0)`).
+  /// @dev Enforces that token transfers (excluding burns and mint) can only originate from addresses with SENDER_ROLE.
   function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
-    if (from != address(0) && !hasAllRoles(from, SENDER_ROLE)) revert Unauthorized();
+    if (from != address(0) && to != address(0) && !hasAllRoles(from, SENDER_ROLE)) revert Unauthorized();
     super._beforeTokenTransfer(from, to, amount);
   }
 }

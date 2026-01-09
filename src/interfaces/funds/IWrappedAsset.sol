@@ -17,4 +17,8 @@ interface IWrappedAsset {
   /// @param to The address to send underlying asset to.
   /// @param amount The amount of tokens to unwrap.
   function burn(address from, address to, uint256 amount) external;
+
+  /// @notice Returns the address of the underlying asset (the asset being wrapped).
+  /// @return The underlying asset address.
+  function underlying() external view returns (address);
 }

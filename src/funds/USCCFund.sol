@@ -329,7 +329,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       USDC.safeTransfer(msg.sender, _amount);
     } else {
       // Mint wUSCC back to depositor (pulls USCC from this contract)
-      USCC.safeApprove(WUSCC, _amount);
+      USCC.safeApproveWithRetry(WUSCC, _amount);
       IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
     }
 
@@ -354,7 +354,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
-      USCC.safeApprove(WUSCC, _amount);
+      USCC.safeApproveWithRetry(WUSCC, _amount);
       IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
