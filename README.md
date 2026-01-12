@@ -808,22 +808,51 @@ The rebalancer requires:
 - Owner permission to initiate rebalances
 - Sufficient liquidity in Morpho for the flash loan
 
-## Funds Module (USCC)
+## Fund Module
 
-The funds module wraps external assets behind a standardized order lifecycle (`IFund`) with create/cancel/commit/unlock/recover operations.
+The fund module standardizes how the protocol wraps external assets and off-chain settlement rails. Each integration implements `IFund` (`src/interfaces/funds/IFund.sol`) and the shared `Order` type (`src/libs/Order.sol`) so callers can rely on a consistent lifecycle across multiple integrations.
 
-### USCCFund
+**Order modes**
+- `DEPOSIT`: commit input assets, then unlock share tokens
+- `REDEEM`: commit share tokens, then unlock output assets
 
-USCCFund integrates Superstate's USCC using a single-order state machine:
-- **Deposit flow**: depositor creates a DEPOSIT order, commits USDC to the Superstate recipient, then unlocks wUSCC after USCC is minted to the fund.
-- **Redeem flow**: depositor creates a REDEEM order, commits by burning wUSCC and calling `offchainRedeem`, then unlocks USDC when it arrives.
-- The fund holds USCC; users receive wUSCC. Redemptions return USDC.
-- Total assets use a Chainlink USCC oracle.
-- Owner/operator roles can set the oracle, mark recovering, or resolve stuck orders.
+### State Machine
 
-### WrappedAsset (wUSCC)
+Orders follow a single lifecycle with explicit transitions and recovery paths. `create()` returns `ACCEPTED` (ready to commit) or `PENDING` (queued/clearing). `commit()` advances to `PROCESSING`, then the integration moves to `UNLOCKING` on success or `RECOVERING` on failure. `unlock()` and `recover()` finalize orders, with partial fills looping back to `PROCESSING`.
 
-`WrappedAsset` is an ERC20 wrapper minted/burned by authorized issuers. Multiple USCCFund instances can share the same wUSCC token; each new fund must be granted `ISSUER_ROLE`.
+```mermaid
+stateDiagram-v2
+    [*] --> EMPTY
+    EMPTY --> ACCEPTED: create()
+    EMPTY --> PENDING: create()
+    PENDING --> ACCEPTED: cleared
+    ACCEPTED --> EMPTY: cancel()
+    PENDING --> EMPTY: cancel()
+    ACCEPTED --> PROCESSING: commit()
+    PROCESSING --> UNLOCKING: success
+    PROCESSING --> RECOVERING: failure
+    UNLOCKING --> PROCESSING: partial unlock
+    RECOVERING --> PROCESSING: partial recover
+    UNLOCKING --> ENDED: unlock()
+    RECOVERING --> ENDED: recover()
+    ENDED --> [*]
+```
+
+### USCC Integration (Superstate)
+
+`USCCFund` is the current `IFund` implementation for Superstate USCC. It uses a single active order per fund and exposes a USCC-backed wrapper token (`wUSCC`) via `WrappedAsset`. Multiple funds can share the same wrapper token by granting `ISSUER_ROLE`.
+
+**Deposit (USDC → wUSCC)**
+1. `create(DEPOSIT)` initializes the order.
+2. `commit()` transfers USDC to the Superstate recipient.
+3. Once USCC is minted to the fund, `unlock()` mints wUSCC to the receiver.
+
+**Redeem (wUSCC → USDC)**
+1. `create(REDEEM)` initializes the order.
+2. `commit()` burns wUSCC and triggers off-chain redemption.
+3. When USDC settles, `unlock()` releases it (or `recover()` returns inputs if processing fails).
+
+USCC accounting uses a Chainlink USCC oracle; operator roles manage oracle configuration and recovery.
 
 ## Transfer Guard
 
