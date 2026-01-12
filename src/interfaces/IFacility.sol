@@ -23,7 +23,7 @@ interface IFacility {
   function setDepositCap(uint256 id, uint256 newDepositCap) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         OPERATIONS                         */
+  /*                        FUND OPERATIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// TODO => Parameters
@@ -50,6 +50,42 @@ interface IFacility {
   /// TODO => Parameters
   function swap(uint256 id1, address token1, uint256 id2, address token2, uint256 amount1, uint256 amount2) external;
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     REQUEST OPERATIONS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Pull funds from the given intent Request.
+  /// @param id The ID of the intent to pull from.
+  /// @param amount The amount to pull (can be partial).
+  function pull(uint256 id, uint256 amount) external;
+
+  /// @notice Repay funds to the given intent Request.
+  /// @param id The ID of the intent to repay to.
+  /// @param amount The amount to repay (can be partial).
+  function repay(uint256 id, uint256 amount) external;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 POSITION MANAGER OPERATIONS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Deposits and/or borrows funds for the position manager of the given intent.
+  /// @param id The ID of the intent.
+  /// @param depositAmount The amount to deposit.
+  /// @param borrowAmount The amount to borrow.
+  function depositManager(uint256 id, uint256 depositAmount, uint256 borrowAmount) external;  
+
+  /// @notice Withdraws and/or repays funds for the position manager of the given intent.
+  /// @param id The ID of the intent.
+  /// @param withdrawAmount The amount to withdraw.
+  /// @param repayAmount The amount to repay.
+  function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount) external;
+
+  /// @notice Burns shares by repaying debt and withdrawing collateral proportionally for the 
+  ///         position manager of the given intent.
+  /// @param id The ID of the intent.
+  /// @param amount The amount of shares to burn.
+  function burnManager(uint256 id, uint256 amount) external;
+  
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     LIQUIDITY PROVIDERS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
