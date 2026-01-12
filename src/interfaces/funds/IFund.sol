@@ -8,14 +8,18 @@ import {Order, State} from "../../libs/Order.sol";
 ///
 ///      State Machine:
 ///      ┌────────────────────────────────────────────────────────────────────────────┐
-///      │                    ┌──> ACCEPTED ──commit()──> PROCESSING────────┐         │
-///      │                    │       ▲                        │            │         │
+///      │                                                                            │
+///      │    ┌───────cancel()────────┐                                               │
+///      │    │                       │                                               │
+///      │    │                       │                                               │
+///      │    │               ┌──> ACCEPTED ──commit()──> PROCESSING────────┐         │
+///      │    ▼               │       ▲                        │            │         │
 ///      │  EMPTY ──create()──┤       │                        │            │         │
-///      │                    │       │                        ▼            ▼         │
-///      │                    └──> PENDING                 UNLOCKING    RECOVERING    │
-///      │                                                     │            │         │
-///      │                                                     │            │         │
-///      │                                                  unlock()     recover()    │
+///      │    ▲               │       │                        ▼            ▼         │
+///      │    │               └──> PENDING                 UNLOCKING    RECOVERING    │
+///      │    │                       │                        │            │         │
+///      │    │                       │                        │            │         │
+///      │    └────────cancel()───────┘                     unlock()     recover()    │
 ///      │                                                     │            │         │
 ///      │                                                     │            │         │
 ///      │                                                     └──────┐─────┘         │
@@ -31,6 +35,7 @@ import {Order, State} from "../../libs/Order.sol";
 ///      Comments:
 ///      - create() returns ACCEPTED (ready for commit) or PENDING (e.g. queued/rate-limited/KYC)
 ///      - PENDING orders transition to ACCEPTED when ready
+///      - ACCEPTED and PENDING orders can be canceled back to EMPTY via cancel()
 ///      - ACCEPTED orders go to PROCESSING via commit()
 ///      - PROCESSING splits to UNLOCKING (success) or RECOVERING (failure)
 ///      - Partial unlock/recover: After claiming partial funds, state goes back to PROCESSING
@@ -48,6 +53,12 @@ interface IFund {
   /// @param order The order parameters defining the operation.
   /// @return The new state of the order after creation (ACCEPTED or PENDING).
   function create(Order calldata order) external returns (State);
+
+  /// @notice Cancels an uncommitted order.
+  /// @dev Only callable when state() returns ACCEPTED or PENDING.
+  /// @param order The order parameters identifying the operation.
+  /// @return The new state of the order after cancellation (EMPTY).
+  function cancel(Order calldata order) external returns (State);
 
   /// @notice Transfers assets from the sender to the wrapper for an accepted order.
   /// @dev Only callable when state() returns ACCEPTED.

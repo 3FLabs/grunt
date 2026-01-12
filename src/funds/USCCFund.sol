@@ -20,6 +20,7 @@ import {Order, State, Id, Mode} from "../libs/Order.sol";
 ///        The underlying USCC tokens are held centrally by the wUSCC contract (not by individual funds).
 ///        This enables shared state across all funds via wUSCC.totalSupply().
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
+///      - ACCEPTED / PENDING orders can be canceled back to EMPTY via cancel() before any assets/shares are committed.
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
 ///        on asset balances to determine state transitions.
@@ -171,6 +172,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param receiver The address receiving the unlocked funds.
   event OrderUnlocked(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
+  /// @notice Emitted when an order is canceled before commitment.
+  /// @param orderId The unique identifier of the order.
+  /// @param mode The mode of the order (DEPOSIT or REDEEM).
+  /// @param owner The owner of the canceled order.
+  event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
+
   /// @notice Emitted when the internal state is manually set to RECOVERING.
   /// @param orderId The unique identifier of the order being recovered.
   event OrderRecovering(Id indexed orderId);
@@ -281,6 +288,27 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
     return State.ACCEPTED;
+  }
+
+  /// @inheritdoc IFund
+  function cancel(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
+    if (order.owner != msg.sender) revert InvalidOwner();
+
+    UsccFundStorage storage $ = _usccFundStorage();
+    Id _currentOrder = $.currentOrder;
+    Id _orderId = order.toId(address(this));
+    if (!_orderId.eq(_currentOrder)) revert InvalidOrder(_orderId);
+
+    State _internalState = $.internalState;
+    if (_internalState != State.ACCEPTED && _internalState != State.PENDING) revert InvalidState(_internalState);
+
+    $.currentOrder = Id.wrap(bytes32(0));
+    $.internalState = State.EMPTY;
+    $.cachedBalance = 0;
+
+    emit OrderCanceled(_orderId, order.mode, order.owner);
+
+    return State.EMPTY;
   }
 
   /// @inheritdoc IFund

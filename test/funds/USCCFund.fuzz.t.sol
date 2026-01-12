@@ -609,6 +609,20 @@ contract USCCFundHandler is Test {
     cachedUsccBalance = 0;
   }
 
+  function act_cancel(uint96 input, uint96 output, bytes32 salt) external {
+    if (internalState != State.ACCEPTED && internalState != State.PENDING) return;
+
+    order = Order({
+      owner: address(this),
+      receiver: address(this),
+      input: uint256(input),
+      output: uint256(output),
+      mode: Mode.DEPOSIT,
+      salt: salt
+    });
+    internalState = fund.cancel(order);
+  }
+
   function act_createRedeem(uint96 inputSeed, uint96 output, bytes32 salt) external {
     if (internalState != State.EMPTY && internalState != State.ENDED) return;
 
@@ -801,7 +815,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
 
     handler.initialize(fund, usdc, uscc, wuscc, recipient);
 
-    bytes4[] memory selectors = new bytes4[](9);
+    bytes4[] memory selectors = new bytes4[](10);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_commit.selector;
@@ -811,6 +825,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     selectors[6] = handler.act_superstateMintUsdc.selector;
     selectors[7] = handler.act_unlock.selector;
     selectors[8] = handler.act_recover.selector;
+    selectors[9] = handler.act_cancel.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -822,6 +837,12 @@ contract USCCFundInvariantTest is StdInvariant, Test {
 
   function invariant_RecipientBalanceMatchesDeposits() public view {
     assertEq(usdc.balanceOf(recipient), handler.expectedRecipientUsdc(), "recipient usdc mismatch");
+  }
+
+  function invariant_balanceWUSCCMatchesUnderlyingUSCC() public view {
+    uint256 wusccBalance = uscc.balanceOf(address(wuscc));
+    uint256 totalSupply = wuscc.totalSupply();
+    assertEq(totalSupply, wusccBalance, "wUSCC underlying USCC mismatch");
   }
 
   function invariant_TotalAssetsTracksWusccSupplyWhenPriceIsOne() public view {
