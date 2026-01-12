@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
+struct Intent {
+  address fund;
+  address positionManager;
+}
+
 interface IFacility {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */
@@ -72,7 +77,7 @@ interface IFacility {
   /// @param id The ID of the intent.
   /// @param depositAmount The amount to deposit.
   /// @param borrowAmount The amount to borrow.
-  function depositManager(uint256 id, uint256 depositAmount, uint256 borrowAmount) external;  
+  function depositManager(uint256 id, uint256 depositAmount, uint256 borrowAmount) external;
 
   /// @notice Withdraws and/or repays funds for the position manager of the given intent.
   /// @param id The ID of the intent.
@@ -80,12 +85,12 @@ interface IFacility {
   /// @param repayAmount The amount to repay.
   function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount) external;
 
-  /// @notice Burns shares by repaying debt and withdrawing collateral proportionally for the 
+  /// @notice Burns shares by repaying debt and withdrawing collateral proportionally for the
   ///         position manager of the given intent.
   /// @param id The ID of the intent.
   /// @param amount The amount of shares to burn.
   function burnManager(uint256 id, uint256 amount) external;
-  
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     LIQUIDITY PROVIDERS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
