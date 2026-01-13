@@ -56,6 +56,7 @@ contract PositionManager is
   /// @param collateralAsset_ The collateral asset address
   /// @param debtAsset_ The debt asset address
   /// @param lltv_ The LLTV for available collateral calculation (WAD precision)
+  /// @param transferGuard_ The initial transfer guard address (address(0) to disable)
   function initialize(
     address owner_,
     string memory name_,
@@ -63,7 +64,8 @@ contract PositionManager is
     uint8 decimals_,
     address collateralAsset_,
     address debtAsset_,
-    uint256 lltv_
+    uint256 lltv_,
+    address transferGuard_
   ) external initializer {
     _initializeOwner(owner_);
     PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
@@ -78,6 +80,11 @@ contract PositionManager is
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
     ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
+    emit IPositionManager.LLTVSet(lltv_);
+    if (transferGuard_ != address(0)) {
+      ps.transferGuard = transferGuard_;
+      emit IPositionManager.TransferGuardSet(transferGuard_);
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

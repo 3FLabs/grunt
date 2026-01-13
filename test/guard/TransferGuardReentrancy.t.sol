@@ -230,7 +230,8 @@ contract TransferGuardReentrancyTest is Test {
       18,
       address(collateralToken),
       address(debtToken),
-      0.8e18 // 80% LLTV
+      0.8e18, // 80% LLTV
+      address(0)
     );
 
     // Deploy malicious module

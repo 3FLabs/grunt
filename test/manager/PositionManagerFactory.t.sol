@@ -41,7 +41,8 @@ contract PositionManagerFactoryTest is Test {
     address indexed owner,
     address indexed collateralAsset,
     address debtAsset,
-    uint256 lltv
+    uint256 lltv,
+    address transferGuard
   );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -98,7 +99,8 @@ contract PositionManagerFactoryTest is Test {
       18,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV
+      DEFAULT_LLTV,
+      address(0)
     );
 
     assertTrue(positionManager != address(0), "Position manager should be deployed");
@@ -112,7 +114,8 @@ contract PositionManagerFactoryTest is Test {
       18,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV
+      DEFAULT_LLTV,
+      address(0)
     );
 
     PositionManager pm = PositionManager(positionManager);
@@ -136,7 +139,8 @@ contract PositionManagerFactoryTest is Test {
       positionManagerOwner,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV
+      DEFAULT_LLTV,
+      address(0)
     );
 
     factory.createPositionManager(
@@ -146,17 +150,25 @@ contract PositionManagerFactoryTest is Test {
       18,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV
+      DEFAULT_LLTV,
+      address(0)
     );
   }
 
   function test_createPositionManager_multipleDeployments() public {
     address pm1 = factory.createPositionManager(
-      positionManagerOwner, "Position Manager 1", "PM1", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV
+      positionManagerOwner,
+      "Position Manager 1",
+      "PM1",
+      18,
+      address(collateralToken),
+      address(debtToken),
+      DEFAULT_LLTV,
+      address(0)
     );
 
     address pm2 = factory.createPositionManager(
-      user, "Position Manager 2", "PM2", 18, address(collateralToken), address(debtToken), 0.6e18
+      user, "Position Manager 2", "PM2", 18, address(collateralToken), address(debtToken), 0.6e18, address(0)
     );
 
     assertTrue(pm1 != pm2, "Each deployment should create a unique address");
@@ -175,7 +187,8 @@ contract PositionManagerFactoryTest is Test {
       18,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV
+      DEFAULT_LLTV,
+      address(0)
     );
 
     assertTrue(positionManager != address(0), "Anyone should be able to create position manager");
@@ -206,11 +219,12 @@ contract PositionManagerFactoryTest is Test {
   function test_beaconUpgrade_affectsAllProxies() public {
     // Create two position managers
     address pm1 = factory.createPositionManager(
-      positionManagerOwner, "PM1", "PM1", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV
+      positionManagerOwner, "PM1", "PM1", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV, address(0)
     );
 
-    address pm2 =
-      factory.createPositionManager(user, "PM2", "PM2", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV);
+    address pm2 = factory.createPositionManager(
+      user, "PM2", "PM2", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV, address(0)
+    );
 
     // Verify both work before upgrade
     assertEq(PositionManager(pm1).name(), "PM1");
@@ -237,20 +251,23 @@ contract PositionManagerFactoryTest is Test {
     string memory name,
     string memory symbol,
     uint8 decimals,
-    uint256 lltv
+    uint256 lltv,
+    address transferGuard
   ) public {
     vm.assume(owner != address(0));
     lltv = bound(lltv, 0, 1e18); // LLTV should be <= 100%
 
-    address positionManager =
-      factory.createPositionManager(owner, name, symbol, decimals, address(collateralToken), address(debtToken), lltv);
+    address positionManager = factory.createPositionManager(
+      owner, name, symbol, decimals, address(collateralToken), address(debtToken), lltv, transferGuard
+    );
 
     PositionManager pm = PositionManager(positionManager);
     assertEq(pm.owner(), owner);
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
     assertEq(pm.decimals(), decimals);
-    (uint256 lltv_,,) = pm.config();
+    (uint256 lltv_,, address transferGuard_) = pm.config();
     assertEq(lltv_, lltv);
+    assertEq(transferGuard_, transferGuard);
   }
 }
