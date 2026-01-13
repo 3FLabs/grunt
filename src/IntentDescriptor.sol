@@ -33,11 +33,11 @@ contract IntentDescriptor is IIntentDescriptor {
   }
 
   /// @inheritdoc IIntentDescriptor
-  function tokenURI(IFacility facility, uint256 id) external pure override returns (string memory) {
+  function tokenURI(IFacility, uint256 id) external pure override returns (string memory) {
     string memory tokenName = _name(id);
     string memory tokenDescription = _description(id);
     string memory tokenSymbol = _symbol(id);
-    string memory image = _generateSVG(tokenSymbol);
+    string memory image = _generateSvg(tokenSymbol);
 
     string memory json =
       string.concat('{"name":"', tokenName, '","description":"', tokenDescription, '","image":"', image, '"}');
@@ -68,7 +68,7 @@ contract IntentDescriptor is IIntentDescriptor {
   /// @dev Generates an SVG image for the intent token.
   /// @param tokenSymbol The symbol to display on the token.
   /// @return The base64-encoded SVG data URI.
-  function _generateSVG(string memory tokenSymbol) internal pure returns (string memory) {
+  function _generateSvg(string memory tokenSymbol) internal pure returns (string memory) {
     string memory svg = string.concat(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">',
       "<defs>",
