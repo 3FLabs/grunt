@@ -14,9 +14,11 @@ import {Order, Mode} from "./libs/Order.sol";
 import {TokenBalancesLib} from "./libs/facility/TokenBalancesLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 
 contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable {
   using TokenBalancesLib for EnumerableMapLib.AddressToUint256Map;
+  using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
 
@@ -51,6 +53,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @notice Thrown when the deposit cap is exceeded.
   error DepositCapExceeded(uint256 id);
+
+  /// @notice Thrown when the asset is invalid.
+  error InvalidAsset(uint256 id);
+
+  /// @notice Thrown when the amount is invalid.
+  error InvalidAmount(uint256 id);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -242,7 +250,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Order memory order = _intent.order;
     _intent.amounts.sub(asset, order.input);
     asset.safeApproveWithRetry(_intent.fund, order.input);
-    (, committedAmount) = IFund(_intent.fund).commit(order);
+    (, uint256 committedAmount) = IFund(_intent.fund).commit(order);
 
     if (committedAmount != order.input) revert InvalidAmount(id);
 
@@ -276,21 +284,24 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     // TODO - Validations
     if (!_isResolving(_intent)) revert NotResolving(id);
-    
+
     // TODO - Updates
     Order memory order = _intent.order;
     address asset = order.mode == Mode.DEPOSIT ? IFund(_intent.fund).asset() : IFund(_intent.fund).share();
 
-    (_, uint recoveredAmount) = IFund(_intent.fund).recover(order);
-    
+    (, uint256 recoveredAmount) = IFund(_intent.fund).recover(order);
+
     _intent.amounts.add(asset, recoveredAmount);
 
     // TODO - Emits event
-
   }
 
   /// @inheritdoc IFacility
-  function swap(uint256 id1, address token1, uint256 id2, address token2, uint256 amount1, uint256 amount2) external override onlyRoles(FACILITATOR_ROLE) {
+  function swap(uint256 id1, address token1, uint256 id2, address token2, uint256 amount1, uint256 amount2)
+    external
+    override
+    onlyRoles(FACILITATOR_ROLE)
+  {
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent1 = $.intents[id1];
     Intent storage _intent2 = $.intents[id2];
@@ -460,7 +471,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     return descriptor_.tokenURI(IFacility(address(this)), id);
   }
 
-  function totalSupply(uint256 id) public view override returns (uint256) {
+  function totalSupply(uint256 id) public view returns (uint256) {
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
     return _intent.totalSupply;
