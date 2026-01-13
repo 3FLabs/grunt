@@ -26,6 +26,21 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @notice Thrown when a required address parameter is the zero address.
   error AddressZero();
 
+  /// @notice Thrown when the intent is already resolving.
+  error AlreadyResolving();
+
+  /// @notice Thrown when the intent is already resolved.
+  error AlreadyResolved();
+
+  /// @notice Thrown when the intent is not resolving.
+  error NotResolving();
+
+  /// @notice Thrown when the intent is not resolved.
+  error NotResolved();
+
+  /// @notice Thrown when the intent is not depositing.
+  error NotDepositing();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -119,17 +134,34 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @inheritdoc IFacility
   function lock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (_isResolving(_intent)) revert AlreadyResolving();
+
+    _intent.resolveStart = uint40(block.timestamp);
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
   function resolve(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (_intent.resolved) revert AlreadyResolved();
+
+    _intent.resolved = true;
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
   function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    _intent.depositCap = newDepositCap;
+    // TODO - Emits event
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -147,6 +179,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
+    if (!_isResolving(_intent)) revert NotResolving();
 
     order = Order({
       owner: address(this),
@@ -168,6 +201,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
+    if (!_isResolving(_intent)) revert NotResolving();
 
     IFund(_intent.fund).cancel(_intent.order);
 
@@ -180,6 +214,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
+    if (!_isResolving(_intent)) revert NotResolving();
 
     IFund(_intent.fund).commit(_intent.order);
 
@@ -192,6 +227,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
+    if (!_isResolving(_intent)) revert NotResolving();
 
     IFund(_intent.fund).unlock(_intent.order);
 
@@ -204,6 +240,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
+    if (!_isResolving(_intent)) revert NotResolving();
 
     IFund(_intent.fund).recover(_intent.order);
 
@@ -216,7 +253,15 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     override
     onlyRoles(FACILITATOR_ROLE)
   {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent1 = $.intents[id1];
+    Intent storage _intent2 = $.intents[id2];
+
+    // TODO - Validations
+    if (!_isResolving(_intent1)) revert NotResolving();
+    if (!_isResolving(_intent2)) revert NotResolving();
+
+    // TODO - Updates
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -226,11 +271,25 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @inheritdoc IFacility
   function pull(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
+
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isResolving(_intent)) revert NotResolving();
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
   function repay(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
+
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isResolving(_intent)) revert NotResolving();
+
+    // TODO - Updates
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -243,7 +302,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     override
     onlyRoles(FACILITATOR_ROLE)
   {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isResolving(_intent)) revert NotResolving();
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
@@ -252,12 +316,22 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     override
     onlyRoles(FACILITATOR_ROLE)
   {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isResolving(_intent)) revert NotResolving();
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
   function burnManager(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isResolving(_intent)) revert NotResolving();
+
+    // TODO - Updates
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -266,17 +340,32 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @inheritdoc IFacility
   function deposit(uint256 id, uint256 amount) external override {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isDepositing(_intent)) revert NotDepositing();
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
   function withdraw(uint256 id, uint256 amount) external override {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_isDepositing(_intent)) revert NotDepositing();
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
   function claim(uint256 id) external override {
-    // TODO
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (!_intent.resolved) revert NotResolved();
+
+    // TODO - Updates
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -312,5 +401,13 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @param addr The address to check.
   function _checkNotZero(address addr) internal pure {
     if (addr == address(0)) revert AddressZero();
+  }
+
+  function _isResolving(Intent storage _intent) internal view returns (bool) {
+    return _intent.resolveStart <= block.timestamp && !_intent.resolved;
+  }
+
+  function _isDepositing(Intent storage _intent) internal view returns (bool) {
+    return !_intent.resolved && _intent.resolveStart > block.timestamp;
   }
 }

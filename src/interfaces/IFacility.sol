@@ -5,19 +5,13 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 
 import {Order, Mode} from "../libs/Order.sol";
 
-enum IntentState {
-  OPEN,
-  LOCKED,
-  RESOLVED
-}
-
 struct Intent {
   address fund;
   address positionManager;
   address request;
-  IntentState state;
   uint256 depositCap;
-  uint256 deadline;
+  uint40 resolveStart;
+  bool resolved;
   EnumerableMapLib.AddressToUint256Map amounts;
   Order order;
 }
