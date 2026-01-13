@@ -8,6 +8,8 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 import {IFacility, Intent} from "./interfaces/IFacility.sol";
 import {IIntentDescriptor} from "./interfaces/IIntentDescriptor.sol";
+import {IFund} from "./interfaces/funds/IFund.sol";
+import {Order, Mode} from "./libs/Order.sol";
 
 contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -110,23 +112,23 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function createIntent() external override returns (uint256 id) {
+  function createIntent() external override onlyRoles(FACILITATOR_ROLE) returns (uint256 id) {
     // TODO
     return 0;
   }
 
   /// @inheritdoc IFacility
-  function lock(uint256 id) external override {
+  function lock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
   }
 
   /// @inheritdoc IFacility
-  function resolve(uint256 id) external override {
+  function resolve(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
   }
 
   /// @inheritdoc IFacility
-  function setDepositCap(uint256 id, uint256 newDepositCap) external override {
+  function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
   }
 
@@ -135,35 +137,84 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function create(uint256 id, uint256 amount, uint256 minAmountOut) external override returns (uint256 orderId) {
-    // TODO
-    return 0;
+  function create(uint256 id, uint256 amount, uint256 minAmountOut, Mode mode )
+    external
+    override
+    onlyRoles(FACILITATOR_ROLE)
+    returns (Order memory order)
+  {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    // TODO - Validations
+    
+    order = Order({
+      owner: address(this),
+      receiver: address(this),
+      input: amount,
+      output: minAmountOut,
+      mode: mode,
+      salt: keccak256(abi.encode(address(this), block.timestamp, id))
+    });
+
+    IFund(_intent.fund).create(order);
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
-  function cancel(uint256 id) external override {
-    // TODO
+  function cancel(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    // TODO - Validations
+
+    IFund(_intent.fund).cancel(_intent.order);
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
-  function commit(uint256 id) external override {
-    // TODO
+  function commit(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    // TODO - Validations
+
+    IFund(_intent.fund).commit(_intent.order);
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
-  function unlock(uint256 id) external override {
-    // TODO
+  function unlock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    // TODO - Validations
+
+    IFund(_intent.fund).unlock(_intent.order);
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
-  function recover(uint256 id) external override {
-    // TODO
+  function recover(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    // TODO - Validations
+
+    IFund(_intent.fund).recover(_intent.order);
+
+    // TODO - Updates
   }
 
   /// @inheritdoc IFacility
   function swap(uint256 id1, address token1, uint256 id2, address token2, uint256 amount1, uint256 amount2)
     external
     override
+    onlyRoles(FACILITATOR_ROLE)
   {
     // TODO
   }
@@ -173,12 +224,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function pull(uint256 id, uint256 amount) external override {
+  function pull(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
   }
 
   /// @inheritdoc IFacility
-  function repay(uint256 id, uint256 amount) external override {
+  function repay(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
   }
 
@@ -187,17 +238,25 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function depositManager(uint256 id, uint256 depositAmount, uint256 borrowAmount) external override {
+  function depositManager(uint256 id, uint256 depositAmount, uint256 borrowAmount)
+    external
+    override
+    onlyRoles(FACILITATOR_ROLE)
+  {
     // TODO
   }
 
   /// @inheritdoc IFacility
-  function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount) external override {
+  function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount)
+    external
+    override
+    onlyRoles(FACILITATOR_ROLE)
+  {
     // TODO
   }
 
   /// @inheritdoc IFacility
-  function burnManager(uint256 id, uint256 amount) external override {
+  function burnManager(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) {
     // TODO
   }
 
