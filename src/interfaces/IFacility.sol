@@ -1,9 +1,25 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
+import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
+
+import {Order, Mode} from "../libs/Order.sol";
+
+enum IntentState {
+  OPEN,
+  LOCKED,
+  RESOLVED
+}
+
 struct Intent {
   address fund;
   address positionManager;
+  address request;
+  IntentState state;
+  uint256 depositCap;
+  uint256 deadline;
+  EnumerableMapLib.AddressToUint256Map amounts;
+  Order order;
 }
 
 interface IFacility {
@@ -33,7 +49,7 @@ interface IFacility {
 
   /// TODO => Parameters
   /// @dev We have only one order per intent.
-  function create(uint256 id, uint256 amount, uint256 minAmountOut) external returns (uint256 orderId);
+  function create(uint256 id, uint256 amount, uint256 minAmountOut, Mode mode) external returns (Order memory order);
 
   /// @notice Cancels the given intent underlying order.
 
