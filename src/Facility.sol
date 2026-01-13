@@ -11,7 +11,15 @@ import {IIntentDescriptor} from "./interfaces/IIntentDescriptor.sol";
 import {IFund} from "./interfaces/funds/IFund.sol";
 import {Order, Mode} from "./libs/Order.sol";
 
+import {TokenBalancesLib} from "./libs/facility/TokenBalancesLib.sol";
+import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+
 contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable {
+  using TokenBalancesLib for EnumerableMapLib.AddressToUint256Map;
+  using SafeTransferLib for address;
+  using FixedPointMathLib for uint256;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -27,19 +35,22 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   error AddressZero();
 
   /// @notice Thrown when the intent is already resolving.
-  error AlreadyResolving();
+  error AlreadyResolving(uint256 id);
 
   /// @notice Thrown when the intent is already resolved.
-  error AlreadyResolved();
+  error AlreadyResolved(uint256 id);
 
   /// @notice Thrown when the intent is not resolving.
-  error NotResolving();
+  error NotResolving(uint256 id);
 
   /// @notice Thrown when the intent is not resolved.
-  error NotResolved();
+  error NotResolved(uint256 id);
 
   /// @notice Thrown when the intent is not depositing.
-  error NotDepositing();
+  error NotDepositing(uint256 id);
+
+  /// @notice Thrown when the deposit cap is exceeded.
+  error DepositCapExceeded(uint256 id);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -137,7 +148,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (_isResolving(_intent)) revert AlreadyResolving();
+    if (_isResolving(_intent)) revert AlreadyResolving(id);
 
     _intent.resolveStart = uint40(block.timestamp);
 
@@ -149,7 +160,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (_intent.resolved) revert AlreadyResolved();
+    if (_intent.resolved) revert AlreadyResolved(id);
 
     _intent.resolved = true;
     // TODO - Emits event
@@ -179,7 +190,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     order = Order({
       owner: address(this),
@@ -193,6 +204,9 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     IFund(_intent.fund).create(order);
 
     // TODO - Updates
+    _intent.order = order;
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
@@ -201,11 +215,14 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     IFund(_intent.fund).cancel(_intent.order);
 
     // TODO - Updates
+    delete _intent.order;
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
@@ -214,11 +231,22 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
+    // TODO - check order exists
 
-    IFund(_intent.fund).commit(_intent.order);
+    // TODO - change the way we handle the asset
+    address asset = _intent.order.mode == Mode.DEPOSIT ? IFund(_intent.fund).asset() : IFund(_intent.fund).share();
+    if (asset != _intent.depositAsset) revert InvalidAsset(id);
 
     // TODO - Updates
+    Order memory order = _intent.order;
+    _intent.amounts.sub(asset, order.input);
+    asset.safeApproveWithRetry(_intent.fund, order.input);
+    (, committedAmount) = IFund(_intent.fund).commit(order);
+
+    if (committedAmount != order.input) revert InvalidAmount(id);
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
@@ -227,11 +255,18 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
-    IFund(_intent.fund).unlock(_intent.order);
+    // TODO - change the way we handle the asset
+    Order memory order = _intent.order;
+    address asset = order.mode == Mode.DEPOSIT ? IFund(_intent.fund).share() : IFund(_intent.fund).asset();
+
+    (, uint256 unlockedAmount) = IFund(_intent.fund).unlock(order);
+    _intent.amounts.add(asset, unlockedAmount);
 
     // TODO - Updates
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
@@ -240,28 +275,31 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
-    if (!_isResolving(_intent)) revert NotResolving();
-
-    IFund(_intent.fund).recover(_intent.order);
-
+    if (!_isResolving(_intent)) revert NotResolving(id);
+    
     // TODO - Updates
+    Order memory order = _intent.order;
+    address asset = order.mode == Mode.DEPOSIT ? IFund(_intent.fund).asset() : IFund(_intent.fund).share();
+
+    (_, uint recoveredAmount) = IFund(_intent.fund).recover(order);
+    
+    _intent.amounts.add(asset, recoveredAmount);
+
+    // TODO - Emits event
+
   }
 
   /// @inheritdoc IFacility
-  function swap(uint256 id1, address token1, uint256 id2, address token2, uint256 amount1, uint256 amount2)
-    external
-    override
-    onlyRoles(FACILITATOR_ROLE)
-  {
+  function swap(uint256 id1, address token1, uint256 id2, address token2, uint256 amount1, uint256 amount2) external override onlyRoles(FACILITATOR_ROLE) {
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent1 = $.intents[id1];
     Intent storage _intent2 = $.intents[id2];
+    _intent1.amounts.sub(token1, amount1);
+    _intent1.amounts.add(token2, amount2);
+    _intent2.amounts.sub(token2, amount2);
+    _intent2.amounts.add(token1, amount1);
 
-    // TODO - Validations
-    if (!_isResolving(_intent1)) revert NotResolving();
-    if (!_isResolving(_intent2)) revert NotResolving();
-
-    // TODO - Updates
+    // TODO - Emits event
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -275,7 +313,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     // TODO - Updates
   }
@@ -287,7 +325,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     // TODO - Updates
   }
@@ -305,7 +343,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     // TODO - Updates
   }
@@ -319,7 +357,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     // TODO - Updates
   }
@@ -329,7 +367,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving();
+    if (!_isResolving(_intent)) revert NotResolving(id);
 
     // TODO - Updates
   }
@@ -343,9 +381,18 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isDepositing(_intent)) revert NotDepositing();
+    // IScreener.check(msg.sender, id, data, amount);
+
+    if (!_isDepositing(_intent)) revert NotDepositing(id);
+    if (_intent.totalSupply + amount > _intent.depositCap) revert DepositCapExceeded(id);
 
     // TODO - Updates
+    address depositAsset = _intent.depositAsset;
+    depositAsset.safeTransferFrom(msg.sender, address(this), amount);
+    _intent.amounts.add(depositAsset, amount);
+    _mint(msg.sender, id, amount);
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
@@ -353,9 +400,15 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isDepositing(_intent)) revert NotDepositing();
+    if (!_isDepositing(_intent)) revert NotDepositing(id);
 
     // TODO - Updates
+    address depositAsset = _intent.depositAsset;
+    _intent.amounts.sub(depositAsset, amount);
+    depositAsset.safeTransfer(msg.sender, amount);
+    _burn(msg.sender, id, amount);
+
+    // TODO - Emits event
   }
 
   /// @inheritdoc IFacility
@@ -363,9 +416,23 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_intent.resolved) revert NotResolved();
+    if (!_intent.resolved) revert NotResolved(id);
+
+    uint256 balance = balanceOf(msg.sender, id);
+    uint256 totalSupply = totalSupply(id);
 
     // TODO - Updates
+    address[] memory tokens = _intent.amounts.keys();
+    for (uint256 i = 0; i < tokens.length; i++) {
+      address token = tokens[i];
+      uint256 userBalance = _intent.amounts.get(token).mulDiv(balance, totalSupply);
+      _intent.amounts.sub(token, userBalance);
+      token.safeTransfer(msg.sender, userBalance);
+    }
+
+    _burn(msg.sender, id, balance);
+
+    // TODO - Emits event
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -393,6 +460,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     return descriptor_.tokenURI(IFacility(address(this)), id);
   }
 
+  function totalSupply(uint256 id) public view override returns (uint256) {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+    return _intent.totalSupply;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -409,5 +482,16 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   function _isDepositing(Intent storage _intent) internal view returns (bool) {
     return !_intent.resolved && _intent.resolveStart > block.timestamp;
+  }
+
+  function _beforeTokenTransfer(address from, address to, uint256 id, uint256 amount) internal override {
+    FacilityStorage storage $ = _facilityStorage();
+    Intent storage _intent = $.intents[id];
+
+    if (from == address(0) && to != address(0)) {
+      _intent.totalSupply += amount;
+    } else if (from != address(0) && to == address(0)) {
+      _intent.totalSupply -= amount;
+    }
   }
 }

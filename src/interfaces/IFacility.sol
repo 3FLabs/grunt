@@ -6,6 +6,7 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {Order, Mode} from "../libs/Order.sol";
 
 struct Intent {
+  address depositAsset;
   address fund;
   address positionManager;
   address request;
@@ -14,6 +15,7 @@ struct Intent {
   bool resolved;
   EnumerableMapLib.AddressToUint256Map amounts;
   Order order;
+  uint256 totalSupply;
 }
 
 interface IFacility {
