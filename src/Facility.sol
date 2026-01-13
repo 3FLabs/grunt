@@ -7,6 +7,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 import {IFacility, Intent} from "./interfaces/IFacility.sol";
+import {IIntentDescriptor} from "./interfaces/IIntentDescriptor.sol";
 
 contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -27,6 +28,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Emitted when the intent descriptor is updated.
+  /// @param descriptor The new descriptor address.
+  event DescriptorSet(address indexed descriptor);
+
   // TODO => Events
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -37,8 +42,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param intents Mapping from intent ID to Intent struct.
+  /// @param descriptor The intent descriptor contract for generating token metadata.
   struct FacilityStorage {
     mapping(uint256 => Intent) intents;
+    IIntentDescriptor descriptor;
   }
 
   /// @dev Storage slot for the Facility contract's main storage struct.
@@ -66,12 +73,36 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   ///      The owner has admin control, while the depositor can execute orders.
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param facilitator_ The address to be granted the FACILITATOR_ROLE (initial facilitator).
-  function initialize(address owner_, address facilitator_) public initializer {
+  /// @param descriptor_ The initial intent descriptor contract (can be address(0) to disable).
+  function initialize(address owner_, address facilitator_, IIntentDescriptor descriptor_) public initializer {
     _checkNotZero(owner_);
     _checkNotZero(facilitator_);
 
     _initializeOwner(owner_);
     _setRoles(facilitator_, FACILITATOR_ROLE);
+
+    if (address(descriptor_) != address(0)) {
+      _facilityStorage().descriptor = descriptor_;
+      emit DescriptorSet(address(descriptor_));
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         DESCRIPTOR                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns the current intent descriptor contract.
+  /// @return The intent descriptor address.
+  function descriptor() external view returns (IIntentDescriptor) {
+    return _facilityStorage().descriptor;
+  }
+
+  /// @notice Sets the intent descriptor contract for generating token metadata.
+  /// @dev Only callable by the owner. Can be set to address(0) to disable.
+  /// @param descriptor_ The new descriptor contract address.
+  function setDescriptor(IIntentDescriptor descriptor_) external onlyOwner {
+    _facilityStorage().descriptor = descriptor_;
+    emit DescriptorSet(address(descriptor_));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -195,17 +226,23 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @inheritdoc ERC6909
   function name(uint256 id) public view override returns (string memory) {
-    return "";
+    IIntentDescriptor descriptor_ = _facilityStorage().descriptor;
+    if (address(descriptor_) == address(0)) return "";
+    return descriptor_.name(IFacility(address(this)), id);
   }
 
   /// @inheritdoc ERC6909
   function symbol(uint256 id) public view override returns (string memory) {
-    return "";
+    IIntentDescriptor descriptor_ = _facilityStorage().descriptor;
+    if (address(descriptor_) == address(0)) return "";
+    return descriptor_.symbol(IFacility(address(this)), id);
   }
 
   /// @inheritdoc ERC6909
   function tokenURI(uint256 id) public view override returns (string memory) {
-    return "";
+    IIntentDescriptor descriptor_ = _facilityStorage().descriptor;
+    if (address(descriptor_) == address(0)) return "";
+    return descriptor_.tokenURI(IFacility(address(this)), id);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
