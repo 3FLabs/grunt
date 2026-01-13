@@ -39,15 +39,8 @@ contract IntentDescriptor is IIntentDescriptor {
     string memory tokenSymbol = _symbol(id);
     string memory image = _generateSVG(tokenSymbol);
 
-    string memory json = string.concat(
-      '{"name":"',
-      tokenName,
-      '","description":"',
-      tokenDescription,
-      '","image":"',
-      image,
-      '"}'
-    );
+    string memory json =
+      string.concat('{"name":"', tokenName, '","description":"', tokenDescription, '","image":"', image, '"}');
 
     return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
   }
