@@ -206,12 +206,15 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param internalState The internal state of the current order.
   /// @param oracle The address of Chainlink USCC Oracle.
   /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
+  /// @param endedOrders Mapping of ended order Ids to boolean (true if ended). To archive ended orders
+  ///                    (since we only handle one at a time).
   struct UsccFundStorage {
     address recipient;
     Id currentOrder;
     State internalState;
     address oracle;
     uint256 cachedBalance;
+    mapping(Id => bool) endedOrders;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -277,6 +280,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     // Check allowlist permissions for this contract to deposit in USCC
     if (!IAllowlist(ISuperstateToken(USCC).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC")) {
       revert NotAllowedSuperstate();
+    }
+
+    if (_internalState == State.ENDED) {
+      // Archive ended order
+      $.endedOrders[$.currentOrder] = true;
     }
 
     // No pending state, always accepted or revert.
@@ -532,9 +540,15 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
+    Id _orderId = order.toId(address(this));
+
+    // Return ENDED for archived orders
+    if ($.endedOrders[_orderId]) {
+      return (State.ENDED, 0);
+    }
 
     // Return EMPTY to indicate this order doesn't exist
-    if (!order.toId(address(this)).eq($.currentOrder)) {
+    if (!_orderId.eq($.currentOrder)) {
       return (State.EMPTY, 0);
     }
 

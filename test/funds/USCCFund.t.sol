@@ -830,6 +830,36 @@ contract USCCFundTest is Test {
     assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order still EMPTY");
   }
 
+  function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    _unlockDeposit(order);
+
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(nextOrder);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order is ENDED");
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder_RecoveryFlow() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering();
+    usdc.mint(address(fund), order.input);
+    fund.recover(order);
+
+    Order memory nextOrder = _depositOrder(ONE_USDC * 3, ONE_USDC * 3);
+    fund.create(nextOrder);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order is ENDED");
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         STATE MACHINE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

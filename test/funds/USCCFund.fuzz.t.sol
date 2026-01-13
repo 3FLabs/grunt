@@ -181,6 +181,32 @@ contract USCCFundFuzzTest is Test {
     fund.recover(order);
   }
 
+  function testFuzz_ArchivedEndedOrderRemainsEndedAfterNewOrder(uint96 input, uint96 output, uint96 nextInput) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount - 1);
+    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
+    uint256 nextInputAmount = bound(uint256(nextInput), 1, maxAmount);
+    if (nextInputAmount == inputAmount) {
+      nextInputAmount = inputAmount + 1;
+    }
+
+    Order memory order = _depositOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    usdc.mint(address(this), inputAmount);
+    usdc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    uscc.mint(address(fund), outputAmount);
+    fund.unlock(order);
+
+    Order memory nextOrder = _depositOrder(nextInputAmount, outputAmount);
+    fund.create(nextOrder);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order ended");
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
   function testFuzz_RedeemUnlock_SucceedsWhenUsdcOutGteOutput(uint96 input, uint96 output, uint96 usdcOut) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
