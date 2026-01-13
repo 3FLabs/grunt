@@ -25,7 +25,14 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     // Deploy new position manager with reentrant collateral
     reentrantPm = new PositionManager();
     reentrantPm.initialize(
-      owner, "Reentrant PM", "RPM", 18, address(reentrantCollateral), address(debtToken), POSITION_MANAGER_LLTV
+      owner,
+      "Reentrant PM",
+      "RPM",
+      18,
+      address(reentrantCollateral),
+      address(debtToken),
+      POSITION_MANAGER_LLTV,
+      address(0)
     );
 
     // Deploy attacker
@@ -60,7 +67,9 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     // Create a version where debt token is reentrant instead
     ReentrantCollateral reentrantDebt = new ReentrantCollateral();
     PositionManager pm2 = new PositionManager();
-    pm2.initialize(owner, "PM2", "PM2", 18, address(collateralToken), address(reentrantDebt), POSITION_MANAGER_LLTV);
+    pm2.initialize(
+      owner, "PM2", "PM2", 18, address(collateralToken), address(reentrantDebt), POSITION_MANAGER_LLTV, address(0)
+    );
 
     ReentrantMinter attacker2 = new ReentrantMinter(pm2);
 

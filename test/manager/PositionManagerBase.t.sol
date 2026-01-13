@@ -169,7 +169,14 @@ abstract contract PositionManagerBaseTest is Test {
     // Deploy PositionManager
     positionManager = new PositionManager();
     positionManager.initialize(
-      owner, "Position Manager Shares", "PMS", 18, address(collateralToken), address(debtToken), POSITION_MANAGER_LLTV
+      owner,
+      "Position Manager Shares",
+      "PMS",
+      18,
+      address(collateralToken),
+      address(debtToken),
+      POSITION_MANAGER_LLTV,
+      address(0)
     );
 
     // Grant minter role
