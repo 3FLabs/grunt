@@ -137,7 +137,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function create(uint256 id, uint256 amount, uint256 minAmountOut, Mode mode )
+  function create(uint256 id, uint256 amount, uint256 minAmountOut, Mode mode)
     external
     override
     onlyRoles(FACILITATOR_ROLE)
@@ -147,7 +147,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     // TODO - Validations
-    
+
     order = Order({
       owner: address(this),
       receiver: address(this),
