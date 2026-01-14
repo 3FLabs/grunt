@@ -338,46 +338,55 @@ The borrow module enables protocol participants to open and manage collateralize
   │   - Initializable            │
   │   - Ownable                  │
   │   - ERC-7201 Storage         │
-  │   - PreLiquidation Support   │
+  │   - Custom PreLiquidation    │
+  └──────────────────────────────┘
+             │
+             │ deployed by
+             ▼
+  ┌──────────────────────────────┐
+  │ MorphoBorrowPositionFactory  │  <-- Beacon proxy factory
+  │   - UpgradeableBeacon        │
+  │   - ERC1967 Beacon Proxy     │
   └──────────────────────────────┘
 ```
 
 ### MorphoBorrowPosition
 
-Implementation of a borrow position for the Morpho Blue lending protocol with integrated PreLiquidation system support.
+Implementation of a borrow position for the Morpho Blue lending protocol with a custom pre-liquidation mechanism.
 
 **Key Features:**
-- **PreLiquidation Integration**: Connects to Morpho's PreLiquidation system for custom liquidation thresholds
-- **Dual LLTV Enforcement**: Enforces both market LLTV (by Morpho) and stricter preLltv (by this contract)
+- **Custom LLTV**: Each position has an immutable LLTV set at initialization, typically lower than the Morpho market LLTV
+- **Proportional Pre-Liquidation**: Custom liquidation mechanism that gives proportional collateral without liquidation incentive factor
 - **ERC-7201 Namespaced Storage**: Proxy-compatible storage pattern preventing storage collisions
 - **Ownable Access Control**: Position manager has exclusive control over operations
+- **PreLiquidation Callback Interface**: Compatible with Morpho's `IPreLiquidationCallback` interface
 
 **Initialization:**
 Requires:
 - `morpho` - The Morpho Blue protocol contract
 - `marketId` - The Morpho market ID for this position
 - `positionManager` - The owner address controlling this position
-- `preLiquidation` - The PreLiquidation contract (must be from the factory)
-
-The contract validates that the PreLiquidation contract:
-1. Exists in the PreLiquidation factory's registry
-2. Has a market ID matching the provided marketId
-3. Authorizes the PreLiquidation contract to manage position liquidations
+- `lltv` - The custom LLTV for this position (immutable after initialization, must be > 0 and ≤ 1e18)
 
 **Operations:**
 - `supplyCollateral(amount)` - Add collateral to increase borrowing capacity
-- `withdrawCollateral(amount)` - Remove collateral (enforces preLltv health check)
-- `borrow(amount)` - Borrow assets against collateral (enforces preLltv health check)
+- `withdrawCollateral(amount)` - Remove collateral (enforces custom LLTV health check)
+- `borrow(amount)` - Borrow assets against collateral (enforces custom LLTV health check)
 - `repay(amount)` - Repay borrowed assets
+- `preLiquidate(borrower, seizedAssets, repaidShares, data)` - Liquidate unhealthy positions
 
 **Views:**
 - `totalBorrowed()` - Current debt including accrued interest
-- `totalCollateral()` - Current collateral value **quoted in borrowed asset terms** (using oracle price)
+- `totalCollateral()` - Current collateral amount in the position
+- `totalCollateralQuoted()` - Collateral value **quoted in borrowed asset terms** (using oracle price)
 - `isHealthy(lltv)` - Whether position is above the specified LLTV threshold
 - `maxBorrow(lltv)` - Maximum borrowable amount given current collateral and specified LLTV
 - `availableLiquidity()` - Available liquidity in the market (totalSupplyAssets - totalBorrowAssets)
+- `availableCollateral(lltv)` - Collateral that can be withdrawn while maintaining health at given LLTV
+- `lltv()` - The custom LLTV set for this position
+- `marketId()` - The Morpho market ID
 
-### Health Factor & PreLiquidation
+### Health Factor & Pre-Liquidation
 
 Position health is determined by comparing borrowed amount against maximum capacity at a given LLTV:
 
@@ -386,6 +395,109 @@ collateralValue = collateral × oraclePrice / ORACLE_PRICE_SCALE
 maxBorrow = collateralValue × lltv
 isHealthy(lltv) = maxBorrow ≥ totalBorrowed
 ```
+
+### Custom Pre-Liquidation Mechanism
+
+Unlike Morpho's native liquidation (which applies a liquidation incentive factor), MorphoBorrowPosition implements a **proportional pre-liquidation** mechanism where liquidators receive collateral proportional to the debt they repay.
+
+**Liquidation Bonus Formula:**
+```
+Liquidation Bonus = 1 - LTV (at time of liquidation)
+```
+
+**Example:**
+If a position has:
+- 100 collateral tokens (worth $100)
+- 80 debt tokens (worth $80)
+- Current LTV = 80%
+
+A liquidator repaying 50% of the debt ($40) will seize 50% of the collateral (50 tokens worth $50):
+- Liquidator pays: $40 (debt)
+- Liquidator receives: $50 (collateral)
+- Liquidator profit: $10 = (1 - 0.80) × $50 = 20% bonus
+
+**Key Properties:**
+- Liquidators always receive their proportional share of collateral
+- Liquidation bonus scales with how underwater the position is
+- At the LLTV threshold, the bonus approaches `1 - LLTV`
+- No cap on seized collateral (unlike some liquidation systems)
+
+### MorphoBorrowPositionFactory
+
+Deploys MorphoBorrowPosition instances using the **beacon proxy pattern**:
+
+```
+┌──────────────────────────────┐
+│ MorphoBorrowPositionFactory  │
+│                              │
+│ BORROW_POSITION_BEACON ──────┼──> UpgradeableBeacon ──> MorphoBorrowPosition Implementation
+└──────────────────────────────┘
+           │
+           │ createBorrowPosition()
+           ▼
+    ┌────────────────┐
+    │ BP Proxy       │
+    │ (ERC1967)      │──> delegates to beacon
+    └────────────────┘
+```
+
+```solidity
+// Deploy factory
+MorphoBorrowPositionFactory factory = new MorphoBorrowPositionFactory(beaconOwner);
+
+// Create a new borrow position
+address bp = factory.createBorrowPosition(
+    morpho,          // IMorpho contract
+    marketId,        // Morpho market ID
+    positionManager, // Owner address
+    0.72e18          // Custom LLTV (72%)
+);
+```
+
+**Events:**
+```solidity
+event BorrowPositionCreated(
+    address indexed borrowPosition,
+    address indexed morpho,
+    Id indexed marketId,
+    address positionManager,
+    uint256 lltv
+);
+```
+
+### Liquidator Integration
+
+The `preLiquidate` function conforms to the same signature as Morpho's PreLiquidation contract:
+
+```solidity
+function preLiquidate(
+    address borrower,      // The position address (pass the MorphoBorrowPosition address)
+    uint256 seizedAssets,  // Collateral to seize (pass 0 to calculate from repaidShares)
+    uint256 repaidShares,  // Borrow shares to repay (pass 0 to calculate from seizedAssets)
+    bytes calldata data    // Callback data (empty for no callback)
+) external returns (uint256 seizedAssets, uint256 repaidAssets);
+```
+
+**Input Options:**
+- Pass `seizedAssets > 0` and `repaidShares = 0` to specify collateral amount
+- Pass `seizedAssets = 0` and `repaidShares > 0` to specify debt shares amount
+- Reverts with `InconsistentInput` if both are non-zero or both are zero
+
+**Callback Interface:**
+
+Liquidators can implement `IPreLiquidationCallback` to receive a callback during liquidation:
+
+```solidity
+interface IPreLiquidationCallback {
+    function onPreLiquidate(uint256 repaidAssets, bytes calldata data) external;
+}
+```
+
+The callback is invoked only if `data` is non-empty, after collateral is transferred to the liquidator but before debt tokens are pulled.
+
+**Discovering Positions:**
+
+Monitor `BorrowPositionCreated` events from the factory to track deployments. Each event includes the position's custom `lltv` threshold for liquidation eligibility
 
 ## Position Manager
 
