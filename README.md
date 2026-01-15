@@ -856,7 +856,7 @@ USCC accounting uses a Chainlink USCC oracle; operator roles manage oracle confi
 
 ## Transfer Guard
 
-The `TransferGuard` contract provides compliance controls for token transfers, supporting blocklists, whitelists, large transfer thresholds, and pause functionality.
+The `TransferGuard` contract provides compliance controls for token transfers, supporting blocklist mode, whitelist mode, and pause functionality.
 
 ### Architecture
 
@@ -888,42 +888,45 @@ The `TransferGuard` contract provides compliance controls for token transfers, s
   └──────────────────────────┘
 ```
 
+### Token Modes
+
+Each token can be configured in one of two modes:
+
+| Mode       | Behavior                                                    |
+| ---------- | ----------------------------------------------------------- |
+| Blocklist  | Default - all addresses allowed EXCEPT those with BLOCKLIST status |
+| Whitelist  | Only addresses with WHITELIST status are allowed            |
+
 ### Address Status
 
-Each address can have one of four statuses per guard:
+Each address can have one of three statuses per guard:
 
-| Status                  | Value | Behavior                                            |
-| ----------------------- | ----- | --------------------------------------------------- |
-| `NONE`                  | 0     | Default - subject to threshold checks and validator |
-| `WHITELIST`             | 1     | Allowed for transfers below threshold               |
-| `BLOCKLIST`             | 2     | Always blocked from transfers                       |
-| `WHITELIST_ALL_AMOUNTS` | 3     | Allowed for any transfer amount                     |
+| Status      | Value | Blocklist Mode  | Whitelist Mode  |
+| ----------- | ----- | --------------- | --------------- |
+| `NONE`      | 0     | Allowed         | Blocked         |
+| `WHITELIST` | 1     | Allowed         | Allowed         |
+| `BLOCKLIST` | 2     | Blocked         | Blocked         |
 
 ### Token Configuration
 
 Each token registered with the guard has:
 - **paused**: Whether all transfers are blocked
-- **threshold**: Minimum amount considered a "large transfer" (scaled by 1e6)
-- **validator**: Optional external contract for NONE-status addresses
+- **whitelist**: Whether the token uses whitelist mode (true) or blocklist mode (false)
 
 ```solidity
-// Set token configuration
-guard.setTokenConfig(
-    tokenAddress,
-    false,           // paused
-    1_000_000e18,    // threshold (1M tokens)
-    address(0)       // validator (none)
-);
+// Set token configuration (blocklist mode - default)
+guard.setTokenConfig(tokenAddress, false, false);
+
+// Set token configuration (whitelist mode)
+guard.setTokenConfig(tokenAddress, false, true);
 
 // Pause/unpause a token
 guard.pause(tokenAddress);
 guard.unpause(tokenAddress);
-```
 
-**Threshold Scaling:**
-Thresholds are stored scaled down by `THRESHOLD_SCALE` (1e6) for storage efficiency:
-- Minimum granularity: 1e6 (values below this round to 0, disabling the threshold)
-- Maximum threshold: ~3.09e32
+// Check mode
+bool isWhitelistMode = guard.isWhitelistMode(tokenAddress);
+```
 
 ### Transfer Validation Logic
 
@@ -955,16 +958,14 @@ canTransfer(token, from, to, amount)
     Check both 'from' AND 'to' addresses
            │
            ▼
-    ┌──────────────────────────────────┐
-    │ For each address:                │
-    │                                  │
-    │ BLOCKLIST ──────────────> BLOCK  │
-    │ WHITELIST_ALL_AMOUNTS ──> ALLOW  │
-    │ WHITELIST + small ──────> ALLOW  │
-    │ WHITELIST + large ──────> BLOCK  │
-    │ NONE + no validator ────> ALLOW  │
-    │ NONE + validator ───────> ASK    │
-    └──────────────────────────────────┘
+    ┌────────────────────────────────────────┐
+    │ For each address:                      │
+    │                                        │
+    │ BLOCKLIST ────────────────────> BLOCK  │
+    │ WHITELIST ────────────────────> ALLOW  │
+    │ NONE + blocklist mode ────────> ALLOW  │
+    │ NONE + whitelist mode ────────> BLOCK  │
+    └────────────────────────────────────────┘
 ```
 
 ### Role-Based Access Control
@@ -975,23 +976,8 @@ canTransfer(token, from, to, amount)
 | `COMPLIANCE_ROLE` | `1 << 0` | Set address statuses |
 
 The **owner** has exclusive control over:
-- Setting token configuration (threshold, validator)
+- Setting token configuration (paused, whitelist mode)
 - Granting/revoking roles
-
-### External Validator
-
-For addresses with `NONE` status, an optional validator contract can be configured:
-
-```solidity
-interface ITransferGuardValidator {
-    function isAuthorized(address account) external view returns (bool);
-}
-
-// Set validator for a token
-guard.setTokenConfig(token, false, threshold, validatorAddress);
-```
-
-If no validator is set (`address(0)`), NONE-status addresses are allowed by default.
 
 ### Usage Example
 
@@ -1000,26 +986,22 @@ If no validator is set (`address(0)`), NONE-status addresses are allowed by defa
 TransferGuardFactory factory = new TransferGuardFactory(beaconOwner);
 address guard = factory.createTransferGuard(guardOwner);
 
-// Configure the guard
+// Configure the guard (whitelist mode)
 TransferGuard(guard).setTokenConfig(
     address(positionManager),
-    false,        // not paused
-    100_000e18,   // 100k threshold
-    address(0)    // no validator
+    false,    // not paused
+    true      // whitelist mode
 );
 
 // Set address statuses
 TransferGuard(guard).setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
-TransferGuard(guard).setAddressStatus(whitelistedUser, AddressStatus.WHITELIST_ALL_AMOUNTS);
+TransferGuard(guard).setAddressStatus(allowedUser, AddressStatus.WHITELIST);
 
 // Batch updates
 address[] memory accounts = new address[](2);
 accounts[0] = user1;
 accounts[1] = user2;
-AddressStatus[] memory statuses = new AddressStatus[](2);
-statuses[0] = AddressStatus.WHITELIST;
-statuses[1] = AddressStatus.WHITELIST;
-TransferGuard(guard).setAddressStatusBatch(accounts, statuses);
+TransferGuard(guard).setAddressStatusBatch(accounts, AddressStatus.WHITELIST);
 
 // Connect to Position Manager
 positionManager.setTransferGuard(guard);
@@ -1044,5 +1026,3 @@ UpgradeableBeacon(factory.BEACON()).upgradeTo(newImplementation);
 
 1. **Centralization Risk**: Guard owner can blocklist any address. Use multisig/timelock for production.
 2. **Reentrancy Protection**: Position Manager's `rebalance` function uses `nonReentrant` to prevent guard state manipulation via callbacks.
-3. **Validator Trust**: External validators are called during transfers. Only use trusted validator contracts.
-4. **Threshold Granularity**: Thresholds below 1e6 round to 0, effectively disabling large transfer restrictions.
