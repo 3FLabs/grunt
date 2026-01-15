@@ -21,10 +21,6 @@ import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
 import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
-import {IPreLiquidation, PreLiquidationParams} from "lib/pre-liquidation/src/interfaces/IPreLiquidation.sol";
-import {IPreLiquidationFactory} from "lib/pre-liquidation/src/interfaces/IPreLiquidationFactory.sol";
-import {Id as PreLiquidationId} from "lib/pre-liquidation/lib/morpho-blue/src/interfaces/IMorpho.sol";
-import {PreLiquidationBytecode} from "../borrow/PreLiquidationBytecode.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 /// @title PositionManagerBaseTest
@@ -47,9 +43,6 @@ abstract contract PositionManagerBaseTest is Test {
   ERC20Mock public collateralToken;
   OracleMock public oracle;
   IrmMock public irm;
-  IPreLiquidationFactory public preLiquidationFactory;
-  IPreLiquidation public preLiquidation1;
-  IPreLiquidation public preLiquidation2;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       TEST PARAMETERS                      */
@@ -75,7 +68,8 @@ abstract contract PositionManagerBaseTest is Test {
   /*                          CONSTANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV
+  uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV (Morpho market)
+  uint256 constant CUSTOM_LLTV = 0.72e18; // 72% LLTV (custom for borrow positions)
   uint256 constant POSITION_MANAGER_LLTV = 0.7e18; // 70% LLTV for available collateral
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36; // 1:1 price
@@ -148,24 +142,6 @@ abstract contract PositionManagerBaseTest is Test {
     morpho.createMarket(marketParams2);
     marketId2 = marketParams2.id();
 
-    // Deploy PreLiquidationFactory
-    preLiquidationFactory = PreLiquidationBytecode.deployFactory(address(morpho));
-
-    // Create PreLiquidation contracts
-    PreLiquidationParams memory preLiquidationParams = PreLiquidationParams({
-      preLltv: (DEFAULT_LLTV * 90) / 100,
-      preLCF1: 0.5e18,
-      preLCF2: 1.0e18,
-      preLIF1: 1.03e18,
-      preLIF2: 1.1e18,
-      preLiquidationOracle: address(oracle)
-    });
-
-    preLiquidation1 =
-      preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(marketId1)), preLiquidationParams);
-    preLiquidation2 =
-      preLiquidationFactory.createPreLiquidation(PreLiquidationId.wrap(Id.unwrap(marketId2)), preLiquidationParams);
-
     // Deploy PositionManager
     positionManager = new PositionManager();
     positionManager.initialize(
@@ -184,14 +160,12 @@ abstract contract PositionManagerBaseTest is Test {
     positionManager.grantRoles(minter, _ROLE_MINTER);
 
     // Deploy MorphoBorrowPositionFactory and create positions
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, preLiquidationFactory);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
 
-    address bp1 =
-      borrowPositionFactory.createBorrowPosition(morpho, marketId1, address(positionManager), preLiquidation1);
+    address bp1 = borrowPositionFactory.createBorrowPosition(morpho, marketId1, address(positionManager), CUSTOM_LLTV);
     borrowPosition1 = MorphoBorrowPosition(bp1);
 
-    address bp2 =
-      borrowPositionFactory.createBorrowPosition(morpho, marketId2, address(positionManager), preLiquidation2);
+    address bp2 = borrowPositionFactory.createBorrowPosition(morpho, marketId2, address(positionManager), CUSTOM_LLTV);
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
     // Setup borrow modules whitelist and grant curator/rebalancer roles

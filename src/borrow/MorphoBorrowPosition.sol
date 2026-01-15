@@ -7,14 +7,12 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
-import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
-import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
+import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
-import {IPreLiquidation} from "lib/pre-liquidation/src/interfaces/IPreLiquidation.sol";
-import {IPreLiquidationFactory} from "lib/pre-liquidation/src/interfaces/IPreLiquidationFactory.sol";
-import "lib/pre-liquidation/src/interfaces/IPreLiquidation.sol" as PreLiquidation;
-
 import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
+import {UtilsLib} from "lib/morpho-blue/src/libraries/UtilsLib.sol";
+import {IMorphoRepayCallback} from "lib/morpho-blue/src/interfaces/IMorphoCallbacks.sol";
+import {IPreLiquidationCallback} from "../interfaces/borrow/IPreliquidationCallback.sol";
 
 /// @title MorphoBorrowPosition
 /// @notice Implementation of a borrow position with the Morpho Blue protocol.
@@ -23,8 +21,7 @@ import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 ///      The contract uses ERC-7201 namespaced storage for proxy compatibility and follows
 ///      the Checks-Effects-Interactions pattern for security.
 /// @author 3F Protocol
-contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
-  using MathLib for uint256;
+contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorphoRepayCallback {
   using SharesMathLib for uint256;
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
@@ -51,26 +48,17 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @notice Thrown when the position has insufficient collateral after an operation.
   error InsufficientCollateral();
 
-  /// @notice Thrown when the provided pre-liquidation contract is not valid (not known from the factory).
-  /// @param preLiquidation The invalid pre-liquidation contract address.
-  error InvalidPreLiquidation(address preLiquidation);
+  /// @notice Thrown when attempting to liquidate a healthy position.
+  error PositionHealthy();
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         IMMUTABLE                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+  /// @notice Thrown when the provided LLTV is invalid (zero or greater than WAD).
+  error InvalidLltv();
 
-  /// @dev The preLiquidation Factory contract address.
-  IPreLiquidationFactory internal immutable _PRE_LIQUIDATION_FACTORY;
+  /// @notice Thrown when the input parameters are inconsistent (e.g., both seizedAssets and repaidShares are non-zero).
+  error InconsistentInput();
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        CONSTRUCTOR                         */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Constructs the MorphoBorrowPosition contract with the PreLiquidation factory address.
-  /// @param preLiquidationFactory_ The PreLiquidation factory contract address.
-  constructor(IPreLiquidationFactory preLiquidationFactory_) {
-    _PRE_LIQUIDATION_FACTORY = preLiquidationFactory_;
-  }
+  /// @notice Thrown when the callback is called by an address other than Morpho.
+  error NotMorpho();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -82,14 +70,12 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @param morpho The Morpho protocol contract
   /// @param marketId The Morpho market ID for this borrow position
   /// @param marketParams The Morpho market parameters for this borrow position
-  /// @param preLiquidation The pre-liquidation contract for this borrow position
-  /// @param preLltv The pre-liquidation maximum LLTV for this borrow position
+  /// @param lltv The custom LLTV for this borrow position (immutable after initialization)
   struct BorrowPositionStorage {
     IMorpho morpho;
     Id marketId;
     MarketParams marketParams;
-    IPreLiquidation preLiquidation;
-    uint256 preLltv;
+    uint256 lltv;
   }
 
   /// @dev Storage slot for the MorphoBorrowPosition contract's main storage struct.
@@ -118,32 +104,22 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @param morpho_ The Morpho Blue protocol contract address.
   /// @param marketId_ The Morpho market ID for this borrow position. Must correspond to an existing market.
   /// @param positionManager_ The address of the position manager (owner) that will control this position.
-  /// @param preLiquidation_ The pre-liquidation contract for this borrow position.
+  /// @param lltv_ The custom LLTV for this borrow position. Must be > 0 and <= WAD.
+  /// @custom:reverts AddressZero if morpho_ is zero address.
   /// @custom:reverts InvalidMarketId if marketId_ is zero.
   /// @custom:reverts MarketNotCreated if the market doesn't exist in Morpho (lastUpdate == 0).
-  function initialize(IMorpho morpho_, Id marketId_, address positionManager_, IPreLiquidation preLiquidation_)
-    public
-    initializer
-  {
+  /// @custom:reverts InvalidLltv if lltv_ is zero or greater than WAD.
+  function initialize(IMorpho morpho_, Id marketId_, address positionManager_, uint256 lltv_) public initializer {
     if (address(morpho_) == address(0)) revert AddressZero();
-    if (address(preLiquidation_) == address(0)) revert AddressZero();
     if (Id.unwrap(marketId_) == bytes32(0)) revert InvalidMarketId(marketId_);
     if (morpho_.market(marketId_).lastUpdate == 0) revert MarketNotCreated();
-    if (PreLiquidation.Id.unwrap(preLiquidation_.ID()) != Id.unwrap(marketId_)) {
-      revert InvalidMarketId(marketId_);
-    }
-    if (!_PRE_LIQUIDATION_FACTORY.isPreLiquidation(address(preLiquidation_))) {
-      revert InvalidPreLiquidation(address(preLiquidation_));
-    }
+    if (lltv_ == 0 || lltv_ > FixedPointMathLib.WAD) revert InvalidLltv();
 
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     $.morpho = morpho_;
     $.marketId = marketId_;
     $.marketParams = morpho_.idToMarketParams(marketId_);
-    $.preLltv = preLiquidation_.preLiquidationParams().preLltv;
-
-    $.preLiquidation = preLiquidation_;
-    morpho_.setAuthorization(address(preLiquidation_), true);
+    $.lltv = lltv_;
 
     _initializeOwner(positionManager_);
   }
@@ -194,7 +170,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // This will revert if the position would become unhealthy
     $.morpho.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
 
-    if (!_isHealthy($.preLltv, _marketParams.oracle)) {
+    if (!_isHealthy($.lltv, _marketParams.oracle)) {
       revert InsufficientCollateral();
     }
   }
@@ -217,7 +193,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // This will revert if the position would become unhealthy or insufficient liquidity
     $.morpho.borrow(_marketParams, amount, 0, address(this), msg.sender);
 
-    if (!_isHealthy($.preLltv, _marketParams.oracle)) {
+    if (!_isHealthy($.lltv, _marketParams.oracle)) {
       revert InsufficientCollateral();
     }
   }
@@ -244,6 +220,100 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
     // Repay debt to Morpho
     _morpho.repay(_marketParams, amount, 0, address(this), "");
+  }
+
+  /// @notice Pre-liquidates the position when it becomes unhealthy based on the custom LLTV.
+  /// @dev This function allows anyone to liquidate an unhealthy position. Unlike Morpho's native liquidation,
+  ///      this mechanism gives **proportional collateral** to the liquidator without applying a liquidation
+  ///      incentive factor (LIF). This means:
+  ///
+  ///      **Liquidation Bonus = 1 - LTV (at time of liquidation)**
+  ///
+  ///      For example, if a position has:
+  ///      - 100 collateral tokens (worth $100)
+  ///      - 80 debt tokens (worth $80)
+  ///      - LTV = 80%
+  ///
+  ///      A liquidator repaying 50% of the debt ($40) will seize 50% of the collateral (50 tokens worth $50).
+  ///      The liquidator's profit is $50 - $40 = $10, which equals (1 - 0.80) × $50 = 20% × $50.
+  ///
+  ///      This ensures liquidators can always seize their proportional share of collateral, and the liquidation
+  ///      bonus scales with how underwater the position is. At the LLTV threshold, the bonus approaches 1 - LLTV.
+  ///
+  ///      The liquidation uses a callback pattern: Morpho calls `onMorphoRepay` which withdraws collateral
+  ///      to the liquidator, optionally calls the liquidator's callback, then pulls loan tokens from the liquidator.
+  ///
+  ///      **Callback Interface:**
+  ///      This function conforms to the same signature and callback interface as Morpho's PreLiquidation contract.
+  ///      Liquidators implementing `IPreLiquidationCallback.onPreLiquidate(uint256 repaidAssets, bytes calldata data)`
+  ///      will receive the callback if `data` is non-empty.
+  ///
+  /// @param borrower The address of the position owner (typically this contract's address).
+  /// @param seizedAssets The amount of collateral to seize. Pass 0 to calculate based on repaidShares.
+  /// @param repaidShares The amount of borrow shares to repay. Pass 0 to calculate based on seizedAssets.
+  /// @param data Arbitrary data to pass to the `onPreLiquidate` callback. Pass empty data if not needed.
+  /// @return The amount of collateral seized.
+  /// @return The amount of debt assets repaid.
+  /// @custom:reverts InconsistentInput if both seizedAssets and repaidShares are non-zero or both are zero.
+  /// @custom:reverts PositionHealthy if the position is healthy based on the custom LLTV.
+  function preLiquidate(address borrower, uint256 seizedAssets, uint256 repaidShares, bytes calldata data)
+    external
+    returns (uint256, uint256)
+  {
+    if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert InconsistentInput();
+
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    if (_isHealthy($.lltv, $.marketParams.oracle)) revert PositionHealthy();
+
+    $.morpho.accrueInterest($.marketParams);
+
+    {
+      Position memory position = $.morpho.position($.marketId, borrower);
+      if (seizedAssets > 0) {
+        repaidShares = seizedAssets.mulDivUp(position.borrowShares, position.collateral);
+      } else {
+        seizedAssets = repaidShares.mulDiv(position.collateral, position.borrowShares);
+      }
+    }
+
+    uint256 repaidAssets;
+    {
+      bytes memory callbackData = abi.encode(seizedAssets, borrower, msg.sender, data);
+      (repaidAssets,) = $.morpho.repay($.marketParams, 0, repaidShares, borrower, callbackData);
+    }
+
+    return (seizedAssets, repaidAssets);
+  }
+
+  /// @notice Morpho callback invoked after a repay operation.
+  /// @dev This callback is called by Morpho during the pre-liquidation flow:
+  ///      1. preLiquidate() calls morpho.repay() with callback data
+  ///      2. Morpho repays the debt and calls this callback
+  ///      3. This callback withdraws collateral to the liquidator
+  ///      4. Optionally calls the liquidator's onPreLiquidate callback
+  ///      5. Pulls loan tokens from the liquidator to complete the repayment
+  /// @param repaidAssets The amount of loan tokens that were repaid.
+  /// @param callbackData Encoded data containing (seizedAssets, borrower, liquidator, data).
+  /// @custom:reverts NotMorpho if called by any address other than the Morpho contract.
+  function onMorphoRepay(uint256 repaidAssets, bytes calldata callbackData) external {
+    BorrowPositionStorage storage $ = _borrowPositionStorage();
+    IMorpho _morpho = $.morpho;
+
+    if (msg.sender != address(_morpho)) revert NotMorpho();
+
+    (uint256 seizedAssets, address borrower, address liquidator, bytes memory data) =
+      abi.decode(callbackData, (uint256, address, address, bytes));
+
+    MarketParams memory marketParams = $.marketParams;
+
+    _morpho.withdrawCollateral(marketParams, seizedAssets, borrower, liquidator);
+
+    if (data.length > 0) {
+      IPreLiquidationCallback(liquidator).onPreLiquidate(repaidAssets, data);
+    }
+
+    marketParams.loanToken.safeTransferFrom(liquidator, address(this), repaidAssets);
+    marketParams.loanToken.safeApproveWithRetry(address(_morpho), repaidAssets);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -296,17 +366,17 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   function totalCollateralQuoted() external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     return uint256($.morpho.position($.marketId, address(this)).collateral)
-      .mulDivDown(IOracle($.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
+      .mulDiv(IOracle($.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
   }
 
   /// @inheritdoc IBorrowPosition
-  function isHealthy(uint256 lltv) external view override returns (bool) {
+  function isHealthy(uint256 _lltv) external view override returns (bool) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
-    return _isHealthy(lltv, $.marketParams.oracle);
+    return _isHealthy(_lltv, $.marketParams.oracle);
   }
 
   /// @inheritdoc IBorrowPosition
-  function maxBorrow(uint256 lltv) external view override returns (uint256) {
+  function maxBorrow(uint256 _lltv) external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     Id _marketId = $.marketId;
     IMorpho _morpho = $.morpho;
@@ -324,8 +394,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     // Calculate remaining borrow capacity: (collateralValue * LLTV) - alreadyBorrowed
     // Uses zeroFloorSub to return 0 instead of underflowing if already over-utilized
     // Return remaining capacity or available liquidity, whichever is lower
-    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv)
-      .zeroFloorSub(borrowed).min(_availableLiquidity);
+    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_lltv).zeroFloorSub(borrowed)
+      .min(_availableLiquidity);
   }
 
   /// @inheritdoc IBorrowPosition
@@ -340,7 +410,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @inheritdoc IBorrowPosition
   /// @dev Calculates available collateral as: totalCollateral - (debt * ORACLE_PRICE_SCALE) / (lltv * price)
   ///      If no debt, returns all collateral. Returns 0 if position would be unhealthy.
-  function availableCollateral(uint256 lltv) external view override returns (uint256) {
+  function availableCollateral(uint256 _lltv) external view override returns (uint256) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     IMorpho _morpho = $.morpho;
     Id _marketId = $.marketId;
@@ -358,7 +428,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
 
     // Required collateral = borrowed * ORACLE_PRICE_SCALE / (lltv * price)
     // This rounds up to be conservative (more collateral required = less available)
-    uint256 _requiredCollateral = MathLib.mulDivUp(_borrowed, ORACLE_PRICE_SCALE, lltv.wMulDown(_collateralPrice));
+    uint256 _requiredCollateral = _borrowed.mulDivUp(ORACLE_PRICE_SCALE, _lltv.mulWad(_collateralPrice));
 
     // Return available collateral (0 if required > total)
     if (_requiredCollateral >= uint256(_pos.collateral)) return 0;
@@ -371,10 +441,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   ///      2. Otherwise, calculates: maxBorrow = (collateral * oraclePrice / ORACLE_PRICE_SCALE) * lltv
   ///      3. Position is healthy if maxBorrow >= borrowed amount (with interest).
   ///      Uses conservative rounding: borrowed amount rounds up, max borrow rounds down.
-  /// @param lltv The LLTV to use for the health calculation.
+  /// @param _lltv The LLTV to use for the health calculation.
   /// @param oracle The oracle address to fetch the collateral price.
   /// @return True if the position is healthy, false otherwise.
-  function _isHealthy(uint256 lltv, address oracle) internal view returns (bool) {
+  function _isHealthy(uint256 _lltv, address oracle) internal view returns (bool) {
     BorrowPositionStorage storage $ = _borrowPositionStorage();
     IMorpho morpho = $.morpho;
     Id _marketId = $.marketId;
@@ -392,7 +462,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
     uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
 
     // Calculate max borrow based on collateral value and provided LLTV
-    return uint256(_pos.collateral).mulDivDown(_collateralPrice, ORACLE_PRICE_SCALE).wMulDown(lltv) >= _borrowed;
+    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_lltv) >= _borrowed;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -405,5 +475,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable {
   /// @return The Morpho market ID (bytes32 encoded).
   function marketId() external view returns (Id) {
     return _borrowPositionStorage().marketId;
+  }
+
+  /// @notice Returns the custom LLTV set for this borrow position.
+  /// @dev This LLTV is immutable after initialization and determines when the position
+  ///      can be liquidated. It is typically set lower than the Morpho market LLTV.
+  /// @return The custom LLTV in WAD format (1e18 = 100%).
+  function lltv() external view returns (uint256) {
+    return _borrowPositionStorage().lltv;
   }
 }

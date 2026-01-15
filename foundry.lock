@@ -11,9 +11,6 @@
       "rev": "f81b6590cc3b3e73d2160ed4f08440da691e0fc8"
     }
   },
-  "lib/pre-liquidation": {
-    "rev": "57722cdf3276c8079cd95ee72a81bf7b366c33e1"
-  },
   "lib/solady": {
     "tag": {
       "name": "v0.1.26",
