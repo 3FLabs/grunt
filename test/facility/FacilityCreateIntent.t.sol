@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset} from "src/interfaces/IFacility.sol";
+import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -83,12 +83,36 @@ contract FacilityCreateIntentTest is Test {
     manager.initialize(address(this), "PM", "PM", 6, collateralAsset, debtAsset, 0.8e18);
   }
 
+  function _createIntent(
+    Asset memory depositAsset,
+    Asset memory targetAsset,
+    address guardKey,
+    address fund,
+    address request,
+    uint256 depositCap,
+    uint40 resolveStart,
+    uint8 quorum
+  ) internal returns (uint256 id) {
+    id = facility.createIntent(
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: guardKey,
+        fund: fund,
+        request: request,
+        depositCap: depositCap,
+        resolveStart: resolveStart,
+        quorum: quorum
+      })
+    );
+  }
+
   function test_RevertWhen_CreateIntent_ResolveStartNotInFuture() public {
     Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
     Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidResolveStart.selector, uint256(1)));
-    facility.createIntent(depositAsset, targetAsset, address(pm), address(0), address(0), 1, uint40(block.timestamp), 0);
+    _createIntent(depositAsset, targetAsset, address(pm), address(0), address(0), 1, uint40(block.timestamp), 0);
   }
 
   function test_RevertWhen_CreateIntent_NoPositionManager() public {
@@ -96,7 +120,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(collateral), isPositionManager: false});
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, uint256(1)));
-    facility.createIntent(
+    _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(0), 1, uint40(block.timestamp + 1 days), 0
     );
   }
@@ -106,7 +130,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(pmMismatch), isPositionManager: true});
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, uint256(1)));
-    facility.createIntent(
+    _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(0), 1, uint40(block.timestamp + 1 days), 0
     );
   }
@@ -116,7 +140,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, uint256(1)));
-    facility.createIntent(
+    _createIntent(
       depositAsset, targetAsset, address(pmMismatch), address(0), address(0), 1, uint40(block.timestamp + 1 days), 0
     );
   }
@@ -126,7 +150,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, uint256(1)));
-    facility.createIntent(
+    _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(0), 1, uint40(block.timestamp + 1 days), 0
     );
   }
@@ -139,7 +163,7 @@ contract FacilityCreateIntentTest is Test {
     MockFund fund = new MockFund(address(wrongDebt), address(collateral));
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, uint256(1)));
-    facility.createIntent(
+    _createIntent(
       depositAsset, targetAsset, address(pm), address(fund), address(0), 1, uint40(block.timestamp + 1 days), 0
     );
   }
@@ -151,7 +175,7 @@ contract FacilityCreateIntentTest is Test {
     MockRequest request = new MockRequest(address(collateral));
 
     vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, uint256(1)));
-    facility.createIntent(
+    _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(request), 1, uint40(block.timestamp + 1 days), 0
     );
   }
@@ -175,7 +199,7 @@ contract FacilityCreateIntentTest is Test {
       7
     );
 
-    uint256 id = facility.createIntent(
+    uint256 id = _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(0), 123, uint40(block.timestamp + 1 days), 7
     );
 
@@ -201,7 +225,7 @@ contract FacilityCreateIntentTest is Test {
       0
     );
 
-    uint256 id = facility.createIntent(
+    uint256 id = _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(0), 456, uint40(block.timestamp + 1 days), 0
     );
 
@@ -227,7 +251,7 @@ contract FacilityCreateIntentTest is Test {
       1
     );
 
-    uint256 id = facility.createIntent(
+    uint256 id = _createIntent(
       depositAsset, targetAsset, address(pm), address(0), address(0), 1, uint40(block.timestamp + 1 days), 1
     );
 

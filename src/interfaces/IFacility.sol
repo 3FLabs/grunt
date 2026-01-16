@@ -41,21 +41,23 @@ struct SwapParams {
   uint256 deadline;
 }
 
+struct CreateIntentParams {
+  Asset depositAsset;
+  Asset targetAsset;
+  address guardKey;
+  address fund;
+  address request;
+  uint256 depositCap;
+  uint40 resolveStart;
+  uint8 quorum;
+}
+
 interface IFacility {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function createIntent(
-    Asset calldata depositAsset,
-    Asset calldata targetAsset,
-    address guardKey,
-    address fund,
-    address request,
-    uint256 depositCap,
-    uint40 resolveStart,
-    uint8 quorum
-  ) external returns (uint256 id);
+  function createIntent(CreateIntentParams calldata params) external returns (uint256 id);
 
   function updateTarget(uint256 id, Asset calldata newTargetAsset, address newGuardKey) external;
 

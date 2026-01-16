@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset} from "src/interfaces/IFacility.sol";
+import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
 
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {Order, Mode, State} from "src/libs/Order.sol";
@@ -145,14 +145,16 @@ contract FacilityReentrancyTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
     uint256 id = facility.createIntent(
-      depositAsset,
-      targetAsset,
-      address(pm),
-      address(0),
-      address(0),
-      type(uint256).max,
-      uint40(block.timestamp + 1 days),
-      0
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(pm),
+        fund: address(0),
+        request: address(0),
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
     );
 
     // Deploy reentrant fund and set as intent fund via updateTarget (keeps invariants) is not possible.
@@ -161,14 +163,16 @@ contract FacilityReentrancyTest is Test {
     ReentrantFund fund = new ReentrantFund(facility, id + 1, address(asset), address(share));
 
     uint256 id2 = facility.createIntent(
-      depositAsset,
-      targetAsset,
-      address(pm),
-      address(fund),
-      address(0),
-      type(uint256).max,
-      uint40(block.timestamp + 1 days),
-      0
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(pm),
+        fund: address(fund),
+        request: address(0),
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
     );
 
     // Give the fund facilitator role so it can reenter a guarded path.

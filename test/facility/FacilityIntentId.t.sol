@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset} from "src/interfaces/IFacility.sol";
+import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -30,14 +30,16 @@ contract FacilityIntentIdTest is Test {
     Asset memory targetAsset = Asset({asset: address(0xB0B), isPositionManager: false});
 
     return facility.createIntent(
-      depositAsset,
-      targetAsset,
-      address(positionManager),
-      address(0),
-      address(0),
-      1_000_000,
-      uint40(block.timestamp + 1 days),
-      0
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(positionManager),
+        fund: address(0),
+        request: address(0),
+        depositCap: 1_000_000,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
     );
   }
 

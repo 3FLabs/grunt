@@ -9,7 +9,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 import {ReentrancyGuard} from "lib/solady/src/utils/ReentrancyGuard.sol";
 
-import {IFacility, Asset, Intent, SwapParams} from "./interfaces/IFacility.sol";
+import {IFacility, Asset, Intent, SwapParams, CreateIntentParams} from "./interfaces/IFacility.sol";
 import {IIntentDescriptor} from "./interfaces/IIntentDescriptor.sol";
 import {IFund} from "./interfaces/funds/IFund.sol";
 import {IPositionManager} from "./interfaces/manager/IPositionManager.sol";
@@ -212,11 +212,6 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     }
   }
 
-  function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
-    name = "Facility";
-    version = "1.0.0";
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         DESCRIPTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -239,43 +234,13 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  struct CreateIntentParams {
-    Asset depositAsset;
-    Asset targetAsset;
-    address guardKey;
-    address fund;
-    address request;
-    uint256 depositCap;
-    uint40 resolveStart;
-    uint8 quorum;
-  }
-
   /// @inheritdoc IFacility
-  function createIntent(
-    Asset calldata depositAsset,
-    Asset calldata targetAsset,
-    address guardKey,
-    address fund,
-    address request,
-    uint256 depositCap,
-    uint40 resolveStart,
-    uint8 quorum
-  ) external override onlyRoles(FACILITATOR_ROLE) returns (uint256 id) {
-    CreateIntentParams memory params = CreateIntentParams({
-      depositAsset: depositAsset,
-      targetAsset: targetAsset,
-      guardKey: guardKey,
-      fund: fund,
-      request: request,
-      depositCap: depositCap,
-      resolveStart: resolveStart,
-      quorum: quorum
-    });
-
-    return _createIntent(params);
-  }
-
-  function _createIntent(CreateIntentParams memory params) internal returns (uint256 id) {
+  function createIntent(CreateIntentParams calldata params)
+    external
+    override
+    onlyRoles(FACILITATOR_ROLE)
+    returns (uint256 id)
+  {
     FacilityStorage storage $ = _facilityStorage();
 
     uint256 nextId = $.nextIntentId;
@@ -352,29 +317,6 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
       oldGuardKey,
       newGuardKey
     );
-  }
-
-  function _validateUpdateTarget(
-    uint256 id,
-    Asset memory depositAsset,
-    Asset calldata newTargetAsset,
-    address newGuardKey,
-    address fund,
-    address request
-  ) internal view {
-    _checkNotZero(newTargetAsset.asset);
-    _checkNotZero(newGuardKey);
-
-    (address pmCollateral, address pmDebt) = _getPositionManagerAssets(id, depositAsset, newTargetAsset, newGuardKey);
-
-    if (request != address(0)) {
-      if (IVaultController(request).asset() != pmDebt) revert InvalidAsset(id);
-    }
-
-    if (fund != address(0)) {
-      if (IFund(fund).asset() != pmDebt) revert InvalidAsset(id);
-      if (IFund(fund).share() != pmCollateral) revert InvalidAsset(id);
-    }
   }
 
   /// @inheritdoc IFacility
@@ -898,6 +840,16 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          EIP-712                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc EIP712
+  function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
+    name = "3Facility";
+    version = "1.0.0";
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -912,6 +864,29 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @param addr The address to check.
   function _checkNotZero(address addr) internal pure {
     if (addr == address(0)) revert AddressZero();
+  }
+
+  function _validateUpdateTarget(
+    uint256 id,
+    Asset memory depositAsset,
+    Asset calldata newTargetAsset,
+    address newGuardKey,
+    address fund,
+    address request
+  ) internal view {
+    _checkNotZero(newTargetAsset.asset);
+    _checkNotZero(newGuardKey);
+
+    (address pmCollateral, address pmDebt) = _getPositionManagerAssets(id, depositAsset, newTargetAsset, newGuardKey);
+
+    if (request != address(0)) {
+      if (IVaultController(request).asset() != pmDebt) revert InvalidAsset(id);
+    }
+
+    if (fund != address(0)) {
+      if (IFund(fund).asset() != pmDebt) revert InvalidAsset(id);
+      if (IFund(fund).share() != pmCollateral) revert InvalidAsset(id);
+    }
   }
 
   function _getPositionManagerAssets(uint256 id, Asset memory depositAsset, Asset memory targetAsset, address guardKey)

@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset} from "src/interfaces/IFacility.sol";
+import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
 
 import {Order, Mode, State} from "src/libs/Order.sol";
 
@@ -131,14 +131,16 @@ contract FacilityPositionManagerOpsTest is PositionManagerBaseTest {
     Asset memory targetAsset = Asset({asset: address(positionManager), isPositionManager: true});
 
     intentId = facility.createIntent(
-      depositAsset,
-      targetAsset,
-      address(positionManager),
-      address(fund),
-      address(0),
-      type(uint256).max,
-      uint40(block.timestamp + 1 days),
-      0
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(positionManager),
+        fund: address(fund),
+        request: address(0),
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
     );
 
     uint256 debtDeposit = 1_000e18;

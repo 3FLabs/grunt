@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset} from "src/interfaces/IFacility.sol";
+import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 
@@ -57,14 +57,16 @@ contract FacilityRequestOpsTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
     intentId = facility.createIntent(
-      depositAsset,
-      targetAsset,
-      address(pm),
-      address(0),
-      request,
-      type(uint256).max,
-      uint40(block.timestamp + 1 days),
-      0
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(pm),
+        fund: address(0),
+        request: request,
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
     );
 
     facility.lock(intentId);

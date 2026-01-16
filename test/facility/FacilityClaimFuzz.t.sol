@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset} from "src/interfaces/IFacility.sol";
+import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -36,14 +36,16 @@ contract FacilityClaimFuzzTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
     id = facility.createIntent(
-      depositAsset,
-      targetAsset,
-      address(pm),
-      address(0),
-      address(0),
-      type(uint256).max,
-      uint40(block.timestamp + 1 days),
-      0
+      CreateIntentParams({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(pm),
+        fund: address(0),
+        request: address(0),
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
     );
   }
 
