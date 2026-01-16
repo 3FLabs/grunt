@@ -40,7 +40,9 @@ contract USCCFundTest is Test {
   event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
   event OrderRecovering(Id indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
-  event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
+  event OrderResolved(
+    Id indexed orderId, Id indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
+  );
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
   uint256 private constant ONE_USDC = 1e6;
@@ -597,7 +599,8 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    Order memory resolved = Order({
+    Id orderId = order.toId(address(fund));
+    Order memory resolvedOrder = Order({
       owner: order.owner,
       receiver: order.receiver,
       input: ONE_USDC * 2,
@@ -605,12 +608,15 @@ contract USCCFundTest is Test {
       mode: order.mode,
       salt: order.salt
     });
-    Id resolvedId = resolved.toId(address(fund));
+    Id resolvedOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(resolvedId, resolved.input, resolved.output, owner);
+    emit OrderResolved(orderId, resolvedOrderId, ONE_USDC * 2, ONE_USDC * 3, owner);
     fund.resolve(order, ONE_USDC * 2, ONE_USDC * 3);
+
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved processing");
+    assertEq(uint256(fund.state(order)), uint256(State.EMPTY), "original empty");
   }
 
   function test_Resolve_InRecoveringState() public {
@@ -654,8 +660,8 @@ contract USCCFundTest is Test {
     fund.resolve(order, ONE_USDC, ONE_USDC);
   }
 
-  function test_Resolve_OrderIdChange() public {
-    // Demonstrates that resolve() changes the order ID, requiring use of resolved order for unlock
+  function test_Resolve_OrderIdChanges() public {
+    // resolve() updates the order id; only the resolved order is valid for state/unlock.
     Order memory originalOrder = _depositOrder(ONE_USDC, ONE_USDC);
     Id originalId = originalOrder.toId(address(fund));
     fund.create(originalOrder);
@@ -665,10 +671,7 @@ contract USCCFundTest is Test {
     uint256 newInput = ONE_USDC;
     uint256 newOutput = (ONE_USDC * 95) / 100; // Only 95% received
 
-    vm.prank(owner);
-    fund.resolve(originalOrder, newInput, newOutput);
-
-    // Create resolved order with updated amounts
+    // A resolved Order struct hashes to a different id and becomes the current order.
     Order memory resolvedOrder = Order({
       owner: originalOrder.owner,
       receiver: originalOrder.receiver,
@@ -678,25 +681,29 @@ contract USCCFundTest is Test {
       salt: originalOrder.salt
     });
     Id resolvedId = resolvedOrder.toId(address(fund));
+    assertFalse(originalId.eq(resolvedId), "resolved order id differs");
 
-    // Verify the order ID changed
-    assertFalse(originalId.eq(resolvedId), "order ID should change after resolve");
+    vm.prank(owner);
+    fund.resolve(originalOrder, newInput, newOutput);
 
-    // Original order is now invalid - state() returns EMPTY
-    assertEq(uint256(fund.state(originalOrder)), uint256(State.EMPTY), "original order is invalid");
+    // Original order is no longer valid.
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.EMPTY), "original order invalid");
 
-    // Resolved order is valid - state() returns current state
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order is valid");
+    // Resolved order id is now recognized.
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order processing");
 
-    // Mint the resolved output amount to trigger UNLOCKING
+    // Minting less than the original output keeps the order in PROCESSING.
     uscc.mint(address(fund), newOutput);
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order still processing");
+
+    // Mint remaining amount to reach the original output threshold.
+    uscc.mint(address(fund), originalOrder.output - newOutput);
     assertEq(uint256(fund.state(resolvedOrder)), uint256(State.UNLOCKING), "resolved order unlocking");
 
-    // Unlock must use the resolved order, not the original
     fund.unlock(resolvedOrder);
 
-    // User receives the resolved output amount
-    assertEq(wuscc.balanceOf(address(this)), newOutput, "user receives resolved output");
+    // User receives the full amount minted.
+    assertEq(wuscc.balanceOf(address(this)), originalOrder.output, "user receives output");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

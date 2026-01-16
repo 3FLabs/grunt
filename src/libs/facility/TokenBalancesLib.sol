@@ -9,7 +9,8 @@ library TokenBalancesLib {
   error InsufficientBalance();
 
   function add(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
-    _balances.set(token, _balances.get(token) + amount);
+    (, uint256 currentAmount) = _balances.tryGet(token);
+    _balances.set(token, currentAmount + amount);
   }
 
   function sub(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
