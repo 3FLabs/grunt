@@ -16,7 +16,7 @@ contract FacilityIntentIdTest is Test {
 
   function setUp() public {
     facility = new Facility();
-    facility.initialize(address(this), address(this), IIntentDescriptor(address(0)));
+    facility.initialize(address(this), address(this), address(0));
 
     MockERC20 collateral = new MockERC20("Collateral", "COL", 18);
     MockERC20 debt = new MockERC20("Debt", "DEBT", 6);

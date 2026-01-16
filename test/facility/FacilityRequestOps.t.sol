@@ -41,7 +41,7 @@ contract FacilityRequestOpsTest is Test {
 
   function setUp() public {
     facility = new FacilityRequestHarness();
-    facility.initialize(address(this), address(this), IIntentDescriptor(address(0)));
+    facility.initialize(address(this), address(this), address(0));
 
     asset = new MockERC20("USDC", "USDC", 6);
     MockERC20 collateral = new MockERC20("COL", "COL", 18);

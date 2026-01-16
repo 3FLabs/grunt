@@ -47,7 +47,7 @@ contract FacilitySwapTest is Test {
 
   function setUp() public {
     facility = new FacilityEIP712Harness();
-    facility.initialize(address(this), address(this), IIntentDescriptor(address(0)));
+    facility.initialize(address(this), address(this), address(0));
 
     collateral = new MockERC20("Collateral", "COL", 18);
     debt = new MockERC20("Debt", "DEBT", 6);

@@ -132,7 +132,7 @@ contract FacilityReentrancyTest is Test {
 
   function test_ReentrancyGuard_BlocksReenteringCommit() public {
     facility = new FacilityReentrancyHarness();
-    facility.initialize(address(this), address(this), IIntentDescriptor(address(0)));
+    facility.initialize(address(this), address(this), address(0));
 
     asset = new MockERC20("Debt", "DEBT", 6);
     share = new MockERC20("Collateral", "COL", 18);

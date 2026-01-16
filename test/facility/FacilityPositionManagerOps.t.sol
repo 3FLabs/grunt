@@ -120,7 +120,7 @@ contract FacilityPositionManagerOpsTest is PositionManagerBaseTest {
     super.setUp();
 
     facility = new FacilityHarness();
-    facility.initialize(address(this), address(this), IIntentDescriptor(address(0)));
+    facility.initialize(address(this), address(this), address(0));
 
     vm.prank(owner);
     positionManager.grantRoles(address(facility), 1 << 0);

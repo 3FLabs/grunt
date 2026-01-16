@@ -40,6 +40,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @notice Role for global swap guardians.
   uint256 public constant GUARDIAN_ROLE = _ROLE_1;
 
+  /// @notice EIP-712 typehash for SwapParams struct.
   bytes32 constant SWAP_PARAMS_TYPEHASH = keccak256(
     "SwapParams(uint256 id1,address token1,uint256 id2,address token2,uint256 amount1,uint256 amount2,uint256 deadline)"
   );
@@ -50,6 +51,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @notice Thrown when a required address parameter is the zero address.
   error AddressZero();
+
+  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
+  /// @param addr The invalid address.
+  error InvalidContract(address addr);
 
   /// @notice Thrown when the intent is already resolving.
   /// @param id The intent ID.
@@ -176,7 +181,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @notice Emitted when the intent descriptor is updated.
   /// @param descriptor The new descriptor address.
-  event DescriptorSet(address indexed descriptor);
+  event DescriptorSet(address descriptor);
 
   event IntentCreated(
     uint256 indexed id,
@@ -211,11 +216,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param intents Mapping from intent ID to Intent struct.
   /// @param descriptor The intent descriptor contract for generating token metadata.
+  /// @param lastIntentId The most recent intent ID assigned.
+  /// @param usedSwapDigests Mapping of used swap digests to prevent replay attacks.
   struct FacilityStorage {
     mapping(uint256 => Intent) intents;
     IIntentDescriptor descriptor;
-
-    uint256 nextIntentId;
+    uint256 lastIntentId;
     mapping(bytes32 => bool) usedSwapDigests;
   }
 
@@ -229,8 +235,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   ///      This pattern ensures consistent storage layout when used behind proxies.
   /// @return facilityStorage A storage pointer to the FacilityStorage struct
   function _facilityStorage() internal pure returns (FacilityStorage storage facilityStorage) {
-    /// @solidity memory-safe-assembly
-    assembly {
+    assembly ("memory-safe") {
       facilityStorage.slot := _MAIN_STORAGE_SLOT
     }
   }
@@ -245,19 +250,11 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param facilitator_ The address to be granted the FACILITATOR_ROLE (initial facilitator).
   /// @param descriptor_ The initial intent descriptor contract (can be address(0) to disable).
-  function initialize(address owner_, address facilitator_, IIntentDescriptor descriptor_) public initializer {
+  function initialize(address owner_, address facilitator_, address descriptor_) public initializer {
     _checkNotZero(owner_);
-    _checkNotZero(facilitator_);
-
     _initializeOwner(owner_);
+    _setDescriptor(descriptor_);
     _setRoles(facilitator_, FACILITATOR_ROLE);
-
-    _facilityStorage().nextIntentId = 1;
-
-    if (address(descriptor_) != address(0)) {
-      _facilityStorage().descriptor = descriptor_;
-      emit DescriptorSet(address(descriptor_));
-    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -265,11 +262,18 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets the intent descriptor contract for generating token metadata.
-  /// @dev Only callable by the owner. Can be set to address(0) to disable.
+  /// @dev Only callable by the owner.
   /// @param descriptor_ The new descriptor contract address.
-  function setDescriptor(IIntentDescriptor descriptor_) external onlyOwner {
-    _facilityStorage().descriptor = descriptor_;
-    emit DescriptorSet(address(descriptor_));
+  function setDescriptor(address descriptor_) external onlyOwner {
+    _setDescriptor(descriptor_);
+  }
+
+  /// @dev Internal function to set the intent descriptor contract.
+  /// @param descriptor_ The new descriptor contract address.
+  function _setDescriptor(address descriptor_) internal {
+    _checkContract(descriptor_);
+    _facilityStorage().descriptor = IIntentDescriptor(descriptor_);
+    emit DescriptorSet(descriptor_);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -285,9 +289,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   {
     FacilityStorage storage $ = _facilityStorage();
 
-    uint256 nextId = $.nextIntentId;
-    if (nextId == 0) nextId = 1;
-    id = nextId;
+    id = $.lastIntentId + 1;
 
     if (params.resolveStart <= block.timestamp) {
       revert InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
@@ -312,7 +314,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
       if (fundShare != pmCollateral) revert AssetMismatch(pmCollateral, fundShare);
     }
 
-    $.nextIntentId = nextId + 1;
+    $.lastIntentId = id;
 
     Intent storage intent = $.intents[id];
     intent.depositAsset = params.depositAsset;
@@ -926,14 +928,20 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @dev Reverts if the intent ID does not exist.
   /// @param id The intent ID to check.
   function _requireIntentExists(uint256 id) internal view {
-    uint256 nextId = _facilityStorage().nextIntentId;
-    if (id == 0 || id >= nextId) revert IntentNotFound(id);
+    uint256 lastId = _facilityStorage().lastIntentId;
+    if (id == 0 || id > lastId) revert IntentNotFound(id);
   }
 
   /// @dev Reverts if the address is the zero address.
   /// @param addr The address to check.
   function _checkNotZero(address addr) internal pure {
     if (addr == address(0)) revert AddressZero();
+  }
+
+  /// @dev Reverts if the address is not a contract.
+  /// @param addr The address to check.
+  function _checkContract(address addr) internal view {
+    if (addr.code.length == 0) revert InvalidContract(addr);
   }
 
   function _validateUpdateTarget(
