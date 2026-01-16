@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test, Vm} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
-import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
+import {IntentDescriptor} from "src/IntentDescriptor.sol";
 import {Asset, IntentProperties, SwapParams} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
@@ -47,7 +47,8 @@ contract FacilitySwapTest is Test {
 
   function setUp() public {
     facility = new FacilityEIP712Harness();
-    facility.initialize(address(this), address(this), address(0));
+    IntentDescriptor descriptor = new IntentDescriptor();
+    facility.initialize(address(this), address(this), address(descriptor));
 
     collateral = new MockERC20("Collateral", "COL", 18);
     debt = new MockERC20("Debt", "DEBT", 6);

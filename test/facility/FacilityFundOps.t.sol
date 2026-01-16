@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
-import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
+import {IntentDescriptor} from "src/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
 import {Order, Mode} from "src/libs/Order.sol";
@@ -40,7 +40,8 @@ contract FacilityFundOpsTest is Test {
 
   function setUp() public {
     facility = new FacilityFundHarness();
-    facility.initialize(address(this), address(this), address(0));
+    IntentDescriptor descriptor = new IntentDescriptor();
+    facility.initialize(address(this), address(this), address(descriptor));
 
     asset = new MockERC20("Debt", "DEBT", 6);
     share = new MockERC20("Collateral", "COL", 18);

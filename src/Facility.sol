@@ -255,7 +255,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   ///      The owner has admin control, while the depositor can execute orders.
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param facilitator_ The address to be granted the FACILITATOR_ROLE (initial facilitator).
-  /// @param descriptor_ The initial intent descriptor contract (can be address(0) to disable).
+  /// @param descriptor_ The initial intent descriptor contract.
   function initialize(address owner_, address facilitator_, address descriptor_) public initializer {
     _checkNotZero(owner_);
     _initializeOwner(owner_);
@@ -375,7 +375,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     // TODO - Check if needed or not...
     // It's possible to resolve multiple times if needed, always overriding the previous resolution.
-    if (_hasActiveOrder(_intent)) revert ActiveOrder(id);
+    if (_hasActiveOrder(_intent)) revert NoActiveOrder(id);
 
     _intent.resolved = true;
     emit IntentResolved(id);
@@ -840,23 +840,17 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
   /// @inheritdoc ERC6909
   function name(uint256 id) public view override returns (string memory) {
-    IIntentDescriptor descriptor_ = _facilityStorage().descriptor;
-    if (address(descriptor_) == address(0)) return "";
-    return descriptor_.name(IFacility(address(this)), id);
+    return _facilityStorage().descriptor.name(IFacility(address(this)), id);
   }
 
   /// @inheritdoc ERC6909
   function symbol(uint256 id) public view override returns (string memory) {
-    IIntentDescriptor descriptor_ = _facilityStorage().descriptor;
-    if (address(descriptor_) == address(0)) return "";
-    return descriptor_.symbol(IFacility(address(this)), id);
+    return _facilityStorage().descriptor.symbol(IFacility(address(this)), id);
   }
 
   /// @inheritdoc ERC6909
   function tokenURI(uint256 id) public view override returns (string memory) {
-    IIntentDescriptor descriptor_ = _facilityStorage().descriptor;
-    if (address(descriptor_) == address(0)) return "";
-    return descriptor_.tokenURI(IFacility(address(this)), id);
+    return _facilityStorage().descriptor.tokenURI(IFacility(address(this)), id);
   }
 
   /// @notice Returns total supply for a given intent.
@@ -965,10 +959,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     (_pmCollateral, _pmDebt) = IPositionManager(guardKey).assets();
 
-    address otherPm = guardKey == depositAsset.asset ? targetAsset.asset : depositAsset.asset;
-    (address otherCollateral, address otherDebt) = IPositionManager(otherPm).assets();
-    if (otherCollateral != _pmCollateral) revert AssetMismatch(_pmCollateral, otherCollateral);
-    if (otherDebt != _pmDebt) revert AssetMismatch(_pmDebt, otherDebt);
+    if (depositIsPm && targetIsPm) {
+      address otherPm = guardKey == depositAsset.asset ? targetAsset.asset : depositAsset.asset;
+      (address otherCollateral, address otherDebt) = IPositionManager(otherPm).assets();
+      if (otherCollateral != _pmCollateral) revert AssetMismatch(_pmCollateral, otherCollateral);
+      if (otherDebt != _pmDebt) revert AssetMismatch(_pmDebt, otherDebt);
+    }
   }
 
   /// @dev TODO Natspec

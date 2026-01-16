@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Facility} from "src/Facility.sol";
-import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
+import {IntentDescriptor} from "src/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
 import {Order, Mode, State} from "src/libs/Order.sol";
@@ -120,7 +120,8 @@ contract FacilityPositionManagerOpsTest is PositionManagerBaseTest {
     super.setUp();
 
     facility = new FacilityHarness();
-    facility.initialize(address(this), address(this), address(0));
+    IntentDescriptor descriptor = new IntentDescriptor();
+    facility.initialize(address(this), address(this), address(descriptor));
 
     vm.prank(owner);
     positionManager.grantRoles(address(facility), 1 << 0);
