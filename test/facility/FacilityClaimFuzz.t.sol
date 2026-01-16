@@ -29,7 +29,7 @@ contract FacilityClaimFuzzTest is Test {
     debt = new MockERC20("Debt", "DEBT", 6);
 
     pm = new PositionManager();
-    pm.initialize(address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18);
+    pm.initialize(address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18, address(0));
   }
 
   function _createIntent() internal returns (uint256 id) {

@@ -47,7 +47,7 @@ contract FacilityFundOpsTest is Test {
     share = new MockERC20("Collateral", "COL", 18);
 
     pm = new PositionManager();
-    pm.initialize(address(this), "PM", "PM", 18, address(share), address(asset), 0.8e18);
+    pm.initialize(address(this), "PM", "PM", 18, address(share), address(asset), 0.8e18, address(0));
 
     fund = new MockFund(address(asset), address(share));
 

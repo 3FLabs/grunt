@@ -21,7 +21,7 @@ contract FacilityTransferGuardTest is Test {
   address internal bob = makeAddr("bob");
 
   // 6-decimal token units.
-  uint256 internal constant THRESHOLD = 5_000_000;
+  uint256 internal constant TRANSFER_AMOUNT = 5_000_000;
 
   function setUp() public {
     facility = new Facility();
@@ -31,14 +31,15 @@ contract FacilityTransferGuardTest is Test {
     MockERC20 collateral = new MockERC20("Collateral", "COL", 18);
     debt = new MockERC20("Debt", "DEBT", 6);
 
-    positionManager = new PositionManager();
-    positionManager.initialize(address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18);
-
     transferGuard = new TransferGuard();
     transferGuard.initialize(address(this));
 
-    positionManager.setTransferGuard(address(transferGuard));
-    transferGuard.setTokenConfig(address(positionManager), false, THRESHOLD, address(0));
+    positionManager = new PositionManager();
+    positionManager.initialize(
+      address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18, address(transferGuard)
+    );
+
+    transferGuard.setTokenConfig(address(positionManager), false, true);
   }
 
   function _createIntent() internal returns (uint256 id) {
@@ -66,9 +67,12 @@ contract FacilityTransferGuardTest is Test {
     vm.stopPrank();
   }
 
-  function test_TransferGuard_AllowsSmallTransfers() public {
+  function test_TransferGuard_AllowsWhitelistedTransfers() public {
     uint256 id = _createIntent();
-    uint256 amount = THRESHOLD - 1;
+    uint256 amount = TRANSFER_AMOUNT;
+
+    transferGuard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    transferGuard.setAddressStatus(bob, AddressStatus.WHITELIST);
 
     _deposit(alice, id, amount);
 
@@ -78,12 +82,11 @@ contract FacilityTransferGuardTest is Test {
     assertEq(facility.balanceOf(bob, id), amount, "bob balance");
   }
 
-  function test_TransferGuard_BlocksLargeTransfers() public {
+  function test_TransferGuard_BlocksNonWhitelistedRecipient() public {
     uint256 id = _createIntent();
-    uint256 amount = THRESHOLD;
+    uint256 amount = TRANSFER_AMOUNT;
 
-    // Allow minting a large amount to alice.
-    transferGuard.setAddressStatus(alice, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    transferGuard.setAddressStatus(alice, AddressStatus.WHITELIST);
 
     _deposit(alice, id, amount);
 

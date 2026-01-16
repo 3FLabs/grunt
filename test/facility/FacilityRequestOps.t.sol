@@ -48,7 +48,7 @@ contract FacilityRequestOpsTest is Test {
     MockERC20 collateral = new MockERC20("COL", "COL", 18);
 
     pm = new PositionManager();
-    pm.initialize(address(this), "PM", "PM", 18, address(collateral), address(asset), 0.8e18);
+    pm.initialize(address(this), "PM", "PM", 18, address(collateral), address(asset), 0.8e18, address(0));
 
     RequestFactory factory = new RequestFactory(address(this));
     (request,,) =
