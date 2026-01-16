@@ -52,46 +52,91 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   error AddressZero();
 
   /// @notice Thrown when the intent is already resolving.
+  /// @param id The intent ID.
   error AlreadyResolving(uint256 id);
 
   /// @notice Thrown when the intent is already resolved.
+  /// @param id The intent ID.
   error AlreadyResolved(uint256 id);
 
   /// @notice Thrown when the intent is not resolving.
+  /// @param id The intent ID.
   error NotResolving(uint256 id);
 
   /// @notice Thrown when the intent is not resolved.
+  /// @param id The intent ID.
   error NotResolved(uint256 id);
 
   /// @notice Thrown when the intent is not depositing.
+  /// @param id The intent ID.
   error NotDepositing(uint256 id);
 
   /// @notice Thrown when the deposit cap is exceeded.
-  error DepositCapExceeded(uint256 id);
+  /// @param id The intent ID.
+  /// @param depositCap The configured deposit cap.
+  /// @param attemptedTotal The attempted total supply after deposit.
+  error DepositCapExceeded(uint256 id, uint256 depositCap, uint256 attemptedTotal);
 
-  /// @notice Thrown when the asset is invalid.
-  error InvalidAsset(uint256 id);
+  /// @notice Thrown when an expected asset does not match the actual asset.
+  /// @param expected The expected asset address.
+  /// @param actual The actual asset address.
+  error AssetMismatch(address expected, address actual);
 
-  /// @notice Thrown when the amount is invalid.
-  error InvalidAmount(uint256 id);
+  /// @notice Thrown when no position manager is provided on either side of the intent.
+  error MissingPositionManager();
+
+  /// @notice Thrown when the guard key does not match the required position manager.
+  /// @param guardKey The provided guard key.
+  error InvalidGuardKey(address guardKey);
+
+  /// @notice Thrown when an asset is expected to be a position manager but is not.
+  /// @param asset The asset address that is not a position manager.
+  error AssetNotPositionManager(address asset);
+
+  /// @notice Thrown when the request has not reached a withdrawable state.
+  /// @param request The request address.
+  error RequestNotRepaid(address request);
+
+  /// @notice Thrown when an amount differs from the expected value.
+  /// @param expected The expected amount.
+  /// @param actual The actual amount.
+  error AmountMismatch(uint256 expected, uint256 actual);
 
   /// @notice Thrown when resolveStart is not in the future.
-  error InvalidResolveStart(uint256 id);
+  /// @param resolveStart The provided resolve start timestamp.
+  /// @param currentTime The current block timestamp.
+  error InvalidResolveStart(uint40 resolveStart, uint40 currentTime);
 
   /// @notice Thrown when an intent ID does not exist.
+  /// @param id The intent ID.
   error IntentNotFound(uint256 id);
 
   /// @notice Thrown when a TransferGuard blocks a transfer.
-  error TransferBlocked(uint256 id);
+  /// @param guard The TransferGuard address.
+  /// @param from The token sender.
+  /// @param to The token receiver.
+  /// @param amount The token amount.
+  error TransferBlocked(address guard, address from, address to, uint256 amount);
 
   /// @notice Thrown when a fund order already exists.
+  /// @param id The intent ID.
   error ActiveOrder(uint256 id);
 
   /// @notice Thrown when no fund order exists.
+  /// @param id The intent ID.
   error NoActiveOrder(uint256 id);
 
   /// @notice Thrown when a fund order is not yet ended.
+  /// @param id The intent ID.
   error OrderNotEnded(uint256 id);
+
+  /// @notice Thrown when a fund is required but not configured.
+  /// @param id The intent ID.
+  error MissingFund(uint256 id);
+
+  /// @notice Thrown when a request is required but not configured.
+  /// @param id The intent ID.
+  error MissingRequest(uint256 id);
 
   /// @notice Thrown when swap params reference the same intent.
   error SameIntent();
@@ -103,21 +148,26 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   error InvalidSwapAmount();
 
   /// @notice Thrown when a swap digest has already been used.
+  /// @param digest The used swap digest.
   error SwapDigestUsed(bytes32 digest);
 
   /// @notice Thrown when signatures length mismatches.
   error InvalidSignatureLength();
 
   /// @notice Thrown when not enough guardian signatures are provided.
+  /// @param required The required number of signatures.
+  /// @param provided The number of signatures provided.
   error InvalidSignatureCount(uint256 required, uint256 provided);
 
   /// @notice Thrown when signers are not strictly increasing.
   error InvalidSignerOrder();
 
   /// @notice Thrown when a signer is not a guardian.
+  /// @param signer The address of the signer.
   error NotGuardian(address signer);
 
   /// @notice Thrown when a signature is invalid.
+  /// @param signer The address of the signer.
   error InvalidSignature(address signer);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -151,8 +201,6 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     address indexed oldGuardKey,
     address indexed newGuardKey
   );
-
-  // TODO => Events
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -247,22 +295,27 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (nextId == 0) nextId = 1;
     id = nextId;
 
-    if (params.resolveStart <= block.timestamp) revert InvalidResolveStart(id);
+    if (params.resolveStart <= block.timestamp) {
+      revert InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
+    }
 
     _checkNotZero(params.depositAsset.asset);
     _checkNotZero(params.targetAsset.asset);
     _checkNotZero(params.guardKey);
 
     (address pmCollateral, address pmDebt) =
-      _getPositionManagerAssets(id, params.depositAsset, params.targetAsset, params.guardKey);
+      _getPositionManagerAssets(params.depositAsset, params.targetAsset, params.guardKey);
 
     if (params.request != address(0)) {
-      if (IVaultController(params.request).asset() != pmDebt) revert InvalidAsset(id);
+      address requestAsset = IVaultController(params.request).asset();
+      if (requestAsset != pmDebt) revert AssetMismatch(pmDebt, requestAsset);
     }
 
     if (params.fund != address(0)) {
-      if (IFund(params.fund).asset() != pmDebt) revert InvalidAsset(id);
-      if (IFund(params.fund).share() != pmCollateral) revert InvalidAsset(id);
+      address fundAsset = IFund(params.fund).asset();
+      if (fundAsset != pmDebt) revert AssetMismatch(pmDebt, fundAsset);
+      address fundShare = IFund(params.fund).share();
+      if (fundShare != pmCollateral) revert AssetMismatch(pmCollateral, fundShare);
     }
 
     $.nextIntentId = nextId + 1;
@@ -303,7 +356,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     bool oldTargetIsPm = intent.targetAsset.isPositionManager;
     address oldGuardKey = intent.guardKey;
 
-    _validateUpdateTarget(id, intent.depositAsset, newTargetAsset, newGuardKey, intent.fund, intent.request);
+    _validateUpdateTarget(intent.depositAsset, newTargetAsset, newGuardKey, intent.fund, intent.request);
 
     intent.targetAsset = newTargetAsset;
     intent.guardKey = newGuardKey;
@@ -345,7 +398,9 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (!_isResolving(_intent)) revert NotResolving(id);
 
     if (_intent.request != address(0)) {
-      if (!IVaultController(_intent.request).canWithdraw()) revert InvalidAmount(id);
+      if (!IVaultController(_intent.request).canWithdraw()) {
+        revert RequestNotRepaid(_intent.request);
+      }
     }
 
     if (_intent.fund != address(0) && _hasActiveOrder(_intent)) {
@@ -386,7 +441,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     // TODO - Validations
     if (!_isResolving(_intent)) revert NotResolving(id);
-    if (_intent.fund == address(0)) revert InvalidAsset(id);
+    if (_intent.fund == address(0)) revert MissingFund(id);
     if (_hasActiveOrder(_intent)) revert ActiveOrder(id);
 
     order = Order({
@@ -444,7 +499,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     tokenIn.safeApproveWithRetry(_intent.fund, order.input);
     (, uint256 committedAmount) = IFund(_intent.fund).commit(order);
 
-    if (committedAmount != order.input) revert InvalidAmount(id);
+    if (committedAmount != order.input) revert AmountMismatch(order.input, committedAmount);
 
     // TODO - Emits event
   }
@@ -565,7 +620,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     if (!_isResolving(_intent)) revert NotResolving(id);
-    if (_intent.request == address(0)) revert InvalidAsset(id);
+    if (_intent.request == address(0)) revert MissingRequest(id);
 
     address asset = IVaultController(_intent.request).asset();
 
@@ -581,7 +636,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
 
     if (!_isResolving(_intent)) revert NotResolving(id);
-    if (_intent.request == address(0)) revert InvalidAsset(id);
+    if (_intent.request == address(0)) revert MissingRequest(id);
 
     address asset = IVaultController(_intent.request).asset();
 
@@ -609,7 +664,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (!_isResolving(_intent)) revert NotResolving(id);
 
     Asset storage selected = useTarget ? _intent.targetAsset : _intent.depositAsset;
-    if (!selected.isPositionManager) revert InvalidAsset(id);
+    if (!selected.isPositionManager) revert AssetNotPositionManager(selected.asset);
 
     address positionManager = selected.asset;
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -647,7 +702,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (!_isResolving(_intent)) revert NotResolving(id);
 
     Asset storage selected = useTarget ? _intent.targetAsset : _intent.depositAsset;
-    if (!selected.isPositionManager) revert InvalidAsset(id);
+    if (!selected.isPositionManager) revert AssetNotPositionManager(selected.asset);
 
     address positionManager = selected.asset;
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -685,7 +740,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (!_isResolving(_intent)) revert NotResolving(id);
 
     Asset storage selected = useTarget ? _intent.targetAsset : _intent.depositAsset;
-    if (!selected.isPositionManager) revert InvalidAsset(id);
+    if (!selected.isPositionManager) revert AssetNotPositionManager(selected.asset);
 
     address positionManager = selected.asset;
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -702,7 +757,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     (uint256 collateral, uint256 debt) = IPositionManager(positionManager).burn(shares);
 
-    if (debt != debtNeeded) revert InvalidAmount(id);
+    if (debt != debtNeeded) revert AmountMismatch(debtNeeded, debt);
     if (collateral > 0) {
       _intent.amounts.add(collateralAsset, collateral);
     }
@@ -722,7 +777,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     // IScreener.check(msg.sender, id, data, amount);
 
     if (!_isDepositing(_intent)) revert NotDepositing(id);
-    if (_intent.totalSupply + amount > _intent.depositCap) revert DepositCapExceeded(id);
+    uint256 attemptedTotal = _intent.totalSupply + amount;
+    if (attemptedTotal > _intent.depositCap) {
+      revert DepositCapExceeded(id, _intent.depositCap, attemptedTotal);
+    }
 
     // TODO - Updates
     address depositAsset = _intent.depositAsset.asset;
@@ -812,6 +870,9 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     return descriptor_.tokenURI(IFacility(address(this)), id);
   }
 
+  /// @notice Returns total supply for a given intent.
+  /// @param id The intent ID.
+  /// @return The total supply.
   function totalSupply(uint256 id) public view returns (uint256) {
     _requireIntentExists(id);
     FacilityStorage storage $ = _facilityStorage();
@@ -819,6 +880,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     return _intent.totalSupply;
   }
 
+  /// @inheritdoc ERC6909
   function _beforeTokenTransfer(address from, address to, uint256 id, uint256 amount) internal override {
     _requireIntentExists(id);
 
@@ -828,7 +890,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     (,, address guard) = IPositionManager(_intent.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.guardKey, from, to, amount)) {
-        revert TransferBlocked(id);
+        revert TransferBlocked(guard, from, to, amount);
       }
     }
 
@@ -867,7 +929,6 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   }
 
   function _validateUpdateTarget(
-    uint256 id,
     Asset memory depositAsset,
     Asset calldata newTargetAsset,
     address newGuardKey,
@@ -877,19 +938,22 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _checkNotZero(newTargetAsset.asset);
     _checkNotZero(newGuardKey);
 
-    (address pmCollateral, address pmDebt) = _getPositionManagerAssets(id, depositAsset, newTargetAsset, newGuardKey);
+    (address pmCollateral, address pmDebt) = _getPositionManagerAssets(depositAsset, newTargetAsset, newGuardKey);
 
     if (request != address(0)) {
-      if (IVaultController(request).asset() != pmDebt) revert InvalidAsset(id);
+      address requestAsset = IVaultController(request).asset();
+      if (requestAsset != pmDebt) revert AssetMismatch(pmDebt, requestAsset);
     }
 
     if (fund != address(0)) {
-      if (IFund(fund).asset() != pmDebt) revert InvalidAsset(id);
-      if (IFund(fund).share() != pmCollateral) revert InvalidAsset(id);
+      address fundAsset = IFund(fund).asset();
+      if (fundAsset != pmDebt) revert AssetMismatch(pmDebt, fundAsset);
+      address fundShare = IFund(fund).share();
+      if (fundShare != pmCollateral) revert AssetMismatch(pmCollateral, fundShare);
     }
   }
 
-  function _getPositionManagerAssets(uint256 id, Asset memory depositAsset, Asset memory targetAsset, address guardKey)
+  function _getPositionManagerAssets(Asset memory depositAsset, Asset memory targetAsset, address guardKey)
     internal
     view
     returns (address pmCollateral, address pmDebt)
@@ -897,27 +961,30 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     bool depositIsPm = depositAsset.isPositionManager;
     bool targetIsPm = targetAsset.isPositionManager;
 
-    if (!depositIsPm && !targetIsPm) revert InvalidAsset(id);
+    if (!depositIsPm && !targetIsPm) revert MissingPositionManager();
 
     if (depositIsPm && !targetIsPm) {
-      if (guardKey != depositAsset.asset) revert InvalidAsset(id);
+      if (guardKey != depositAsset.asset) revert InvalidGuardKey(guardKey);
       return IPositionManager(guardKey).assets();
     }
 
     if (!depositIsPm && targetIsPm) {
-      if (guardKey != targetAsset.asset) revert InvalidAsset(id);
+      if (guardKey != targetAsset.asset) revert InvalidGuardKey(guardKey);
       (pmCollateral, pmDebt) = IPositionManager(guardKey).assets();
-      if (depositAsset.asset != pmDebt) revert InvalidAsset(id);
+      if (depositAsset.asset != pmDebt) revert AssetMismatch(pmDebt, depositAsset.asset);
       return (pmCollateral, pmDebt);
     }
 
-    if (guardKey != depositAsset.asset && guardKey != targetAsset.asset) revert InvalidAsset(id);
+    if (guardKey != depositAsset.asset && guardKey != targetAsset.asset) {
+      revert InvalidGuardKey(guardKey);
+    }
 
     (pmCollateral, pmDebt) = IPositionManager(guardKey).assets();
 
     address otherPm = guardKey == depositAsset.asset ? targetAsset.asset : depositAsset.asset;
     (address otherCollateral, address otherDebt) = IPositionManager(otherPm).assets();
-    if (otherCollateral != pmCollateral || otherDebt != pmDebt) revert InvalidAsset(id);
+    if (otherCollateral != pmCollateral) revert AssetMismatch(pmCollateral, otherCollateral);
+    if (otherDebt != pmDebt) revert AssetMismatch(pmDebt, otherDebt);
   }
 
   function _isResolving(Intent storage _intent) internal view returns (bool) {

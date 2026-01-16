@@ -155,7 +155,7 @@ contract FacilityPositionManagerOpsTest is PositionManagerBaseTest {
   }
 
   function test_RevertWhen_DepositManager_SelectedSideNotPM() public {
-    vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, intentId));
+    vm.expectRevert(abi.encodeWithSelector(Facility.AssetNotPositionManager.selector, address(debtToken)));
     facility.depositManager(intentId, 1, 0, false);
   }
 

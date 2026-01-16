@@ -89,7 +89,9 @@ contract FacilityTransferGuardTest is Test {
     _deposit(alice, id, amount);
 
     vm.startPrank(alice);
-    vm.expectRevert(abi.encodeWithSelector(Facility.TransferBlocked.selector, id));
+    vm.expectRevert(
+      abi.encodeWithSelector(Facility.TransferBlocked.selector, address(transferGuard), alice, bob, amount)
+    );
     facility.transfer(bob, id, amount);
     vm.stopPrank();
 

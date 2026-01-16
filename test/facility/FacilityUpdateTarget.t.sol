@@ -125,7 +125,7 @@ contract FacilityUpdateTargetTest is Test {
 
     Asset memory newTarget = Asset({asset: address(collateral), isPositionManager: false});
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, id));
+    vm.expectRevert(Facility.MissingPositionManager.selector);
     facility.updateTarget(id, newTarget, address(pm1));
   }
 
@@ -134,7 +134,7 @@ contract FacilityUpdateTargetTest is Test {
 
     Asset memory newTarget = Asset({asset: address(pmMismatch), isPositionManager: true});
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.InvalidAsset.selector, id));
+    vm.expectRevert(abi.encodeWithSelector(Facility.AssetMismatch.selector, address(collateral), address(collateral2)));
     facility.updateTarget(id, newTarget, address(pm1));
   }
 }
