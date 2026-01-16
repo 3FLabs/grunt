@@ -4,21 +4,6 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
 import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
-import {ITransferGuardValidator} from "src/interfaces/guard/ITransferGuardValidator.sol";
-
-/// @title MockValidator
-/// @notice Mock validator for testing NONE status delegation
-contract MockValidator is ITransferGuardValidator {
-  mapping(address => bool) public authorized;
-
-  function setAuthorized(address account, bool _authorized) external {
-    authorized[account] = _authorized;
-  }
-
-  function isAuthorized(address account) external view returns (bool) {
-    return authorized[account];
-  }
-}
 
 /// @title TransferGuardTest
 /// @notice Test suite for TransferGuard contract
@@ -28,7 +13,6 @@ contract TransferGuardTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   TransferGuard public guard;
-  MockValidator public validator;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST ADDRESSES                      */
@@ -48,15 +32,13 @@ contract TransferGuardTest is Test {
 
   uint256 constant COMPLIANCE_ROLE = 1 << 0;
   uint256 constant PAUSER_ROLE = 1 << 1;
-  uint256 constant THRESHOLD_SCALE = 1e6;
-  uint256 constant LARGE_TRANSFER_THRESHOLD = 100_000e18;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   event AddressStatusSet(address indexed account, AddressStatus status);
-  event TokenConfigSet(address indexed token, bool paused, uint256 threshold, address validator);
+  event TokenConfigSet(address indexed token, bool paused, bool whitelist);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -75,9 +57,6 @@ contract TransferGuardTest is Test {
     guard = new TransferGuard();
     guard.initialize(owner);
 
-    // Deploy mock validator
-    validator = new MockValidator();
-
     // Grant roles
     vm.startPrank(owner);
     guard.grantRoles(compliance, COMPLIANCE_ROLE);
@@ -86,7 +65,6 @@ contract TransferGuardTest is Test {
 
     // Label contracts
     vm.label(address(guard), "TransferGuard");
-    vm.label(address(validator), "MockValidator");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -149,57 +127,31 @@ contract TransferGuardTest is Test {
 
   function test_setTokenConfig() public {
     vm.expectEmit(true, false, false, true);
-    emit TokenConfigSet(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
+    emit TokenConfigSet(token, false, true);
 
     vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
+    guard.setTokenConfig(token, false, true);
 
-    // tokenConfig returns scaled threshold
-    (bool paused, uint88 scaledThreshold, address val) = guard.tokenConfig(token);
-    assertEq(paused, false);
-    assertEq(scaledThreshold, LARGE_TRANSFER_THRESHOLD / THRESHOLD_SCALE);
-    assertEq(val, address(validator));
-
-    // getThreshold returns actual threshold
-    assertEq(guard.getThreshold(token), LARGE_TRANSFER_THRESHOLD);
+    (bool paused_, bool whitelist_) = guard.tokenConfig(token);
+    assertEq(paused_, false);
+    assertEq(whitelist_, true);
   }
 
   function test_setTokenConfig_revertsNonOwner() public {
     vm.prank(compliance);
     vm.expectRevert();
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
+    guard.setTokenConfig(token, false, true);
   }
 
-  function test_setTokenConfig_thresholdScaling() public {
-    // Test that threshold is scaled correctly
-    uint256 threshold = 123_456_789e18;
-    uint256 expectedScaled = threshold / THRESHOLD_SCALE;
-    uint256 expectedActual = expectedScaled * THRESHOLD_SCALE;
+  function test_isWhitelistMode() public {
+    // Default is blocklist mode
+    assertFalse(guard.isWhitelistMode(token));
 
+    // Set to whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, threshold, address(0));
+    guard.setTokenConfig(token, false, true);
 
-    // Check stored value is scaled
-    (, uint88 scaledThreshold,) = guard.tokenConfig(token);
-    assertEq(scaledThreshold, expectedScaled);
-
-    // Check getter returns scaled-up value (rounded down)
-    assertEq(guard.getThreshold(token), expectedActual);
-  }
-
-  function test_setTokenConfig_thresholdRoundsDown() public {
-    // Set threshold that's not a multiple of THRESHOLD_SCALE
-    uint256 threshold = 100e18 + 500_000; // 100e18 + 0.5e6
-    uint256 expectedActual = 100e18; // Rounds down to 100e18
-
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, threshold, address(0));
-
-    assertEq(guard.getThreshold(token), expectedActual);
-  }
-
-  function test_thresholdScale_constant() public view {
-    assertEq(guard.THRESHOLD_SCALE(), 1e6);
+    assertTrue(guard.isWhitelistMode(token));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -237,128 +189,67 @@ contract TransferGuardTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                   CAN TRANSFER TESTS                       */
+  /*                BLOCKLIST MODE TESTS (default)              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_canTransfer_allowsDefaultNoConfig() public view {
-    // No config set, no threshold - should allow
+  function test_blocklist_allowsDefaultNoConfig() public view {
+    // No config set - should allow (blocklist mode by default, NONE status allowed)
     assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_blocksWhenPaused() public {
+  function test_blocklist_blocksWhenPaused() public {
     vm.prank(pauser);
     guard.pause(token);
 
     assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_blocksBlocklistedSender() public {
+  function test_blocklist_blocksBlocklistedSender() public {
     vm.prank(compliance);
     guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
 
     assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_blocksBlocklistedRecipient() public {
+  function test_blocklist_blocksBlocklistedRecipient() public {
     vm.prank(compliance);
     guard.setAddressStatus(bob, AddressStatus.BLOCKLIST);
 
     assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_allowsWhitelistAllAmounts() public {
-    // Set threshold
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(0));
-
-    // Whitelist both alice and bob for all amounts
+  function test_blocklist_allowsWhitelisted() public {
     vm.startPrank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST_ALL_AMOUNTS);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
     vm.stopPrank();
 
-    // Large transfer should succeed
-    assertTrue(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD + 1));
+    assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_whitelistBlocksLargeTransfer() public {
-    // Set threshold
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(0));
-
-    // Whitelist alice (not for all amounts)
-    vm.prank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
-
-    // Small transfer should succeed
-    assertTrue(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD - 1));
-
-    // Large transfer should fail (alice is sender, not WHITELIST_ALL_AMOUNTS)
-    assertFalse(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD));
+  function test_blocklist_allowsNoneStatus() public view {
+    // NONE status is allowed in blocklist mode
+    assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_noneStatusWithNoValidator() public {
-    // Set threshold but no validator
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(0));
-
-    // alice has NONE status (default)
-    // Small transfer should succeed
-    assertTrue(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD - 1));
-
-    // Large transfer should fail
-    assertFalse(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD));
-  }
-
-  function test_canTransfer_noneStatusWithValidatorAuthorized() public {
-    // Set threshold with validator
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
-
-    // Authorize alice in validator
-    validator.setAuthorized(alice, true);
-    validator.setAuthorized(bob, true);
-
-    // Small transfer should succeed
-    assertTrue(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD - 1));
-
-    // Large transfer should still fail (validator gives WHITELIST equivalent, not WHITELIST_ALL_AMOUNTS)
-    assertFalse(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD));
-  }
-
-  function test_canTransfer_noneStatusWithValidatorNotAuthorized() public {
-    // Set threshold with validator
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(validator));
-
-    // alice is NOT authorized in validator (default false)
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_canTransfer_allowsMint() public {
+  function test_blocklist_allowsMint() public view {
     // Mints have from = address(0)
-    vm.prank(compliance);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
-
     assertTrue(guard.canTransfer(token, address(0), bob, 1000e18));
   }
 
-  function test_canTransfer_allowsBurn() public {
+  function test_blocklist_allowsBurn() public view {
     // Burns have to = address(0)
-    vm.prank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
-
     assertTrue(guard.canTransfer(token, alice, address(0), 1000e18));
   }
 
-  function test_canTransfer_blocksMintToBlocklisted() public {
+  function test_blocklist_blocksMintToBlocklisted() public {
     vm.prank(compliance);
     guard.setAddressStatus(bob, AddressStatus.BLOCKLIST);
 
     assertFalse(guard.canTransfer(token, address(0), bob, 1000e18));
   }
 
-  function test_canTransfer_blocksBurnFromBlocklisted() public {
+  function test_blocklist_blocksBurnFromBlocklisted() public {
     vm.prank(compliance);
     guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
 
@@ -366,46 +257,143 @@ contract TransferGuardTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                   THRESHOLD EDGE CASES                     */
+  /*                   WHITELIST MODE TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_canTransfer_thresholdZeroAllowsAll() public {
-    // Set config with threshold = 0
+  function test_whitelist_blocksNoneStatus() public {
+    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, 0, address(0));
+    guard.setTokenConfig(token, false, true);
 
-    // Any amount should work for NONE status
-    assertTrue(guard.canTransfer(token, alice, bob, type(uint256).max));
+    // NONE status is blocked in whitelist mode
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_canTransfer_exactThresholdIsLargeTransfer() public {
+  function test_whitelist_allowsWhitelisted() public {
+    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(0));
+    guard.setTokenConfig(token, false, true);
 
-    // Exactly at threshold is considered large
-    assertFalse(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD));
+    // Whitelist both parties
+    vm.startPrank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+    vm.stopPrank();
 
-    // One below threshold is not large
-    assertTrue(guard.canTransfer(token, alice, bob, LARGE_TRANSFER_THRESHOLD - 1));
+    assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_whitelist_blocksBlocklisted() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
+
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_whitelist_blocksWhenPaused() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // Whitelist both parties
+    vm.startPrank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+    vm.stopPrank();
+
+    // Pause
+    vm.prank(pauser);
+    guard.pause(token);
+
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_whitelist_blocksIfSenderNotWhitelisted() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // Only whitelist recipient
+    vm.prank(compliance);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_whitelist_blocksIfRecipientNotWhitelisted() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // Only whitelist sender
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_whitelist_allowsMintToWhitelisted() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // Whitelist recipient
+    vm.prank(compliance);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+
+    // Mints have from = address(0) which is skipped
+    assertTrue(guard.canTransfer(token, address(0), bob, 1000e18));
+  }
+
+  function test_whitelist_allowsBurnFromWhitelisted() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // Whitelist sender
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+
+    // Burns have to = address(0) which is skipped
+    assertTrue(guard.canTransfer(token, alice, address(0), 1000e18));
+  }
+
+  function test_whitelist_blocksMintToNone() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // bob has NONE status (not whitelisted)
+    assertFalse(guard.canTransfer(token, address(0), bob, 1000e18));
+  }
+
+  function test_whitelist_blocksBurnFromNone() public {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    // alice has NONE status (not whitelisted)
+    assertFalse(guard.canTransfer(token, alice, address(0), 1000e18));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        FUZZ TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_canTransfer_whitelistAllAmountsAlwaysAllowed(uint256 amount) public {
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, LARGE_TRANSFER_THRESHOLD, address(0));
-
+  function testFuzz_blocklist_whitelistedAlwaysAllowed(uint256 amount) public {
     vm.startPrank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST_ALL_AMOUNTS);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
     vm.stopPrank();
 
     assertTrue(guard.canTransfer(token, alice, bob, amount));
   }
 
-  function testFuzz_canTransfer_blocklistAlwaysBlocked(uint256 amount, bool isSender) public {
+  function testFuzz_blocklist_blocklistAlwaysBlocked(uint256 amount, bool isSender) public {
     vm.prank(compliance);
     if (isSender) {
       guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
@@ -416,10 +404,33 @@ contract TransferGuardTest is Test {
     }
   }
 
-  function testFuzz_canTransfer_pausedAlwaysBlocked(uint256 amount) public {
+  function testFuzz_pausedAlwaysBlocked(uint256 amount, bool isWhitelistMode) public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, isWhitelistMode);
+
     vm.prank(pauser);
     guard.pause(token);
 
     assertFalse(guard.canTransfer(token, alice, bob, amount));
+  }
+
+  function testFuzz_whitelist_onlyWhitelistedAllowed(uint256 amount, bool senderWhitelisted, bool recipientWhitelisted)
+    public
+  {
+    // Set whitelist mode
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, true);
+
+    vm.startPrank(compliance);
+    if (senderWhitelisted) {
+      guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    }
+    if (recipientWhitelisted) {
+      guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+    }
+    vm.stopPrank();
+
+    bool expected = senderWhitelisted && recipientWhitelisted;
+    assertEq(guard.canTransfer(token, alice, bob, amount), expected);
   }
 }

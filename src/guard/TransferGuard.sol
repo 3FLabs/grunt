@@ -2,64 +2,49 @@
 pragma solidity ^0.8.20;
 
 import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
-import {ITransferGuardValidator} from "../interfaces/guard/ITransferGuardValidator.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 /// @notice Status of an address in the transfer guard.
-/// @dev NONE must be 0 so unset mappings default to checking the validator.
+/// @dev NONE must be 0 so unset mappings default to the token's mode behavior.
 enum AddressStatus {
-  /// @notice Not explicitly set - delegate to validator contract (or allow if no validator).
+  /// @notice Not explicitly set - behavior depends on token mode (blocklist vs whitelist).
   NONE,
-  /// @notice Whitelisted for transfers below threshold only.
+  /// @notice Explicitly whitelisted - allowed in whitelist mode, also allowed in blocklist mode.
   WHITELIST,
-  /// @notice Blocked from all transfers.
-  BLOCKLIST,
-  /// @notice Whitelisted for all transfers regardless of amount.
-  WHITELIST_ALL_AMOUNTS
+  /// @notice Explicitly blocklisted - blocked in both modes.
+  BLOCKLIST
 }
 
 /// @notice Per-token configuration packed into a single storage slot.
 /// @param paused Whether transfers are paused for this token.
-/// @param scaledThreshold Transfer threshold scaled down by THRESHOLD_SCALE. Actual threshold = scaledThreshold * THRESHOLD_SCALE.
-/// @param validator Validator contract for NONE status addresses. address(0) = allow by default.
-/// @dev Layout: paused (8 bits) + scaledThreshold (88 bits) + validator (160 bits) = 256 bits
-///      The threshold is stored scaled down by THRESHOLD_SCALE (1e6) to fit in 88 bits.
-///      Max representable threshold = 2^88 * 1e6 ≈ 3.09e32, which supports any realistic token amount.
+/// @param whitelist If true, token uses whitelist mode (only WHITELIST allowed). If false, blocklist mode (only BLOCKLIST blocked).
+/// @dev Layout: paused (8 bits) + whitelist (8 bits) = 16 bits (fits in single slot)
 struct TokenConfig {
   bool paused;
-  uint88 scaledThreshold;
-  address validator;
+  bool whitelist;
 }
 
 /// @title TransferGuard
 /// @notice Gas-optimized transfer validation with single mapping for address status.
 /// @dev Uses a single mapping with enum status instead of separate blocklist/allowlist mappings.
-///      Token config (paused, threshold, validator) is packed into a single slot per token.
+///      Token config (paused, whitelist mode) is packed into a single slot per token.
 ///      Deployable via beacon proxy pattern for upgradeability.
 ///
-///      **Threshold scaling:**
-///      The threshold is stored scaled down by THRESHOLD_SCALE (1e6) to maximize the range
-///      of representable values in 88 bits. This means:
-///      - Minimum granularity: 1e6 (1 token for 6-decimal tokens, 0.000001 for 18-decimal)
-///      - Maximum threshold: ~3.09e32 (more than enough for any token)
-///      - When setting threshold, pass the actual threshold value; it will be divided by 1e6
-///      - Thresholds are rounded down to the nearest 1e6
-///      - IMPORTANT: Thresholds below THRESHOLD_SCALE (1e6) round down to 0, effectively disabling
-///        large transfer restrictions. To enforce a threshold, use values >= 1e6.
+///      **Token modes:**
+///      Each token can be configured in one of two modes:
+///      - Blocklist mode (default): All addresses allowed EXCEPT those with BLOCKLIST status
+///      - Whitelist mode: ONLY addresses with WHITELIST status are allowed
 ///
 ///      **Address status behavior:**
-///      - NONE: Check validator contract. If validator is address(0), blocked if amount >= threshold.
-///      - WHITELIST: Allowed for amounts below threshold. Blocked if amount >= threshold.
-///      - BLOCKLIST: Always blocked.
-///      - WHITELIST_ALL_AMOUNTS: Always allowed (for large transfers).
+///      - NONE: Behavior depends on token mode (allowed in blocklist mode, blocked in whitelist mode)
+///      - WHITELIST: Always allowed (in both modes)
+///      - BLOCKLIST: Always blocked (in both modes)
 ///
 ///      **Validation logic:**
 ///      1. If token is paused → block all transfers
 ///      2. Check `from` status (skip for mints where from == address(0))
 ///      3. Check `to` status (skip for burns where to == address(0))
-///      4. For threshold checks: amount >= threshold AND threshold > 0 requires WHITELIST_ALL_AMOUNTS
 ///
 ///      **Roles:**
 ///      - Owner: Full control (set token config, manage roles)
@@ -69,13 +54,6 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Scale factor for threshold storage.
-  /// @dev Threshold is stored as (actualThreshold / THRESHOLD_SCALE) to fit in 88 bits.
-  ///      This gives us 1e6 granularity, which is sufficient since no common token has
-  ///      less than 6 decimals. For 18-decimal tokens, minimum threshold granularity is 0.000001 tokens.
-  ///      Maximum representable threshold: 2^88 * 1e6 ≈ 3.09e32
-  uint256 public constant THRESHOLD_SCALE = 1e6;
 
   /// @dev Role for managing address statuses.
   uint256 public constant COMPLIANCE_ROLE = _ROLE_0;
@@ -87,11 +65,10 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Status of each address (blocklist, whitelist, or delegate to validator).
+  /// @notice Status of each address (NONE, WHITELIST, or BLOCKLIST).
   mapping(address account => AddressStatus status) public addressStatus;
 
-  /// @notice Per-token configuration (paused, scaledThreshold, validator) packed in one slot.
-  /// @dev Use getThreshold() to get the actual (unscaled) threshold value.
+  /// @notice Per-token configuration (paused, whitelist mode) packed in one slot.
   mapping(address token => TokenConfig config) public tokenConfig;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -104,9 +81,8 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Emitted when a token's configuration is updated.
   /// @param token The token address
   /// @param paused Whether the token is paused
-  /// @param threshold The actual (unscaled) threshold value
-  /// @param validator The validator contract address
-  event TokenConfigSet(address indexed token, bool paused, uint256 threshold, address validator);
+  /// @param whitelist Whether the token uses whitelist mode
+  event TokenConfigSet(address indexed token, bool paused, bool whitelist);
 
   /// @notice Emitted when a token is paused.
   /// @param token The token that was paused
@@ -138,17 +114,13 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     // Check pause status
     if (config.paused) return false;
 
-    // Scale up threshold for comparison
-    uint256 actualThreshold = uint256(config.scaledThreshold) * THRESHOLD_SCALE;
-    bool isLargeTransfer = actualThreshold > 0 && amount >= actualThreshold;
-
     // Check sender (skip for mints)
-    if (from != address(0) && !_isAllowed(from, isLargeTransfer, config.validator)) {
+    if (from != address(0) && !_isAllowed(from, config.whitelist)) {
       return false;
     }
 
     // Check recipient (skip for burns)
-    if (to != address(0) && !_isAllowed(to, isLargeTransfer, config.validator)) {
+    if (to != address(0) && !_isAllowed(to, config.whitelist)) {
       return false;
     }
 
@@ -160,50 +132,38 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     return tokenConfig[token].paused;
   }
 
-  /// @notice Returns the actual (unscaled) threshold for a token.
+  /// @notice Returns whether a token is in whitelist mode.
   /// @param token The token address
-  /// @return The actual threshold value (scaledThreshold * THRESHOLD_SCALE)
-  function getThreshold(address token) external view returns (uint256) {
-    return uint256(tokenConfig[token].scaledThreshold) * THRESHOLD_SCALE;
+  /// @return True if whitelist mode, false if blocklist mode
+  function isWhitelistMode(address token) external view returns (bool) {
+    return tokenConfig[token].whitelist;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INTERNAL FUNCTIONS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Checks if an address is allowed based on its status and transfer size.
+  /// @dev Checks if an address is allowed based on its status and token mode.
   /// @param account The address to check
-  /// @param isLargeTransfer Whether this is a large transfer (>= threshold)
-  /// @param validator The validator contract for this token
+  /// @param whitelistMode Whether the token is in whitelist mode
   /// @return True if allowed, false otherwise
-  function _isAllowed(address account, bool isLargeTransfer, address validator) internal view returns (bool) {
+  function _isAllowed(address account, bool whitelistMode) internal view returns (bool) {
     AddressStatus status = addressStatus[account];
 
+    // BLOCKLIST is always blocked in both modes
     if (status == AddressStatus.BLOCKLIST) {
       return false;
     }
 
-    if (status == AddressStatus.WHITELIST_ALL_AMOUNTS) {
+    // WHITELIST is always allowed in both modes
+    if (status == AddressStatus.WHITELIST) {
       return true;
     }
 
-    if (status == AddressStatus.WHITELIST) {
-      // Whitelisted but only for small transfers
-      return !isLargeTransfer;
-    }
-
-    // status == AddressStatus.NONE: delegate to validator
-    if (validator == address(0)) {
-      // No validator set - allow by default but block large transfers
-      return !isLargeTransfer;
-    }
-
-    // Check validator - if authorized, treat as WHITELIST (small transfers only)
-    // Large transfers still require explicit WHITELIST_ALL_AMOUNTS
-    if (!ITransferGuardValidator(validator).isAuthorized(account)) {
-      return false;
-    }
-    return !isLargeTransfer;
+    // status == AddressStatus.NONE: depends on token mode
+    // In blocklist mode (default): NONE is allowed
+    // In whitelist mode: NONE is blocked
+    return !whitelistMode;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -254,19 +214,11 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets the full configuration for a token.
-  /// @dev The threshold is scaled down by THRESHOLD_SCALE (1e6) for storage.
-  ///      Effective threshold will be rounded down to the nearest multiple of THRESHOLD_SCALE.
-  ///      WARNING: Values below THRESHOLD_SCALE (1e6) will round to 0, disabling large transfer restrictions.
   /// @param token The token to configure
   /// @param paused_ Whether transfers should be paused
-  /// @param threshold_ Actual transfer threshold (0 to disable). Will be divided by THRESHOLD_SCALE for storage.
-  ///                   Must be >= THRESHOLD_SCALE (1e6) to take effect, or 0 to disable.
-  /// @param validator_ Validator contract for NONE status addresses (address(0) to allow by default)
-  function setTokenConfig(address token, bool paused_, uint256 threshold_, address validator_) external onlyOwner {
-    // Scale down threshold for storage (rounds down, reverts on overflow)
-    uint88 scaledThreshold = SafeCastLib.toUint88(threshold_ / THRESHOLD_SCALE);
-    tokenConfig[token] = TokenConfig({paused: paused_, scaledThreshold: scaledThreshold, validator: validator_});
-    // Emit actual threshold (may be slightly less than input due to rounding)
-    emit TokenConfigSet(token, paused_, uint256(scaledThreshold) * THRESHOLD_SCALE, validator_);
+  /// @param whitelist_ Whether to use whitelist mode (true) or blocklist mode (false)
+  function setTokenConfig(address token, bool paused_, bool whitelist_) external onlyOwner {
+    tokenConfig[token] = TokenConfig({paused: paused_, whitelist: whitelist_});
+    emit TokenConfigSet(token, paused_, whitelist_);
   }
 }

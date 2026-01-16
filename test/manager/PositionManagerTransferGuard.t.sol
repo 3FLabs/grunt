@@ -25,12 +25,6 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   address public whitelistedUser;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          CONSTANTS                         */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  uint256 constant LARGE_TRANSFER_THRESHOLD = 1_000e18;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -46,13 +40,13 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     address guardAddr = guardFactory.createTransferGuard(guardOwner);
     guard = TransferGuard(guardAddr);
 
-    // Configure guard for position manager
+    // Configure guard for position manager (whitelist mode)
     vm.startPrank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, LARGE_TRANSFER_THRESHOLD, address(0));
+    guard.setTokenConfig(address(positionManager), false, true);
     guard.setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
-    guard.setAddressStatus(whitelistedUser, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setAddressStatus(whitelistedUser, AddressStatus.WHITELIST);
     // Whitelist minter for deposits/withdrawals
-    guard.setAddressStatus(minter, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setAddressStatus(minter, AddressStatus.WHITELIST);
     vm.stopPrank();
 
     // Set transfer guard on position manager
@@ -117,7 +111,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   function test_transfer_blockedForBlocklistedSender() public {
     // First whitelist blockedUser temporarily to receive shares
     vm.prank(guardOwner);
-    guard.setAddressStatus(blockedUser, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setAddressStatus(blockedUser, AddressStatus.WHITELIST);
 
     // Mint shares to blocked user
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -152,10 +146,24 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     positionManager.transfer(blockedUser, shares);
   }
 
-  function test_transfer_largeTransferBlockedWithoutWhitelistAll() public {
-    // Set user to WHITELIST (not WHITELIST_ALL_AMOUNTS)
+  function test_transfer_blockedForNoneStatusInWhitelistMode() public {
+    // Mint shares to minter
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 shares = positionManager.balanceOf(minter);
+
+    // Transfer to user (not whitelisted, NONE status) should fail in whitelist mode
+    vm.prank(minter);
+    vm.expectRevert(IPositionManager.TransferBlocked.selector);
+    positionManager.transfer(user, shares);
+  }
+
+  function test_transfer_allowedInBlocklistMode() public {
+    // Switch to blocklist mode
     vm.prank(guardOwner);
-    guard.setAddressStatus(user, AddressStatus.WHITELIST);
+    guard.setTokenConfig(address(positionManager), false, false);
 
     // Mint shares to minter
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -163,30 +171,12 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     uint256 shares = positionManager.balanceOf(minter);
-    assertTrue(shares >= LARGE_TRANSFER_THRESHOLD, "Should have enough shares for large transfer");
 
-    // Large transfer to user should fail (user only has WHITELIST, not WHITELIST_ALL_AMOUNTS)
+    // Transfer to user (NONE status) should succeed in blocklist mode
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.TransferBlocked.selector);
-    positionManager.transfer(user, LARGE_TRANSFER_THRESHOLD);
-  }
+    positionManager.transfer(user, shares);
 
-  function test_transfer_smallTransferAllowedWithWhitelist() public {
-    // Set user to WHITELIST (not WHITELIST_ALL_AMOUNTS)
-    vm.prank(guardOwner);
-    guard.setAddressStatus(user, AddressStatus.WHITELIST);
-
-    // Mint shares to minter
-    _mintCollateral(minter, COLLATERAL_AMOUNT);
-    vm.prank(minter);
-    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
-
-    // Small transfer should succeed
-    uint256 smallAmount = LARGE_TRANSFER_THRESHOLD - 1;
-    vm.prank(minter);
-    positionManager.transfer(user, smallAmount);
-
-    assertEq(positionManager.balanceOf(user), smallAmount);
+    assertEq(positionManager.balanceOf(user), shares);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -209,6 +199,22 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     vm.stopPrank();
   }
 
+  function test_deposit_blockedForNoneStatusInWhitelistMode() public {
+    // Grant minter role to user (not whitelisted)
+    vm.prank(owner);
+    positionManager.grantRoles(user, _ROLE_MINTER);
+
+    _mintCollateral(user, COLLATERAL_AMOUNT);
+
+    vm.startPrank(user);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+
+    // Deposit should fail because user is not whitelisted
+    vm.expectRevert(IPositionManager.TransferBlocked.selector);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    vm.stopPrank();
+  }
+
   function test_burn_blockedForBlocklistedBurner() public {
     // First deposit as minter
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -220,7 +226,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     // Transfer shares to a user who will be blocklisted
     address tempUser = makeAddr("tempUser");
     vm.prank(guardOwner);
-    guard.setAddressStatus(tempUser, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setAddressStatus(tempUser, AddressStatus.WHITELIST);
 
     vm.prank(minter);
     positionManager.transfer(tempUser, shares);
@@ -336,7 +342,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   /*                        FUZZ TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_transfer_whitelistedAllAmounts(uint256 amount) public {
+  function testFuzz_transfer_whitelisted(uint256 amount) public {
     amount = bound(amount, 1, COLLATERAL_AMOUNT);
 
     // Mint shares

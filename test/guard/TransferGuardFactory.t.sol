@@ -176,14 +176,14 @@ contract TransferGuardFactoryTest is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
-    // Set token config (threshold is uint256, will be scaled down internally)
+    // Set token config (whitelist mode)
     vm.prank(guardOwner);
-    tg.setTokenConfig(token, false, uint256(100_000e18), address(0));
+    tg.setTokenConfig(token, false, true);
 
     // Set address status for both parties
     vm.startPrank(guardOwner);
-    tg.setAddressStatus(alice, AddressStatus.WHITELIST_ALL_AMOUNTS);
-    tg.setAddressStatus(bob, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    tg.setAddressStatus(alice, AddressStatus.WHITELIST);
+    tg.setAddressStatus(bob, AddressStatus.WHITELIST);
     vm.stopPrank();
 
     // Test canTransfer
@@ -200,16 +200,38 @@ contract TransferGuardFactoryTest is Test {
     assertTrue(tg.canTransfer(token, alice, bob, 200_000e18));
   }
 
+  function test_deployedGuard_blocklistMode() public {
+    address guard = factory.createTransferGuard(guardOwner);
+    TransferGuard tg = TransferGuard(guard);
+
+    address token = makeAddr("token");
+    address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
+
+    // Blocklist mode is default
+    assertFalse(tg.isWhitelistMode(token));
+
+    // Should allow transfers between any non-blocklisted addresses
+    assertTrue(tg.canTransfer(token, alice, bob, 1000e18));
+
+    // Blocklist bob
+    vm.prank(guardOwner);
+    tg.setAddressStatus(bob, AddressStatus.BLOCKLIST);
+
+    // Now transfers to bob should fail
+    assertFalse(tg.canTransfer(token, alice, bob, 1000e18));
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        FUZZ TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_createTransferGuard(address owner) public {
-    vm.assume(owner != address(0));
+  function testFuzz_createTransferGuard(address owner_) public {
+    vm.assume(owner_ != address(0));
 
-    address guard = factory.createTransferGuard(owner);
+    address guard = factory.createTransferGuard(owner_);
 
-    assertEq(TransferGuard(guard).owner(), owner);
+    assertEq(TransferGuard(guard).owner(), owner_);
   }
 
   function testFuzz_multipleDeployments(uint8 count) public {

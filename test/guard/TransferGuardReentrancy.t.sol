@@ -249,10 +249,9 @@ contract TransferGuardReentrancyTest is Test {
     positionManager.setTransferGuard(address(guard));
     vm.stopPrank();
 
-    // Configure guard
+    // Configure guard (blocklist mode - minter can deposit/withdraw)
     vm.startPrank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, 0, address(0));
-    guard.setAddressStatus(minter, AddressStatus.WHITELIST_ALL_AMOUNTS);
+    guard.setTokenConfig(address(positionManager), false, false);
     vm.stopPrank();
 
     // Setup approvals
