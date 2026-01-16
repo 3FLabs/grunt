@@ -7,7 +7,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
-import {ReentrancyGuard} from "lib/solady/src/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
 import {IFacility, Asset, Intent, SwapParams, CreateIntentParams} from "./interfaces/IFacility.sol";
 import {IIntentDescriptor} from "./interfaces/IIntentDescriptor.sol";
@@ -24,7 +24,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 
-contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable, EIP712, ReentrancyGuard {
+contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable, EIP712, ReentrancyGuardTransient {
   using TokenBalancesLib for EnumerableMapLib.AddressToUint256Map;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using SafeTransferLib for address;
@@ -263,12 +263,6 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         DESCRIPTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Returns the current intent descriptor contract.
-  /// @return The intent descriptor address.
-  function descriptor() external view returns (IIntentDescriptor) {
-    return _facilityStorage().descriptor;
-  }
 
   /// @notice Sets the intent descriptor contract for generating token metadata.
   /// @dev Only callable by the owner. Can be set to address(0) to disable.
@@ -909,6 +903,20 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
     name = "3Facility";
     version = "1.0.0";
+  }
+
+  /// @inheritdoc EIP712
+  function _domainNameAndVersionMayChange() internal pure override returns (bool) {
+    return true;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   REENTRANCY GUARD TRANSIENT               */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc ReentrancyGuardTransient
+  function _useTransientReentrancyGuardOnlyOnMainnet() internal pure override returns (bool) {
+    return false;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
