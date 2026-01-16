@@ -459,6 +459,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id remains
   ///      valid for `state/unlock/recover`, but the fund will use the resolved `input/output` amounts as
   ///      the effective thresholds for PROCESSING/RECOVERING balance comparisons.
+  ///      It's possible to resolve multiple times if needed, always overriding the previous resolution.
   ///
   /// @param order The order to resolve (must match current order ID before resolution).
   /// @param input The new input amount.
@@ -472,14 +473,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     order.input = input;
     order.output = output;
 
-    Id _currentOrderId = $.currentOrderId;
-    $.resolvedOrder = $.currentOrder;
+    $.resolvedOrder = order;
 
-    Id _newOrderId = order.toId(address(this));
-    $.currentOrderId = _newOrderId;
-    $.currentOrder = order;
-
-    emit OrderResolved(_currentOrderId, _newOrderId, input, output, msg.sender);
+    emit OrderResolved($.currentOrderId, order.toId(address(this)), input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -572,6 +568,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     uint256 _effectiveInput = order.input;
     uint256 _effectiveOutput = order.output;
+
+    // If order resolved, use resolved amounts
     if ($.resolvedOrder.owner != address(0)) {
       _effectiveInput = $.resolvedOrder.input;
       _effectiveOutput = $.resolvedOrder.output;

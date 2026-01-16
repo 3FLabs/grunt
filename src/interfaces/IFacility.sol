@@ -5,30 +5,28 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 
 import {Order, Mode} from "../libs/Order.sol";
 
-struct Asset {
-  address asset;
-  bool isPositionManager;
-}
-
 struct Intent {
-  Asset depositAsset;
-  Asset targetAsset;
-
-  address guardKey;
+  IntentProperties properties;
   address fund;
   address request;
-
-  uint256 depositCap;
-  uint40 resolveStart;
   bool resolved;
-
-  // accounting + lifecycle
   EnumerableMapLib.AddressToUint256Map amounts;
   Order order;
   uint256 totalSupply;
+}
 
-  // governance
+struct IntentProperties {
+  Asset depositAsset;
+  Asset targetAsset;
+  uint256 depositCap;
+  address guardKey;
+  uint40 resolveStart;
   uint8 quorum;
+}
+
+struct Asset {
+  address asset;
+  bool isPositionManager;
 }
 
 struct SwapParams {
@@ -41,23 +39,12 @@ struct SwapParams {
   uint256 deadline;
 }
 
-struct CreateIntentParams {
-  Asset depositAsset;
-  Asset targetAsset;
-  address guardKey;
-  address fund;
-  address request;
-  uint256 depositCap;
-  uint40 resolveStart;
-  uint8 quorum;
-}
-
 interface IFacility {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function createIntent(CreateIntentParams calldata params) external returns (uint256 id);
+  function createIntent(IntentProperties calldata params) external returns (uint256 id);
 
   function updateTarget(uint256 id, Asset calldata newTargetAsset, address newGuardKey) external;
 
@@ -69,6 +56,16 @@ interface IFacility {
 
   /// @notice Sets a new deposit cap for a given intent ID.
   function setDepositCap(uint256 id, uint256 newDepositCap) external;
+
+  /// @notice Sets a new fund address for a given intent ID.
+  /// @param id The intent ID.
+  /// @param newFund The new fund address.
+  function setFund(uint256 id, address newFund) external;
+
+  /// @notice Sets a new request address for a given intent ID.
+  /// @param id The intent ID.
+  /// @param newRequest The new request address.
+  function setRequest(uint256 id, address newRequest) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        FUND OPERATIONS                     */

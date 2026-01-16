@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
+import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
@@ -45,12 +45,10 @@ contract FacilityTransferGuardTest is Test {
     Asset memory targetAsset = Asset({asset: address(positionManager), isPositionManager: true});
 
     id = facility.createIntent(
-      CreateIntentParams({
+      IntentProperties({
         depositAsset: depositAsset,
         targetAsset: targetAsset,
         guardKey: address(positionManager),
-        fund: address(0),
-        request: address(0),
         depositCap: type(uint256).max,
         resolveStart: uint40(block.timestamp + 1 days),
         quorum: 0

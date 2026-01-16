@@ -5,21 +5,13 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
 import {IIntentDescriptor} from "src/interfaces/IIntentDescriptor.sol";
-import {Asset, CreateIntentParams} from "src/interfaces/IFacility.sol";
+import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 contract FacilityUpdateTargetTest is Test {
-  event IntentTargetUpdated(
-    uint256 indexed id,
-    address oldTargetAsset,
-    bool oldTargetIsPositionManager,
-    address newTargetAsset,
-    bool newTargetIsPositionManager,
-    address indexed oldGuardKey,
-    address indexed newGuardKey
-  );
+  event IntentTargetUpdated(uint256 indexed id, Asset newTargetAsset, address newGuardKey);
 
   Facility internal facility;
 
@@ -54,12 +46,10 @@ contract FacilityUpdateTargetTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm2), isPositionManager: true});
 
     id = facility.createIntent(
-      CreateIntentParams({
+      IntentProperties({
         depositAsset: depositAsset,
         targetAsset: targetAsset,
         guardKey: address(pm1),
-        fund: address(0),
-        request: address(0),
         depositCap: 1,
         resolveStart: uint40(block.timestamp + 1 days),
         quorum: 0
@@ -72,12 +62,10 @@ contract FacilityUpdateTargetTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm1), isPositionManager: true});
 
     id = facility.createIntent(
-      CreateIntentParams({
+      IntentProperties({
         depositAsset: depositAsset,
         targetAsset: targetAsset,
         guardKey: address(pm1),
-        fund: address(0),
-        request: address(0),
         depositCap: 1,
         resolveStart: uint40(block.timestamp + 1 days),
         quorum: 0
@@ -100,8 +88,8 @@ contract FacilityUpdateTargetTest is Test {
 
     Asset memory newTarget = Asset({asset: address(pm2), isPositionManager: true});
 
-    vm.expectEmit(true, true, false, true);
-    emit IntentTargetUpdated(id, address(pm2), true, address(pm2), true, address(pm1), address(pm2));
+    vm.expectEmit(true, false, false, true);
+    emit IntentTargetUpdated(id, newTarget, address(pm2));
 
     facility.updateTarget(id, newTarget, address(pm2));
   }
