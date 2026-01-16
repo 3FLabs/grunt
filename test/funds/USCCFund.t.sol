@@ -600,11 +600,13 @@ contract USCCFundTest is Test {
     _commitDeposit(order);
 
     Id orderId = order.toId(address(fund));
+    uint256 newInput = order.input;
+    uint256 newOutput = ONE_USDC / 2;
     Order memory resolvedOrder = Order({
       owner: order.owner,
       receiver: order.receiver,
-      input: ONE_USDC * 2,
-      output: ONE_USDC * 3,
+      input: newInput,
+      output: newOutput,
       mode: order.mode,
       salt: order.salt
     });
@@ -612,11 +614,14 @@ contract USCCFundTest is Test {
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, resolvedOrderId, ONE_USDC * 2, ONE_USDC * 3, owner);
-    fund.resolve(order, ONE_USDC * 2, ONE_USDC * 3);
+    emit OrderResolved(orderId, resolvedOrderId, newInput, newOutput, owner);
+    fund.resolve(order, newInput, newOutput);
 
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved processing");
-    assertEq(uint256(fund.state(order)), uint256(State.EMPTY), "original empty");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "original processing");
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved empty");
+
+    uscc.mint(address(fund), newOutput);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "uses resolved output");
   }
 
   function test_Resolve_InRecoveringState() public {
@@ -660,8 +665,8 @@ contract USCCFundTest is Test {
     fund.resolve(order, ONE_USDC, ONE_USDC);
   }
 
-  function test_Resolve_OrderIdChanges() public {
-    // resolve() updates the order id; only the resolved order is valid for state/unlock.
+  function test_Resolve_DoesNotChangeCurrentOrderId() public {
+    // resolve() keeps the original order id; resolved amounts are internal overrides.
     Order memory originalOrder = _depositOrder(ONE_USDC, ONE_USDC);
     Id originalId = originalOrder.toId(address(fund));
     fund.create(originalOrder);
@@ -686,24 +691,26 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     fund.resolve(originalOrder, newInput, newOutput);
 
-    // Original order is no longer valid.
-    assertEq(uint256(fund.state(originalOrder)), uint256(State.EMPTY), "original order invalid");
+    // Original order id remains valid; resolved order is not recognized.
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.PROCESSING), "original order valid");
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved order empty");
 
-    // Resolved order id is now recognized.
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order processing");
+    // Minting less than the resolved output keeps the order in PROCESSING.
+    uscc.mint(address(fund), newOutput - 1);
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.PROCESSING), "original order processing");
 
-    // Minting less than the original output keeps the order in PROCESSING.
-    uscc.mint(address(fund), newOutput);
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order still processing");
+    // Mint remaining amount to reach the resolved output threshold.
+    uscc.mint(address(fund), 1);
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.UNLOCKING), "original order unlocking");
 
-    // Mint remaining amount to reach the original output threshold.
-    uscc.mint(address(fund), originalOrder.output - newOutput);
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.UNLOCKING), "resolved order unlocking");
-
+    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, resolvedId));
     fund.unlock(resolvedOrder);
 
+    fund.unlock(originalOrder);
+
     // User receives the full amount minted.
-    assertEq(wuscc.balanceOf(address(this)), originalOrder.output, "user receives output");
+    assertEq(wuscc.balanceOf(address(this)), newOutput, "user receives output");
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.ENDED), "ended");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -338,7 +338,7 @@ contract USCCFundFuzzTest is Test {
     fund.recover(order);
   }
 
-  function testFuzz_DepositResolveThenUnlock_RequiresResolvedOrder(
+  function testFuzz_DepositResolveThenUnlock_UsesOriginalOrder(
     uint96 input,
     uint96 initialOutput,
     uint96 resolvedInput,
@@ -371,25 +371,26 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    assertEq(uint256(fund.state(original)), uint256(State.EMPTY), "original invalid");
-    assertEq(uint256(fund.state(resolved)), uint256(State.PROCESSING), "resolved processing");
+    State expectedState = newOutput == 0 ? State.UNLOCKING : State.PROCESSING;
+    assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
+    assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
-    uint256 receivedAmount = bound(uint256(receivedUscc), original.output, maxAmount);
+    uint256 receivedAmount = bound(uint256(receivedUscc), newOutput, maxAmount);
     if (receivedAmount > 0) uscc.mint(address(fund), receivedAmount);
 
-    assertEq(uint256(fund.state(resolved)), uint256(State.UNLOCKING), "resolved unlocking");
+    assertEq(uint256(fund.state(original)), uint256(State.UNLOCKING), "original unlocking");
 
     vm.expectRevert();
-    fund.unlock(original);
-
     fund.unlock(resolved);
+
+    fund.unlock(original);
 
     assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
     assertEq(usdc.balanceOf(recipient), inputAmount, "usdc recipient");
     assertEq(uint256(fund.state(original)), uint256(State.ENDED), "ended");
   }
 
-  function testFuzz_DepositResolveInRecoveringThenRecover_RequiresResolvedOrder(
+  function testFuzz_DepositResolveInRecoveringThenRecover_UsesOriginalOrder(
     uint96 input,
     uint96 initialOutput,
     uint96 resolvedInput,
@@ -425,25 +426,26 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    assertEq(uint256(fund.state(original)), uint256(State.EMPTY), "original invalid");
-    assertEq(uint256(fund.state(resolved)), uint256(State.PROCESSING), "resolved processing");
+    State expectedState = newInput == 0 ? State.RECOVERING : State.PROCESSING;
+    assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
+    assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
-    uint256 returnedAmount = bound(uint256(returnedUsdc), original.input, maxAmount);
+    uint256 returnedAmount = bound(uint256(returnedUsdc), newInput, maxAmount);
     if (returnedAmount > 0) usdc.mint(address(fund), returnedAmount);
 
-    assertEq(uint256(fund.state(resolved)), uint256(State.RECOVERING), "resolved recovering");
+    assertEq(uint256(fund.state(original)), uint256(State.RECOVERING), "original recovering");
 
     vm.expectRevert();
-    fund.recover(original);
-
     fund.recover(resolved);
+
+    fund.recover(original);
 
     assertEq(usdc.balanceOf(address(this)), returnedAmount, "usdc recovered");
     assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
     assertEq(uint256(fund.state(original)), uint256(State.ENDED), "ended");
   }
 
-  function testFuzz_RedeemResolveThenUnlock_RequiresResolvedOrder(
+  function testFuzz_RedeemResolveThenUnlock_UsesOriginalOrder(
     uint96 input,
     uint96 initialOutput,
     uint96 resolvedInput,
@@ -476,25 +478,26 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    assertEq(uint256(fund.state(original)), uint256(State.EMPTY), "original invalid");
-    assertEq(uint256(fund.state(resolved)), uint256(State.PROCESSING), "resolved processing");
+    State expectedState = newOutput == 0 ? State.UNLOCKING : State.PROCESSING;
+    assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
+    assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
-    uint256 usdcOutAmount = bound(uint256(usdcOut), original.output, maxAmount);
+    uint256 usdcOutAmount = bound(uint256(usdcOut), newOutput, maxAmount);
     if (usdcOutAmount > 0) usdc.mint(address(fund), usdcOutAmount);
 
-    assertEq(uint256(fund.state(resolved)), uint256(State.UNLOCKING), "resolved unlocking");
+    assertEq(uint256(fund.state(original)), uint256(State.UNLOCKING), "original unlocking");
 
     vm.expectRevert();
-    fund.unlock(original);
-
     fund.unlock(resolved);
+
+    fund.unlock(original);
 
     assertEq(usdc.balanceOf(address(this)), usdcOutAmount, "usdc received");
     assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
     assertEq(uint256(fund.state(original)), uint256(State.ENDED), "ended");
   }
 
-  function testFuzz_RedeemResolveInRecoveringThenRecover_RequiresResolvedOrder(
+  function testFuzz_RedeemResolveInRecoveringThenRecover_UsesOriginalOrder(
     uint96 input,
     uint96 initialOutput,
     uint96 resolvedInput,
@@ -530,18 +533,19 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    assertEq(uint256(fund.state(original)), uint256(State.EMPTY), "original invalid");
-    assertEq(uint256(fund.state(resolved)), uint256(State.PROCESSING), "resolved processing");
+    State expectedState = newInput == 0 ? State.RECOVERING : State.PROCESSING;
+    assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
+    assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
-    uint256 returnedAmount = bound(uint256(returnedUscc), original.input, maxAmount);
+    uint256 returnedAmount = bound(uint256(returnedUscc), newInput, maxAmount);
     if (returnedAmount > 0) uscc.mint(address(fund), returnedAmount);
 
-    assertEq(uint256(fund.state(resolved)), uint256(State.RECOVERING), "resolved recovering");
+    assertEq(uint256(fund.state(original)), uint256(State.RECOVERING), "original recovering");
 
     vm.expectRevert();
-    fund.recover(original);
-
     fund.recover(resolved);
+
+    fund.recover(original);
 
     assertEq(wuscc.balanceOf(address(this)), returnedAmount, "wuscc recovered");
     // USCC is now held by wUSCC contract (inputAmount was burned during offchainRedeem in commit)
@@ -728,10 +732,8 @@ contract USCCFundHandler is Test {
 
     fund.resolve(order, resolvedInput, resolvedOutput);
 
-    effectiveInput = order.input;
-    effectiveOutput = order.output;
-    order.input = resolvedInput;
-    order.output = resolvedOutput;
+    effectiveInput = resolvedInput;
+    effectiveOutput = resolvedOutput;
   }
 
   function act_superstateMintUscc(uint96 amount) external {
