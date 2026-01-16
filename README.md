@@ -206,14 +206,14 @@ request.setRepaid(); // Enables PT/YT holders to redeem
 - The puller role is set during contract initialization via the factory
 - Only addresses with the puller role can call `pullFunds()`
 - Funds are always transferred to `msg.sender` (the puller), not a separate recipient
-- The puller can be a smart contract implementing `IPositionManagerRequestCallback` for automated fund management
+- The puller can be a smart contract implementing `IRequestInteractionsCallback` for automated fund management
 
 **Callback Interface:**
 
-Position managers implementing automated strategies can implement `IPositionManagerRequestCallback`:
+Position managers implementing automated strategies can implement `IRequestInteractionsCallback`:
 
 ```solidity
-interface IPositionManagerRequestCallback {
+interface IRequestInteractionsCallback {
   function onPullFunds(uint256 amount, bytes calldata data) external;
 }
 ```

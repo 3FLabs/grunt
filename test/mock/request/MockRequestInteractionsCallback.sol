@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManagerRequestCallback} from "../../../src/interfaces/request/IPositionManagerRequestCallback.sol";
+import {IRequestInteractionsCallback} from "../../../src/interfaces/request/IRequestInteractionsCallback.sol";
 
-/// @notice Mock contract for testing IPositionManagerRequestCallback functionality
+/// @notice Mock contract for testing IRequestInteractionsCallback functionality
 /// @dev Implements the callback to handle pullFunds callbacks
-contract MockPositionManagerRequestCallback is IPositionManagerRequestCallback {
+contract MockRequestInteractionsCallback is IRequestInteractionsCallback {
   bool public callbackCalled;
   uint256 public lastAmount;
   bytes public lastData;
@@ -16,7 +16,7 @@ contract MockPositionManagerRequestCallback is IPositionManagerRequestCallback {
   }
 
   function onPullFunds(uint256 amount, bytes calldata data) external override {
-    if (shouldRevert) revert("MockPositionManagerRequestCallback: forced revert");
+    if (shouldRevert) revert("MockRequestInteractionsCallback: forced revert");
 
     callbackCalled = true;
     lastAmount = amount;
@@ -29,4 +29,3 @@ contract MockPositionManagerRequestCallback is IPositionManagerRequestCallback {
     lastData = "";
   }
 }
-
