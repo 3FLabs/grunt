@@ -97,9 +97,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
 
     vm.expectRevert(
-      abi.encodeWithSelector(
-        Facility.InvalidResolveStart.selector, uint40(block.timestamp), uint40(block.timestamp)
-      )
+      abi.encodeWithSelector(Facility.InvalidResolveStart.selector, uint40(block.timestamp), uint40(block.timestamp))
     );
     _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp), 0);
   }
