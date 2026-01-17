@@ -308,4 +308,113 @@ contract FacilityCreateIntentTest is Test {
     // Set same request on same intent - should succeed
     facility.setRequest(id, address(request));
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       VIEW FUNCTIONS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_GetIntent_ReturnsCorrectData() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1000, uint40(block.timestamp + 1 days), 3);
+
+    MockFund fund = new MockFund(address(debt), address(collateral));
+    MockRequest request = new MockRequest(address(debt));
+
+    facility.setFund(id, address(fund));
+    facility.setRequest(id, address(request));
+
+    (IntentProperties memory props, address fundAddr, address requestAddr, bool resolved) = facility.getIntent(id);
+
+    // Check properties
+    assertEq(props.depositAsset.asset, address(debt));
+    assertFalse(props.depositAsset.isPositionManager);
+    assertEq(props.targetAsset.asset, address(pm));
+    assertTrue(props.targetAsset.isPositionManager);
+    assertEq(props.depositCap, 1000);
+    assertEq(props.guardKey, address(pm));
+    assertEq(props.resolveStart, uint40(block.timestamp + 1 days));
+    assertEq(props.quorum, 3);
+
+    // Check fund and request
+    assertEq(fundAddr, address(fund));
+    assertEq(requestAddr, address(request));
+    assertFalse(resolved);
+  }
+
+  function test_GetIntent_ResolvedIntent() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1000, uint40(block.timestamp + 1 days), 0);
+
+    // Lock and resolve
+    facility.lock(id);
+    facility.resolve(id);
+
+    (,,, bool resolved) = facility.getIntent(id);
+    assertTrue(resolved);
+  }
+
+  function test_RevertWhen_GetIntent_IntentNotFound() public {
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.IntentNotFound.selector, 999));
+    facility.getIntent(999);
+  }
+
+  function test_IntentBalance_ReturnsCorrectBalance() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    uint256 id =
+      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
+
+    // Deposit some tokens
+    debt.mint(address(this), 500);
+    debt.approve(address(facility), 500);
+    facility.deposit(id, 500);
+
+    uint256 balance = facility.intentBalance(id, address(debt));
+    assertEq(balance, 500);
+  }
+
+  function test_IntentBalance_ReturnsZeroForUnknownToken() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    uint256 id =
+      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
+
+    // Check balance of a token that was never deposited
+    uint256 balance = facility.intentBalance(id, address(collateral));
+    assertEq(balance, 0);
+  }
+
+  function test_IntentTokens_ReturnsCorrectTokens() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    uint256 id =
+      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
+
+    // Deposit some tokens
+    debt.mint(address(this), 500);
+    debt.approve(address(facility), 500);
+    facility.deposit(id, 500);
+
+    address[] memory tokens = facility.intentTokens(id);
+    assertEq(tokens.length, 1);
+    assertEq(tokens[0], address(debt));
+  }
+
+  function test_IntentTokens_ReturnsEmptyArrayForNoTokens() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    uint256 id =
+      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
+
+    address[] memory tokens = facility.intentTokens(id);
+    assertEq(tokens.length, 0);
+  }
 }

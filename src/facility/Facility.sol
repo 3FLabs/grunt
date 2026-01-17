@@ -18,6 +18,7 @@ import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
 import {IERC20} from "src/interfaces/integrations/IERC20.sol";
 
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
+import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {LibAddress} from "src/libs/facility/LibAddress.sol";
@@ -39,6 +40,7 @@ contract Facility is
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
   using LibAddress for address;
+  using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -55,6 +57,21 @@ contract Facility is
     _initializeOwner(owner_);
     _setDescriptor(descriptor_);
     _setRoles(facilitator_, FACILITATOR_ROLE);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IFacility
+  function intentBalance(uint256 id, address token) external view override returns (uint256 balance) {
+    Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
+    (, balance) = _intent.amounts.tryGet(token);
+  }
+
+  /// @inheritdoc IFacility
+  function intentTokens(uint256 id) external view override returns (address[] memory tokens) {
+    return LibStorage.facilityStorage().getIntent(id).amounts.keys();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

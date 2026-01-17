@@ -41,6 +41,21 @@ interface IFacility is
   event TokenReceived(uint256 indexed id, address indexed token, address indexed from, uint256 amount);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns the balance of a specific token held by an intent.
+  /// @param id The intent ID.
+  /// @param token The token address.
+  /// @return The token balance held by the intent.
+  function intentBalance(uint256 id, address token) external view returns (uint256);
+
+  /// @notice Returns all tokens held by an intent.
+  /// @param id The intent ID.
+  /// @return tokens The array of token addresses held by the intent.
+  function intentTokens(uint256 id) external view returns (address[] memory tokens);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        ADMIN                               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

@@ -47,6 +47,21 @@ interface IFacilityIntents {
   event RequestUpdated(uint256 indexed id, address newRequest);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns all data for an intent.
+  /// @param id The intent ID.
+  /// @return properties The intent configuration.
+  /// @return fund The fund address (or address(0) if none).
+  /// @return request The request address (or address(0) if none).
+  /// @return resolved Whether the intent has been resolved.
+  function getIntent(uint256 id)
+    external
+    view
+    returns (IntentProperties memory properties, address fund, address request, bool resolved);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

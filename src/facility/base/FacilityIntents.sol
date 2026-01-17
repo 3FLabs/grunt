@@ -20,6 +20,24 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   using LibAddress for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IFacilityIntents
+  function getIntent(uint256 id)
+    external
+    view
+    override
+    returns (IntentProperties memory properties, address fund, address request, bool resolved)
+  {
+    Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
+    properties = _intent.properties;
+    fund = _intent.fund;
+    request = _intent.request;
+    resolved = _intent.resolved;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
