@@ -86,33 +86,5 @@ library LibIntent {
       revert LibErrors.DepositCapExceeded(id, _intent.properties.depositCap, attemptedTotal);
     }
   }
-
-  /// @dev Swaps tokens between two intents. Both intents must be in resolving state.
-  /// @param intent1 The first intent.
-  /// @param id1 The ID of the first intent (for error reporting).
-  /// @param intent2 The second intent.
-  /// @param id2 The ID of the second intent (for error reporting).
-  /// @param token1 The token to transfer from intent1 to intent2.
-  /// @param amount1 The amount of token1 to transfer.
-  /// @param token2 The token to transfer from intent2 to intent1.
-  /// @param amount2 The amount of token2 to transfer.
-  function swap(
-    Intent storage intent1,
-    uint256 id1,
-    Intent storage intent2,
-    uint256 id2,
-    address token1,
-    uint256 amount1,
-    address token2,
-    uint256 amount2
-  ) internal {
-    if (!intent1.isResolving()) revert LibErrors.NotResolving(id1);
-    if (!intent2.isResolving()) revert LibErrors.NotResolving(id2);
-
-    intent1.amounts.sub(token1, amount1);
-    intent1.amounts.add(token2, amount2);
-    intent2.amounts.sub(token2, amount2);
-    intent2.amounts.add(token1, amount1);
-  }
 }
 

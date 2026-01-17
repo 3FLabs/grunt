@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Intent} from "./LibIntent.sol";
+import {Intent, LibIntent} from "./LibIntent.sol";
 import {IIntentDescriptor} from "../../interfaces/facility/IIntentDescriptor.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 import {LibErrors} from "./LibErrors.sol";
@@ -51,6 +51,48 @@ library LibStorage {
   function getIntent(FacilityStorageData storage self, uint256 id) internal view returns (Intent storage _intent) {
     if (id == 0 || id > self.lastIntentId) revert LibErrors.IntentNotFound(id);
     _intent = self.intents[id];
+  }
+
+  /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
+  ///      or is not in the resolving state.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param id The ID of the intent.
+  /// @return _intent A reference to the intent struct.
+  function getResolvingIntent(FacilityStorageData storage self, uint256 id)
+    internal
+    view
+    returns (Intent storage _intent)
+  {
+    _intent = getIntent(self, id);
+    if (!LibIntent.isResolving(_intent)) revert LibErrors.NotResolving(id);
+  }
+
+  /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
+  ///      or is not in the depositing state.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param id The ID of the intent.
+  /// @return _intent A reference to the intent struct.
+  function getDepositingIntent(FacilityStorageData storage self, uint256 id)
+    internal
+    view
+    returns (Intent storage _intent)
+  {
+    _intent = getIntent(self, id);
+    if (!LibIntent.isDepositing(_intent)) revert LibErrors.NotDepositing(id);
+  }
+
+  /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
+  ///      or is not in the resolved state.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param id The ID of the intent.
+  /// @return _intent A reference to the intent struct.
+  function getResolvedIntent(FacilityStorageData storage self, uint256 id)
+    internal
+    view
+    returns (Intent storage _intent)
+  {
+    _intent = getIntent(self, id);
+    if (!LibIntent.isResolved(_intent)) revert LibErrors.NotResolved(id);
   }
 
   /// @dev Checks if a digest has been used and marks it as used. Reverts if already used.

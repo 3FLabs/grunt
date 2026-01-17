@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
+import {FacilityRoles} from "./FacilityRoles.sol";
 
 import {IFacilityRequests} from "src/interfaces/facility/base/IFacilityRequests.sol";
 import {IRequestInteractions} from "src/interfaces/request/IRequestInteractions.sol";
@@ -15,7 +16,7 @@ import {LibErrors} from "src/libs/facility/LibErrors.sol";
 /// @title FacilityRequests
 /// @notice Abstract contract implementing request operations for intents.
 /// @dev Allows pulling funds from and repaying to request contracts.
-abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransient {
+abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransient, FacilityRoles {
   using SafeTransferLib for address;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
@@ -29,17 +30,16 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
   /// @inheritdoc IFacilityRequests
   /// @dev Pulls funds from the request contract associated with the intent.
   ///      The intent must be in resolving state and have a request configured.
-  function pull(uint256 id, uint256 amount) external override nonReentrant {
-    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getIntent(id);
+  function pull(uint256 id, uint256 amount) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
+    Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
-    if (!_intent.isResolving()) revert LibErrors.NotResolving(id);
-    if (_intent.request == address(0)) revert LibErrors.MissingRequest(id);
+    address _request = _intent.request;
+    if (_request == address(0)) revert LibErrors.MissingRequest(id);
 
-    address asset = IRequestInteractions(_intent.request).asset();
+    address _asset = IRequestInteractions(_request).asset();
 
-    IRequestInteractions(_intent.request).pullFunds(amount, bytes(""));
-    _intent.amounts.add(asset, amount);
+    IRequestInteractions(_request).pullFunds(amount, bytes(""));
+    _intent.amounts.add(_asset, amount);
 
     // TODO - Emits event
   }
@@ -47,18 +47,17 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
   /// @inheritdoc IFacilityRequests
   /// @dev Repays funds to the request contract associated with the intent.
   ///      The intent must be in resolving state and have a request configured.
-  function repay(uint256 id, uint256 amount) external override nonReentrant {
-    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getIntent(id);
+  function repay(uint256 id, uint256 amount) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
+    Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
-    if (!_intent.isResolving()) revert LibErrors.NotResolving(id);
-    if (_intent.request == address(0)) revert LibErrors.MissingRequest(id);
+    address _request = _intent.request;
+    if (_request == address(0)) revert LibErrors.MissingRequest(id);
 
-    address asset = IRequestInteractions(_intent.request).asset();
+    address _asset = IRequestInteractions(_request).asset();
 
-    _intent.amounts.sub(asset, amount);
-    asset.safeApproveWithRetry(_intent.request, amount);
-    IRequestInteractions(_intent.request).repay(amount);
+    _intent.amounts.sub(_asset, amount);
+    _asset.safeApproveWithRetry(_request, amount);
+    IRequestInteractions(_request).repay(amount);
 
     // TODO - Emits event
   }

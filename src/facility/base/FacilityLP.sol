@@ -33,10 +33,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      Reverts if the deposit would exceed the intent's deposit cap.
   function deposit(uint256 id, uint256 amount) external override {
-    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getIntent(id);
-
-    if (!_intent.isDepositing()) revert LibErrors.NotDepositing(id);
+    Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     _intent.checkCap(id, amount);
 
@@ -52,10 +49,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   /// @dev Burns LP tokens 1:1 with the withdrawn amount.
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   function withdraw(uint256 id, uint256 amount) external override {
-    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getIntent(id);
-
-    if (!_intent.isDepositing()) revert LibErrors.NotDepositing(id);
+    Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     address depositAsset = _intent.properties.depositAsset.asset;
     _intent.amounts.sub(depositAsset, amount);
@@ -70,10 +64,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   ///      The intent must be resolved before claims can be made.
   ///      Burns all of the caller's LP tokens for this intent.
   function claim(uint256 id) external override {
-    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getIntent(id);
-
-    if (!_intent.isResolved()) revert LibErrors.NotResolved(id);
+    Intent storage _intent = LibStorage.facilityStorage().getResolvedIntent(id);
 
     uint256 balance = balanceOf(msg.sender, id);
     if (balance == 0) return;
