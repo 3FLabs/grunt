@@ -26,7 +26,7 @@ import {IRequestInteractions} from "./interfaces/request/IRequestInteractions.so
 import {IERC20} from "./interfaces/integrations/IERC20.sol";
 import {Order, Mode, State, Id} from "./libs/Order.sol";
 
-import {TokenBalancesLib} from "./libs/facility/TokenBalancesLib.sol";
+import {LibTokenBalances} from "./libs/facility/LibTokenBalances.sol";
 import {LibStorage, FacilityStorageData} from "./libs/facility/LibStorage.sol";
 import {LibErrors} from "./libs/facility/LibErrors.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -34,7 +34,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 
 contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializable, EIP712, ReentrancyGuardTransient {
-  using TokenBalancesLib for EnumerableMapLib.AddressToUint256Map;
+  using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;

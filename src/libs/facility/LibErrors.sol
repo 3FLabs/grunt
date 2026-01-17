@@ -129,4 +129,7 @@ library LibErrors {
   /// @notice Thrown when a signature is invalid.
   /// @param signer The address of the signer.
   error InvalidSignature(address signer);
+
+  /// @notice Thrown when there is insufficient balance for a token operation.
+  error InsufficientBalance();
 }
