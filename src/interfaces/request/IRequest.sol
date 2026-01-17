@@ -2,12 +2,13 @@
 pragma solidity ^0.8.20;
 
 import {Offer} from "./IOfferReceiver.sol";
-import {IVaultController} from "./IVaultController.sol";
-import {IPositionManagerRequest} from "./IPositionManagerRequest.sol";
+import {IRequestInteractions} from "./IRequestInteractions.sol";
 
 /// @title IRequest
 /// @notice Interface for the Request contract that manages funding requests with dual-token (PT/YT) issuance.
-interface IRequest is IVaultController, IPositionManagerRequest {
+/// @dev This interface focuses on the operational aspects of requests (minting, consuming offers).
+///      The implementation contract should also inherit IVaultController for PT/YT redemption functionality.
+interface IRequest is IRequestInteractions {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
