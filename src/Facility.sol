@@ -20,6 +20,8 @@ import {IERC20} from "./interfaces/integrations/IERC20.sol";
 import {Order, Mode, State, Id} from "./libs/Order.sol";
 
 import {TokenBalancesLib} from "./libs/facility/TokenBalancesLib.sol";
+import {LibStorage, FacilityStorageData} from "./libs/facility/LibStorage.sol";
+import {LibErrors} from "./libs/facility/LibErrors.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
@@ -44,206 +46,6 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   bytes32 constant SWAP_PARAMS_TYPEHASH = keccak256(
     "SwapParams(uint256 id1,address token1,uint256 id2,address token2,uint256 amount1,uint256 amount2,uint256 deadline)"
   );
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           ERRORS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when a required address parameter is the zero address.
-  error AddressZero();
-
-  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
-  /// @param addr The invalid address.
-  error InvalidContract(address addr);
-
-  /// @notice Thrown when the intent is already resolving.
-  /// @param id The intent ID.
-  error AlreadyResolving(uint256 id);
-
-  /// @notice Thrown when the intent is already resolved.
-  /// @param id The intent ID.
-  error AlreadyResolved(uint256 id);
-
-  /// @notice Thrown when the intent is not resolving.
-  /// @param id The intent ID.
-  error NotResolving(uint256 id);
-
-  /// @notice Thrown when the intent is not resolved.
-  /// @param id The intent ID.
-  error NotResolved(uint256 id);
-
-  /// @notice Thrown when the intent is not depositing.
-  /// @param id The intent ID.
-  error NotDepositing(uint256 id);
-
-  /// @notice Thrown when the deposit cap is exceeded.
-  /// @param id The intent ID.
-  /// @param depositCap The configured deposit cap.
-  /// @param attemptedTotal The attempted total supply after deposit.
-  error DepositCapExceeded(uint256 id, uint256 depositCap, uint256 attemptedTotal);
-
-  /// @notice Thrown when an expected asset does not match the actual asset.
-  /// @param expected The expected asset address.
-  /// @param actual The actual asset address.
-  error AssetMismatch(address expected, address actual);
-
-  /// @notice Thrown when no position manager is provided on either side of the intent.
-  error MissingPositionManager();
-
-  /// @notice Thrown when the guard key does not match the required position manager.
-  /// @param guardKey The provided guard key.
-  error InvalidGuardKey(address guardKey);
-
-  /// @notice Thrown when an asset is expected to be a position manager but is not.
-  /// @param asset The asset address that is not a position manager.
-  error AssetNotPositionManager(address asset);
-
-  /// @notice Thrown when the request has not reached a withdrawable state.
-  /// @param request The request address.
-  error RequestNotRepaid(address request);
-
-  /// @notice Thrown when an amount differs from the expected value.
-  /// @param expected The expected amount.
-  /// @param actual The actual amount.
-  error AmountMismatch(uint256 expected, uint256 actual);
-
-  /// @notice Thrown when resolveStart is not in the future.
-  /// @param resolveStart The provided resolve start timestamp.
-  /// @param currentTime The current block timestamp.
-  error InvalidResolveStart(uint40 resolveStart, uint40 currentTime);
-
-  /// @notice Thrown when an intent ID does not exist.
-  /// @param id The intent ID.
-  error IntentNotFound(uint256 id);
-
-  /// @notice Thrown when a TransferGuard blocks a transfer.
-  /// @param guard The TransferGuard address.
-  /// @param from The token sender.
-  /// @param to The token receiver.
-  /// @param amount The token amount.
-  error TransferBlocked(address guard, address from, address to, uint256 amount);
-
-  /// @notice Thrown when a fund order already exists.
-  /// @param id The intent ID.
-  error ActiveOrder(uint256 id);
-
-  /// @notice Thrown when no fund order exists.
-  /// @param id The intent ID.
-  error NoActiveOrder(uint256 id);
-
-  /// @notice Thrown when a fund order is not yet ended.
-  /// @param id The intent ID.
-  error OrderNotEnded(uint256 id);
-
-  /// @notice Thrown when a fund is required but not configured.
-  /// @param id The intent ID.
-  error MissingFund(uint256 id);
-
-  /// @notice Thrown when a request is required but not configured.
-  /// @param id The intent ID.
-  error MissingRequest(uint256 id);
-
-  /// @notice Thrown when swap params reference the same intent.
-  error SameIntent();
-
-  /// @notice Thrown when the swap deadline has passed.
-  error SwapExpired();
-
-  /// @notice Thrown when swap amounts are zero.
-  error InvalidSwapAmount();
-
-  /// @notice Thrown when a swap digest has already been used.
-  /// @param digest The used swap digest.
-  error SwapDigestUsed(bytes32 digest);
-
-  /// @notice Thrown when signatures length mismatches.
-  error InvalidSignatureLength();
-
-  /// @notice Thrown when not enough guardian signatures are provided.
-  /// @param required The required number of signatures.
-  /// @param provided The number of signatures provided.
-  error InvalidSignatureCount(uint256 required, uint256 provided);
-
-  /// @notice Thrown when signers are not strictly increasing.
-  error InvalidSignerOrder();
-
-  /// @notice Thrown when a signer is not a guardian.
-  /// @param signer The address of the signer.
-  error NotGuardian(address signer);
-
-  /// @notice Thrown when a signature is invalid.
-  /// @param signer The address of the signer.
-  error InvalidSignature(address signer);
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          EVENTS                            */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Emitted when the intent descriptor is updated.
-  /// @param descriptor The new descriptor address.
-  event DescriptorSet(address descriptor);
-
-  /// @notice TODO
-  event IntentCreated(uint256 indexed id, Asset depositAsset, uint8 quorum);
-
-  /// @notice TODO
-  event IntentResolved(uint256 indexed id);
-
-  /// @notice TODO
-  event ResolveStartUpdated(uint256 indexed id, uint40 newResolveStart);
-
-  /// @notice TODO
-  event DepositCapUpdated(uint256 indexed id, uint256 newDepositCap);
-
-  /// @notice TODO
-  event IntentTargetUpdated(uint256 indexed id, Asset newTargetAsset, address newGuardKey);
-
-  /// @notice TODO
-  event FundUpdated(uint256 indexed id, address newFund);
-
-  /// @notice TODO
-  event RequestUpdated(uint256 indexed id, address newRequest);
-
-  /// @notice TODO
-  event CreatingOrder(uint256 indexed id, Id orderId);
-
-  /// @notice TODO
-  event Swap(
-    uint256 indexed id1, uint256 indexed id2, address token1, uint256 amount1, address token2, uint256 amount2
-  );
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          STORAGE                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Storage struct containing all persistent state for the Facility contract.
-  /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
-  ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
-  /// @param intents Mapping from intent ID to Intent struct.
-  /// @param descriptor The intent descriptor contract for generating token metadata.
-  /// @param lastIntentId The most recent intent ID assigned.
-  /// @param usedSwapDigests Mapping of used swap digests to prevent replay attacks.
-  struct FacilityStorage {
-    mapping(uint256 => Intent) intents;
-    IIntentDescriptor descriptor;
-    uint256 lastIntentId;
-    mapping(bytes32 => bool) usedSwapDigests;
-  }
-
-  /// @dev Storage slot for the Facility contract's main storage struct.
-  ///      Computed as: keccak256(abi.encode(uint256(keccak256("facility")) - 1)) & ~bytes32(uint256(0xff))
-  ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
-  bytes32 private constant _MAIN_STORAGE_SLOT = 0x17225e1ce54a2d38eb42db16fff6bda9e819f9fc11384a092e92905d7c79a900;
-
-  /// @dev Returns a reference to the contract's storage struct.
-  ///      Uses assembly to load the storage pointer from the fixed storage slot.
-  ///      This pattern ensures consistent storage layout when used behind proxies.
-  /// @return facilityStorage A storage pointer to the FacilityStorage struct
-  function _facilityStorage() internal pure returns (FacilityStorage storage facilityStorage) {
-    assembly ("memory-safe") {
-      facilityStorage.slot := _MAIN_STORAGE_SLOT
-    }
-  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -277,7 +79,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @param descriptor_ The new descriptor contract address.
   function _setDescriptor(address descriptor_) internal {
     _checkContract(descriptor_);
-    _facilityStorage().descriptor = IIntentDescriptor(descriptor_);
+    LibStorage.facilityStorage().descriptor = IIntentDescriptor(descriptor_);
     emit DescriptorSet(descriptor_);
   }
 
@@ -292,12 +94,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     onlyRoles(FACILITATOR_ROLE)
     returns (uint256 id)
   {
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
 
     id = $.lastIntentId + 1;
 
     if (params.resolveStart <= block.timestamp) {
-      revert InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
+      revert LibErrors.InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
     }
     _checkContract(params.depositAsset.asset);
     _checkContract(params.targetAsset.asset);
@@ -327,7 +129,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _requireIntentExists(id);
     _checkContract(newTargetAsset.asset);
     _checkContract(newGuardKey);
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
     _updateTargetAsset(id, _intent, _intent.properties.depositAsset, newTargetAsset, newGuardKey);
@@ -337,11 +139,11 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function lock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (_intent.resolved) revert AlreadyResolved(id);
-    if (_isResolving(_intent)) revert AlreadyResolving(id);
+    if (_intent.resolved) revert LibErrors.AlreadyResolved(id);
+    if (_isResolving(_intent)) revert LibErrors.AlreadyResolving(id);
 
     _updateResolveStart(id, _intent, uint40(block.timestamp));
   }
@@ -350,20 +152,20 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function resolve(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (_intent.resolved) revert AlreadyResolved(id);
-    if (!_isResolving(_intent)) revert NotResolving(id);
+    if (_intent.resolved) revert LibErrors.AlreadyResolved(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
 
     address _request = _intent.request;
     if (_request != address(0) && !IVaultController(_request).canWithdraw()) {
-      revert RequestNotRepaid(_request);
+      revert LibErrors.RequestNotRepaid(_request);
     }
 
     // TODO - Check if needed or not...
     // It's possible to resolve multiple times if needed, always overriding the previous resolution.
-    if (_hasActiveOrder(_intent)) revert NoActiveOrder(id);
+    if (_hasActiveOrder(_intent)) revert LibErrors.NoActiveOrder(id);
 
     _intent.resolved = true;
     emit IntentResolved(id);
@@ -376,20 +178,20 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     onlyRoles(FACILITATOR_ROLE)
     nonReentrant
   {
-    if (params.id1 == params.id2) revert SameIntent();
-    if (block.timestamp > params.deadline) revert SwapExpired();
-    if (params.amount1 == 0 || params.amount2 == 0) revert InvalidSwapAmount();
+    if (params.id1 == params.id2) revert LibErrors.SameIntent();
+    if (block.timestamp > params.deadline) revert LibErrors.SwapExpired();
+    if (params.amount1 == 0 || params.amount2 == 0) revert LibErrors.InvalidSwapAmount();
 
     {
       _requireIntentExists(params.id1);
       _requireIntentExists(params.id2);
 
-      FacilityStorage storage $ = _facilityStorage();
+      FacilityStorageData storage $ = LibStorage.facilityStorage();
       Intent storage intent1 = $.intents[params.id1];
       Intent storage intent2 = $.intents[params.id2];
 
-      if (!_isResolving(intent1)) revert NotResolving(params.id1);
-      if (!_isResolving(intent2)) revert NotResolving(params.id2);
+      if (!_isResolving(intent1)) revert LibErrors.NotResolving(params.id1);
+      if (!_isResolving(intent2)) revert LibErrors.NotResolving(params.id2);
 
       // take the higher quorum
       uint256 _required =
@@ -397,7 +199,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
       bytes32 _digest = _swapDigest(params);
 
-      if ($.usedSwapDigests[_digest]) revert SwapDigestUsed(_digest);
+      if ($.usedSwapDigests[_digest]) revert LibErrors.SwapDigestUsed(_digest);
       $.usedSwapDigests[_digest] = true;
 
       _verifySwapSignatures(_digest, signers, signatures, _required);
@@ -415,7 +217,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
     _updateDepositCap(id, _intent, newDepositCap);
@@ -426,18 +228,18 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _checkContract(newFund);
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (_hasActiveOrder(_intent)) revert ActiveOrder(id);
+    if (_hasActiveOrder(_intent)) revert LibErrors.ActiveOrder(id);
 
     (address _pmCollateral, address _pmDebt) = IPositionManager(_intent.properties.guardKey).assets();
 
     address _fundAsset = IFund(newFund).asset();
-    if (_fundAsset != _pmDebt) revert AssetMismatch(_pmDebt, _fundAsset);
+    if (_fundAsset != _pmDebt) revert LibErrors.AssetMismatch(_pmDebt, _fundAsset);
 
     address _fundShare = IFund(newFund).share();
-    if (_fundShare != _pmCollateral) revert AssetMismatch(_pmCollateral, _fundShare);
+    if (_fundShare != _pmCollateral) revert LibErrors.AssetMismatch(_pmCollateral, _fundShare);
 
     $.intents[id].fund = newFund;
     emit FundUpdated(id, newFund);
@@ -448,7 +250,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _checkContract(newRequest);
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
 
     Intent storage _intent = $.intents[id];
     address _request = _intent.request;
@@ -457,12 +259,12 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
       // TODO canWithdraw is not enough (need intermediary state like `repaid()`)
       // TODO do the same change for resolve()
       // TODO OR Check that the request is not used yet.
-      revert RequestNotRepaid(_request);
+      revert LibErrors.RequestNotRepaid(_request);
     }
 
     (, address _pmDebt) = IPositionManager(_intent.properties.guardKey).assets();
     address _requestAsset = IVaultController(newRequest).asset();
-    if (_requestAsset != _pmDebt) revert AssetMismatch(_pmDebt, _requestAsset);
+    if (_requestAsset != _pmDebt) revert LibErrors.AssetMismatch(_pmDebt, _requestAsset);
 
     $.intents[id].request = newRequest;
     emit RequestUpdated(id, newRequest);
@@ -482,11 +284,11 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving(id);
-    if (_hasActiveOrder(_intent)) revert ActiveOrder(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
+    if (_hasActiveOrder(_intent)) revert LibErrors.ActiveOrder(id);
 
     order = Order({
       owner: address(this),
@@ -508,10 +310,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function cancel(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_hasActiveOrder(_intent)) revert NoActiveOrder(id);
+    if (!_hasActiveOrder(_intent)) revert LibErrors.NoActiveOrder(id);
 
     IFund(_intent.fund).cancel(_intent.order);
     delete _intent.order;
@@ -521,10 +323,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function commit(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_hasActiveOrder(_intent)) revert NoActiveOrder(id);
+    if (!_hasActiveOrder(_intent)) revert LibErrors.NoActiveOrder(id);
 
     Order memory _order = _intent.order;
     address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_intent.fund).asset() : IFund(_intent.fund).share();
@@ -542,10 +344,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function unlock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_hasActiveOrder(_intent)) revert NoActiveOrder(id);
+    if (!_hasActiveOrder(_intent)) revert LibErrors.NoActiveOrder(id);
 
     Order memory order = _intent.order;
 
@@ -565,10 +367,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function recover(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_hasActiveOrder(_intent)) revert NoActiveOrder(id);
+    if (!_hasActiveOrder(_intent)) revert LibErrors.NoActiveOrder(id);
 
     Order memory order = _intent.order;
 
@@ -592,11 +394,11 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function pull(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving(id);
-    if (_intent.request == address(0)) revert MissingRequest(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
+    if (_intent.request == address(0)) revert LibErrors.MissingRequest(id);
 
     address asset = IVaultController(_intent.request).asset();
 
@@ -608,11 +410,11 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function repay(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving(id);
-    if (_intent.request == address(0)) revert MissingRequest(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
+    if (_intent.request == address(0)) revert LibErrors.MissingRequest(id);
 
     address asset = IVaultController(_intent.request).asset();
 
@@ -634,13 +436,13 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
 
     Asset storage selected = useTarget ? _intent.properties.targetAsset : _intent.properties.depositAsset;
-    if (!selected.isPositionManager) revert AssetNotPositionManager(selected.asset);
+    if (!selected.isPositionManager) revert LibErrors.AssetNotPositionManager(selected.asset);
 
     address positionManager = selected.asset;
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -672,13 +474,13 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
 
     Asset storage selected = useTarget ? _intent.properties.targetAsset : _intent.properties.depositAsset;
-    if (!selected.isPositionManager) revert AssetNotPositionManager(selected.asset);
+    if (!selected.isPositionManager) revert LibErrors.AssetNotPositionManager(selected.asset);
 
     address positionManager = selected.asset;
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -710,13 +512,13 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isResolving(_intent)) revert NotResolving(id);
+    if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
 
     Asset storage selected = useTarget ? _intent.properties.targetAsset : _intent.properties.depositAsset;
-    if (!selected.isPositionManager) revert AssetNotPositionManager(selected.asset);
+    if (!selected.isPositionManager) revert LibErrors.AssetNotPositionManager(selected.asset);
 
     address positionManager = selected.asset;
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -733,7 +535,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     (uint256 collateral, uint256 debt) = IPositionManager(positionManager).burn(shares);
 
-    if (debt != debtNeeded) revert AmountMismatch(debtNeeded, debt);
+    if (debt != debtNeeded) revert LibErrors.AmountMismatch(debtNeeded, debt);
     if (collateral > 0) {
       _intent.amounts.add(collateralAsset, collateral);
     }
@@ -747,15 +549,15 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function deposit(uint256 id, uint256 amount) external override {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
     // IScreener.check(msg.sender, id, data, amount);
 
-    if (!_isDepositing(_intent)) revert NotDepositing(id);
+    if (!_isDepositing(_intent)) revert LibErrors.NotDepositing(id);
     uint256 attemptedTotal = _intent.totalSupply + amount;
     if (attemptedTotal > _intent.properties.depositCap) {
-      revert DepositCapExceeded(id, _intent.properties.depositCap, attemptedTotal);
+      revert LibErrors.DepositCapExceeded(id, _intent.properties.depositCap, attemptedTotal);
     }
 
     // TODO - Updates
@@ -771,10 +573,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function withdraw(uint256 id, uint256 amount) external override {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_isDepositing(_intent)) revert NotDepositing(id);
+    if (!_isDepositing(_intent)) revert LibErrors.NotDepositing(id);
 
     // TODO - Updates
     address depositAsset = _intent.properties.depositAsset.asset;
@@ -789,10 +591,10 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function claim(uint256 id) external override {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    if (!_intent.resolved) revert NotResolved(id);
+    if (!_intent.resolved) revert LibErrors.NotResolved(id);
     uint256 balance = balanceOf(msg.sender, id);
     if (balance == 0) return;
 
@@ -820,24 +622,24 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @inheritdoc ERC6909
   function decimals(uint256 id) public view override returns (uint8) {
     _requireIntentExists(id);
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage intent = $.intents[id];
     return IERC20(intent.properties.depositAsset.asset).decimals();
   }
 
   /// @inheritdoc ERC6909
   function name(uint256 id) public view override returns (string memory) {
-    return _facilityStorage().descriptor.name(IFacility(address(this)), id);
+    return LibStorage.facilityStorage().descriptor.name(IFacility(address(this)), id);
   }
 
   /// @inheritdoc ERC6909
   function symbol(uint256 id) public view override returns (string memory) {
-    return _facilityStorage().descriptor.symbol(IFacility(address(this)), id);
+    return LibStorage.facilityStorage().descriptor.symbol(IFacility(address(this)), id);
   }
 
   /// @inheritdoc ERC6909
   function tokenURI(uint256 id) public view override returns (string memory) {
-    return _facilityStorage().descriptor.tokenURI(IFacility(address(this)), id);
+    return LibStorage.facilityStorage().descriptor.tokenURI(IFacility(address(this)), id);
   }
 
   /// @notice Returns total supply for a given intent.
@@ -845,7 +647,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @return The total supply.
   function totalSupply(uint256 id) public view returns (uint256) {
     _requireIntentExists(id);
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
     return _intent.totalSupply;
   }
@@ -854,13 +656,13 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   function _beforeTokenTransfer(address from, address to, uint256 id, uint256 amount) internal override {
     _requireIntentExists(id);
 
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     Intent storage _intent = $.intents[id];
 
     (,, address guard) = IPositionManager(_intent.properties.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.properties.guardKey, from, to, amount)) {
-        revert TransferBlocked(guard, from, to, amount);
+        revert LibErrors.TransferBlocked(guard, from, to, amount);
       }
     }
 
@@ -902,20 +704,20 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /// @dev Reverts if the intent ID does not exist.
   /// @param id The intent ID to check.
   function _requireIntentExists(uint256 id) internal view {
-    uint256 lastId = _facilityStorage().lastIntentId;
-    if (id == 0 || id > lastId) revert IntentNotFound(id);
+    uint256 lastId = LibStorage.facilityStorage().lastIntentId;
+    if (id == 0 || id > lastId) revert LibErrors.IntentNotFound(id);
   }
 
   /// @dev Reverts if the address is the zero address.
   /// @param addr The address to check.
   function _checkNotZero(address addr) internal pure {
-    if (addr == address(0)) revert AddressZero();
+    if (addr == address(0)) revert LibErrors.AddressZero();
   }
 
   /// @dev Reverts if the address is not a contract.
   /// @param addr The address to check.
   function _checkContract(address addr) internal view {
-    if (addr.code.length == 0) revert InvalidContract(addr);
+    if (addr.code.length == 0) revert LibErrors.InvalidContract(addr);
   }
 
   /// @dev TODO Natspec + Refactor
@@ -928,20 +730,20 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     bool depositIsPm = depositAsset.isPositionManager;
     bool targetIsPm = targetAsset.isPositionManager;
 
-    if (!depositIsPm && !targetIsPm) revert MissingPositionManager();
+    if (!depositIsPm && !targetIsPm) revert LibErrors.MissingPositionManager();
 
     if (depositIsPm && !targetIsPm) {
-      if (guardKey != depositAsset.asset) revert InvalidGuardKey(guardKey);
+      if (guardKey != depositAsset.asset) revert LibErrors.InvalidGuardKey(guardKey);
     }
 
     if (!depositIsPm && targetIsPm) {
-      if (guardKey != targetAsset.asset) revert InvalidGuardKey(guardKey);
+      if (guardKey != targetAsset.asset) revert LibErrors.InvalidGuardKey(guardKey);
       (_pmCollateral, _pmDebt) = IPositionManager(guardKey).assets();
-      if (depositAsset.asset != _pmDebt) revert AssetMismatch(_pmDebt, depositAsset.asset);
+      if (depositAsset.asset != _pmDebt) revert LibErrors.AssetMismatch(_pmDebt, depositAsset.asset);
     }
 
     if (guardKey != depositAsset.asset && guardKey != targetAsset.asset) {
-      revert InvalidGuardKey(guardKey);
+      revert LibErrors.InvalidGuardKey(guardKey);
     }
 
     (_pmCollateral, _pmDebt) = IPositionManager(guardKey).assets();
@@ -949,8 +751,8 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (depositIsPm && targetIsPm) {
       address otherPm = guardKey == depositAsset.asset ? targetAsset.asset : depositAsset.asset;
       (address otherCollateral, address otherDebt) = IPositionManager(otherPm).assets();
-      if (otherCollateral != _pmCollateral) revert AssetMismatch(_pmCollateral, otherCollateral);
-      if (otherDebt != _pmDebt) revert AssetMismatch(_pmDebt, otherDebt);
+      if (otherCollateral != _pmCollateral) revert LibErrors.AssetMismatch(_pmCollateral, otherCollateral);
+      if (otherDebt != _pmDebt) revert LibErrors.AssetMismatch(_pmDebt, otherDebt);
     }
   }
 
@@ -962,16 +764,16 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     uint256 required
   ) internal view {
     if (required == 0) return;
-    if (signers.length != signatures.length) revert InvalidSignatureLength();
-    if (signers.length < required) revert InvalidSignatureCount(required, signers.length);
+    if (signers.length != signatures.length) revert LibErrors.InvalidSignatureLength();
+    if (signers.length < required) revert LibErrors.InvalidSignatureCount(required, signers.length);
 
     address lastSigner = address(0);
     for (uint256 i = 0; i < signers.length; i++) {
       address signer = signers[i];
-      if (signer <= lastSigner) revert InvalidSignerOrder();
-      if (!hasAnyRole(signer, GUARDIAN_ROLE)) revert NotGuardian(signer);
+      if (signer <= lastSigner) revert LibErrors.InvalidSignerOrder();
+      if (!hasAnyRole(signer, GUARDIAN_ROLE)) revert LibErrors.NotGuardian(signer);
       if (!SignatureCheckerLib.isValidSignatureNowCalldata(signer, digest, signatures[i])) {
-        revert InvalidSignature(signer);
+        revert LibErrors.InvalidSignature(signer);
       }
       lastSigner = signer;
     }

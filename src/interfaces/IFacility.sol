@@ -1,51 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
-
-import {Order, Mode} from "../libs/Order.sol";
-
-/// @dev Intent state for a facility request, including configuration and accounting.
-/// @param properties Static configuration for the intent.
-/// @param fund Fund address associated with the intent.
-/// @param request Request contract address associated with the intent.
-/// @param resolved Whether the intent has been resolved and claims are enabled.
-/// @param amounts Per-address accounting balances for the intent.
-/// @param order Current fund order associated with the intent.
-/// @param totalSupply Total supply tracked for the intent.
-struct Intent {
-  IntentProperties properties;
-  address fund;
-  address request;
-  bool resolved;
-  EnumerableMapLib.AddressToUint256Map amounts;
-  Order order;
-  uint256 totalSupply;
-}
-
-/// @dev Configuration values that define an intent's behavior.
-/// @param depositAsset Asset deposited into the intent.
-/// @param targetAsset Target asset or position manager for the intent.
-/// @param depositCap Maximum amount that can be deposited into the intent.
-/// @param guardKey Guard key address associated with intent authorization.
-/// @param resolveStart Earliest timestamp when the intent can be resolved.
-/// @param quorum Quorum threshold required for guard approvals.
-struct IntentProperties {
-  Asset depositAsset;
-  Asset targetAsset;
-  uint256 depositCap;
-  address guardKey;
-  uint40 resolveStart;
-  uint8 quorum;
-}
-
-/// @dev Asset configuration for intents and swaps.
-/// @param asset Address of the asset.
-/// @param isPositionManager Whether the asset represents a position manager.
-struct Asset {
-  address asset;
-  bool isPositionManager;
-}
+import {Intent, IntentProperties, Asset} from "../libs/facility/LibIntent.sol";
+import {Order, Mode, Id} from "../libs/Order.sol";
 
 /// @dev Parameters describing a two-asset swap between intents.
 /// @param id1 First intent ID.
@@ -68,6 +25,66 @@ struct SwapParams {
 /// @title IFacility
 /// @notice Interface for managing intents, funds, requests, and position managers.
 interface IFacility {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          EVENTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted when the intent descriptor is updated.
+  /// @param descriptor The new descriptor address.
+  event DescriptorSet(address descriptor);
+
+  /// @notice Emitted when a new intent is created.
+  /// @param id The intent ID.
+  /// @param depositAsset The deposit asset configuration.
+  /// @param quorum The quorum threshold for guard approvals.
+  event IntentCreated(uint256 indexed id, Asset depositAsset, uint8 quorum);
+
+  /// @notice Emitted when an intent is resolved.
+  /// @param id The intent ID.
+  event IntentResolved(uint256 indexed id);
+
+  /// @notice Emitted when the resolve start timestamp is updated.
+  /// @param id The intent ID.
+  /// @param newResolveStart The new resolve start timestamp.
+  event ResolveStartUpdated(uint256 indexed id, uint40 newResolveStart);
+
+  /// @notice Emitted when the deposit cap is updated.
+  /// @param id The intent ID.
+  /// @param newDepositCap The new deposit cap.
+  event DepositCapUpdated(uint256 indexed id, uint256 newDepositCap);
+
+  /// @notice Emitted when the intent target is updated.
+  /// @param id The intent ID.
+  /// @param newTargetAsset The new target asset configuration.
+  /// @param newGuardKey The new guard key address.
+  event IntentTargetUpdated(uint256 indexed id, Asset newTargetAsset, address newGuardKey);
+
+  /// @notice Emitted when the fund address is updated.
+  /// @param id The intent ID.
+  /// @param newFund The new fund address.
+  event FundUpdated(uint256 indexed id, address newFund);
+
+  /// @notice Emitted when the request address is updated.
+  /// @param id The intent ID.
+  /// @param newRequest The new request address.
+  event RequestUpdated(uint256 indexed id, address newRequest);
+
+  /// @notice Emitted when a fund order is being created.
+  /// @param id The intent ID.
+  /// @param orderId The order ID.
+  event CreatingOrder(uint256 indexed id, Id orderId);
+
+  /// @notice Emitted when a swap is executed between two intents.
+  /// @param id1 The first intent ID.
+  /// @param id2 The second intent ID.
+  /// @param token1 The token sent from the first intent to the second.
+  /// @param amount1 The amount of the token sent from the first intent to the second.
+  /// @param token2 The token sent from the second intent to the first.
+  /// @param amount2 The amount of the token sent from the second intent to the first.
+  event Swap(
+    uint256 indexed id1, uint256 indexed id2, address token1, uint256 amount1, address token2, uint256 amount2
+  );
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

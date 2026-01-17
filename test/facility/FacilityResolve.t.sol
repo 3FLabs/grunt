@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
+import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
@@ -129,7 +130,7 @@ contract FacilityResolveTest is Test {
     facility.lock(id);
     facility.resolve(id);
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.AlreadyResolved.selector, id));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AlreadyResolved.selector, id));
     facility.lock(id);
   }
 
@@ -140,7 +141,7 @@ contract FacilityResolveTest is Test {
 
     facility.create(id, 1, 1, Mode.DEPOSIT);
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.NoActiveOrder.selector, id));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.NoActiveOrder.selector, id));
     facility.resolve(id);
   }
 }

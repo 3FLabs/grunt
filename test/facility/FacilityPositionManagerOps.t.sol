@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Facility} from "src/Facility.sol";
+import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
@@ -11,12 +12,13 @@ import {PositionManagerBaseTest} from "test/manager/PositionManagerBase.t.sol";
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 
 contract FacilityHarness is Facility {
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
 
   function amountOf(uint256 id, address token) external view returns (uint256) {
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     (bool exists, uint256 value) = $.intents[id].amounts.tryGet(token);
     return exists ? value : 0;
   }
@@ -156,7 +158,7 @@ contract FacilityPositionManagerOpsTest is PositionManagerBaseTest {
   }
 
   function test_RevertWhen_DepositManager_SelectedSideNotPM() public {
-    vm.expectRevert(abi.encodeWithSelector(Facility.AssetNotPositionManager.selector, address(debtToken)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetNotPositionManager.selector, address(debtToken)));
     facility.depositManager(intentId, 1, 0, false);
   }
 

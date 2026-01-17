@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/Facility.sol";
+import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
 
@@ -97,7 +98,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
 
     vm.expectRevert(
-      abi.encodeWithSelector(Facility.InvalidResolveStart.selector, uint40(block.timestamp), uint40(block.timestamp))
+      abi.encodeWithSelector(LibErrors.InvalidResolveStart.selector, uint40(block.timestamp), uint40(block.timestamp))
     );
     _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp), 0);
   }
@@ -106,7 +107,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
     Asset memory targetAsset = Asset({asset: address(collateral), isPositionManager: false});
 
-    vm.expectRevert(Facility.MissingPositionManager.selector);
+    vm.expectRevert(LibErrors.MissingPositionManager.selector);
     _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
   }
 
@@ -114,7 +115,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
     Asset memory targetAsset = Asset({asset: address(pmMismatch), isPositionManager: true});
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.AssetMismatch.selector, address(collateral), address(collateral2)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetMismatch.selector, address(collateral), address(collateral2)));
     _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
   }
 
@@ -122,7 +123,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
     Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.InvalidGuardKey.selector, address(pmMismatch)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidGuardKey.selector, address(pmMismatch)));
     _createIntent(depositAsset, targetAsset, address(pmMismatch), 1, uint40(block.timestamp + 1 days), 0);
   }
 
@@ -130,7 +131,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory depositAsset = Asset({asset: address(collateral), isPositionManager: false});
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.AssetMismatch.selector, address(debt), address(collateral)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetMismatch.selector, address(debt), address(collateral)));
     _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
   }
 
@@ -143,7 +144,7 @@ contract FacilityCreateIntentTest is Test {
 
     uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.AssetMismatch.selector, address(debt), address(wrongDebt)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetMismatch.selector, address(debt), address(wrongDebt)));
     facility.setFund(id, address(fund));
   }
 
@@ -155,7 +156,7 @@ contract FacilityCreateIntentTest is Test {
 
     uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
 
-    vm.expectRevert(abi.encodeWithSelector(Facility.AssetMismatch.selector, address(debt), address(collateral)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetMismatch.selector, address(debt), address(collateral)));
     facility.setRequest(id, address(request));
   }
 
