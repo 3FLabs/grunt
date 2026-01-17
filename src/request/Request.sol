@@ -8,6 +8,7 @@ import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
 import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.sol";
+import {IHasAsset} from "../interfaces/request/IHasAsset.sol";
 import {IRequestCallback} from "../interfaces/request/IRequestCallback.sol";
 import {IRequestInteractionsCallback} from "../interfaces/request/IRequestInteractionsCallback.sol";
 import {ITokenController} from "../interfaces/request/ITokenController.sol";
@@ -155,6 +156,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   function _canWithdraw() internal view override returns (bool) {
     RequestStorage storage req = _requestStorage();
     return req.repaid || block.timestamp >= req.repaymentDeadline;
+  }
+
+  /// @inheritdoc IHasAsset
+  function asset() external view override(IHasAsset, VaultController) returns (address) {
+    return _asset();
   }
 
   /// @inheritdoc ITokenController

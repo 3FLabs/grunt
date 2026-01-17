@@ -8,18 +8,14 @@ import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTran
 import {IFacilitySwap, SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 
-import {LibTokenBalances} from "src/libs/facility/LibTokenBalances.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title FacilitySwap
 /// @notice Abstract contract implementing swap functionality between intents.
 /// @dev Descendant contracts must implement `_checkSigner` to define signer validation logic.
 abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransient {
-  using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
-  using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibIntent for Intent;
   using LibStorage for FacilityStorageData;
 

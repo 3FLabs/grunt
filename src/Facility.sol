@@ -268,7 +268,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     }
 
     (, address _pmDebt) = IPositionManager(_intent.properties.guardKey).assets();
-    address _requestAsset = IVaultController(newRequest).asset();
+    address _requestAsset = IRequestInteractions(newRequest).asset();
     if (_requestAsset != _pmDebt) revert LibErrors.AssetMismatch(_pmDebt, _requestAsset);
 
     $.intents[id].request = newRequest;
@@ -405,7 +405,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
     if (_intent.request == address(0)) revert LibErrors.MissingRequest(id);
 
-    address asset = IVaultController(_intent.request).asset();
+    address asset = IRequestInteractions(_intent.request).asset();
 
     IRequestInteractions(_intent.request).pullFunds(amount, bytes(""));
     _intent.amounts.add(asset, amount);
@@ -421,7 +421,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (!_isResolving(_intent)) revert LibErrors.NotResolving(id);
     if (_intent.request == address(0)) revert LibErrors.MissingRequest(id);
 
-    address asset = IVaultController(_intent.request).asset();
+    address asset = IRequestInteractions(_intent.request).asset();
 
     _intent.amounts.sub(asset, amount);
     asset.safeApproveWithRetry(_intent.request, amount);

@@ -7,6 +7,7 @@ import {LibTokenController} from "../../../libs/request/LibTokenController.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ControlledVault} from "./ControlledVault.sol";
 import {IVaultController} from "../../../interfaces/request/IVaultController.sol";
+import {IHasAsset} from "../../../interfaces/request/IHasAsset.sol";
 
 /// @title VaultController
 /// @notice Abstract base contract for managing dual-vault systems with Principal and Yield token separation.
@@ -37,9 +38,8 @@ abstract contract VaultController is TokenController, IVaultController {
   /*                        METADATA/STATUS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IVaultController
-  /// @dev This is the asset that backs both PT and YT tokens (e.g., USDC).
-  function asset() external view virtual returns (address) {
+  /// @inheritdoc IHasAsset
+  function asset() external view virtual override returns (address) {
     return _asset();
   }
 
