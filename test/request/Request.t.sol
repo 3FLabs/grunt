@@ -23,6 +23,7 @@ contract RequestTest is Test {
   // Test addresses
   address public owner;
   address public puller;
+  address public consumer;
   address public borrower;
   address public beaconOwner;
 
@@ -48,6 +49,7 @@ contract RequestTest is Test {
   function setUp() public {
     owner = makeAddr("owner");
     puller = makeAddr("puller");
+    consumer = makeAddr("consumer");
     borrower = makeAddr("borrower");
     beaconOwner = makeAddr("beaconOwner");
     maker = vm.createWallet("maker");
@@ -62,7 +64,7 @@ contract RequestTest is Test {
     // Create request via factory with far future deadline (effectively disabled for most tests)
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -90,7 +92,7 @@ contract RequestTest is Test {
     vm.expectEmit(false, true, false, false);
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
-    factory.createRequest(owner, puller, address(asset), "New Request", "NEW", uint64(type(uint64).max));
+    factory.createRequest(owner, puller, consumer, address(asset), "New Request", "NEW", uint64(type(uint64).max));
   }
 
   function test_factory_createRequest_initializesCorrectly() public view {
@@ -124,7 +126,15 @@ contract RequestTest is Test {
   function test_initialize_cannotReinitialize() public {
     vm.expectRevert();
     request.initialize(
-      owner, puller, address(asset), address(ptVault), address(ytVault), "New", "NEW", uint64(type(uint64).max)
+      owner,
+      puller,
+      consumer,
+      address(asset),
+      address(ptVault),
+      address(ytVault),
+      "New",
+      "NEW",
+      uint64(type(uint64).max)
     );
   }
 
@@ -146,13 +156,27 @@ contract RequestTest is Test {
     assertEq(ytAmount, 100_000e6);
   }
 
-  function test_authorizeMinting_onlyOwner() public {
+  function test_authorizeMinting_onlyOwnerOrConsumer() public {
     address primeBroker = makeAddr("primeBroker");
-    address notOwner = makeAddr("notOwner");
+    address notAuthorized = makeAddr("notAuthorized");
 
-    vm.prank(notOwner);
+    vm.prank(notAuthorized);
     vm.expectRevert(Unauthorized.selector);
     request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+  }
+
+  function test_authorizeMinting_consumerCanCall() public {
+    address primeBroker = makeAddr("primeBroker");
+
+    vm.expectEmit(true, false, false, true, address(request));
+    emit AuthorizedMinting(primeBroker, 1_000_000e6, 100_000e6);
+
+    vm.prank(consumer);
+    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+
+    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(primeBroker);
+    assertEq(ptAmount, 1_000_000e6);
+    assertEq(ytAmount, 100_000e6);
   }
 
   function test_authorizeMinting_canUpdate() public {
@@ -393,7 +417,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -441,7 +465,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -483,7 +507,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -528,7 +552,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -773,7 +797,8 @@ contract RequestTest is Test {
     // Create a request with a deadline that will pass
     uint64 deadline = uint64(block.timestamp + 1 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DL", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline);
     Request deadlineRequest = Request(reqAddr);
 
     // Initially both isRepaid and canWithdraw should be false
@@ -1087,14 +1112,16 @@ contract RequestTest is Test {
     MockERC20 asset8 = new MockERC20("WBTC", "WBTC", 8);
 
     // Create request with 18 decimals
-    (, address pt18, address yt18) =
-      factory.createRequest(owner, puller, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max));
+    (, address pt18, address yt18) = factory.createRequest(
+      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max)
+    );
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
-    (, address pt8, address yt8) =
-      factory.createRequest(owner, puller, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max));
+    (, address pt8, address yt8) = factory.createRequest(
+      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max)
+    );
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
   }
@@ -1158,7 +1185,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
     Vault deadlinePtVault = Vault(ptAddr);
@@ -1199,7 +1226,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_setRepaidStillWorks() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1217,7 +1245,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_blocksOperationsAfterDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1261,7 +1290,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_mintBlockedAfterDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1287,7 +1317,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_consumeBlockedAfterDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1306,7 +1337,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_beforeDeadlineOperationsWork() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1347,7 +1379,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_exactlyAtDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 

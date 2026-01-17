@@ -56,7 +56,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @dev Role for addresses authorized to pull funds from the contract via `pullFunds()`.
   uint256 internal constant _ROLE_PULLER = _ROLE_0;
+
+  /// @dev Role for addresses authorized to consume offers and authorize minting via `consume()` and `authorizeMinting()`.
+  uint256 internal constant _ROLE_CONSUMER = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERRORS                             */
@@ -114,6 +118,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      state where withdrawals are disabled until either setRepaid() is called or the repayment deadline passes.
   /// @param owner_ The address that will own the contract and have admin privileges
   /// @param puller_ The address that will have the puller role
+  /// @param consumer_ The address that will have the consumer role (can call consume and authorizeMinting)
   /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
   /// @param ptToken_ The address of the deployed Principal Token contract
   /// @param ytToken_ The address of the deployed Yield Token contract
@@ -123,6 +128,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   function initialize(
     address owner_,
     address puller_,
+    address consumer_,
     address asset_,
     address ptToken_,
     address ytToken_,
@@ -139,6 +145,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     req.symbol = symbol_;
     _initializeOwner(owner_);
     _grantRoles(puller_, _ROLE_PULLER);
+    _grantRoles(consumer_, _ROLE_CONSUMER);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -204,11 +211,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc IRequest
-  /// @dev Only callable by the owner. The authorized address can then call `mint()` to receive
+  /// @dev Only callable by the owner or consumer role. The authorized address can then call `mint()` to receive
   ///      the tokens after transferring the required underlying asset. This is useful for
   ///      whitelisting participants or implementing custom minting logic.
   ///      Emits an {AuthorizedMinting} event.
-  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwner {
+  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwnerOrRoles(_ROLE_CONSUMER) {
     to.updateMintAuth(ptAmount, ytAmount);
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
@@ -278,7 +285,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRequest
-  /// @dev Only callable by the owner. This function implements the core offer consumption flow:
+  /// @dev Only callable by the owner or consumer role. This function implements the core offer consumption flow:
   ///      1. Validates the offer signature using EIP-712 (via `_validateOffer`)
   ///      2. Calculates the proportional YT amount based on the PT amount being consumed
   ///      3. If `offer.useCallback` is true, calls the maker's `onRequestConsumed` callback to prepare funds
@@ -297,7 +304,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @custom:reverts If the asset transfer fails
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
-    onlyOwner
+    onlyOwnerOrRoles(_ROLE_CONSUMER)
     nonReentrant
     returns (uint256 ytAmount)
   {

@@ -91,6 +91,7 @@ contract RequestFactory {
   ///      Emits a {RequestCreated} event.
   /// @param owner The address that will own the Request (admin privileges)
   /// @param puller The address that will have the puller role
+  /// @param consumer The address that will have the consumer role (can call consume and authorizeMinting)
   /// @param asset The underlying ERC20 asset address (e.g., USDC)
   /// @param name The base name for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for PT/YT tokens (prefixed with "PT-" / "YT-")
@@ -101,6 +102,7 @@ contract RequestFactory {
   function createRequest(
     address owner,
     address puller,
+    address consumer,
     address asset,
     string memory name,
     string memory symbol,
@@ -110,7 +112,7 @@ contract RequestFactory {
     ptToken = PT_TOKEN_BEACON.deployERC1967BeaconProxy();
     ytToken = YT_TOKEN_BEACON.deployERC1967BeaconProxy();
 
-    Request(request).initialize(owner, puller, asset, ptToken, ytToken, name, symbol, repaymentDeadline);
+    Request(request).initialize(owner, puller, consumer, asset, ptToken, ytToken, name, symbol, repaymentDeadline);
     Vault(ptToken).initialize(request);
     Vault(ytToken).initialize(request);
 

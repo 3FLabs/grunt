@@ -52,8 +52,9 @@ contract FacilityRequestOpsTest is Test {
     pm.initialize(address(this), "PM", "PM", 18, address(collateral), address(asset), 0.8e18, address(0));
 
     RequestFactory factory = new RequestFactory(address(this));
-    (request,,) =
-      factory.createRequest(address(this), address(facility), address(asset), "Req", "REQ", uint64(type(uint64).max));
+    (request,,) = factory.createRequest(
+      address(this), address(facility), address(this), address(asset), "Req", "REQ", uint64(type(uint64).max)
+    );
 
     Asset memory depositAsset = Asset({asset: address(asset), isPositionManager: false});
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
