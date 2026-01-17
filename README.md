@@ -1,15 +1,6 @@
-```txt                                                                                                                          █████   
-                                                     ░░███    
- ███████    ████████     █████ ████    ████████      ███████  
-███░░███   ░░███░░███   ░░███ ░███    ░░███░░███    ░░░███░   
-░███ ░███    ░███ ░░░     ░███ ░███     ░███ ░███      ░███    
-░███ ░███    ░███         ░███ ░███     ░███ ░███      ░███ ███
-░░███████    █████        ░░████████    ████ █████     ░░█████ 
- ░░░░░███   ░░░░░          ░░░░░░░░    ░░░░ ░░░░░       ░░░░░  
- ███ ░███                                                      
-░░██████                                                       
- ░░░░░░                                                                                                      
-```
+<p align="center">
+  <img src="static/grunt_visual.jpg" alt="grunt" />
+</p>
 
 <p align="center" style="font-size: smaller;">
   <i>(wip)</i>
@@ -1004,20 +995,20 @@ The `TransferGuard` contract provides compliance controls for token transfers, s
 
 Each token can be configured in one of two modes:
 
-| Mode       | Behavior                                                    |
-| ---------- | ----------------------------------------------------------- |
-| Blocklist  | Default - all addresses allowed EXCEPT those with BLOCKLIST status |
-| Whitelist  | Only addresses with WHITELIST status are allowed            |
+| Mode      | Behavior                                                           |
+| --------- | ------------------------------------------------------------------ |
+| Blocklist | Default - all addresses allowed EXCEPT those with BLOCKLIST status |
+| Whitelist | Only addresses with WHITELIST status are allowed                   |
 
 ### Address Status
 
 Each address can have one of three statuses per guard:
 
-| Status      | Value | Blocklist Mode  | Whitelist Mode  |
-| ----------- | ----- | --------------- | --------------- |
-| `NONE`      | 0     | Allowed         | Blocked         |
-| `WHITELIST` | 1     | Allowed         | Allowed         |
-| `BLOCKLIST` | 2     | Blocked         | Blocked         |
+| Status      | Value | Blocklist Mode | Whitelist Mode |
+| ----------- | ----- | -------------- | -------------- |
+| `NONE`      | 0     | Allowed        | Blocked        |
+| `WHITELIST` | 1     | Allowed        | Allowed        |
+| `BLOCKLIST` | 2     | Blocked        | Blocked        |
 
 ### Token Configuration
 
