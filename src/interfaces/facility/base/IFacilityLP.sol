@@ -14,11 +14,18 @@ interface IFacilityLP {
   function deposit(uint256 id, uint256 amount) external;
 
   /// @notice Withdraws assets from the intent as a liquidity provider.
+  /// @dev If `from` is not `msg.sender`, the caller must be an operator for `from`.
   /// @param id The intent ID.
+  /// @param from The address to burn LP tokens from.
+  /// @param receiver The address to receive the withdrawn assets.
   /// @param amount The amount to withdraw.
-  function withdraw(uint256 id, uint256 amount) external;
+  function withdraw(uint256 id, address from, address receiver, uint256 amount) external;
 
   /// @notice Claims resolved assets for the intent.
+  /// @dev If `from` is not `msg.sender`, the caller must be an operator for `from`.
   /// @param id The intent ID.
-  function claim(uint256 id) external;
+  /// @param from The address to burn LP tokens from.
+  /// @param receiver The address to receive the claimed assets.
+  /// @param shares The amount of shares to burn.
+  function claim(uint256 id, address from, address receiver, uint256 shares) external;
 }

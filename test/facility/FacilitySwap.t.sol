@@ -138,10 +138,13 @@ contract FacilitySwapTest is Test {
     facility.resolve(id1);
     facility.resolve(id2);
 
+    uint256 aliceShares = facility.balanceOf(alice, id1);
+    uint256 bobShares = facility.balanceOf(bob, id2);
+
     vm.prank(alice);
-    facility.claim(id1);
+    facility.claim(id1, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id2);
+    facility.claim(id2, bob, bob, bobShares);
 
     assertEq(debt.balanceOf(alice), 70, "alice output");
     assertEq(debt.balanceOf(bob), 230, "bob output");
@@ -221,10 +224,13 @@ contract FacilitySwapTest is Test {
     facility.resolve(id1);
     facility.resolve(id2);
 
+    uint256 aliceShares = facility.balanceOf(alice, id1);
+    uint256 bobShares = facility.balanceOf(bob, id2);
+
     vm.prank(alice);
-    facility.claim(id1);
+    facility.claim(id1, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id2);
+    facility.claim(id2, bob, bob, bobShares);
 
     assertEq(debt.balanceOf(alice), 103, "alice output");
     assertEq(debt.balanceOf(bob), 197, "bob output");
@@ -267,10 +273,13 @@ contract FacilitySwapTest is Test {
     facility.resolve(id1);
     facility.resolve(id2);
 
+    uint256 aliceShares = facility.balanceOf(alice, id1);
+    uint256 bobShares = facility.balanceOf(bob, id2);
+
     vm.prank(alice);
-    facility.claim(id1);
+    facility.claim(id1, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id2);
+    facility.claim(id2, bob, bob, bobShares);
 
     assertEq(debt.balanceOf(alice), 9, "alice output");
     assertEq(debt.balanceOf(bob), 11, "bob output");
