@@ -54,11 +54,37 @@ library LibIntent {
   using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
   using LibIntent for Intent;
 
+  /// @dev Returns true if the intent is in the depositing phase.
+  /// @param _intent The intent to check.
+  /// @return True if depositing, false otherwise.
+  function isDepositing(Intent storage _intent) internal view returns (bool) {
+    return !_intent.resolved && _intent.properties.resolveStart > block.timestamp;
+  }
+
   /// @dev Returns true if the intent is in the resolving phase.
   /// @param _intent The intent to check.
   /// @return True if resolving, false otherwise.
   function isResolving(Intent storage _intent) internal view returns (bool) {
     return _intent.properties.resolveStart <= block.timestamp && !_intent.resolved;
+  }
+
+  /// @dev Returns true if the intent has been resolved.
+  /// @param _intent The intent to check.
+  /// @return True if resolved, false otherwise.
+  function isResolved(Intent storage _intent) internal view returns (bool) {
+    return _intent.resolved;
+  }
+
+  /// @dev Checks if the deposit amount would exceed the intent's deposit cap.
+  ///      Reverts with DepositCapExceeded if the cap would be exceeded.
+  /// @param _intent The intent to check.
+  /// @param id The intent ID (for error reporting).
+  /// @param amount The amount to deposit.
+  function checkCap(Intent storage _intent, uint256 id, uint256 amount) internal view {
+    uint256 attemptedTotal = _intent.totalSupply + amount;
+    if (attemptedTotal > _intent.properties.depositCap) {
+      revert LibErrors.DepositCapExceeded(id, _intent.properties.depositCap, attemptedTotal);
+    }
   }
 
   /// @dev Swaps tokens between two intents. Both intents must be in resolving state.
