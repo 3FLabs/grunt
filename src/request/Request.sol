@@ -138,7 +138,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     req.name = name_;
     req.symbol = symbol_;
     _initializeOwner(owner_);
-    _setRoles(puller_, _ROLE_PULLER);
+    _grantRoles(puller_, _ROLE_PULLER);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -195,12 +195,12 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @inheritdoc IRequest
   /// @dev Only callable by the owner. Once called, `canWithdraw()` returns true and users
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
-  ///      Emits a {Repaid} event.
+  ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
   /// @custom:reverts If the request has already been repaid
   function setRepaid() external onlyOwner {
     if (_canWithdraw()) revert AlreadyRepaid();
     _requestStorage().repaid = true;
-    emit Repaid();
+    emit Repaid(_asset().balanceOf(address(this)));
   }
 
   /// @inheritdoc IRequest
@@ -218,11 +218,12 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      transfer the collected funds to the puller. The puller
   ///      is then expected to repay by transferring assets back to the contract before
   ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
-  ///      Emits a Transfer event from the underlying asset contract.
+  ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid
   function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
     if (_canWithdraw()) revert AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
+    emit FundsPulled(msg.sender, amount);
     if (data.length > 0) {
       IRequestInteractionsCallback(msg.sender).onPullFunds(amount, data);
     }

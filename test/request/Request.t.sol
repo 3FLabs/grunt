@@ -36,7 +36,8 @@ contract RequestTest is Test {
     keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
   // Events
-  event Repaid();
+  event Repaid(uint256 amount);
+  event FundsPulled(address indexed puller, uint256 amount);
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
   event RequestCreated(address request, address asset, address ptToken, address ytToken);
 
@@ -319,6 +320,11 @@ contract RequestTest is Test {
 
     // Now pull funds (puller receives funds, no callback)
     asset.mint(puller, 0); // Ensure puller exists
+
+    // Expect the FundsPulled event with puller address
+    vm.expectEmit(true, true, true, true, address(request));
+    emit FundsPulled(puller, amount);
+
     vm.prank(puller);
     request.pullFunds(amount, "");
 
@@ -339,7 +345,10 @@ contract RequestTest is Test {
     request.mint();
     vm.stopPrank();
 
-    // Pull partial funds
+    // Pull partial funds - expect event with puller address and partial amount
+    vm.expectEmit(true, true, true, true, address(request));
+    emit FundsPulled(puller, 500_000e6);
+
     vm.prank(puller);
     request.pullFunds(500_000e6, "");
 
@@ -694,7 +703,31 @@ contract RequestTest is Test {
     assertEq(request.canWithdraw(), false);
 
     vm.expectEmit(true, true, true, true, address(request));
-    emit Repaid();
+    emit Repaid(0);
+
+    vm.prank(owner);
+    request.setRepaid();
+
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_emitsAmountWithBalance() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Now set repaid - should emit with the balance
+    vm.expectEmit(true, true, true, true, address(request));
+    emit Repaid(amount);
 
     vm.prank(owner);
     request.setRepaid();

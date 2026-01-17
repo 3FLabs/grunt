@@ -14,7 +14,13 @@ interface IRequest is IRequestInteractions {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Emitted when the contract is marked as repaid, enabling withdrawals.
-  event Repaid();
+  /// @param amount The total amount of underlying assets available for redemption
+  event Repaid(uint256 amount);
+
+  /// @notice Emitted when funds are pulled from the contract.
+  /// @param puller The address that pulled the funds
+  /// @param amount The amount of underlying assets pulled
+  event FundsPulled(address indexed puller, uint256 amount);
 
   /// @notice Emitted when minting authorization is granted to an address.
   /// @param to The address receiving minting authorization
