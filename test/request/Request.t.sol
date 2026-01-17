@@ -119,6 +119,30 @@ contract RequestTest is Test {
     assertEq(ytVault.decimals(), 6);
   }
 
+  function test_factory_isRequest_returnsTrueForDeployedRequest() public view {
+    assertEq(factory.isRequest(address(request)), true);
+  }
+
+  function test_factory_isRequest_returnsFalseForRandomAddress() public view {
+    assertEq(factory.isRequest(address(0x1234)), false);
+  }
+
+  function test_factory_isRequest_tracksMultipleRequests() public {
+    // Deploy additional requests
+    (address req1,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(type(uint64).max));
+    (address req2,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(type(uint64).max));
+
+    // All deployed requests should be tracked
+    assertEq(factory.isRequest(address(request)), true);
+    assertEq(factory.isRequest(req1), true);
+    assertEq(factory.isRequest(req2), true);
+
+    // Random addresses should still return false
+    assertEq(factory.isRequest(makeAddr("notARequest")), false);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   INITIALIZATION TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

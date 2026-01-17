@@ -59,6 +59,14 @@ contract RequestFactory {
   address public immutable YT_TOKEN_BEACON;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all Request contracts deployed by this factory.
+  /// @dev Returns true if the address is a Request deployed by this factory.
+  mapping(address => bool) internal _isRequest;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -116,6 +124,15 @@ contract RequestFactory {
     Vault(ptToken).initialize(request);
     Vault(ytToken).initialize(request);
 
+    _isRequest[request] = true;
+
     emit RequestCreated(request, asset, ptToken, ytToken);
+  }
+
+  /// @notice Checks if an address is a Request contract deployed by this factory.
+  /// @param request The address to check
+  /// @return True if the address is a Request deployed by this factory
+  function isRequest(address request) external view returns (bool) {
+    return _isRequest[request];
   }
 }
