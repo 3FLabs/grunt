@@ -7,9 +7,9 @@ import {TokenController} from "./abstract/tokens/TokenController.sol";
 import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
-import {IPositionManagerRequest} from "../interfaces/request/IPositionManagerRequest.sol";
+import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.sol";
 import {IRequestCallback} from "../interfaces/request/IRequestCallback.sol";
-import {IPositionManagerRequestCallback} from "../interfaces/request/IPositionManagerRequestCallback.sol";
+import {IRequestInteractionsCallback} from "../interfaces/request/IRequestInteractionsCallback.sol";
 import {ITokenController} from "../interfaces/request/ITokenController.sol";
 import {Offer} from "../interfaces/request/IOfferReceiver.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
@@ -207,7 +207,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
 
-  /// @inheritdoc IPositionManagerRequest
+  /// @inheritdoc IRequestInteractions
   /// @dev Only callable by the puller role. This function is used after offers are consumed to
   ///      transfer the collected funds to the puller. The puller
   ///      is then expected to repay by transferring assets back to the contract before
@@ -218,11 +218,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     if (_canWithdraw()) revert AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
     if (data.length > 0) {
-      IPositionManagerRequestCallback(msg.sender).onPullFunds(amount, data);
+      IRequestInteractionsCallback(msg.sender).onPullFunds(amount, data);
     }
   }
 
-  /// @inheritdoc IPositionManagerRequest
+  /// @inheritdoc IRequestInteractions
   /// @dev Transfers the underlying assets back to the contract. This is purely optional
   ///      with the given implementation and may be done via a simple transfer.
   ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
@@ -230,6 +230,13 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   function repay(uint256 amount) external {
     if (_canWithdraw()) revert AlreadyRepaid();
     _asset().safeTransferFrom(msg.sender, address(this), amount);
+  }
+
+  /// @inheritdoc IRequestInteractions
+  /// @dev Returns true only when the request has been explicitly marked as repaid via setRepaid().
+  ///      This differs from canWithdraw() which can also return true when the repayment deadline passes.
+  function isRepaid() external view returns (bool) {
+    return _requestStorage().repaid;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

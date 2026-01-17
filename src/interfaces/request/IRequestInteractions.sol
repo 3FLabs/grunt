@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-/// @title IPositionManagerRequest
-/// @notice Interface for the PositionManagerRequest contract that pulls funds from the contract.
-interface IPositionManagerRequest {
+/// @title IRequestInteractions
+/// @notice Interface for interactions with request contracts - pulling funds and repaying.
+/// @dev This interface defines the operational side of request contracts that handle
+///      fund management (pulling and repaying). It is separate from the vault controller
+///      concerns which handle PT/YT token redemptions.
+interface IRequestInteractions {
+  /// @notice Returns whether the request has been repaid.
+  /// @dev This is intended for use by consumers of the request to check repayment status.
+  ///      Note that this may differ from canWithdraw() which can also be true due to
+  ///      deadline expiration.
+  /// @return repaid True if the request has been marked as repaid
+  function isRepaid() external view returns (bool repaid);
+
   /// @notice Transfers underlying assets from the contract to the puller.
   /// @dev This function is used after offers are consumed to transfer the collected funds
   ///      to the borrower. The borrower then repays by transferring assets back to the

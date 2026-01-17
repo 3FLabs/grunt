@@ -9,7 +9,7 @@ import {Vault} from "../../src/request/Vault.sol";
 import {ControlledVault} from "../../src/request/abstract/vault/ControlledVault.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
-import {MockPositionManagerRequestCallback} from "../mock/request/MockPositionManagerRequestCallback.sol";
+import {MockRequestInteractionsCallback} from "../mock/request/MockRequestInteractionsCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
@@ -379,7 +379,7 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Deploy callback contract
-    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+    MockRequestInteractionsCallback callback = new MockRequestInteractionsCallback();
 
     // Create a new request with callback as puller
     vm.prank(owner);
@@ -426,7 +426,7 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Deploy callback contract that will revert
-    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+    MockRequestInteractionsCallback callback = new MockRequestInteractionsCallback();
     callback.setShouldRevert(true);
 
     // Create a new request with callback as puller
@@ -450,7 +450,7 @@ contract RequestTest is Test {
     // Pull funds with callback data - should revert
     bytes memory callbackData = abi.encode("test");
     vm.prank(address(callback));
-    vm.expectRevert("MockPositionManagerRequestCallback: forced revert");
+    vm.expectRevert("MockRequestInteractionsCallback: forced revert");
     callbackRequest.pullFunds(amount, callbackData);
   }
 
@@ -469,7 +469,7 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Deploy callback contract
-    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+    MockRequestInteractionsCallback callback = new MockRequestInteractionsCallback();
 
     // Create a new request with callback as puller
     vm.prank(owner);
@@ -514,7 +514,7 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Deploy callback contract
-    MockPositionManagerRequestCallback callback = new MockPositionManagerRequestCallback();
+    MockRequestInteractionsCallback callback = new MockRequestInteractionsCallback();
 
     // Create a new request with callback as puller
     vm.prank(owner);
@@ -717,6 +717,42 @@ contract RequestTest is Test {
     vm.prank(owner);
     vm.expectRevert(AlreadyRepaid.selector);
     request.setRepaid();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   IS REPAID TESTS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isRepaid_initiallyFalse() public view {
+    assertEq(request.isRepaid(), false);
+  }
+
+  function test_isRepaid_trueAfterSetRepaid() public {
+    assertEq(request.isRepaid(), false);
+
+    vm.prank(owner);
+    request.setRepaid();
+
+    assertEq(request.isRepaid(), true);
+  }
+
+  function test_isRepaid_falseWhenDeadlinePassed() public {
+    // Create a request with a deadline that will pass
+    uint64 deadline = uint64(block.timestamp + 1 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DL", deadline);
+    Request deadlineRequest = Request(reqAddr);
+
+    // Initially both isRepaid and canWithdraw should be false
+    assertEq(deadlineRequest.isRepaid(), false);
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // Warp past the deadline
+    vm.warp(deadline + 1);
+
+    // canWithdraw should be true (deadline passed), but isRepaid should still be false
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), false);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
