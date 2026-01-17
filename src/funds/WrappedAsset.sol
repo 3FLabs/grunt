@@ -23,16 +23,16 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for asset issuers authorized to mint tokens.
-  uint256 public constant ISSUER_ROLE = _ROLE_0;
+  uint256 internal constant ISSUER_ROLE = _ROLE_0;
 
   /// @notice Role for addresses authorized to send wrapper tokens.
   /// @dev Restricts transfers to protocol contracts and authorized lending protocols to prevent unauthorized movement.
   ///      Liquidators can still burn tokens to receive underlying and complete liquidations.
-  uint256 public constant SENDER_ROLE = _ROLE_1;
+  uint256 internal constant SENDER_ROLE = _ROLE_1;
 
   /// @notice Role for addresses authorized to receive wrapper tokens from anyone.
   /// @dev Addresses with this role can receive tokens even from senders without SENDER_ROLE.
-  uint256 public constant RECEIVER_ROLE = _ROLE_2;
+  uint256 internal constant RECEIVER_ROLE = _ROLE_2;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
@@ -113,12 +113,13 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IWrappedAsset
-  /// @dev Wraps underlying asset: pulls underlying from `from`, mints wrapper to `to`.
-  ///      Requires ISSUER_ROLE. The caller must ensure `from` has approved this contract.
-  function mint(address from, address to, uint256 amount) external override onlyRoles(ISSUER_ROLE) {
+  /// @dev Wraps underlying asset: pulls underlying from caller, mints wrapper to `to`.
+  ///      If `to != msg.sender`, the caller must have ISSUER_ROLE.
+  function mint(address to, uint256 amount) external override {
     if (to == address(0)) revert MintToZeroAddress();
+    if (to != msg.sender) _checkRoles(ISSUER_ROLE);
     WrappedAssetStorage storage $ = _wrappedAssetStorage();
-    $.underlying.safeTransferFrom(from, address(this), amount);
+    $.underlying.safeTransferFrom(msg.sender, address(this), amount);
     _mint(to, amount);
   }
 

@@ -14,7 +14,12 @@ contract WrappedAssetTest is Test {
   error BurnToZeroAddress();
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x17335d0a3e97e0293c2bb91805cb7279c336f9ba807e8dbe36cf5097172d3300;
-  uint256 private constant EXTRA_ROLE = 1 << 2;
+  uint256 private constant EXTRA_ROLE = 1 << 3;
+
+  // WrappedAsset roles (matching internal constants)
+  uint256 private constant ISSUER_ROLE = 1 << 0;
+  uint256 private constant SENDER_ROLE = 1 << 1;
+  uint256 private constant RECEIVER_ROLE = 1 << 2;
 
   MockERC20 public underlying;
   address public owner;
@@ -37,7 +42,7 @@ contract WrappedAssetTest is Test {
     assertEq(token.name(), "Wrapped USCC", "name");
     assertEq(token.symbol(), "wUSCC", "symbol");
     assertEq(token.owner(), owner, "owner");
-    assertEq(token.rolesOf(issuer), token.ISSUER_ROLE() | token.SENDER_ROLE(), "issuer roles");
+    assertEq(token.rolesOf(issuer), ISSUER_ROLE | SENDER_ROLE, "issuer roles");
     assertEq(token.underlying(), address(underlying), "underlying");
   }
 
@@ -56,17 +61,33 @@ contract WrappedAssetTest is Test {
   /*                           MINT                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_Mint_Success() public {
+  function test_Mint_ToSelf_Success() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
-    // Give issuer underlying tokens and approve
+    // Anyone can mint to themselves
+    underlying.mint(user, 100);
+    vm.prank(user);
+    underlying.approve(address(token), 100);
+
+    vm.prank(user);
+    token.mint(user, 100);
+
+    assertEq(token.balanceOf(user), 100, "wrapper balance");
+    assertEq(token.totalSupply(), 100, "total supply");
+    assertEq(underlying.balanceOf(address(token)), 100, "underlying held by wrapper");
+    assertEq(underlying.balanceOf(user), 0, "user underlying spent");
+  }
+
+  function test_Mint_ToOther_WithIssuerRole_Success() public {
+    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
+
+    // Issuer can mint to others
     underlying.mint(issuer, 100);
     vm.prank(issuer);
     underlying.approve(address(token), 100);
 
-    // Mint wrapper tokens
     vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    token.mint(user, 100);
 
     assertEq(token.balanceOf(user), 100, "wrapper balance");
     assertEq(token.totalSupply(), 100, "total supply");
@@ -74,19 +95,20 @@ contract WrappedAssetTest is Test {
     assertEq(underlying.balanceOf(issuer), 0, "issuer underlying spent");
   }
 
-  function test_Mint_OnlyIssuerRole() public {
+  function test_Mint_ToOther_WithoutIssuerRole_Reverts() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     underlying.mint(user, 100);
     vm.prank(user);
     underlying.approve(address(token), 100);
 
+    // User without ISSUER_ROLE cannot mint to others
     vm.prank(user);
     vm.expectRevert(Unauthorized.selector);
-    token.mint(user, user, 100);
+    token.mint(owner, 100);
   }
 
-  function test_Mint_ToZeroAddress() public {
+  function test_Mint_ToZeroAddress_Reverts() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     underlying.mint(issuer, 100);
@@ -95,14 +117,14 @@ contract WrappedAssetTest is Test {
 
     vm.prank(issuer);
     vm.expectRevert(MintToZeroAddress.selector);
-    token.mint(issuer, address(0), 100);
+    token.mint(address(0), 100);
   }
 
   function test_Mint_MultipleIssuers() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
     address issuerTwo = makeAddr("issuerTwo");
-    uint256 issuerRole = token.ISSUER_ROLE();
-    uint256 senderRole = token.SENDER_ROLE();
+    uint256 issuerRole = ISSUER_ROLE;
+    uint256 senderRole = SENDER_ROLE;
     vm.prank(owner);
     token.grantRoles(issuerTwo, issuerRole | senderRole);
 
@@ -117,39 +139,23 @@ contract WrappedAssetTest is Test {
     underlying.approve(address(token), 50);
 
     vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    token.mint(user, 100);
     vm.prank(issuerTwo);
-    token.mint(issuerTwo, user, 50);
+    token.mint(user, 50);
 
     assertEq(token.balanceOf(user), 150, "balance");
     assertEq(underlying.balanceOf(address(token)), 150, "underlying held");
   }
 
-  function test_Mint_FromDifferentAddress() public {
-    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
-
-    // Give user underlying tokens and approve the wrapper
-    underlying.mint(user, 100);
-    vm.prank(user);
-    underlying.approve(address(token), 100);
-
-    // Issuer mints wrapper to user, pulling underlying from user
-    vm.prank(issuer);
-    token.mint(user, user, 100);
-
-    assertEq(token.balanceOf(user), 100, "wrapper balance");
-    assertEq(underlying.balanceOf(user), 0, "user underlying spent");
-  }
-
   function test_Transfer_FromWithoutSenderRole_Reverts() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
-    // Mint wrapper to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    // Mint wrapper to user (user mints to self)
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // User cannot transfer without SENDER_ROLE (and owner doesn't have RECEIVER_ROLE)
     vm.prank(user);
@@ -161,14 +167,14 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint wrapper to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // Grant RECEIVER_ROLE to owner
-    uint256 receiverRole = token.RECEIVER_ROLE();
+    uint256 receiverRole = RECEIVER_ROLE;
     vm.prank(owner);
     token.grantRoles(owner, receiverRole);
 
@@ -184,14 +190,14 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint wrapper to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // Grant SENDER_ROLE to user
-    uint256 senderRole = token.SENDER_ROLE();
+    uint256 senderRole = SENDER_ROLE;
     vm.prank(owner);
     token.grantRoles(user, senderRole);
 
@@ -208,11 +214,11 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint wrapper to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // Neither sender has SENDER_ROLE nor recipient has RECEIVER_ROLE
     address recipient = makeAddr("recipient");
@@ -228,12 +234,12 @@ contract WrappedAssetTest is Test {
   function test_Burn_Success() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
-    // Mint first
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    // Mint first (user mints to self)
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // User burns their own tokens
     vm.prank(user);
@@ -249,11 +255,11 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // User can burn without SENDER_ROLE
     vm.prank(user);
@@ -267,11 +273,11 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint first
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     vm.prank(user);
     vm.expectRevert(BurnToZeroAddress.selector);
@@ -291,11 +297,11 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // Third party tries to burn user's tokens without approval
     address thirdParty = makeAddr("thirdParty");
@@ -308,11 +314,11 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // User approves third party
     address thirdParty = makeAddr("thirdParty");
@@ -331,11 +337,11 @@ contract WrappedAssetTest is Test {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
     // Mint to user
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
     // User burns and sends underlying to owner
     vm.prank(user);
@@ -377,13 +383,13 @@ contract WrappedAssetTest is Test {
   function test_Transfer_Success() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
-    uint256 senderRole = token.SENDER_ROLE();
+    uint256 senderRole = SENDER_ROLE;
     vm.prank(owner);
     token.grantRoles(user, senderRole);
 
@@ -402,13 +408,13 @@ contract WrappedAssetTest is Test {
   function test_TransferFrom_Success() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
 
-    underlying.mint(issuer, 100);
-    vm.prank(issuer);
+    underlying.mint(user, 100);
+    vm.prank(user);
     underlying.approve(address(token), 100);
-    vm.prank(issuer);
-    token.mint(issuer, user, 100);
+    vm.prank(user);
+    token.mint(user, 100);
 
-    uint256 senderRole = token.SENDER_ROLE();
+    uint256 senderRole = SENDER_ROLE;
     vm.prank(owner);
     token.grantRoles(user, senderRole);
 
@@ -427,7 +433,7 @@ contract WrappedAssetTest is Test {
   function test_Roles_GrantIssuerRole() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
     address newIssuer = makeAddr("newIssuer");
-    uint256 issuerRole = token.ISSUER_ROLE();
+    uint256 issuerRole = ISSUER_ROLE;
     vm.prank(owner);
     token.grantRoles(newIssuer, issuerRole);
     assertEq(token.rolesOf(newIssuer), issuerRole, "issuer role");
@@ -435,16 +441,16 @@ contract WrappedAssetTest is Test {
 
   function test_Roles_RevokeIssuerRole() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
-    uint256 issuerRole = token.ISSUER_ROLE();
+    uint256 issuerRole = ISSUER_ROLE;
     vm.prank(owner);
     token.revokeRoles(issuer, issuerRole);
-    assertEq(token.rolesOf(issuer), token.SENDER_ROLE(), "revoked");
+    assertEq(token.rolesOf(issuer), SENDER_ROLE, "revoked");
   }
 
   function test_Roles_MultipleRoles() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
-    uint256 issuerRole = token.ISSUER_ROLE();
-    uint256 combined = issuerRole | token.SENDER_ROLE() | EXTRA_ROLE;
+    uint256 issuerRole = ISSUER_ROLE;
+    uint256 combined = issuerRole | SENDER_ROLE | EXTRA_ROLE;
     vm.prank(owner);
     token.grantRoles(issuer, EXTRA_ROLE);
     assertEq(token.rolesOf(issuer), combined, "combined");
@@ -460,7 +466,7 @@ contract WrappedAssetTest is Test {
   function test_Roles_GrantReceiverRole() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
     address receiver = makeAddr("receiver");
-    uint256 receiverRole = token.RECEIVER_ROLE();
+    uint256 receiverRole = RECEIVER_ROLE;
     vm.prank(owner);
     token.grantRoles(receiver, receiverRole);
     assertEq(token.rolesOf(receiver), receiverRole, "receiver role");
@@ -469,7 +475,7 @@ contract WrappedAssetTest is Test {
   function test_Roles_RevokeReceiverRole() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
     address receiver = makeAddr("receiver");
-    uint256 receiverRole = token.RECEIVER_ROLE();
+    uint256 receiverRole = RECEIVER_ROLE;
 
     // Grant then revoke
     vm.prank(owner);
@@ -529,12 +535,12 @@ contract WrappedAssetTest is Test {
   /*                          HELPERS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function _deployProxy(string memory symbol, string memory name) internal returns (WrappedAsset) {
+  function _deployProxy(string memory symbol_, string memory name_) internal returns (WrappedAsset) {
     WrappedAsset implementation = new WrappedAsset();
     address proxy = LibClone.deployERC1967(address(implementation));
     WrappedAsset token = WrappedAsset(proxy);
     vm.prank(owner);
-    token.initialize(owner, issuer, address(underlying), symbol, name, 18);
+    token.initialize(owner, issuer, address(underlying), symbol_, name_, 18);
     return token;
   }
 }

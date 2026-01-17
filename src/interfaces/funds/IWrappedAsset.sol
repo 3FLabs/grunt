@@ -4,12 +4,12 @@ pragma solidity ^0.8.20;
 /// @notice Interface for a wrapped asset token with wrap/unwrap capabilities.
 /// @dev The wrapper holds underlying assets 1:1 and mints/burns wrapper tokens accordingly.
 interface IWrappedAsset {
-  /// @notice Wraps underlying asset: pulls underlying from `from`, mints wrapper tokens to `to`.
-  /// @dev Requires ISSUER_ROLE. The `from` address must have approved this contract to spend underlying.
-  /// @param from The address to pull underlying asset from.
+  /// @notice Wraps underlying asset: pulls underlying from caller, mints wrapper tokens to `to`.
+  /// @dev If `to != msg.sender`, the caller must have ISSUER_ROLE.
+  ///      The caller must have approved this contract to spend underlying.
   /// @param to The address to mint wrapper tokens to.
   /// @param amount The amount of tokens to wrap.
-  function mint(address from, address to, uint256 amount) external;
+  function mint(address to, uint256 amount) external;
 
   /// @notice Unwraps to underlying asset: burns wrapper tokens from `from`, sends underlying to `to`.
   /// @dev If `from != msg.sender`, the caller must have sufficient allowance on the wrapper token.

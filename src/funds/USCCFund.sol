@@ -377,7 +377,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     } else {
       // Mint wUSCC back to depositor (pulls USCC from this contract)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
@@ -403,7 +403,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
       USDC.safeTransfer(msg.sender, _amount);
