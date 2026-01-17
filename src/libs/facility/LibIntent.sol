@@ -86,5 +86,12 @@ library LibIntent {
       revert LibErrors.DepositCapExceeded(id, _intent.properties.depositCap, attemptedTotal);
     }
   }
+
+  /// @dev Returns true if the intent has an active order.
+  /// @param _intent The intent to check.
+  /// @return True if active order, false otherwise.
+  function hasActiveOrder(Intent storage _intent) internal view returns (bool) {
+    return _intent.order.owner != address(0);
+  }
 }
 
