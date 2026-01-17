@@ -15,8 +15,7 @@ import {IFund} from "./interfaces/funds/IFund.sol";
 import {IPositionManager} from "./interfaces/manager/IPositionManager.sol";
 import {ITransferGuard} from "./interfaces/guard/ITransferGuard.sol";
 import {IVaultController} from "./interfaces/request/IVaultController.sol";
-import {IRequest} from "./interfaces/request/IRequest.sol";
-import {IPositionManagerRequest} from "./interfaces/request/IPositionManagerRequest.sol";
+import {IRequestInteractions} from "./interfaces/request/IRequestInteractions.sol";
 import {IERC20} from "./interfaces/integrations/IERC20.sol";
 import {Order, Mode, State, Id} from "./libs/Order.sol";
 
@@ -454,7 +453,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     Intent storage _intent = $.intents[id];
     address _request = _intent.request;
 
-    if (_request != address(0) && !IRequest(_request).canWithdraw()) {
+    if (_request != address(0) && !IVaultController(_request).canWithdraw()) {
       // TODO canWithdraw is not enough (need intermediary state like `repaid()`)
       // TODO do the same change for resolve()
       // TODO OR Check that the request is not used yet.
@@ -601,7 +600,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     address asset = IVaultController(_intent.request).asset();
 
-    IPositionManagerRequest(_intent.request).pullFunds(amount, bytes(""));
+    IRequestInteractions(_intent.request).pullFunds(amount, bytes(""));
     _intent.amounts.add(asset, amount);
   }
 
@@ -619,7 +618,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
 
     _intent.amounts.sub(asset, amount);
     asset.safeApproveWithRetry(_intent.request, amount);
-    IPositionManagerRequest(_intent.request).repay(amount);
+    IRequestInteractions(_intent.request).repay(amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
