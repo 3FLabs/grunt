@@ -304,28 +304,23 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _checkContract(params.targetAsset.asset);
     _checkContract(params.guardKey);
 
-    _checkAssetsAndGuardKey(params.depositAsset, params.targetAsset, params.guardKey);
-
     $.lastIntentId = id;
 
     Intent storage intent = $.intents[id];
 
-    // TODO Move in internal function
-    intent.properties.targetAsset = params.targetAsset;
-    intent.properties.guardKey = params.guardKey;
-    emit IntentTargetUpdated(id, params.targetAsset, params.guardKey);
-
-    // TODO Move in internal function
-    intent.properties.depositCap = params.depositCap;
-    emit DepositCapUpdated(id, params.depositCap);
-
-    // TODO Move in internal function
-    intent.properties.resolveStart = params.resolveStart;
-    emit ResolveStartUpdated(id, params.resolveStart);
-
+    // Sets the intent immutable properties.
     intent.properties.depositAsset = params.depositAsset;
     intent.properties.quorum = params.quorum;
     emit IntentCreated(id, params.depositAsset, params.quorum);
+
+    // Checks and updates the target asset and guard key based on the deposit asset.
+    _updateTargetAsset(id, intent, params.depositAsset, params.targetAsset, params.guardKey);
+
+    // Updates the deposit cap.
+    _updateDepositCap(id, intent, params.depositCap);
+
+    // Updates the resolve start.
+    _updateResolveStart(id, intent, params.resolveStart);
   }
 
   /// @inheritdoc IFacility
@@ -336,12 +331,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    _checkAssetsAndGuardKey(_intent.properties.depositAsset, newTargetAsset, newGuardKey);
-
-    _intent.properties.targetAsset = newTargetAsset;
-    _intent.properties.guardKey = newGuardKey;
-
-    emit IntentTargetUpdated(id, newTargetAsset, newGuardKey);
+    _updateTargetAsset(id, _intent, _intent.properties.depositAsset, newTargetAsset, newGuardKey);
   }
 
   /// @inheritdoc IFacility
@@ -354,8 +344,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     if (_intent.resolved) revert AlreadyResolved(id);
     if (_isResolving(_intent)) revert AlreadyResolving(id);
 
-    _intent.properties.resolveStart = uint40(block.timestamp);
-    emit ResolveStartUpdated(id, uint40(block.timestamp));
+    _updateResolveStart(id, _intent, uint40(block.timestamp));
   }
 
   /// @inheritdoc IFacility
@@ -430,8 +419,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     FacilityStorage storage $ = _facilityStorage();
     Intent storage _intent = $.intents[id];
 
-    _intent.properties.depositCap = newDepositCap;
-    emit DepositCapUpdated(id, newDepositCap);
+    _updateDepositCap(id, _intent, newDepositCap);
   }
 
   /// @inheritdoc IFacility
@@ -1017,5 +1005,30 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
         )
       )
     );
+  }
+
+  function _updateTargetAsset(
+    uint256 id,
+    Intent storage intent,
+    Asset memory depositAsset,
+    Asset memory newTargetAsset,
+    address newGuardKey
+  ) internal {
+    // Checks that the new target asset and guard key are compatible with the deposit asset.
+    _checkAssetsAndGuardKey(depositAsset, newTargetAsset, newGuardKey);
+
+    intent.properties.targetAsset = newTargetAsset;
+    intent.properties.guardKey = newGuardKey;
+    emit IntentTargetUpdated(id, newTargetAsset, newGuardKey);
+  }
+
+  function _updateDepositCap(uint256 id, Intent storage intent, uint256 newDepositCap) internal {
+    intent.properties.depositCap = newDepositCap;
+    emit DepositCapUpdated(id, newDepositCap);
+  }
+
+  function _updateResolveStart(uint256 id, Intent storage intent, uint40 newResolveStart) internal {
+    intent.properties.resolveStart = newResolveStart;
+    emit ResolveStartUpdated(id, newResolveStart);
   }
 }
