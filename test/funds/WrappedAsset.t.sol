@@ -151,10 +151,74 @@ contract WrappedAssetTest is Test {
     vm.prank(issuer);
     token.mint(issuer, user, 100);
 
-    // User cannot transfer without SENDER_ROLE
+    // User cannot transfer without SENDER_ROLE (and owner doesn't have RECEIVER_ROLE)
     vm.prank(user);
     vm.expectRevert(Unauthorized.selector);
     token.transfer(owner, 1);
+  }
+
+  function test_Transfer_ToReceiverRole_Success() public {
+    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
+
+    // Mint wrapper to user
+    underlying.mint(issuer, 100);
+    vm.prank(issuer);
+    underlying.approve(address(token), 100);
+    vm.prank(issuer);
+    token.mint(issuer, user, 100);
+
+    // Grant RECEIVER_ROLE to owner
+    uint256 receiverRole = token.RECEIVER_ROLE();
+    vm.prank(owner);
+    token.grantRoles(owner, receiverRole);
+
+    // User can transfer to owner even without SENDER_ROLE because owner has RECEIVER_ROLE
+    vm.prank(user);
+    token.transfer(owner, 50);
+
+    assertEq(token.balanceOf(owner), 50, "owner received");
+    assertEq(token.balanceOf(user), 50, "user remaining");
+  }
+
+  function test_Transfer_FromSenderRole_ToNonReceiver_Success() public {
+    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
+
+    // Mint wrapper to user
+    underlying.mint(issuer, 100);
+    vm.prank(issuer);
+    underlying.approve(address(token), 100);
+    vm.prank(issuer);
+    token.mint(issuer, user, 100);
+
+    // Grant SENDER_ROLE to user
+    uint256 senderRole = token.SENDER_ROLE();
+    vm.prank(owner);
+    token.grantRoles(user, senderRole);
+
+    // User with SENDER_ROLE can transfer to anyone (even without RECEIVER_ROLE)
+    address recipient = makeAddr("recipient");
+    vm.prank(user);
+    token.transfer(recipient, 50);
+
+    assertEq(token.balanceOf(recipient), 50, "recipient received");
+    assertEq(token.balanceOf(user), 50, "user remaining");
+  }
+
+  function test_Transfer_NoSenderRole_NoReceiverRole_Reverts() public {
+    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
+
+    // Mint wrapper to user
+    underlying.mint(issuer, 100);
+    vm.prank(issuer);
+    underlying.approve(address(token), 100);
+    vm.prank(issuer);
+    token.mint(issuer, user, 100);
+
+    // Neither sender has SENDER_ROLE nor recipient has RECEIVER_ROLE
+    address recipient = makeAddr("recipient");
+    vm.prank(user);
+    vm.expectRevert(Unauthorized.selector);
+    token.transfer(recipient, 50);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -391,6 +455,29 @@ contract WrappedAssetTest is Test {
     vm.prank(owner);
     token.transferOwnership(user);
     assertEq(token.owner(), user, "new owner");
+  }
+
+  function test_Roles_GrantReceiverRole() public {
+    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
+    address receiver = makeAddr("receiver");
+    uint256 receiverRole = token.RECEIVER_ROLE();
+    vm.prank(owner);
+    token.grantRoles(receiver, receiverRole);
+    assertEq(token.rolesOf(receiver), receiverRole, "receiver role");
+  }
+
+  function test_Roles_RevokeReceiverRole() public {
+    WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
+    address receiver = makeAddr("receiver");
+    uint256 receiverRole = token.RECEIVER_ROLE();
+
+    // Grant then revoke
+    vm.prank(owner);
+    token.grantRoles(receiver, receiverRole);
+    vm.prank(owner);
+    token.revokeRoles(receiver, receiverRole);
+
+    assertEq(token.rolesOf(receiver), 0, "revoked");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

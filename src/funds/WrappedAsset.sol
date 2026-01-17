@@ -30,6 +30,10 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   ///      Liquidators can still burn tokens to receive underlying and complete liquidations.
   uint256 public constant SENDER_ROLE = _ROLE_1;
 
+  /// @notice Role for addresses authorized to receive wrapper tokens from anyone.
+  /// @dev Addresses with this role can receive tokens even from senders without SENDER_ROLE.
+  uint256 public constant RECEIVER_ROLE = _ROLE_2;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ERRORS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -163,9 +167,13 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /*                          ERC20 HOOK                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Enforces that token transfers (excluding burns and mint) can only originate from addresses with SENDER_ROLE.
+  /// @dev Enforces transfer restrictions (excluding burns and mints):
+  ///      - Transfers are allowed if the sender has SENDER_ROLE, OR
+  ///      - Transfers are allowed if the receiver has RECEIVER_ROLE
   function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
-    if (from != address(0) && to != address(0) && !hasAllRoles(from, SENDER_ROLE)) revert Unauthorized();
+    if (from != address(0) && to != address(0) && !hasAnyRole(to, RECEIVER_ROLE) && !hasAnyRole(from, SENDER_ROLE)) {
+      revert Unauthorized();
+    }
     super._beforeTokenTransfer(from, to, amount);
   }
 }
