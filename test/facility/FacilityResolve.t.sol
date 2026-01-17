@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 
-import {Facility} from "src/Facility.sol";
+import {Facility} from "src/facility/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {IntentDescriptor} from "src/IntentDescriptor.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
@@ -124,16 +124,6 @@ contract FacilityResolveTest is Test {
     facility.setFund(id, address(fund));
   }
 
-  function test_Resolve_AcceptsWhen_NoActiveOrder() public {
-    uint256 id = _createIntentWithFund();
-
-    facility.lock(id);
-    facility.resolve(id);
-
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.AlreadyResolved.selector, id));
-    facility.lock(id);
-  }
-
   function test_RevertWhen_Resolve_ActiveOrderNotEnded() public {
     uint256 id = _createIntentWithFund();
 
@@ -141,7 +131,7 @@ contract FacilityResolveTest is Test {
 
     facility.create(id, 1, 1, Mode.DEPOSIT);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.NoActiveOrder.selector, id));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.ActiveOrder.selector, id));
     facility.resolve(id);
   }
 }

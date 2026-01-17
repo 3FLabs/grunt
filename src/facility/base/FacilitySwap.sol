@@ -41,7 +41,7 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
   ///      Uses EIP-712 typed data hashing for digest computation.
   ///      Each digest can only be used once to prevent replay attacks.
   ///      Both intents must be in resolving state for the swap to succeed.
-  function swap(SwapParams calldata params, address[] calldata signers, bytes[] calldata signatures)
+  function swap(SwapParams memory params, address[] calldata signers, bytes[] calldata signatures)
     external
     override
     nonReentrant
@@ -59,13 +59,14 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
     Intent storage intent1 = _facilityStorage.getResolvingIntent(params.id1);
     Intent storage intent2 = _facilityStorage.getResolvingIntent(params.id2);
 
-    // get the higher quorum
-    uint256 _quorum = FixedPointMathLib.max(intent1.properties.quorum, intent2.properties.quorum);
+    { // get the higher quorum
+      uint256 _quorum = FixedPointMathLib.max(intent1.properties.quorum, intent2.properties.quorum);
 
-    // compute the digest and validate the signatures
-    bytes32 _digest = _hashTypedData(keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params)));
-    _facilityStorage.checkDigest(_digest);
-    _checkSwapSignatures(_digest, signers, signatures, _quorum);
+      // compute the digest and validate the signatures
+      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params)));
+      _facilityStorage.checkDigest(_digest);
+      _checkSwapSignatures(_digest, signers, signatures, _quorum);
+    }
 
     // swap between intents (ensures both intents are in resolving state)
     intent1.amounts.sub(params.token1, params.amount1);

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IIntentDescriptor} from "./interfaces/facility/IIntentDescriptor.sol";
-import {IFacility} from "./interfaces/facility/IFacility.sol";
+import {IIntentDescriptor} from "src/interfaces/facility/IIntentDescriptor.sol";
+import {IFacility} from "src/interfaces/facility/IFacility.sol";
 import {LibString} from "lib/solady/src/utils/LibString.sol";
 import {Base64} from "lib/solady/src/utils/Base64.sol";
 

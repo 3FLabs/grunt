@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {Test, Vm} from "forge-std/Test.sol";
 
-import {Facility} from "src/Facility.sol";
+import {Facility} from "src/facility/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {IntentDescriptor} from "src/IntentDescriptor.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 
@@ -39,6 +39,9 @@ contract MockEIP1271Guardian {
 }
 
 contract FacilitySwapTest is Test {
+  /// @dev GUARDIAN_ROLE from FacilityRoles (_ROLE_1 = 1 << 1 = 2)
+  uint256 internal constant GUARDIAN_ROLE = 2;
+
   FacilityEIP712Harness internal facility;
   PositionManager internal pm;
   MockERC20 internal collateral;
@@ -173,8 +176,8 @@ contract FacilitySwapTest is Test {
     Vm.Wallet memory guardian2 = vm.createWallet("guardian2");
 
     // Grant guardian roles.
-    facility.grantRoles(guardian1.addr, facility.GUARDIAN_ROLE());
-    facility.grantRoles(guardian2.addr, facility.GUARDIAN_ROLE());
+    facility.grantRoles(guardian1.addr, GUARDIAN_ROLE);
+    facility.grantRoles(guardian2.addr, GUARDIAN_ROLE);
 
     uint256 id1 = _createIntent(1);
     uint256 id2 = _createIntent(2);
@@ -231,7 +234,7 @@ contract FacilitySwapTest is Test {
     Vm.Wallet memory eoa = vm.createWallet("eoaGuardian");
     MockEIP1271Guardian guardian = new MockEIP1271Guardian(eoa.addr);
 
-    facility.grantRoles(address(guardian), facility.GUARDIAN_ROLE());
+    facility.grantRoles(address(guardian), GUARDIAN_ROLE);
 
     uint256 id1 = _createIntent(1);
     uint256 id2 = _createIntent(0);
@@ -277,11 +280,11 @@ contract FacilitySwapTest is Test {
     Vm.Wallet memory guardian1 = vm.createWallet("guardian1");
     Vm.Wallet memory guardian2 = vm.createWallet("guardian2");
 
-    facility.grantRoles(guardian1.addr, facility.GUARDIAN_ROLE());
-    facility.grantRoles(guardian2.addr, facility.GUARDIAN_ROLE());
+    facility.grantRoles(guardian1.addr, GUARDIAN_ROLE);
+    facility.grantRoles(guardian2.addr, GUARDIAN_ROLE);
 
-    uint256 id1 = _createIntent(1);
-    uint256 id2 = _createIntent(1);
+    uint256 id1 = _createIntent(2);
+    uint256 id2 = _createIntent(2);
 
     _deposit(alice, id1, 10);
     _deposit(bob, id2, 10);

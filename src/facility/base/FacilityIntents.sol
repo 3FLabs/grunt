@@ -5,7 +5,6 @@ import {FacilityRoles} from "./FacilityRoles.sol";
 import {IFacilityIntents} from "src/interfaces/facility/base/IFacilityIntents.sol";
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
-import {IVaultController} from "src/interfaces/request/IVaultController.sol";
 import {IRequestInteractions} from "src/interfaces/request/IRequestInteractions.sol";
 import {LibIntent, Intent, IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";

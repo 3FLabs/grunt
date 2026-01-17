@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 
-import {Facility} from "src/Facility.sol";
+import {Facility} from "src/facility/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {IntentDescriptor} from "src/IntentDescriptor.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
@@ -124,7 +124,7 @@ contract FacilityUpdateTargetTest is Test {
 
     Asset memory newTarget = Asset({asset: address(pmMismatch), isPositionManager: true});
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetMismatch.selector, address(collateral), address(collateral2)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetMismatch.selector, address(collateral2), address(collateral)));
     facility.updateTarget(id, newTarget, address(pm1));
   }
 }

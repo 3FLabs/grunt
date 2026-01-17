@@ -10,7 +10,6 @@ import {IFacilityLP} from "src/interfaces/facility/base/IFacilityLP.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {LibTokenBalances} from "src/libs/facility/LibTokenBalances.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
 
 /// @title FacilityLP
 /// @notice Abstract contract implementing liquidity provider operations for intents.

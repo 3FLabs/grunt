@@ -220,7 +220,6 @@ library LibIntent {
       if (guardKey != targetAsset.asset) revert LibErrors.InvalidGuardKey(guardKey);
 
       // and the deposit asset must be either the collateral or debt asset of the position manager.
-      (address _pmCollateral, address _pmDebt) = IPositionManager(guardKey).assets();
       if (_pmCollateral != depositAsset.asset && _pmDebt != depositAsset.asset) {
         revert LibErrors.AssetMismatch(_pmCollateral, depositAsset.asset);
       }
