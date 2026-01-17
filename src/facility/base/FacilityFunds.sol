@@ -2,14 +2,11 @@
 pragma solidity ^0.8.20;
 
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
-import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {FacilityRoles} from "./FacilityRoles.sol";
-
+import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IFacilityFunds} from "src/interfaces/facility/base/IFacilityFunds.sol";
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
-import {LibTokenBalances} from "src/libs/facility/LibTokenBalances.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {Order, Mode, State} from "src/libs/Order.sol";
@@ -18,11 +15,9 @@ import {Order, Mode, State} from "src/libs/Order.sol";
 /// @notice Abstract contract implementing fund operations for intents.
 /// @dev Allows creating, canceling, committing, unlocking, and recovering fund orders.
 abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, FacilityRoles {
-  using SafeTransferLib for address;
-  using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
-  using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
+  using SafeTransferLib for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        FUND OPERATIONS                     */
@@ -40,11 +35,14 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   {
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
+    // checks that the intent has a fund
     address _fund = _intent.fund;
-
     if (_fund == address(0)) revert LibErrors.MissingFund(id);
-    if (_intent.hasActiveOrder()) revert LibErrors.ActiveOrder(id);
 
+    // ensure the intent has no pending order
+    _intent.checkNoPendingOrder(id);
+
+    // create order with a block/id unique salt
     order = Order({
       owner: address(this),
       receiver: address(this),
@@ -53,10 +51,10 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
       mode: mode,
       salt: keccak256(abi.encode(address(this), block.timestamp, id))
     });
-
     emit CreatingOrder(id, order.toId(_fund));
     IFund(_fund).create(order);
 
+    // update order in intent
     _intent.order = order;
   }
 
@@ -66,8 +64,10 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   function cancel(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
-    if (!_intent.hasActiveOrder()) revert LibErrors.NoActiveOrder(id);
+    // ensure the intent has an active order
+    _intent.checkActiveOrder(id);
 
+    // cancel order with the fund and delete it from the intent
     IFund(_intent.fund).cancel(_intent.order);
     delete _intent.order;
   }
@@ -79,17 +79,19 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   function commit(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
-    if (!_intent.hasActiveOrder()) revert LibErrors.NoActiveOrder(id);
+    // ensure the intent has an active order
+    _intent.checkActiveOrder(id);
 
+    // get the order and token to deposit
     Order memory _order = _intent.order;
     address _fund = _intent.fund;
     address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_fund).asset() : IFund(_fund).share();
 
-    _intent.amounts.sub(_tokenIn, _order.input);
+    // commit the funds
     _tokenIn.safeApproveWithRetry(_fund, _order.input);
-
     IFund(_fund).commit(_order);
-    // TODO - emit event for sub
+    // remove tokens from intent (since this is non reentrant, we can call this after sending the funds)
+    _intent.transferredTokenTo(id, _tokenIn, _fund, _order.input);
   }
 
   /// @inheritdoc IFacilityFunds
@@ -99,18 +101,22 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   function unlock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
-    if (!_intent.hasActiveOrder()) revert LibErrors.NoActiveOrder(id);
+    // ensure the intent has an active order
+    _intent.checkActiveOrder(id);
 
     Order memory _order = _intent.order;
     address _fund = _intent.fund;
 
+    // unlock the funds
     (State _state, uint256 _unlockedAmount) = IFund(_fund).unlock(_order);
+    // If this is the deposit, an unlock gives shares, otherwise it gives assets
     address _tokenOut = _order.mode == Mode.DEPOSIT ? IFund(_fund).share() : IFund(_fund).asset();
 
-    _intent.amounts.add(_tokenOut, _unlockedAmount);
+    // add tokens to intent
+    _intent.receivedTokenFrom(id, _tokenOut, _fund, _unlockedAmount);
 
-    // TODO - emit event for add
     if (_state == State.ENDED) {
+      // if the order is ended, delete the order
       delete _intent.order;
     }
   }
@@ -122,18 +128,22 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   function recover(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
-    if (!_intent.hasActiveOrder()) revert LibErrors.NoActiveOrder(id);
+    // ensure the intent has an active order
+    _intent.checkActiveOrder(id);
 
     Order memory _order = _intent.order;
     address _fund = _intent.fund;
 
+    // recover the funds
     (State _state, uint256 _recoveredAmount) = IFund(_fund).recover(_order);
+    // If this is the deposit, a recover gives assets back, otherwise it gives shares back
     address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_fund).asset() : IFund(_fund).share();
 
-    _intent.amounts.add(_tokenIn, _recoveredAmount);
+    // add tokens to intent
+    _intent.receivedTokenFrom(id, _tokenIn, _fund, _recoveredAmount);
 
-    // TODO - emit event for add
     if (_state == State.ENDED) {
+      // if the order is ended, delete the order
       delete _intent.order;
     }
   }

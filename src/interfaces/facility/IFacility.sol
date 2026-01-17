@@ -26,6 +26,20 @@ interface IFacility is
   /// @param descriptor The new descriptor address.
   event DescriptorSet(address descriptor);
 
+  /// @notice Emitted when a token is sent from an intent.
+  /// @param id The intent ID.
+  /// @param token The token address.
+  /// @param to The address the token was transferred to.
+  /// @param amount The amount of tokens sent.
+  event TokenSent(uint256 indexed id, address indexed token, address indexed to, uint256 amount);
+
+  /// @notice Emitted when a token is received by an intent.
+  /// @param id The intent ID.
+  /// @param token The token address.
+  /// @param from The address the token was transferred from.
+  /// @param amount The amount of tokens received.
+  event TokenReceived(uint256 indexed id, address indexed token, address indexed from, uint256 amount);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        ADMIN                               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

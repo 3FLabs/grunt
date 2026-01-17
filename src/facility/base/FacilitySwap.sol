@@ -21,7 +21,6 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransient, FacilityRoles {
   using LibIntent for Intent;
   using LibStorage for FacilityStorageData;
-  using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

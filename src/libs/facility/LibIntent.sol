@@ -5,11 +5,13 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {Order} from "../Order.sol";
 import {LibTokenBalances} from "./LibTokenBalances.sol";
 import {LibErrors} from "./LibErrors.sol";
+import {IFacility} from "../../interfaces/facility/IFacility.sol";
 import {IFacilityIntents} from "../../interfaces/facility/base/IFacilityIntents.sol";
 import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibAddress} from "./LibAddress.sol";
 import {IRequestInteractions} from "../../interfaces/request/IRequestInteractions.sol";
+import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Asset configuration for intents and swaps.
 /// @param asset Address of the asset.
@@ -55,95 +57,111 @@ struct Intent {
 
 /// @title LibIntent
 /// @notice Library for Intent storage operations.
+/// @dev Provides functions for intent state checks, validation, initialization,
+///      updates, and token transfer accounting.
 library LibIntent {
   using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
   using LibIntent for Intent;
   using FixedPointMathLib for bool;
   using LibAddress for address;
+  using SafeTransferLib for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        STATE CHECKS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Returns true if the intent is in the depositing phase.
-  /// @param _intent The intent to check.
-  /// @return True if depositing, false otherwise.
-  function isDepositing(Intent storage _intent) internal view returns (bool) {
-    return !_intent.resolved && _intent.properties.resolveStart > block.timestamp;
+  /// @notice Checks if the intent is in the depositing phase.
+  /// @dev The intent is depositing if it is not resolved and the resolve start time has not passed.
+  /// @param _self The intent storage reference.
+  /// @return True if the intent is in the depositing phase, false otherwise.
+  function isDepositing(Intent storage _self) internal view returns (bool) {
+    return !_self.resolved && _self.properties.resolveStart > block.timestamp;
   }
 
-  /// @dev Returns true if the intent is in the resolving phase.
-  /// @param _intent The intent to check.
-  /// @return True if resolving, false otherwise.
-  function isResolving(Intent storage _intent) internal view returns (bool) {
-    return _intent.properties.resolveStart <= block.timestamp && !_intent.resolved;
+  /// @notice Checks if the intent is in the resolving phase.
+  /// @dev The intent is resolving if the resolve start time has passed and it is not yet resolved.
+  /// @param _self The intent storage reference.
+  /// @return True if the intent is in the resolving phase, false otherwise.
+  function isResolving(Intent storage _self) internal view returns (bool) {
+    return _self.properties.resolveStart <= block.timestamp && !_self.resolved;
   }
 
-  /// @dev Returns true if the intent has been resolved.
-  /// @param _intent The intent to check.
-  /// @return True if resolved, false otherwise.
-  function isResolved(Intent storage _intent) internal view returns (bool) {
-    return _intent.resolved;
+  /// @notice Checks if the intent has been resolved.
+  /// @dev Once resolved, claims are enabled for depositors.
+  /// @param _self The intent storage reference.
+  /// @return True if the intent has been resolved, false otherwise.
+  function isResolved(Intent storage _self) internal view returns (bool) {
+    return _self.resolved;
   }
 
-  /// @dev Returns true if the intent has an active order.
-  /// @param _intent The intent to check.
-  /// @return True if active order, false otherwise.
-  function hasActiveOrder(Intent storage _intent) internal view returns (bool) {
-    return _intent.order.owner != address(0);
+  /// @notice Checks if the intent has an active fund order.
+  /// @dev An order is considered active if its owner address is not zero.
+  /// @param _self The intent storage reference.
+  /// @return True if the intent has an active order, false otherwise.
+  function hasActiveOrder(Intent storage _self) internal view returns (bool) {
+    return _self.order.owner != address(0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         VALIDATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Checks if the deposit amount would exceed the intent's deposit cap.
-  ///      Reverts with DepositCapExceeded if the cap would be exceeded.
-  /// @param _intent The intent to check.
-  /// @param id The intent ID (for error reporting).
-  /// @param amount The amount to deposit.
-  function checkCap(Intent storage _intent, uint256 id, uint256 amount) internal view {
-    uint256 attemptedTotal = _intent.totalSupply + amount;
-    if (attemptedTotal > _intent.properties.depositCap) {
-      revert LibErrors.DepositCapExceeded(id, _intent.properties.depositCap, attemptedTotal);
+  /// @notice Validates that a deposit amount does not exceed the intent's deposit cap.
+  /// @dev Reverts with DepositCapExceeded if the total supply after deposit would exceed the cap.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID (used for error reporting).
+  /// @param amount The amount being deposited.
+  function checkCap(Intent storage _self, uint256 id, uint256 amount) internal view {
+    uint256 attemptedTotal = _self.totalSupply + amount;
+    if (attemptedTotal > _self.properties.depositCap) {
+      revert LibErrors.DepositCapExceeded(id, _self.properties.depositCap, attemptedTotal);
     }
   }
 
-  /// @dev Checks if the request is repaid.
-  ///      Reverts if the request is not repaid.
-  /// @param _intent The intent to check.
-  function checkRequestRepaid(Intent storage _intent) internal view {
-    address _request = _intent.request;
+  /// @notice Validates that the intent's associated request has been repaid.
+  /// @dev Reverts with RequestNotRepaid if a request exists and is not repaid.
+  ///      Does nothing if no request is associated with the intent.
+  /// @param _self The intent storage reference.
+  function checkRequestRepaid(Intent storage _self) internal view {
+    address _request = _self.request;
     if (_request != address(0) && !IRequestInteractions(_request).isRepaid()) {
       revert LibErrors.RequestNotRepaid(_request);
     }
   }
 
-  /// @dev Checks if the intent has no pending orders.
-  ///      Reverts if the intent has an active order.
-  /// @param _intent The intent to check.
-  /// @param id The intent ID.
-  function checkNoPendingOrder(Intent storage _intent, uint256 id) internal view {
-    if (_intent.hasActiveOrder()) revert LibErrors.ActiveOrder(id);
+  /// @notice Validates that the intent has no pending fund orders.
+  /// @dev Reverts with ActiveOrder if the intent has an active order.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID (used for error reporting).
+  function checkNoPendingOrder(Intent storage _self, uint256 id) internal view {
+    if (_self.hasActiveOrder()) revert LibErrors.ActiveOrder(id);
+  }
+
+  /// @notice Validates that the intent has an active fund order.
+  /// @dev Reverts with NoActiveOrder if the intent does not have an active order.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID (used for error reporting).
+  function checkActiveOrder(Intent storage _self, uint256 id) internal view {
+    if (!_self.hasActiveOrder()) revert LibErrors.NoActiveOrder(id);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Initializes an intent with the deposit asset and quorum.
-  ///      Emits the IntentCreated event.
-  ///      This does not revert if the intent already exists, so make sure the intent does not already exist.
-  ///      The deposit asset must be a contract.
-  /// @param _intent The intent to initialize.
+  /// @notice Initializes an intent with the deposit asset and quorum.
+  /// @dev Sets the deposit asset and quorum, then emits IntentCreated.
+  ///      The deposit asset must be a deployed contract.
+  ///      Does not check if the intent already exists - caller must ensure this.
+  /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param depositAsset The deposit asset configuration.
-  /// @param quorum The quorum threshold for guard approvals.
-  function init(Intent storage _intent, uint256 id, Asset calldata depositAsset, uint8 quorum) internal {
+  /// @param quorum The quorum threshold required for guardian approvals.
+  function init(Intent storage _self, uint256 id, Asset calldata depositAsset, uint8 quorum) internal {
     depositAsset.asset.checkContract();
 
-    _intent.properties.depositAsset = depositAsset;
-    _intent.properties.quorum = quorum;
+    _self.properties.depositAsset = depositAsset;
+    _self.properties.quorum = quorum;
     emit IFacilityIntents.IntentCreated(id, depositAsset, quorum);
   }
 
@@ -151,53 +169,115 @@ library LibIntent {
   /*                          UPDATES                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Validates and updates the target asset and guard key for an intent.
-  ///      The new target asset must be a contract.
-  /// @param _intent The intent storage reference.
+  /// @notice Updates the target asset and guard key for an intent.
+  /// @dev Validates that the new configuration is compatible with the deposit asset.
+  ///      The new target asset must be a deployed contract.
+  ///      Emits IntentTargetUpdated on success.
+  /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newTargetAsset The new target asset configuration.
   /// @param newGuardKey The new guard key address.
-  function updateTargetAsset(Intent storage _intent, uint256 id, Asset memory newTargetAsset, address newGuardKey)
+  function updateTargetAsset(Intent storage _self, uint256 id, Asset memory newTargetAsset, address newGuardKey)
     internal
   {
     // we don't need to check the guard key, since it is either the deposit asset or the target asset
     // and both are checked to be contracts
     newTargetAsset.asset.checkContract();
-    _checkAssetsAndGuardKey(_intent.properties.depositAsset, newTargetAsset, newGuardKey);
+    _checkAssetsAndGuardKey(_self.properties.depositAsset, newTargetAsset, newGuardKey);
 
-    _intent.properties.targetAsset = newTargetAsset;
-    _intent.properties.guardKey = newGuardKey;
+    _self.properties.targetAsset = newTargetAsset;
+    _self.properties.guardKey = newGuardKey;
     emit IFacilityIntents.IntentTargetUpdated(id, newTargetAsset, newGuardKey);
   }
 
-  /// @dev Updates the deposit cap for an intent.
-  /// @param _intent The intent storage reference.
+  /// @notice Updates the deposit cap for an intent.
+  /// @dev Emits DepositCapUpdated on success.
+  /// @param _self The intent storage reference.
   /// @param id The intent ID.
-  /// @param newDepositCap The new deposit cap.
-  function updateDepositCap(Intent storage _intent, uint256 id, uint256 newDepositCap) internal {
-    _intent.properties.depositCap = newDepositCap;
+  /// @param newDepositCap The new maximum deposit amount.
+  function updateDepositCap(Intent storage _self, uint256 id, uint256 newDepositCap) internal {
+    _self.properties.depositCap = newDepositCap;
     emit IFacilityIntents.DepositCapUpdated(id, newDepositCap);
   }
 
-  /// @dev Updates the resolve start timestamp for an intent.
-  /// @param _intent The intent storage reference.
+  /// @notice Updates the resolve start timestamp for an intent.
+  /// @dev Emits ResolveStartUpdated on success.
+  /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newResolveStart The new resolve start timestamp.
-  function updateResolveStart(Intent storage _intent, uint256 id, uint40 newResolveStart) internal {
-    _intent.properties.resolveStart = newResolveStart;
+  function updateResolveStart(Intent storage _self, uint256 id, uint40 newResolveStart) internal {
+    _self.properties.resolveStart = newResolveStart;
     emit IFacilityIntents.ResolveStartUpdated(id, newResolveStart);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     TOKEN TRANSFERS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Records that tokens were sent from the intent without performing the transfer.
+  /// @dev Updates the intent's token accounting and emits TokenSent.
+  ///      Use this when the transfer has already been performed externally.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  /// @param token The token address that was transferred.
+  /// @param to The recipient address.
+  /// @param amount The amount that was transferred.
+  function transferredTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
+    _self.amounts.sub(token, amount);
+    emit IFacility.TokenSent(id, token, to, amount);
+  }
+
+  /// @notice Transfers tokens from the intent to a recipient and updates accounting.
+  /// @dev Performs a safe transfer and then records the transfer in intent accounting.
+  ///      Emits TokenSent on success.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  /// @param token The token address to transfer.
+  /// @param to The recipient address.
+  /// @param amount The amount to transfer.
+  function transferTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
+    token.safeTransfer(to, amount);
+    _self.transferredTokenTo(id, token, to, amount);
+  }
+
+  /// @notice Records that tokens were received by the intent without performing the transfer.
+  /// @dev Updates the intent's token accounting and emits TokenReceived.
+  ///      Use this when the transfer has already been performed externally.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  /// @param token The token address that was received.
+  /// @param from The sender address.
+  /// @param amount The amount that was received.
+  function receivedTokenFrom(Intent storage _self, uint256 id, address token, address from, uint256 amount) internal {
+    _self.amounts.add(token, amount);
+    emit IFacility.TokenReceived(id, token, from, amount);
+  }
+
+  /// @notice Transfers tokens from a sender to the intent and updates accounting.
+  /// @dev Performs a safe transferFrom and then records the transfer in intent accounting.
+  ///      Emits TokenReceived on success.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  /// @param token The token address to transfer.
+  /// @param from The sender address (must have approved this contract).
+  /// @param amount The amount to transfer.
+  function receiveTokenFrom(Intent storage _self, uint256 id, address token, address from, uint256 amount) internal {
+    token.safeTransferFrom(from, address(this), amount);
+    _self.receivedTokenFrom(id, token, from, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          PRIVATE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Validates that the deposit asset, target asset, and guard key are compatible.
-  ///      At least one asset must be a position manager.
-  ///      The guard key must match one of the position manager assets.
+  /// @notice Validates that the deposit asset, target asset, and guard key are compatible.
+  /// @dev At least one asset must be a position manager.
+  ///      When only the deposit is a PM, the guard key must match it.
+  ///      When only the target is a PM, the guard key must match it and the deposit must be its collateral or debt.
+  ///      When both are PMs, they must share the same collateral and debt assets.
   /// @param depositAsset The deposit asset configuration.
   /// @param targetAsset The target asset configuration.
-  /// @param guardKey The guard key address.
+  /// @param guardKey The guard key address (must be one of the position managers).
   function _checkAssetsAndGuardKey(Asset memory depositAsset, Asset memory targetAsset, address guardKey) private view {
     bool depositIsPm = depositAsset.isPositionManager;
     bool targetIsPm = targetAsset.isPositionManager;

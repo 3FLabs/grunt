@@ -8,7 +8,6 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 
 import {IFacilityLP} from "src/interfaces/facility/base/IFacilityLP.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
-import {LibTokenBalances} from "src/libs/facility/LibTokenBalances.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 
 /// @title FacilityLP
@@ -19,7 +18,6 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
-  using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
 
@@ -34,14 +32,14 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   function deposit(uint256 id, uint256 amount) external override {
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
+    // ensure we do not exceed the deposit cap
     _intent.checkCap(id, amount);
 
-    address depositAsset = _intent.properties.depositAsset.asset;
-    depositAsset.safeTransferFrom(msg.sender, address(this), amount);
-    _intent.amounts.add(depositAsset, amount);
-    _mint(msg.sender, id, amount);
+    // receive the tokens from the sender
+    _intent.receiveTokenFrom(id, _intent.properties.depositAsset.asset, msg.sender, amount);
 
-    // TODO - Emits event
+    // mint the LP tokens
+    _mint(msg.sender, id, amount);
   }
 
   /// @inheritdoc IFacilityLP
@@ -50,12 +48,11 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   function withdraw(uint256 id, uint256 amount) external override {
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
-    address depositAsset = _intent.properties.depositAsset.asset;
-    _intent.amounts.sub(depositAsset, amount);
-    depositAsset.safeTransfer(msg.sender, amount);
-    _burn(msg.sender, id, amount);
+    // transfer the tokens to the sender
+    _intent.transferTokenTo(id, _intent.properties.depositAsset.asset, msg.sender, amount);
 
-    // TODO - Emits event
+    // burn the LP tokens
+    _burn(msg.sender, id, amount);
   }
 
   /// @inheritdoc IFacilityLP
@@ -65,22 +62,25 @@ abstract contract FacilityLP is IFacilityLP, ERC6909 {
   function claim(uint256 id) external override {
     Intent storage _intent = LibStorage.facilityStorage().getResolvedIntent(id);
 
+    // get the user's balance
     uint256 balance = balanceOf(msg.sender, id);
+    // if the user has no balance, return
     if (balance == 0) return;
 
+    // get the total supply (always non null at this point)
     uint256 supply = _intent.totalSupply;
-    if (supply == 0) return;
 
+    // transfer all tokens proportionally to the user's balance (rounding down)
     address[] memory tokens = _intent.amounts.keys();
     for (uint256 i = 0; i < tokens.length; i++) {
       address token = tokens[i];
+      // get the user's balance of this token
       uint256 userBalance = _intent.amounts.get(token).mulDiv(balance, supply);
-      _intent.amounts.sub(token, userBalance);
-      token.safeTransfer(msg.sender, userBalance);
+      // transfer the tokens to the user
+      _intent.transferTokenTo(id, token, msg.sender, userBalance);
     }
 
+    // burn the LP tokens
     _burn(msg.sender, id, balance);
-
-    // TODO - Emits event
   }
 }
