@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Intent} from "./LibIntent.sol";
-import {IIntentDescriptor} from "../../interfaces/IIntentDescriptor.sol";
+import {IIntentDescriptor} from "../../interfaces/facility/IIntentDescriptor.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 
 /// @notice Storage struct containing all persistent state for the Facility contract.

@@ -6,7 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {Facility} from "src/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/IntentDescriptor.sol";
-import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";

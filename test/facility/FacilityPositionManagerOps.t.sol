@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Facility} from "src/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/IntentDescriptor.sol";
-import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {Order, Mode, State} from "src/libs/Order.sol";
 

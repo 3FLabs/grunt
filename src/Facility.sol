@@ -9,8 +9,15 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
-import {IFacility, Asset, Intent, IntentProperties, SwapParams} from "./interfaces/IFacility.sol";
-import {IIntentDescriptor} from "./interfaces/IIntentDescriptor.sol";
+import {IFacility} from "./interfaces/facility/IFacility.sol";
+import {IFacilityIntents} from "./interfaces/facility/base/IFacilityIntents.sol";
+import {IFacilityFunds} from "./interfaces/facility/base/IFacilityFunds.sol";
+import {IFacilityRequests} from "./interfaces/facility/base/IFacilityRequests.sol";
+import {IFacilityPositionManager} from "./interfaces/facility/base/IFacilityPositionManager.sol";
+import {IFacilityLP} from "./interfaces/facility/base/IFacilityLP.sol";
+import {IFacilitySwap, SwapParams} from "./interfaces/facility/base/IFacilitySwap.sol";
+import {IIntentDescriptor} from "./interfaces/facility/IIntentDescriptor.sol";
+import {Intent, IntentProperties, Asset} from "./libs/facility/LibIntent.sol";
 import {IFund} from "./interfaces/funds/IFund.sol";
 import {IPositionManager} from "./interfaces/manager/IPositionManager.sol";
 import {ITransferGuard} from "./interfaces/guard/ITransferGuard.sol";
@@ -68,9 +75,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                         DESCRIPTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Sets the intent descriptor contract for generating token metadata.
-  /// @dev Only callable by the owner.
-  /// @param descriptor_ The new descriptor contract address.
+  /// @inheritdoc IFacility
   function setDescriptor(address descriptor_) external onlyOwner {
     _setDescriptor(descriptor_);
   }
@@ -87,7 +92,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                     INTENT MANAGEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function createIntent(IntentProperties calldata params)
     external
     override
@@ -124,7 +129,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _updateResolveStart(id, intent, params.resolveStart);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function updateTarget(uint256 id, Asset calldata newTargetAsset, address newGuardKey) external override onlyOwner {
     _requireIntentExists(id);
     _checkContract(newTargetAsset.asset);
@@ -135,7 +140,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _updateTargetAsset(id, _intent, _intent.properties.depositAsset, newTargetAsset, newGuardKey);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function lock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
     _requireIntentExists(id);
 
@@ -148,7 +153,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _updateResolveStart(id, _intent, uint40(block.timestamp));
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function resolve(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
     _requireIntentExists(id);
 
@@ -171,7 +176,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     emit IntentResolved(id);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilitySwap
   function swap(SwapParams calldata params, address[] calldata signers, bytes[] calldata signatures)
     external
     override
@@ -213,7 +218,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     emit Swap(params.id1, params.id2, params.token1, params.amount1, params.token2, params.amount2);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
     _requireIntentExists(id);
 
@@ -223,7 +228,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _updateDepositCap(id, _intent, newDepositCap);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function setFund(uint256 id, address newFund) external onlyRoles(FACILITATOR_ROLE) {
     _checkContract(newFund);
     _requireIntentExists(id);
@@ -245,7 +250,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     emit FundUpdated(id, newFund);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityIntents
   function setRequest(uint256 id, address newRequest) external onlyRoles(FACILITATOR_ROLE) {
     _checkContract(newRequest);
     _requireIntentExists(id);
@@ -274,7 +279,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                        FUND OPERATIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityFunds
   function create(uint256 id, uint256 amount, uint256 minAmountOut, Mode mode)
     external
     override
@@ -306,7 +311,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _intent.order = order;
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityFunds
   function cancel(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
@@ -319,7 +324,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     delete _intent.order;
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityFunds
   function commit(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
@@ -340,7 +345,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     (, uint256 committedAmount) = IFund(_intent.fund).commit(_order);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityFunds
   function unlock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
@@ -363,7 +368,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     }
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityFunds
   function recover(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
@@ -390,7 +395,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                     REQUEST OPERATIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityRequests
   function pull(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
@@ -406,7 +411,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     _intent.amounts.add(asset, amount);
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityRequests
   function repay(uint256 id, uint256 amount) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
     _requireIntentExists(id);
 
@@ -427,7 +432,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                 POSITION MANAGER OPERATIONS                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityPositionManager
   function depositManager(uint256 id, uint256 depositAmount, uint256 borrowAmount, bool useTarget)
     external
     override
@@ -465,7 +470,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     }
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityPositionManager
   function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount, bool useTarget)
     external
     override
@@ -503,7 +508,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     }
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityPositionManager
   function burnManager(uint256 id, uint256 shares, bool useTarget)
     external
     override
@@ -545,7 +550,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
   /*                     LIQUIDITY PROVIDERS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityLP
   function deposit(uint256 id, uint256 amount) external override {
     _requireIntentExists(id);
 
@@ -569,7 +574,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     // TODO - Emits event
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityLP
   function withdraw(uint256 id, uint256 amount) external override {
     _requireIntentExists(id);
 
@@ -587,7 +592,7 @@ contract Facility is IFacility, ERC6909, Multicallable, OwnableRoles, Initializa
     // TODO - Emits event
   }
 
-  /// @inheritdoc IFacility
+  /// @inheritdoc IFacilityLP
   function claim(uint256 id) external override {
     _requireIntentExists(id);
 

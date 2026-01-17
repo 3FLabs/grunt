@@ -6,7 +6,8 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {Facility} from "src/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/IntentDescriptor.sol";
-import {Asset, IntentProperties, SwapParams} from "src/interfaces/IFacility.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
+import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
