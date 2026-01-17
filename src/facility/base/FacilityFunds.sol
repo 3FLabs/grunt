@@ -69,7 +69,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     // cancel order with the fund and delete it from the intent
     IFund(_intent.fund).cancel(_intent.order);
-    delete _intent.order;
+    _intent.removeOrderAndFund(id);
   }
 
   /// @inheritdoc IFacilityFunds
@@ -117,7 +117,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     if (_state == State.ENDED) {
       // if the order is ended, delete the order
-      delete _intent.order;
+      _intent.removeOrderAndFund(id);
     }
   }
 
@@ -144,7 +144,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     if (_state == State.ENDED) {
       // if the order is ended, delete the order
-      delete _intent.order;
+      _intent.removeOrderAndFund(id);
     }
   }
 }

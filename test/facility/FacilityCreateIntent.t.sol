@@ -31,6 +31,7 @@ contract MockFund {
 
 contract MockRequest {
   address internal immutable ASSET;
+  bool internal _isRepaid = true;
 
   constructor(address asset_) {
     ASSET = asset_;
@@ -38,6 +39,14 @@ contract MockRequest {
 
   function asset() external view returns (address) {
     return ASSET;
+  }
+
+  function isRepaid() external view returns (bool) {
+    return _isRepaid;
+  }
+
+  function setIsRepaid(bool value) external {
+    _isRepaid = value;
   }
 }
 
@@ -211,5 +220,92 @@ contract FacilityCreateIntentTest is Test {
     uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 1);
 
     assertEq(id, 1);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    FUND/REQUEST TRACKING                   */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_RevertWhen_SetFund_FundAlreadyInUse() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockFund fund = new MockFund(address(debt), address(collateral));
+
+    uint256 id1 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+    uint256 id2 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set fund on intent 1
+    facility.setFund(id1, address(fund));
+
+    // Try to set the same fund on intent 2 - should revert
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.FundAlreadyInUse.selector, address(fund), id1));
+    facility.setFund(id2, address(fund));
+  }
+
+  function test_SetFund_SameFundOnSameIntent_Succeeds() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockFund fund = new MockFund(address(debt), address(collateral));
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set fund on intent
+    facility.setFund(id, address(fund));
+
+    // Set same fund on same intent - should succeed
+    facility.setFund(id, address(fund));
+  }
+
+  function test_SetFund_RemoveFund() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockFund fund = new MockFund(address(debt), address(collateral));
+
+    uint256 id1 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+    uint256 id2 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set fund on intent 1
+    facility.setFund(id1, address(fund));
+
+    // Remove fund from intent 1
+    facility.setFund(id1, address(0));
+
+    // Now intent 2 can use the fund
+    facility.setFund(id2, address(fund));
+  }
+
+  function test_RevertWhen_SetRequest_RequestAlreadyInUse() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockRequest request = new MockRequest(address(debt));
+
+    uint256 id1 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+    uint256 id2 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set request on intent 1
+    facility.setRequest(id1, address(request));
+
+    // Try to set the same request on intent 2 - should revert
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.RequestAlreadyInUse.selector, address(request), id1));
+    facility.setRequest(id2, address(request));
+  }
+
+  function test_SetRequest_SameRequestOnSameIntent_Succeeds() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockRequest request = new MockRequest(address(debt));
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set request on intent
+    facility.setRequest(id, address(request));
+
+    // Set same request on same intent - should succeed
+    facility.setRequest(id, address(request));
   }
 }

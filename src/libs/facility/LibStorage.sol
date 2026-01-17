@@ -13,11 +13,15 @@ import {LibErrors} from "./LibErrors.sol";
 /// @param descriptor The intent descriptor contract for generating token metadata.
 /// @param lastIntentId The most recent intent ID assigned.
 /// @param usedSwapDigests Mapping of used swap digests to prevent replay attacks.
+/// @param fundsIntent Mapping from fund address to intent ID.
+/// @param requestsIntent Mapping from request address to intent ID.
 struct FacilityStorageData {
   mapping(uint256 => Intent) intents;
   IIntentDescriptor descriptor;
   uint256 lastIntentId;
   mapping(bytes32 => bool) usedSwapDigests;
+  mapping(address => uint256) fundsIntent;
+  mapping(address => uint256) requestsIntent;
 }
 
 /// @title LibStorage
@@ -25,6 +29,10 @@ struct FacilityStorageData {
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibStorage {
   using LibIntent for Intent;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       STORAGE ACCESS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Returns a reference to the contract's storage struct.
   ///      Uses assembly to load the storage pointer from the fixed storage slot.
@@ -36,21 +44,9 @@ library LibStorage {
     }
   }
 
-  /// @dev Allocates a new intent ID, sets the deposit asset and quorum, and returns a reference to the intent struct.
-  /// @param self The storage pointer to the FacilityStorageData struct.
-  /// @param depositAsset The deposit asset configuration.
-  /// @param quorum The quorum threshold for guard approvals.
-  /// @return _intent A reference to the newly allocated intent struct.
-  /// @return id The newly allocated intent ID.
-  function createIntent(FacilityStorageData storage self, Asset calldata depositAsset, uint8 quorum)
-    internal
-    returns (Intent storage _intent, uint256 id)
-  {
-    id = self.lastIntentId + 1;
-    self.lastIntentId = id;
-    _intent = self.intents[id];
-    _intent.init(id, depositAsset, quorum);
-  }
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       INTENT GETTERS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist.
   /// @param self The storage pointer to the FacilityStorageData struct.
@@ -117,6 +113,30 @@ library LibStorage {
     if (LibIntent.isResolved(_intent)) revert LibErrors.AlreadyResolved(id);
   }
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       INITIALIZATION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Allocates a new intent ID, sets the deposit asset and quorum, and returns a reference to the intent struct.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param depositAsset The deposit asset configuration.
+  /// @param quorum The quorum threshold for guard approvals.
+  /// @return _intent A reference to the newly allocated intent struct.
+  /// @return id The newly allocated intent ID.
+  function createIntent(FacilityStorageData storage self, Asset calldata depositAsset, uint8 quorum)
+    internal
+    returns (Intent storage _intent, uint256 id)
+  {
+    id = self.lastIntentId + 1;
+    self.lastIntentId = id;
+    _intent = self.intents[id];
+    _intent.init(id, depositAsset, quorum);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         VALIDATION                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @dev Checks if a digest has been used and marks it as used. Reverts if already used.
   ///      Sets the digest as used in the mapping if not already used.
   /// @param self The storage pointer to the FacilityStorageData struct.
@@ -124,5 +144,42 @@ library LibStorage {
   function checkDigest(FacilityStorageData storage self, bytes32 digest) internal {
     if (self.usedSwapDigests[digest]) revert LibErrors.SwapDigestUsed(digest);
     self.usedSwapDigests[digest] = true;
+  }
+
+  /// @dev Checks if a fund is already in use and sets it to the target intent ID if not.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param fund The fund address.
+  /// @param targetIntentId The target intent ID.
+  function checkFundIntent(FacilityStorageData storage self, address fund, uint256 targetIntentId) internal {
+    uint256 intentId = self.fundsIntent[fund];
+    if (intentId == 0) {
+      self.fundsIntent[fund] = targetIntentId;
+      return;
+    }
+    if (intentId != targetIntentId) revert LibErrors.FundAlreadyInUse(fund, intentId);
+  }
+
+  /// @dev Checks if a request is already in use and sets it to the target intent ID if not.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param request The request address.
+  /// @param targetIntentId The target intent ID.
+  function checkRequestIntent(FacilityStorageData storage self, address request, uint256 targetIntentId) internal {
+    uint256 intentId = self.requestsIntent[request];
+    if (intentId == 0) {
+      self.requestsIntent[request] = targetIntentId;
+      return;
+    }
+    if (intentId != targetIntentId) revert LibErrors.RequestAlreadyInUse(request, intentId);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          UPDATES                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Abandons a fund and removes it from the mapping.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param fund The fund address.
+  function abandonFund(FacilityStorageData storage self, address fund) internal {
+    delete self.fundsIntent[fund];
   }
 }

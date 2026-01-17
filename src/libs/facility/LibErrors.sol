@@ -132,4 +132,14 @@ library LibErrors {
 
   /// @notice Thrown when there is insufficient balance for a token operation.
   error InsufficientBalance();
+
+  /// @notice Thrown when a fund is already in use.
+  /// @param fund The fund address.
+  /// @param intentId The intent ID.
+  error FundAlreadyInUse(address fund, uint256 intentId);
+
+  /// @notice Thrown when a request is already in use.
+  /// @param request The request address.
+  /// @param intentId The intent ID.
+  error RequestAlreadyInUse(address request, uint256 intentId);
 }

@@ -75,7 +75,7 @@ interface IFacilityIntents {
 
   /// @notice Sets a new fund address for a given intent ID.
   /// @param id The intent ID.
-  /// @param newFund The new fund address.
+  /// @param newFund The new fund address or address(0) to remove the fund.
   function setFund(uint256 id, address newFund) external;
 
   /// @notice Sets a new request address for a given intent ID.

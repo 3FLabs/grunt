@@ -12,6 +12,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibAddress} from "./LibAddress.sol";
 import {IRequestInteractions} from "../../interfaces/request/IRequestInteractions.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
 
 /// @dev Asset configuration for intents and swaps.
 /// @param asset Address of the asset.
@@ -65,6 +66,7 @@ library LibIntent {
   using FixedPointMathLib for bool;
   using LibAddress for address;
   using SafeTransferLib for address;
+  using LibStorage for FacilityStorageData;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        STATE CHECKS                        */
@@ -208,6 +210,18 @@ library LibIntent {
   function updateResolveStart(Intent storage _self, uint256 id, uint40 newResolveStart) internal {
     _self.properties.resolveStart = newResolveStart;
     emit IFacilityIntents.ResolveStartUpdated(id, newResolveStart);
+  }
+
+  /// @notice Removes the order and fund from the intent.
+  /// @dev Emits FundUpdated on success.
+  ///      Before calling, we must ensure the order is not active.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  function removeOrderAndFund(Intent storage _self, uint256 id) internal {
+    delete _self.order;
+    LibStorage.facilityStorage().abandonFund(_self.fund);
+    _self.fund = address(0);
+    emit IFacilityIntents.FundUpdated(id, address(0));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

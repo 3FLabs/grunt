@@ -83,11 +83,22 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @dev Sets a new fund address for the intent.
   ///      The fund's asset and share must match the position manager's assets.
   ///      The intent must not have an active order and must not be resolved.
+  ///      If the fund is address(0), the fund is removed from the intent.
   function setFund(uint256 id, address newFund) external override onlyRoles(FACILITATOR_ROLE) {
+    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
+    Intent storage _intent = _facilityStorage.getUnresolvedIntent(id);
+
+    if (newFund == address(0)) {
+      // if the fund is address(0), remove the fund
+      _intent.removeOrderAndFund(id);
+      return;
+    }
+
+    // ensure the fund is not already in use
+    _facilityStorage.checkFundIntent(newFund, id);
+
     // ensure the fund is a contract
     newFund.checkContract();
-
-    Intent storage _intent = LibStorage.facilityStorage().getUnresolvedIntent(id);
 
     // ensure the intent has no pensing order
     _intent.checkNoPendingOrder(id);
@@ -109,7 +120,12 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   function setRequest(uint256 id, address newRequest) external override onlyRoles(FACILITATOR_ROLE) {
     // ensure the request is a contract
     newRequest.checkContract();
-    Intent storage _intent = LibStorage.facilityStorage().getUnresolvedIntent(id);
+
+    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
+    Intent storage _intent = _facilityStorage.getUnresolvedIntent(id);
+
+    // ensure the request is not already in use
+    _facilityStorage.checkRequestIntent(newRequest, id);
 
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();
