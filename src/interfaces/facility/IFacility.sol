@@ -44,16 +44,13 @@ interface IFacility is
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the balance of a specific token held by an intent.
-  /// @param id The intent ID.
-  /// @param token The token address.
-  /// @return The token balance held by the intent.
-  function intentBalance(uint256 id, address token) external view returns (uint256);
-
-  /// @notice Returns all tokens held by an intent.
+  /// @notice Returns all tokens and their balances held by an intent.
+  /// @dev Useful for displaying intent holdings and calculating claim previews.
+  ///      The tokens and amounts arrays are parallel (same length, same order).
   /// @param id The intent ID.
   /// @return tokens The array of token addresses held by the intent.
-  function intentTokens(uint256 id) external view returns (address[] memory tokens);
+  /// @return amounts The array of token balances (same order as tokens).
+  function intentBalances(uint256 id) external view returns (address[] memory tokens, uint256[] memory amounts);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        ADMIN                               */

@@ -64,14 +64,19 @@ contract Facility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function intentBalance(uint256 id, address token) external view override returns (uint256 balance) {
+  function intentBalances(uint256 id)
+    external
+    view
+    override
+    returns (address[] memory tokens, uint256[] memory amounts)
+  {
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
-    (, balance) = _intent.amounts.tryGet(token);
-  }
-
-  /// @inheritdoc IFacility
-  function intentTokens(uint256 id) external view override returns (address[] memory tokens) {
-    return LibStorage.facilityStorage().getIntent(id).amounts.keys();
+    tokens = _intent.amounts.keys();
+    uint256 length = tokens.length;
+    amounts = new uint256[](length);
+    for (uint256 i = 0; i < length; i++) {
+      amounts[i] = _intent.amounts.get(tokens[i]);
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

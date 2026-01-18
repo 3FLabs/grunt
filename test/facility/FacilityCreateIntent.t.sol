@@ -496,7 +496,7 @@ contract FacilityCreateIntentTest is Test {
     facility.getIntent(999);
   }
 
-  function test_IntentBalance_ReturnsCorrectBalance() public {
+  function test_IntentBalances_ReturnsCorrectTokensAndAmounts() public {
     Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
@@ -508,47 +508,22 @@ contract FacilityCreateIntentTest is Test {
     debt.approve(address(facility), 500);
     facility.deposit(id, 500);
 
-    uint256 balance = facility.intentBalance(id, address(debt));
-    assertEq(balance, 500);
-  }
-
-  function test_IntentBalance_ReturnsZeroForUnknownToken() public {
-    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
-    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
-
-    uint256 id =
-      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
-
-    // Check balance of a token that was never deposited
-    uint256 balance = facility.intentBalance(id, address(collateral));
-    assertEq(balance, 0);
-  }
-
-  function test_IntentTokens_ReturnsCorrectTokens() public {
-    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
-    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
-
-    uint256 id =
-      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
-
-    // Deposit some tokens
-    debt.mint(address(this), 500);
-    debt.approve(address(facility), 500);
-    facility.deposit(id, 500);
-
-    address[] memory tokens = facility.intentTokens(id);
+    (address[] memory tokens, uint256[] memory amounts) = facility.intentBalances(id);
     assertEq(tokens.length, 1);
+    assertEq(amounts.length, 1);
     assertEq(tokens[0], address(debt));
+    assertEq(amounts[0], 500);
   }
 
-  function test_IntentTokens_ReturnsEmptyArrayForNoTokens() public {
+  function test_IntentBalances_ReturnsEmptyArraysForNoTokens() public {
     Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
     uint256 id =
       _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
 
-    address[] memory tokens = facility.intentTokens(id);
+    (address[] memory tokens, uint256[] memory amounts) = facility.intentBalances(id);
     assertEq(tokens.length, 0);
+    assertEq(amounts.length, 0);
   }
 }
