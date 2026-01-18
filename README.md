@@ -132,7 +132,15 @@ stateDiagram-v2
 |-------|----------|-------------|
 | Depositing | `deposit(id, amount)` | Deposit asset, receive LP tokens 1:1 |
 | Depositing | `withdraw(id, from, receiver, amount)` | Burn LP tokens, receive asset 1:1 |
-| Resolved | `claim(id, from, receiver, shares)` | Burn LP tokens, receive proportional share of all accumulated tokens |
+| Resolved | `claim(id, from, receiver, shares)` | Burn LP tokens, receive proportional share of all accumulated tokens. Returns `(tokens[], amounts[])` for easy tracking of claimed assets |
+
+### View Functions
+
+| Function | Description |
+|----------|-------------|
+| `intentBalances(id)` | Returns all tokens and their balances held by an intent as parallel arrays `(tokens[], amounts[])` |
+| `getIntent(id)` | Returns the full intent properties and current state |
+| `totalSupply(id)` | Returns total LP token supply for an intent |
 
 ### Facilitator Operations
 
@@ -461,7 +469,9 @@ function burn(uint256 shares) external returns (uint256 collateral, uint256 debt
 
 ### Rebalancing
 
-The `rebalance` function allows redistributing collateral and debt across positions without affecting shares:
+The `rebalance` function allows redistributing collateral and debt across positions without affecting shares.
+
+**Position Validation:** All positions referenced in rebalancing operations must be registered in the `borrowModules` set (added via `addBorrowModule`). Attempting to rebalance with unregistered positions reverts with `UnauthorizedPosition()`.
 
 ```solidity
 struct RebalancingData {
@@ -559,7 +569,7 @@ flowchart LR
 ```
 
 **Key Features:**
-- Custom LLTV per position (immutable after init, must be > 0 and ≤ 1e18)
+- Custom LLTV per position (immutable after init, must be > 0 and ≤ market LLTV)
 - Proportional pre-liquidation mechanism
 - ERC-7201 namespaced storage for proxy compatibility
 
