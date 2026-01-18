@@ -74,6 +74,7 @@ contract MorphoBorrowPositionTest is Test {
   error InsufficientCollateral();
   error PositionHealthy();
   error InvalidLltv();
+  error CustomLltvExceedsMarketLltv(uint256 customLltv, uint256 marketLltv);
   error InconsistentInput();
   error NotMorpho();
 
@@ -255,10 +256,50 @@ contract MorphoBorrowPositionTest is Test {
     newPosition.initialize(morpho, marketId, positionManager, 1e18 + 1);
   }
 
-  function test_initialize_AcceptsMaxLltv() public {
+  function test_initialize_AcceptsMarketLltv() public {
+    // Custom LLTV can be at most equal to market LLTV
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    newPosition.initialize(morpho, marketId, positionManager, DEFAULT_LLTV);
+    assertEq(newPosition.lltv(), DEFAULT_LLTV, "LLTV should equal market LLTV");
+  }
+
+  function test_initialize_RevertWhen_CustomLltvExceedsMarketLltv() public {
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+
+    // Try to set custom LLTV higher than market LLTV
+    uint256 exceedingLltv = DEFAULT_LLTV + 1;
+    vm.expectRevert(abi.encodeWithSelector(CustomLltvExceedsMarketLltv.selector, exceedingLltv, DEFAULT_LLTV));
+    newPosition.initialize(morpho, marketId, positionManager, exceedingLltv);
+  }
+
+  function test_initialize_RevertWhen_CustomLltvIsWadButMarketLltvIsLower() public {
+    // This test verifies that even WAD (100%) is rejected if market LLTV is lower
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+
+    vm.expectRevert(abi.encodeWithSelector(CustomLltvExceedsMarketLltv.selector, 1e18, DEFAULT_LLTV));
     newPosition.initialize(morpho, marketId, positionManager, 1e18);
-    assertEq(newPosition.lltv(), 1e18, "LLTV should be 1e18 (100%)");
+  }
+
+  function test_initialize_AcceptsLltvBelowMarketLltv() public {
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    uint256 lowerLltv = DEFAULT_LLTV / 2;
+    newPosition.initialize(morpho, marketId, positionManager, lowerLltv);
+    assertEq(newPosition.lltv(), lowerLltv, "LLTV should be set to lower value");
+  }
+
+  function testFuzz_initialize_CustomLltvMustNotExceedMarketLltv(uint256 customLltv) public {
+    customLltv = bound(customLltv, 1, 1e18);
+
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+
+    if (customLltv > DEFAULT_LLTV) {
+      vm.expectRevert(abi.encodeWithSelector(CustomLltvExceedsMarketLltv.selector, customLltv, DEFAULT_LLTV));
+    }
+    newPosition.initialize(morpho, marketId, positionManager, customLltv);
+
+    if (customLltv <= DEFAULT_LLTV) {
+      assertEq(newPosition.lltv(), customLltv, "LLTV should be set correctly");
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

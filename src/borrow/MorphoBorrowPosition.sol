@@ -54,6 +54,12 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @notice Thrown when the provided LLTV is invalid (zero or greater than WAD).
   error InvalidLltv();
 
+  /// @notice Thrown when the custom LLTV exceeds the Morpho market LLTV.
+  /// @dev The custom LLTV must be <= market LLTV to ensure pre-liquidation triggers before Morpho liquidation.
+  /// @param customLltv The custom LLTV provided.
+  /// @param marketLltv The Morpho market LLTV.
+  error CustomLltvExceedsMarketLltv(uint256 customLltv, uint256 marketLltv);
+
   /// @notice Thrown when the input parameters are inconsistent (e.g., both seizedAssets and repaidShares are non-zero).
   error InconsistentInput();
 
@@ -104,11 +110,12 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @param morpho_ The Morpho Blue protocol contract address.
   /// @param marketId_ The Morpho market ID for this borrow position. Must correspond to an existing market.
   /// @param positionManager_ The address of the position manager (owner) that will control this position.
-  /// @param lltv_ The custom LLTV for this borrow position. Must be > 0 and <= WAD.
+  /// @param lltv_ The custom LLTV for this borrow position. Must be > 0, <= WAD, and <= market LLTV.
   /// @custom:reverts AddressZero if morpho_ is zero address.
   /// @custom:reverts InvalidMarketId if marketId_ is zero.
   /// @custom:reverts MarketNotCreated if the market doesn't exist in Morpho (lastUpdate == 0).
   /// @custom:reverts InvalidLltv if lltv_ is zero or greater than WAD.
+  /// @custom:reverts CustomLltvExceedsMarketLltv if lltv_ exceeds the Morpho market LLTV.
   function initialize(IMorpho morpho_, Id marketId_, address positionManager_, uint256 lltv_) public initializer {
     if (address(morpho_) == address(0)) revert AddressZero();
     if (Id.unwrap(marketId_) == bytes32(0)) revert InvalidMarketId(marketId_);
@@ -119,6 +126,11 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     $.morpho = morpho_;
     $.marketId = marketId_;
     $.marketParams = morpho_.idToMarketParams(marketId_);
+
+    // Validate custom LLTV does not exceed market LLTV
+    // This ensures pre-liquidation triggers before Morpho's native liquidation
+    if (lltv_ > $.marketParams.lltv) revert CustomLltvExceedsMarketLltv(lltv_, $.marketParams.lltv);
+
     $.lltv = lltv_;
 
     _initializeOwner(positionManager_);
