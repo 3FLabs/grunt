@@ -4,17 +4,33 @@ pragma solidity ^0.8.20;
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {LibErrors} from "./LibErrors.sol";
 
+/// @title LibTokenBalances
+/// @notice Library for managing token balance mappings with automatic cleanup.
+/// @dev Provides add and subtract operations on an AddressToUint256Map, automatically
+///      removing entries when balances reach zero to keep storage clean.
 library LibTokenBalances {
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
 
+  /// @notice Adds an amount to a token's balance in the map.
+  /// @dev If the token doesn't exist in the map, it will be added with the given amount.
+  ///      If it exists, the amount is added to the current balance.
+  /// @param _balances The storage reference to the balance map.
+  /// @param token The token address to add balance for.
+  /// @param amount The amount to add to the balance.
   function add(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
     (, uint256 currentAmount) = _balances.tryGet(token);
     _balances.set(token, currentAmount + amount);
   }
 
+  /// @notice Subtracts an amount from a token's balance in the map.
+  /// @dev Reverts with InsufficientBalance if the current balance is less than the amount.
+  ///      Automatically removes the token entry from the map if the resulting balance is zero.
+  /// @param _balances The storage reference to the balance map.
+  /// @param token The token address to subtract balance from.
+  /// @param amount The amount to subtract from the balance.
   function sub(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
     unchecked {
-      uint256 currentAmount = _balances.get(token);
+      (, uint256 currentAmount) = _balances.tryGet(token);
       if (currentAmount < amount) revert LibErrors.InsufficientBalance();
       uint256 result = currentAmount - amount;
       if (result == 0) {
