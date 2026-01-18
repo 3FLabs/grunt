@@ -6,7 +6,8 @@ import {
   IPositionManager,
   RebalancingData,
   RebalancingOperation,
-  RebalancingOperationType
+  RebalancingOperationType,
+  SupplyQueueEntry
 } from "src/interfaces/manager/IPositionManager.sol";
 
 /// @title PositionManagerRebalanceTest
@@ -352,6 +353,199 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     if (actualLossBps > maxLossPercent) {
       vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
     }
+    positionManager.rebalance(data, rebalancer);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              UNAUTHORIZED POSITION TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_rebalance_revertUnauthorizedPosition_supply() public {
+    // Create a fake position address that is NOT in borrowModules
+    address fakePosition = makeAddr("fakePosition");
+
+    // Try to supply to the fake position
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] =
+      RebalancingOperation({position: fakePosition, operationType: RebalancingOperationType.SUPPLY, amount: 1000e18});
+
+    RebalancingData memory data = RebalancingData({collateral: 1000e18, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, 1000e18);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), 1000e18);
+
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_revertUnauthorizedPosition_borrow() public {
+    // Create a fake position address that is NOT in borrowModules
+    address fakePosition = makeAddr("fakePosition");
+
+    // Try to borrow from the fake position
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] =
+      RebalancingOperation({position: fakePosition, operationType: RebalancingOperationType.BORROW, amount: 1000e18});
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    vm.prank(rebalancer);
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+  }
+
+  function test_rebalance_revertUnauthorizedPosition_withdraw() public {
+    // Create a fake position address that is NOT in borrowModules
+    address fakePosition = makeAddr("fakePosition");
+
+    // Try to withdraw from the fake position
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] =
+      RebalancingOperation({position: fakePosition, operationType: RebalancingOperationType.WITHDRAW, amount: 1000e18});
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    vm.prank(rebalancer);
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+  }
+
+  function test_rebalance_revertUnauthorizedPosition_repay() public {
+    // Create a fake position address that is NOT in borrowModules
+    address fakePosition = makeAddr("fakePosition");
+
+    // Try to repay to the fake position
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] =
+      RebalancingOperation({position: fakePosition, operationType: RebalancingOperationType.REPAY, amount: 1000e18});
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 1000e18, operations: ops});
+
+    _mintDebt(rebalancer, 1000e18);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), 1000e18);
+
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_revertUnauthorizedPosition_removedModule() public {
+    // Setup: deposit collateral to position 1
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Remove position 2 from queues first (required before removing module)
+    // Queue operations require CURATOR_ROLE
+    SupplyQueueEntry[] memory newSupplyQueue = new SupplyQueueEntry[](1);
+    newSupplyQueue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: type(uint96).max});
+
+    address[] memory newWithdrawalQueue = new address[](1);
+    newWithdrawalQueue[0] = address(borrowPosition1);
+
+    vm.startPrank(curator);
+    positionManager.setSupplyQueue(newSupplyQueue);
+    positionManager.setWithdrawalQueue(newWithdrawalQueue);
+    vm.stopPrank();
+
+    // Now remove position 2 from borrow modules (requires owner)
+    vm.prank(owner);
+    positionManager.removeBorrowModule(address(borrowPosition2));
+
+    // Try to supply to the removed position
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: 1000e18
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 1000e18, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, 1000e18);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), 1000e18);
+
+    // Should revert because position 2 is no longer a borrow module
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_succeedsWithAuthorizedPosition() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Rebalance with authorized position (borrowPosition1 is in borrowModules)
+    uint256 additionalCollateral = 1000e18;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+
+    // Should succeed because borrowPosition1 is an authorized borrow module
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Verify the supply went through
+    assertEq(borrowPosition1.totalCollateral(), COLLATERAL_AMOUNT + additionalCollateral);
+  }
+
+  function testFuzz_rebalance_onlyAuthorizedPositions(address randomPosition) public {
+    // Ensure the random position is not one of our authorized positions
+    vm.assume(randomPosition != address(borrowPosition1));
+    vm.assume(randomPosition != address(borrowPosition2));
+    vm.assume(randomPosition != address(0));
+
+    // Try to supply to the random position
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] =
+      RebalancingOperation({position: randomPosition, operationType: RebalancingOperationType.SUPPLY, amount: 1e18});
+
+    RebalancingData memory data = RebalancingData({collateral: 1e18, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, 1e18);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), 1e18);
+
+    // Should always revert for unauthorized positions
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_revertMixedAuthorizedAndUnauthorized() public {
+    // Create a fake position
+    address fakePosition = makeAddr("fakePosition");
+
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Try to do a valid operation followed by an unauthorized one
+    RebalancingOperation[] memory ops = new RebalancingOperation[](2);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: 100e18
+    });
+    ops[1] =
+      RebalancingOperation({position: fakePosition, operationType: RebalancingOperationType.SUPPLY, amount: 100e18});
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
+
+    vm.prank(rebalancer);
+    // Should revert on the second operation (unauthorized position)
+    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
   }
 }
