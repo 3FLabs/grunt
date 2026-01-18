@@ -35,6 +35,12 @@ interface IRequest is IRequestInteractions {
   /// @notice Marks the request as repaid, enabling withdrawals and redemptions.
   function setRepaid() external;
 
+  /// @notice Syncs the repaid status after the repayment deadline has passed.
+  /// @dev If the deadline has passed and repaid is still false, this will set repaid to true
+  ///      and emit the Repaid event. Can be called by anyone.
+  /// @return repaid Whether the request is now marked as repaid
+  function syncRepaidStatus() external returns (bool repaid);
+
   /// @notice Authorizes an address to mint a specific amount of PT and YT tokens.
   /// @param to The address to authorize for minting
   /// @param ptAmount The amount of PT tokens the address can mint

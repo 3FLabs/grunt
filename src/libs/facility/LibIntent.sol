@@ -10,7 +10,7 @@ import {IFacilityIntents} from "../../interfaces/facility/base/IFacilityIntents.
 import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibAddress} from "./LibAddress.sol";
-import {IRequestInteractions} from "../../interfaces/request/IRequestInteractions.sol";
+import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
 
@@ -122,11 +122,12 @@ library LibIntent {
 
   /// @notice Validates that the intent's associated request has been repaid.
   /// @dev Reverts with RequestNotRepaid if a request exists and is not repaid.
+  ///      Calls syncRepaidStatus() to trigger automatic repayment if the deadline has passed.
   ///      Does nothing if no request is associated with the intent.
   /// @param _self The intent storage reference.
-  function checkRequestRepaid(Intent storage _self) internal view {
+  function checkRequestRepaid(Intent storage _self) internal {
     address _request = _self.request;
-    if (_request != address(0) && !IRequestInteractions(_request).isRepaid()) {
+    if (_request != address(0) && !IRequest(_request).syncRepaidStatus()) {
       revert LibErrors.RequestNotRepaid(_request);
     }
   }

@@ -45,6 +45,10 @@ contract MockRequest {
     return _isRepaid;
   }
 
+  function syncRepaidStatus() external returns (bool) {
+    return _isRepaid;
+  }
+
   function setIsRepaid(bool value) external {
     _isRepaid = value;
   }

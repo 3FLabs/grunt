@@ -11,8 +11,7 @@ import {IHasAsset} from "./IHasAsset.sol";
 interface IRequestInteractions is IHasAsset {
   /// @notice Returns whether the request has been repaid.
   /// @dev This is intended for use by consumers of the request to check repayment status.
-  ///      Note that this may differ from canWithdraw() which can also be true due to
-  ///      deadline expiration.
+  ///      After the repayment deadline, call syncRepaidStatus() to update the repaid flag.
   /// @return repaid True if the request has been marked as repaid
   function isRepaid() external view returns (bool repaid);
 

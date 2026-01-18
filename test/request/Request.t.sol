@@ -832,9 +832,14 @@ contract RequestTest is Test {
     // Warp past the deadline
     vm.warp(deadline + 1);
 
-    // canWithdraw should be true (deadline passed), but isRepaid should still be false
-    assertEq(deadlineRequest.canWithdraw(), true);
+    // Both should still be false until syncRepaidStatus() is called
+    assertEq(deadlineRequest.canWithdraw(), false);
     assertEq(deadlineRequest.isRepaid(), false);
+
+    // After syncing, both should be true
+    deadlineRequest.syncRepaidStatus();
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), true);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1234,14 +1239,18 @@ contract RequestTest is Test {
     // Fast forward past the deadline
     vm.warp(deadline + 1);
 
-    // Withdrawals should now be enabled even though setRepaid() was never called
-    assertEq(deadlineRequest.canWithdraw(), true);
+    // Withdrawals are still disabled until syncRepaidStatus() is called or a withdrawal is attempted
+    assertEq(deadlineRequest.canWithdraw(), false);
 
-    // PT/YT holders should be able to redeem
+    // PT/YT holders should be able to redeem - this triggers the sync internally
     vm.startPrank(primeBroker);
     uint256 ptAssets = deadlinePtVault.redeem(amount, primeBroker, primeBroker);
     uint256 ytAssets = deadlineYtVault.redeem(100_000e6, primeBroker, primeBroker);
     vm.stopPrank();
+
+    // After a withdrawal, canWithdraw and isRepaid should be true
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), true);
 
     assertEq(ptAssets, amount);
     assertEq(ytAssets, 0); // No yield assets since nothing was repaid
@@ -1294,7 +1303,7 @@ contract RequestTest is Test {
     // Fast forward past deadline
     vm.warp(deadline + 1);
 
-    // Operations should be blocked after deadline
+    // Operations should be blocked after deadline (they trigger the sync internally and revert)
     vm.prank(owner);
     vm.expectRevert(AlreadyRepaid.selector);
     deadlineRequest.setRepaid();
@@ -1307,7 +1316,11 @@ contract RequestTest is Test {
     vm.expectRevert(AlreadyRepaid.selector);
     deadlineRequest.repay(100e6);
 
-    // But withdrawals should work
+    // canWithdraw is false until syncRepaidStatus() is called (reverts don't persist state changes)
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // After syncing, withdrawals should work
+    deadlineRequest.syncRepaidStatus();
     assertEq(deadlineRequest.canWithdraw(), true);
   }
 
@@ -1408,9 +1421,99 @@ contract RequestTest is Test {
 
     Request deadlineRequest = Request(reqAddr);
 
-    // At exactly the deadline, withdrawals should be enabled
+    // At exactly the deadline, canWithdraw is still false until synced
     vm.warp(deadline);
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // syncRepaidStatus returns true and enables withdrawals
+    bool repaid = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid, true);
     assertEq(deadlineRequest.canWithdraw(), true);
+  }
+
+  function test_syncRepaidStatus_returnsFalseBeforeDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Before deadline, syncRepaidStatus should return false
+    bool repaid = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid, false);
+    assertEq(deadlineRequest.canWithdraw(), false);
+    assertEq(deadlineRequest.isRepaid(), false);
+  }
+
+  function test_syncRepaidStatus_idempotentAfterDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    vm.warp(deadline + 1);
+
+    // First call should return true and emit event
+    vm.expectEmit(true, true, true, true);
+    emit Repaid(0);
+    bool repaid1 = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid1, true);
+
+    // Subsequent calls should also return true but not emit again
+    bool repaid2 = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid2, true);
+
+    bool repaid3 = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid3, true);
+  }
+
+  function test_syncRepaidStatus_returnsTrueIfAlreadyRepaidViaSetRepaid() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // setRepaid before deadline
+    vm.prank(owner);
+    deadlineRequest.setRepaid();
+
+    // syncRepaidStatus should return true
+    bool repaid = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid, true);
+  }
+
+  function test_syncRepaidStatus_emitsRepaidEventWithCorrectBalance() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Deposit some funds
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(deadlineRequest), amount);
+    deadlineRequest.mint();
+    vm.stopPrank();
+
+    vm.warp(deadline + 1);
+
+    // syncRepaidStatus should emit Repaid with the correct balance
+    vm.expectEmit(true, true, true, true);
+    emit Repaid(amount);
+    deadlineRequest.syncRepaidStatus();
   }
 }
 

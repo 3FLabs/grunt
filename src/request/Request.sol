@@ -158,11 +158,27 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc VaultController
-  /// @dev Returns true if either the request has been marked as repaid OR the repayment deadline has passed.
-  ///      This allows withdrawals to be enabled automatically after a deadline, even if setRepaid() was never called.
+  /// @dev Returns true only if the request has been marked as repaid.
+  ///      Use syncRepaidStatus() to trigger automatic repayment after the deadline.
   function _canWithdraw() internal view override returns (bool) {
+    return _requestStorage().repaid;
+  }
+
+  /// @inheritdoc VaultController
+  /// @dev Syncs the repaid status if the deadline has passed but repaid is still false.
+  ///      Sets repaid to true and emits the Repaid event when the deadline is reached.
+  function _syncWithdrawalStatus() internal override returns (bool) {
     RequestStorage storage req = _requestStorage();
-    return req.repaid || block.timestamp >= req.repaymentDeadline;
+    // If already repaid, return true
+    if (req.repaid) return true;
+    // else if deadline has passed, set repaid to true and emit the Repaid event
+    if (block.timestamp >= req.repaymentDeadline) {
+      req.repaid = true;
+      emit Repaid(_asset().balanceOf(address(this)));
+      return true;
+    }
+    // else return false
+    return false;
   }
 
   /// @inheritdoc IHasAsset
@@ -203,11 +219,21 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Only callable by the owner. Once called, `canWithdraw()` returns true and users
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
   ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
-  /// @custom:reverts If the request has already been repaid
+  /// @custom:reverts If the request has already been repaid or the deadline has passed
   function setRepaid() external onlyOwner {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _requestStorage().repaid = true;
     emit Repaid(_asset().balanceOf(address(this)));
+  }
+
+  /// @inheritdoc IRequest
+  /// @dev Allows anyone to sync the repaid status after the repayment deadline has passed.
+  ///      If the deadline has passed and repaid is still false, this will set repaid to true
+  ///      and emit the Repaid event. This is useful to trigger the state change without requiring
+  ///      a withdrawal attempt.
+  /// @return repaid Whether the request is now marked as repaid
+  function syncRepaidStatus() external returns (bool) {
+    return _syncWithdrawalStatus();
   }
 
   /// @inheritdoc IRequest
@@ -226,9 +252,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      is then expected to repay by transferring assets back to the contract before
   ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
   ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
-  /// @custom:reverts If the request has been repaid
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
     emit FundsPulled(msg.sender, amount);
     if (data.length > 0) {
@@ -240,15 +266,15 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Transfers the underlying assets back to the contract. This is purely optional
   ///      with the given implementation and may be done via a simple transfer.
   ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
-  /// @custom:reverts If the request has been repaid (canWithdraw is true)
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   function repay(uint256 amount) external {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 
   /// @inheritdoc IRequestInteractions
-  /// @dev Returns true only when the request has been explicitly marked as repaid via setRepaid().
-  ///      This differs from canWithdraw() which can also return true when the repayment deadline passes.
+  /// @dev Returns true when the request has been marked as repaid via setRepaid() or syncRepaidStatus().
+  ///      Call syncRepaidStatus() after the deadline to update the repaid flag.
   function isRepaid() external view returns (bool) {
     return _requestStorage().repaid;
   }
@@ -271,9 +297,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///
   ///      The caller must have approved this contract to spend the required asset amount.
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
-  /// @custom:reverts If the request has been repaid
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   function mint() external {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
@@ -299,7 +325,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      before the asset transfer occurs. Set `offer.useCallback` to false for EOA makers or
   ///      contracts that don't need the callback (e.g., have pre-approved allowances).
   ///
-  /// @custom:reverts If the request has been repaid
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   /// @custom:reverts If the offer signature is invalid
   /// @custom:reverts If the asset transfer fails
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
@@ -308,7 +334,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     nonReentrant
     returns (uint256 ytAmount)
   {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     if (offer.useCallback) {

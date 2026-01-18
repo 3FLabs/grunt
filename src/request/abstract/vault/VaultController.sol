@@ -49,12 +49,10 @@ abstract contract VaultController is TokenController, IVaultController {
     return _canWithdraw();
   }
 
-  /// @dev Reverts if withdrawals are not currently permitted.
-  ///      Called before any withdraw or redeem operation to enforce the withdrawal lock.
-  /// @custom:reverts CannotWithdraw if withdrawals are locked
-  function _requireCanWithdraw() internal view virtual {
-    if (!_canWithdraw()) revert CannotWithdraw();
-  }
+  /// @dev Synchronizes the status for withdrawal.
+  ///      This can be used to update the repayment status above deadline and emit events if repayment happens here.
+  /// @return True if withdrawals are permitted
+  function _syncWithdrawalStatus() internal virtual returns (bool);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INTERNAL HELPERS                        */
@@ -138,7 +136,7 @@ abstract contract VaultController is TokenController, IVaultController {
     uint256 ytShares
   ) internal virtual {
     unchecked {
-      _requireCanWithdraw();
+      if (!_syncWithdrawalStatus()) revert CannotWithdraw();
       if (caller != owner) {
         _consumeAllowance(owner, caller, ptShares, ytShares);
       }
