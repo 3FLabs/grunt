@@ -292,7 +292,8 @@ contract FacilityCreateIntentTest is Test {
 
     MockFund fund = new MockFund(address(debt), address(collateral));
 
-    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
+    uint256 id =
+      _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
 
     // Set fund on intent
     facility.setFund(id, address(fund));

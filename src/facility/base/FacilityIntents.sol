@@ -105,7 +105,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   function setFund(uint256 id, address newFund) external override onlyRoles(FACILITATOR_ROLE) {
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getUnresolvedIntent(id);
-    
+
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
 
