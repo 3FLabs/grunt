@@ -286,6 +286,26 @@ contract FacilityCreateIntentTest is Test {
     facility.setFund(id2, address(fund));
   }
 
+  function test_SetFund_SwitchFundFreesOldFund() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockFund fundA = new MockFund(address(debt), address(collateral));
+    MockFund fundB = new MockFund(address(debt), address(collateral));
+
+    uint256 id1 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+    uint256 id2 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set fundA on intent 1
+    facility.setFund(id1, address(fundA));
+
+    // Switch intent 1 from fundA to fundB
+    facility.setFund(id1, address(fundB));
+
+    // Now intent 2 should be able to use fundA (since it was freed when intent 1 switched to fundB)
+    facility.setFund(id2, address(fundA));
+  }
+
   function test_RevertWhen_SetFund_RemoveFundWithActiveOrder() public {
     Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});

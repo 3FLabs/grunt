@@ -126,6 +126,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     IFund(newFund).asset().checkAssetsMatch(_pmDebt);
     IFund(newFund).share().checkAssetsMatch(_pmCollateral);
 
+    // abandon the old fund if it exists
+    _facilityStorage.abandonFund(_intent.fund);
+
     // update the intent's fund
     _intent.fund = newFund;
     emit FundUpdated(id, newFund);
