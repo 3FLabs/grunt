@@ -273,4 +273,86 @@ contract FacilityLPTest is Test {
     assertEq(facility.balanceOf(alice, id), 0);
     assertEq(debt.balanceOf(alice), 100);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 CLAIM RETURN VALUES TESTS                   */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_Claim_ReturnsTokensAndAmounts() public {
+    uint256 id = _createIntent();
+    _deposit(alice, id, 100);
+
+    facility.lock(id);
+    facility.resolve(id);
+
+    uint256 shares = facility.balanceOf(alice, id);
+
+    vm.prank(alice);
+    (address[] memory tokens, uint256[] memory amounts) = facility.claim(id, alice, alice, shares);
+
+    // Verify return values
+    assertEq(tokens.length, 1, "Should return 1 token");
+    assertEq(amounts.length, 1, "Should return 1 amount");
+    assertEq(tokens[0], address(debt), "Token should be debt token");
+    assertEq(amounts[0], 100, "Amount should be 100");
+
+    // Verify actual transfer happened
+    assertEq(debt.balanceOf(alice), 100, "Alice should have received 100 debt tokens");
+  }
+
+  function test_Claim_ReturnsCorrectPartialAmounts() public {
+    uint256 id = _createIntent();
+    _deposit(alice, id, 100);
+
+    facility.lock(id);
+    facility.resolve(id);
+
+    // Claim partial shares
+    vm.prank(alice);
+    (address[] memory tokens, uint256[] memory amounts) = facility.claim(id, alice, alice, 40);
+
+    assertEq(tokens.length, 1);
+    assertEq(amounts.length, 1);
+    assertEq(tokens[0], address(debt));
+    assertEq(amounts[0], 40, "Should return 40 for 40% of shares");
+
+    // Claim remaining
+    vm.prank(alice);
+    (tokens, amounts) = facility.claim(id, alice, alice, 60);
+
+    assertEq(amounts[0], 60, "Should return 60 for remaining 60% of shares");
+  }
+
+  function test_Claim_ZeroSharesReturnsEmptyArrays() public {
+    uint256 id = _createIntent();
+    _deposit(alice, id, 100);
+
+    facility.lock(id);
+    facility.resolve(id);
+
+    vm.prank(alice);
+    (address[] memory tokens, uint256[] memory amounts) = facility.claim(id, alice, alice, 0);
+
+    assertEq(tokens.length, 0, "Should return empty tokens array for 0 shares");
+    assertEq(amounts.length, 0, "Should return empty amounts array for 0 shares");
+  }
+
+  function test_Claim_ReturnValuesMatchActualTransfers() public {
+    uint256 id = _createIntent();
+    _deposit(alice, id, 100);
+
+    facility.lock(id);
+    facility.resolve(id);
+
+    uint256 aliceBalanceBefore = debt.balanceOf(alice);
+
+    vm.prank(alice);
+    (address[] memory tokens, uint256[] memory amounts) = facility.claim(id, alice, alice, 50);
+
+    uint256 aliceBalanceAfter = debt.balanceOf(alice);
+
+    // Verify return values match actual transfer
+    assertEq(tokens[0], address(debt));
+    assertEq(amounts[0], aliceBalanceAfter - aliceBalanceBefore, "Return amount should match actual transfer");
+  }
 }

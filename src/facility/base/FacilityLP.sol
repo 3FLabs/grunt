@@ -64,9 +64,14 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   /// @dev Distributes tokens held by the intent proportionally to the shares being burned.
   ///      The intent must be resolved before claims can be made.
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
-  function claim(uint256 id, address from, address receiver, uint256 shares) external override nonReentrant {
-    // if shares is 0, return early
-    if (shares == 0) return;
+  function claim(uint256 id, address from, address receiver, uint256 shares)
+    external
+    override
+    nonReentrant
+    returns (address[] memory tokens, uint256[] memory amounts)
+  {
+    // if shares is 0, return early with empty arrays
+    if (shares == 0) return (new address[](0), new uint256[](0));
 
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, shares);
@@ -78,14 +83,20 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     uint256 supply = _intent.totalSupply + shares;
 
     // transfer all tokens proportionally to the shares being burned (rounding down)
-    address[] memory tokens = _intent.amounts.keys();
-    for (uint256 i = 0; i < tokens.length; i++) {
+    tokens = _intent.amounts.keys();
+    uint256 length = tokens.length;
+    amounts = new uint256[](length);
+
+    for (uint256 i = 0; i < length; i++) {
       address token = tokens[i];
       // get the proportional amount of this token
       uint256 userBalance = _intent.amounts.get(token).mulDiv(shares, supply);
+      amounts[i] = userBalance;
       // transfer the tokens to the receiver
       _intent.transferTokenTo(id, token, receiver, userBalance);
     }
+
+    return (tokens, amounts);
   }
 
   /// @dev Checks the withdrawal parameters and burns the shares.

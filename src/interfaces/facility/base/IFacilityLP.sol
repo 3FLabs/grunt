@@ -23,9 +23,14 @@ interface IFacilityLP {
 
   /// @notice Claims resolved assets for the intent.
   /// @dev If `from` is not `msg.sender`, the caller must be an operator for `from`.
+  ///      Returns the tokens and amounts distributed for verification and integration purposes.
   /// @param id The intent ID.
   /// @param from The address to burn LP tokens from.
   /// @param receiver The address to receive the claimed assets.
   /// @param shares The amount of shares to burn.
-  function claim(uint256 id, address from, address receiver, uint256 shares) external;
+  /// @return tokens The array of token addresses that were distributed.
+  /// @return amounts The array of amounts distributed for each token (same order as tokens).
+  function claim(uint256 id, address from, address receiver, uint256 shares)
+    external
+    returns (address[] memory tokens, uint256[] memory amounts);
 }
