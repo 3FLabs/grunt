@@ -105,6 +105,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   function setFund(uint256 id, address newFund) external override onlyRoles(FACILITATOR_ROLE) {
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getUnresolvedIntent(id);
+    
+    // ensure the intent has no pending order
+    _intent.checkNoPendingOrder(id);
 
     if (newFund == address(0)) {
       // if the fund is address(0), remove the fund
@@ -117,9 +120,6 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
 
     // ensure the fund is a contract
     newFund.checkContract();
-
-    // ensure the intent has no pensing order
-    _intent.checkNoPendingOrder(id);
 
     // ensure the fund's assets match the position manager's assets
     (address _pmCollateral, address _pmDebt) = IPositionManager(_intent.properties.guardKey).assets();

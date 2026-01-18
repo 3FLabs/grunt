@@ -7,6 +7,7 @@ import {Facility} from "src/facility/Facility.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
+import {Order, Mode, State} from "src/libs/Order.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -26,6 +27,10 @@ contract MockFund {
 
   function share() external view returns (address) {
     return SHARE;
+  }
+
+  function create(Order calldata) external pure returns (State) {
+    return State.ACCEPTED;
   }
 }
 
@@ -279,6 +284,33 @@ contract FacilityCreateIntentTest is Test {
 
     // Now intent 2 can use the fund
     facility.setFund(id2, address(fund));
+  }
+
+  function test_RevertWhen_SetFund_RemoveFundWithActiveOrder() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
+
+    MockFund fund = new MockFund(address(debt), address(collateral));
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), type(uint256).max, uint40(block.timestamp + 1 days), 0);
+
+    // Set fund on intent
+    facility.setFund(id, address(fund));
+
+    // Deposit some assets
+    debt.mint(address(this), 1_000_000);
+    debt.approve(address(facility), 1_000_000);
+    facility.deposit(id, 1_000_000);
+
+    // Lock the intent to move to resolving phase
+    facility.lock(id);
+
+    // Create an order on the intent
+    facility.create(id, 500_000, 400_000, Mode.DEPOSIT);
+
+    // Try to remove the fund - should revert because there's an active order
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.ActiveOrder.selector, id));
+    facility.setFund(id, address(0));
   }
 
   function test_RevertWhen_SetRequest_RequestAlreadyInUse() public {
