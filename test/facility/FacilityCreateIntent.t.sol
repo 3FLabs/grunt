@@ -366,6 +366,83 @@ contract FacilityCreateIntentTest is Test {
     facility.setRequest(id, address(request));
   }
 
+  function test_SetRequest_RemoveRequest() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockRequest request = new MockRequest(address(debt));
+
+    uint256 id1 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+    uint256 id2 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set request on intent 1
+    facility.setRequest(id1, address(request));
+
+    // Remove request from intent 1
+    facility.setRequest(id1, address(0));
+
+    // Now intent 2 can use the request
+    facility.setRequest(id2, address(request));
+  }
+
+  function test_SetRequest_SwitchRequestFreesOldRequest() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockRequest requestA = new MockRequest(address(debt));
+    MockRequest requestB = new MockRequest(address(debt));
+
+    uint256 id1 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+    uint256 id2 = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Set requestA on intent 1
+    facility.setRequest(id1, address(requestA));
+
+    // Switch intent 1 from requestA to requestB
+    facility.setRequest(id1, address(requestB));
+
+    // Now intent 2 should be able to use requestA (since it was freed when intent 1 switched to requestB)
+    facility.setRequest(id2, address(requestA));
+  }
+
+  function test_SetFund_WorksOnResolvedIntent() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockFund fund = new MockFund(address(debt), address(collateral));
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Lock and resolve the intent
+    facility.lock(id);
+    facility.resolve(id);
+
+    // Setting fund on resolved intent should succeed
+    facility.setFund(id, address(fund));
+
+    // Removing fund from resolved intent should also succeed
+    facility.setFund(id, address(0));
+  }
+
+  function test_SetRequest_WorksOnResolvedIntent() public {
+    Asset memory depositAsset = Asset({asset: address(pm), isPositionManager: true});
+    Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
+
+    MockRequest request = new MockRequest(address(debt));
+
+    uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 0);
+
+    // Lock and resolve the intent
+    facility.lock(id);
+    facility.resolve(id);
+
+    // Setting request on resolved intent should succeed
+    facility.setRequest(id, address(request));
+
+    // Removing request from resolved intent should also succeed
+    facility.setRequest(id, address(0));
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       VIEW FUNCTIONS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

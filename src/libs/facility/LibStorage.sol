@@ -182,4 +182,11 @@ library LibStorage {
   function abandonFund(FacilityStorageData storage self, address fund) internal {
     delete self.fundsIntent[fund];
   }
+
+  /// @dev Abandons a request and removes it from the mapping.
+  /// @param self The storage pointer to the FacilityStorageData struct.
+  /// @param request The request address.
+  function abandonRequest(FacilityStorageData storage self, address request) internal {
+    delete self.requestsIntent[request];
+  }
 }

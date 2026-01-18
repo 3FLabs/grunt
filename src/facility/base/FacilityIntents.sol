@@ -100,11 +100,11 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @inheritdoc IFacilityIntents
   /// @dev Sets a new fund address for the intent.
   ///      The fund's asset and share must match the position manager's assets.
-  ///      The intent must not have an active order and must not be resolved.
+  ///      The intent must not have an active order.
   ///      If the fund is address(0), the fund is removed from the intent.
   function setFund(uint256 id, address newFund) external override onlyRoles(FACILITATOR_ROLE) {
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getUnresolvedIntent(id);
+    Intent storage _intent = _facilityStorage.getIntent(id);
 
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
@@ -138,22 +138,28 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @dev Sets a new request address for the intent.
   ///      The request's asset must match the position manager's debt asset.
   ///      If a previous request exists, it must be repaid.
+  ///      If the request is address(0), the request is removed from the intent.
   function setRequest(uint256 id, address newRequest) external override onlyRoles(FACILITATOR_ROLE) {
-    // ensure the request is a contract
-    newRequest.checkContract();
-
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    Intent storage _intent = _facilityStorage.getUnresolvedIntent(id);
-
-    // ensure the request is not already in use
-    _facilityStorage.checkRequestIntent(newRequest, id);
+    Intent storage _intent = _facilityStorage.getIntent(id);
 
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();
 
-    // ensure the request's asset matches the position manager's debt asset
-    (, address _pmDebt) = IPositionManager(_intent.properties.guardKey).assets();
-    IRequestInteractions(newRequest).asset().checkAssetsMatch(_pmDebt);
+    if (newRequest != address(0)) {
+      // ensure the request is a contract
+      newRequest.checkContract();
+
+      // ensure the request is not already in use
+      _facilityStorage.checkRequestIntent(newRequest, id);
+
+      // ensure the request's asset matches the position manager's debt asset
+      (, address _pmDebt) = IPositionManager(_intent.properties.guardKey).assets();
+      IRequestInteractions(newRequest).asset().checkAssetsMatch(_pmDebt);
+    }
+
+    // abandon the old request if it exists
+    _facilityStorage.abandonRequest(_intent.request);
 
     // update the intent's request
     _intent.request = newRequest;

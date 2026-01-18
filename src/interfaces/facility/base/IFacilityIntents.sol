@@ -95,6 +95,6 @@ interface IFacilityIntents {
 
   /// @notice Sets a new request address for a given intent ID.
   /// @param id The intent ID.
-  /// @param newRequest The new request address.
+  /// @param newRequest The new request address or address(0) to remove the request.
   function setRequest(uint256 id, address newRequest) external;
 }
