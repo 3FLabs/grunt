@@ -24,6 +24,7 @@ import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {LibAddress} from "src/libs/facility/LibAddress.sol";
 
 /// @title Facility
+/// @author 3F Protocol
 /// @notice Main contract combining all facility functionality for managing intents, funds, requests, position managers, LPs, and swaps.
 /// @dev Inherits from all abstract facility components and implements required abstract functions.
 contract Facility is

@@ -6,7 +6,7 @@ import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
-import {Order, Mode, State} from "src/libs/Order.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 
 import {PositionManagerBaseTest} from "test/manager/PositionManagerBase.t.sol";
 

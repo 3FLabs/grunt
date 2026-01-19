@@ -9,6 +9,7 @@ import {Vault} from "../../src/request/Vault.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
+import {LibErrors} from "../../src/libs/request/LibErrors.sol";
 
 /// @title RequestConsumeTest
 /// @notice Tests for the Request.consume() function with EIP-1271 callback contracts
@@ -34,14 +35,6 @@ contract RequestConsumeTest is Test {
   bytes32 internal constant OFFER_TYPEHASH = 0x3ded0c963332962cf2d273c8fb4f3e69f4ef33407ca72484fcebb56263ad0664;
   bytes32 internal constant TYPE_HASH =
     keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-
-  // Errors
-  error AlreadyRepaid();
-  error Unauthorized();
-  error InvalidOffer();
-  error InvalidSignature();
-  error OfferExpired();
-  error InvalidNonce();
 
   function setUp() public {
     owner = makeAddr("owner");
@@ -223,7 +216,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     request.consume(offer, signature, offerAmount);
   }
 
@@ -235,7 +228,7 @@ contract RequestConsumeTest is Test {
 
     address notAuthorized = makeAddr("notAuthorized");
     vm.prank(notAuthorized);
-    vm.expectRevert(Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     request.consume(offer, signature, offerAmount);
   }
 
@@ -278,7 +271,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(OfferExpired.selector);
+    vm.expectRevert(LibErrors.OfferExpired.selector);
     request.consume(offer, signature, offerAmount);
   }
 
@@ -299,7 +292,7 @@ contract RequestConsumeTest is Test {
     bytes memory sig2 = _signOffer(offer2);
 
     vm.prank(owner);
-    vm.expectRevert(InvalidNonce.selector);
+    vm.expectRevert(LibErrors.InvalidNonce.selector);
     request.consume(offer2, sig2, offerAmount);
   }
 
@@ -308,7 +301,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(InvalidOffer.selector);
+    vm.expectRevert(LibErrors.InvalidOffer.selector);
     request.consume(offer, signature, 1_000_000e6);
   }
 
@@ -317,7 +310,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(InvalidOffer.selector);
+    vm.expectRevert(LibErrors.InvalidOffer.selector);
     request.consume(offer, signature, 0);
   }
 
@@ -326,7 +319,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(InvalidOffer.selector);
+    vm.expectRevert(LibErrors.InvalidOffer.selector);
     request.consume(offer, signature, 1_000_000e6);
   }
 

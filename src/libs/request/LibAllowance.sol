@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {MAX_128_BITS} from "../Constants.sol";
 
 /// @title LibAllowance
+/// @author 3F Protocol
 /// @notice Library for efficient allowance management with infinite approval support.
 /// @dev Provides gas-optimized functions for consuming and normalizing uint128 allowances.
 ///      Implements infinite allowance semantics where type(uint128).max remains unchanged during consumption.

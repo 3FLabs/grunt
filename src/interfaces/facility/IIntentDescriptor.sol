@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {IFacility} from "./IFacility.sol";
 
 /// @title IIntentDescriptor
+/// @author 3F Protocol
 /// @notice Interface for generating metadata for intent tokens (ERC6909).
 /// @dev Implementations provide name, symbol, description, and tokenURI for each intent ID.
 interface IIntentDescriptor {

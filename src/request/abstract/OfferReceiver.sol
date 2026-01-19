@@ -4,8 +4,10 @@ pragma solidity ^0.8.20;
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 import {IOfferReceiver, Offer} from "../../interfaces/request/IOfferReceiver.sol";
+import {LibErrors} from "../../libs/request/LibErrors.sol";
 
 /// @title OfferReceiver
+/// @author 3F Protocol
 /// @notice Abstract contract for validating and consuming cryptographically signed prime broker offers.
 /// @dev Implements EIP-712 typed data hashing and signature verification (EIP-712/EIP-1271).
 ///      Manages nonces to prevent replay attacks and enable offer cancellation. Contracts inheriting
@@ -23,25 +25,6 @@ import {IOfferReceiver, Offer} from "../../interfaces/request/IOfferReceiver.sol
 ///      - Expiration timestamps provide time-bound validity for offers
 abstract contract OfferReceiver is EIP712, IOfferReceiver {
   using SignatureCheckerLib for address;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           ERRORS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Error thrown when an offer has invalid parameters (zero maker, amount, or expectedReturn).
-  error InvalidOffer();
-
-  /// @notice Error thrown when the offer signature verification fails.
-  error InvalidSignature();
-
-  /// @notice Error thrown when an offer's expiration timestamp has passed.
-  error OfferExpired();
-
-  /// @notice Error thrown when an offer's nonce is not greater than the stored nonce.
-  error InvalidNonce();
-
-  /// @notice Error thrown when attempting to set a nonce that is not greater than the current nonce.
-  error InvalidNonceUpdate();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          CONSTANTS                         */
@@ -98,7 +81,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @custom:reverts InvalidNonceUpdate if newNonce <= current nonce
   function setNonce(uint256 newNonce) external {
     uint256 currentNonce = nonce(msg.sender);
-    if (currentNonce >= newNonce) revert InvalidNonceUpdate();
+    if (currentNonce >= newNonce) revert LibErrors.InvalidNonceUpdate();
     _setNonce(msg.sender, newNonce);
   }
 
@@ -142,19 +125,19 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @custom:reverts InvalidSignature if signature verification fails
   function _validateOffer(Offer calldata offer, bytes calldata signature) internal {
     // Validate offer parameters are non-zero
-    if (offer.maker == address(0) || offer.amount == 0 || offer.expectedReturn == 0) revert InvalidOffer();
+    if (offer.maker == address(0) || offer.amount == 0 || offer.expectedReturn == 0) revert LibErrors.InvalidOffer();
 
     // Check offer has not expired
-    if (offer.expiration <= block.timestamp) revert OfferExpired();
+    if (offer.expiration <= block.timestamp) revert LibErrors.OfferExpired();
 
     // Ensure offer nonce is fresh (greater than stored nonce)
-    if (nonce(offer.maker) >= offer.nonce) revert InvalidNonce();
+    if (nonce(offer.maker) >= offer.nonce) revert LibErrors.InvalidNonce();
 
     // Update stored nonce BEFORE signature verification to prevent reentrancy replays
     _setNonce(offer.maker, offer.nonce);
 
     // Compute EIP-712 typed data hash and verify signature
     bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
-    if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert InvalidSignature();
+    if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert LibErrors.InvalidSignature();
   }
 }

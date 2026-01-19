@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
-import {Order} from "../Order.sol";
+import {Order} from "../funds/Order.sol";
 import {LibTokenBalances} from "./LibTokenBalances.sol";
 import {LibErrors} from "./LibErrors.sol";
 import {IFacility} from "../../interfaces/facility/IFacility.sol";
@@ -57,6 +57,7 @@ struct Intent {
 }
 
 /// @title LibIntent
+/// @author 3F Protocol
 /// @notice Library for Intent storage operations.
 /// @dev Provides functions for intent state checks, validation, initialization,
 ///      updates, and token transfer accounting.

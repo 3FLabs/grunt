@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title IRequestInteractionsCallback
+/// @author 3F Protocol
 /// @notice Interface for contracts that want to receive callbacks when funds are being pulled.
 interface IRequestInteractionsCallback {
   /// @notice Called when the request contract pulls funds with non-null data.

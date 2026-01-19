@@ -6,8 +6,10 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
+import {LibErrors} from "../libs/funds/LibErrors.sol";
 
 /// @title WrappedAsset
+/// @author 3F Protocol
 /// @notice ERC20 wrapper token that wraps an underlying asset 1:1.
 /// @dev This contract holds the underlying asset and mints/burns wrapper tokens.
 ///      - mint(): Pulls underlying from `from`, mints wrapper to `to`
@@ -33,16 +35,6 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @notice Role for addresses authorized to receive wrapper tokens from anyone.
   /// @dev Addresses with this role can receive tokens even from senders without SENDER_ROLE.
   uint256 internal constant RECEIVER_ROLE = _ROLE_2;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           ERRORS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when minting to the zero address.
-  error MintToZeroAddress();
-
-  /// @notice Thrown when burning to the zero address.
-  error BurnToZeroAddress();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -98,11 +90,11 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
     string calldata name_,
     uint8 decimals_
   ) public initializer {
-    WrappedAssetStorage storage $ = _wrappedAssetStorage();
-    $.symbol = symbol_;
-    $.name = name_;
-    $.decimals = decimals_;
-    $.underlying = underlying_;
+    WrappedAssetStorage storage _storage = _wrappedAssetStorage();
+    _storage.symbol = symbol_;
+    _storage.name = name_;
+    _storage.decimals = decimals_;
+    _storage.underlying = underlying_;
 
     _initializeOwner(owner_);
     _setRoles(initialIssuer_, ISSUER_ROLE | SENDER_ROLE);
@@ -116,10 +108,10 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @dev Wraps underlying asset: pulls underlying from caller, mints wrapper to `to`.
   ///      If `to != msg.sender`, the caller must have ISSUER_ROLE.
   function mint(address to, uint256 amount) external override {
-    if (to == address(0)) revert MintToZeroAddress();
+    if (to == address(0)) revert LibErrors.MintToZeroAddress();
     if (to != msg.sender) _checkRoles(ISSUER_ROLE);
-    WrappedAssetStorage storage $ = _wrappedAssetStorage();
-    $.underlying.safeTransferFrom(msg.sender, address(this), amount);
+    WrappedAssetStorage storage _storage = _wrappedAssetStorage();
+    _storage.underlying.safeTransferFrom(msg.sender, address(this), amount);
     _mint(to, amount);
   }
 
@@ -127,13 +119,13 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @dev Unwraps to underlying asset: burns wrapper from `from`, sends underlying to `to`.
   ///      If `from != msg.sender`, caller must have sufficient allowance.
   function burn(address from, address to, uint256 amount) external override {
-    if (to == address(0)) revert BurnToZeroAddress();
+    if (to == address(0)) revert LibErrors.BurnToZeroAddress();
     if (from != msg.sender) {
       _spendAllowance(from, msg.sender, amount);
     }
     _burn(from, amount);
-    WrappedAssetStorage storage $ = _wrappedAssetStorage();
-    $.underlying.safeTransfer(to, amount);
+    WrappedAssetStorage storage _storage = _wrappedAssetStorage();
+    _storage.underlying.safeTransfer(to, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

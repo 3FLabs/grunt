@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {IntentProperties, Asset} from "../../../libs/facility/LibIntent.sol";
 
 /// @title IFacilityIntents
+/// @author 3F Protocol
 /// @notice Interface for intent management operations.
 interface IFacilityIntents {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

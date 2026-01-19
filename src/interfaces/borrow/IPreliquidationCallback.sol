@@ -2,6 +2,7 @@
 pragma solidity >=0.5.0;
 
 /// @title IPreLiquidationCallback
+/// @author 3F Protocol
 /// @notice Interface that "pre-liquidators" willing to use the pre-liquidation callback must implement.
 interface IPreLiquidationCallback {
   /// @notice Callback called when a pre-liquidation occurs.

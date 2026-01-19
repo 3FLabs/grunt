@@ -5,6 +5,7 @@ import {OfferReceiver} from "./abstract/OfferReceiver.sol";
 import {VaultController} from "./abstract/vault/VaultController.sol";
 import {TokenController} from "./abstract/tokens/TokenController.sol";
 import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
+import {LibErrors} from "../libs/request/LibErrors.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
 import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.sol";
@@ -21,6 +22,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 
 /// @title Request
+/// @author 3F Protocol
 /// @notice Contract for managing funding requests with dual-token (PT/YT) issuance.
 /// @dev This contract combines multiple functionalities:
 ///      - **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
@@ -61,13 +63,6 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
 
   /// @dev Role for addresses authorized to consume offers and authorize minting via `consume()` and `authorizeMinting()`.
   uint256 internal constant _ROLE_CONSUMER = _ROLE_1;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         ERRORS                             */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev The request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
-  error AlreadyRepaid();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -136,13 +131,13 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     string memory symbol_,
     uint64 repaymentDeadline_
   ) public initializer {
-    RequestStorage storage req = _requestStorage();
-    req.asset = asset_;
-    req.repaymentDeadline = repaymentDeadline_;
-    req.ptToken = ptToken_;
-    req.ytToken = ytToken_;
-    req.name = name_;
-    req.symbol = symbol_;
+    RequestStorage storage _request = _requestStorage();
+    _request.asset = asset_;
+    _request.repaymentDeadline = repaymentDeadline_;
+    _request.ptToken = ptToken_;
+    _request.ytToken = ytToken_;
+    _request.name = name_;
+    _request.symbol = symbol_;
     _initializeOwner(owner_);
     _grantRoles(puller_, _ROLE_PULLER);
     _grantRoles(consumer_, _ROLE_CONSUMER);
@@ -221,7 +216,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
   /// @custom:reverts If the request has already been repaid or the deadline has passed
   function setRepaid() external onlyOwner {
-    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
     _requestStorage().repaid = true;
     emit Repaid(_asset().balanceOf(address(this)));
   }
@@ -254,7 +249,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
-    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
     emit FundsPulled(msg.sender, amount);
     if (data.length > 0) {
@@ -268,7 +263,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function repay(uint256 amount) external {
-    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
     _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 
@@ -299,7 +294,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function mint() external {
-    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
@@ -334,7 +329,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     nonReentrant
     returns (uint256 ytAmount)
   {
-    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     if (offer.useCallback) {

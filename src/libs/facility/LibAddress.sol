@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {LibErrors} from "./LibErrors.sol";
 
 /// @title LibAddress
+/// @author 3F Protocol
 /// @notice Library for address validation utilities.
 library LibAddress {
   /// @dev Reverts if the address is the zero address.

@@ -9,6 +9,7 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
+import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
 
 /// @title PositionManagerRolesTest
 /// @notice Tests for PositionManager admin functions and role-based access control
@@ -64,13 +65,13 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
   function test_setLltv_revertOnZero() public {
     vm.prank(owner);
-    vm.expectRevert(IPositionManager.InvalidLltv.selector);
+    vm.expectRevert(LibErrors.InvalidLltv.selector);
     positionManager.setLltv(0);
   }
 
   function test_setLltv_revertOnGreaterThanWad() public {
     vm.prank(owner);
-    vm.expectRevert(IPositionManager.InvalidLltv.selector);
+    vm.expectRevert(LibErrors.InvalidLltv.selector);
     positionManager.setLltv(1e18 + 1);
   }
 
@@ -137,7 +138,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
     // Should revert because borrowPosition1 is still in supply queue
     vm.prank(owner);
-    vm.expectRevert(IPositionManager.ModuleStillInQueue.selector);
+    vm.expectRevert(LibErrors.ModuleStillInQueue.selector);
     positionManager.removeBorrowModule(address(borrowPosition1));
   }
 
@@ -153,7 +154,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
     // Should revert because borrowPosition1 is still in withdrawal queue
     vm.prank(owner);
-    vm.expectRevert(IPositionManager.ModuleStillInQueue.selector);
+    vm.expectRevert(LibErrors.ModuleStillInQueue.selector);
     positionManager.removeBorrowModule(address(borrowPosition1));
   }
 
@@ -202,7 +203,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     queue[0] = SupplyQueueEntry({position: unauthorizedPosition, maxBorrow: uint96(type(uint96).max)});
 
     vm.prank(curator);
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.setSupplyQueue(queue);
   }
 
@@ -213,7 +214,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     queue[0] = unauthorizedPosition;
 
     vm.prank(curator);
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.setWithdrawalQueue(queue);
   }
 

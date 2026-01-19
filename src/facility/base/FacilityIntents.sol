@@ -12,6 +12,7 @@ import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {LibAddress} from "src/libs/facility/LibAddress.sol";
 
 /// @title FacilityIntents
+/// @author 3F Protocol
 /// @notice Abstract contract implementing intent management operations.
 /// @dev Allows creating intents and updating their configuration.
 abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {

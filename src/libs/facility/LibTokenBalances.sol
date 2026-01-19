@@ -5,6 +5,7 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {LibErrors} from "./LibErrors.sol";
 
 /// @title LibTokenBalances
+/// @author 3F Protocol
 /// @notice Library for managing token balance mappings with automatic cleanup.
 /// @dev Provides add and subtract operations on an AddressToUint256Map, automatically
 ///      removing entries when balances reach zero to keep storage clean.

@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.20;
+
+import {State, Id} from "./Order.sol";
+
+/// @title LibErrors
+/// @author 3F Protocol
+/// @notice Error definitions for the Funds contracts.
+library LibErrors {
+  /// @notice Thrown when a required address parameter is the zero address.
+  error AddressZero();
+
+  /// @notice Thrown when an operation is called with a zero amount.
+  error AmountZero();
+
+  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
+  /// @param addr The invalid address.
+  error InvalidContract(address addr);
+
+  /// @notice Thrown when the order owner does not match the caller (the owner).
+  error InvalidOwner();
+
+  /// @notice Thrown when the order receiver does not match the caller (the owner).
+  error InvalidReceiver();
+
+  /// @notice Thrown when trying to create an order while another is still pending.
+  error PendingOrder();
+
+  /// @notice Thrown when the current state does not match the expected one.
+  /// @param actual The actual state.
+  error InvalidState(State actual);
+
+  /// @notice Thrown when the order Id does not match the current one.
+  /// @param orderId The invalid order Id.
+  error InvalidOrder(Id orderId);
+
+  /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
+  error NotAllowedSuperstate();
+
+  /// @notice Thrown when the Chainlink oracle returns a non-positive price.
+  /// @dev Indicates an invalid or paused oracle feed, or corrupted round data.
+  ///      Triggered if `answer <= 0` from `latestRoundData()`.
+  error ChainlinkInvalidAnswer();
+
+  /// @notice Thrown when the latest Chainlink round is not yet complete.
+  /// @dev Indicates the oracle round has not been finalized.
+  ///      Triggered if `updatedAt == 0` from `latestRoundData()`.
+  error ChainlinkIncompleteRound();
+
+  /// @notice Thrown when the Chainlink oracle response is stale.
+  /// @dev Indicates the answer comes from an earlier round than the latest one.
+  ///      Triggered if `answeredInRound < roundId` from `latestRoundData()`.
+  error ChainlinkStaleRound();
+
+  /// @notice Thrown when the provided oracle address is invalid (e.g., decimals mismatch).
+  /// @param oracle The invalid oracle address.
+  error InvalidOracle(address oracle);
+
+  /// @notice Thrown when there is a decimals mismatch between two tokens.
+  /// @param decimalsA The decimals of the first token.
+  /// @param decimalsB The decimals of the second token.
+  error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
+
+  /// @notice Thrown when minting to the zero address.
+  error MintToZeroAddress();
+
+  /// @notice Thrown when burning to the zero address.
+  error BurnToZeroAddress();
+}

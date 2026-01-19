@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Order, Mode, Id} from "../../../libs/Order.sol";
+import {Order, Mode, Id} from "../../../libs/funds/Order.sol";
 
 /// @title IFacilityFunds
+/// @author 3F Protocol
 /// @notice Interface for fund operations.
 interface IFacilityFunds {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

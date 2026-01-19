@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title LibErrors
+/// @author 3F Protocol
 /// @notice Error definitions for the Facility contract.
 library LibErrors {
   /// @notice Thrown when a required address parameter is the zero address.

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title IHasAsset
+/// @author 3F Protocol
 /// @notice Base interface for contracts that hold an underlying asset.
 interface IHasAsset {
   /// @notice Returns the address of the underlying asset (ERC20).

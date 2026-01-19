@@ -12,7 +12,7 @@ import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 import {IFund} from "src/interfaces/funds/IFund.sol";
-import {Order, Mode, State, Id} from "src/libs/Order.sol";
+import {Order, Mode, State, Id} from "src/libs/funds/Order.sol";
 
 contract MockFundState is IFund {
   address internal immutable ASSET;

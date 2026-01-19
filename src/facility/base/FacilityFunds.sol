@@ -9,9 +9,10 @@ import {IFund} from "src/interfaces/funds/IFund.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {Order, Mode, State} from "src/libs/Order.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 
 /// @title FacilityFunds
+/// @author 3F Protocol
 /// @notice Abstract contract implementing fund operations for intents.
 /// @dev Allows creating, canceling, committing, unlocking, and recovering fund orders.
 abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, FacilityRoles {

@@ -6,6 +6,7 @@ import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title USCCFundFactory
+/// @author 3F Protocol
 /// @notice Factory contract for deploying USCCFund instances.
 /// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
 ///      - **UpgradeableBeacon**: The contract type (USCCFund) has its own beacon

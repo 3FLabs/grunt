@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
 
 /// @title PositionManagerFeeTest
 /// @notice Tests for PositionManager fee functionality
@@ -85,7 +86,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint24 validPerformanceFee = 2000;
 
     vm.prank(owner);
-    vm.expectRevert(IPositionManager.FeeExceedsMax.selector);
+    vm.expectRevert(LibErrors.FeeExceedsMax.selector);
     positionManager.setFeeData(feeRecipient, excessiveManagementFee, validPerformanceFee);
   }
 
@@ -94,7 +95,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint24 excessivePerformanceFee = 5001; // > 50%
 
     vm.prank(owner);
-    vm.expectRevert(IPositionManager.FeeExceedsMax.selector);
+    vm.expectRevert(LibErrors.FeeExceedsMax.selector);
     positionManager.setFeeData(feeRecipient, validManagementFee, excessivePerformanceFee);
   }
 

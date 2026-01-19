@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title IFacilityPositionManager
+/// @author 3F Protocol
 /// @notice Interface for position manager operations.
 interface IFacilityPositionManager {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

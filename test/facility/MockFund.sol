@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IFund} from "src/interfaces/funds/IFund.sol";
-import {Order, Mode, State} from "src/libs/Order.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Minimal deterministic IFund mock for Facility tests.

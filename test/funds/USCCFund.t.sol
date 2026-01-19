@@ -5,8 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {USCCFund} from "src/funds/USCCFund.sol";
 import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Order, Mode, State, Id} from "src/libs/Order.sol";
+import {Order, Mode, State, Id} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {LibErrors} from "src/libs/funds/LibErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAllowlist} from "./mocks/MockAllowlist.sol";
@@ -14,20 +15,6 @@ import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
 import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
-  error AddressZero();
-  error AmountZero();
-  error InvalidContract(address addr);
-  error InvalidOwner();
-  error InvalidReceiver();
-  error PendingOrder();
-  error InvalidState(State actual);
-  error InvalidOrder(Id orderId);
-  error NotAllowedSuperstate();
-  error ChainlinkInvalidAnswer();
-  error ChainlinkIncompleteRound();
-  error ChainlinkStaleRound();
-  error InvalidOracle(address oracle);
-  error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
   error InvalidInitialization();
   error Unauthorized();
 
@@ -113,48 +100,48 @@ contract USCCFundTest is Test {
 
   function test_Initialize_RevertsInvalidContract() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0xBEEF)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(0xBEEF)));
     local.initialize(owner, address(0xBEEF), recipient, address(oracle));
 
     local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
     local.initialize(owner, address(this), recipient, address(1));
   }
 
   function test_Initialize_RevertsInvalidOwner() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(AddressZero.selector);
+    vm.expectRevert(LibErrors.AddressZero.selector);
     local.initialize(address(0), address(this), recipient, address(oracle));
   }
 
   function test_Initialize_RevertsInvalidRecipient() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(AddressZero.selector);
+    vm.expectRevert(LibErrors.AddressZero.selector);
     local.initialize(owner, address(this), address(0), address(oracle));
   }
 
   function test_Constructor_RevertsUsdcDecimalsMismatch() public {
     MockERC20 badUsdc = new MockERC20("Bad USDC", "BUSDC", 18);
-    vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.DecimalsMismatch.selector, 18, 6));
     new USCCFund(address(badUsdc), address(uscc), address(wuscc));
   }
 
   function test_Constructor_RevertsUsccDecimalsMismatch() public {
     MockERC20 badUscc = new MockERC20("Bad USCC", "BUSCC", 18);
-    vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.DecimalsMismatch.selector, 18, 6));
     new USCCFund(address(usdc), address(badUscc), address(wuscc));
   }
 
   function test_Constructor_RevertsWrappedAssetDecimalsMismatch() public {
     MockERC20 badWuscc = new MockERC20("Bad WUSCC", "BWUSCC", 18);
-    vm.expectRevert(abi.encodeWithSelector(DecimalsMismatch.selector, 18, 6));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.DecimalsMismatch.selector, 18, 6));
     new USCCFund(address(usdc), address(uscc), address(badWuscc));
   }
 
   function test_Initialize_RevertsInvalidOracleDecimals() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
     MockChainlinkOracle badOracle = new MockChainlinkOracle(8);
-    vm.expectRevert(abi.encodeWithSelector(InvalidOracle.selector, address(badOracle)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOracle.selector, address(badOracle)));
     local.initialize(owner, address(this), recipient, address(badOracle));
   }
 
@@ -189,21 +176,21 @@ contract USCCFundTest is Test {
 
   function test_Create_RevertsAmountZero() public {
     Order memory order = _depositOrder(0, ONE_USDC);
-    vm.expectRevert(AmountZero.selector);
+    vm.expectRevert(LibErrors.AmountZero.selector);
     fund.create(order);
   }
 
   function test_Create_RevertsInvalidOwner() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     order.owner = outsider;
-    vm.expectRevert(InvalidOwner.selector);
+    vm.expectRevert(LibErrors.InvalidOwner.selector);
     fund.create(order);
   }
 
   function test_Create_RevertsInvalidReceiver() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     order.receiver = outsider;
-    vm.expectRevert(InvalidReceiver.selector);
+    vm.expectRevert(LibErrors.InvalidReceiver.selector);
     fund.create(order);
   }
 
@@ -211,19 +198,19 @@ contract USCCFundTest is Test {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
 
-    vm.expectRevert(PendingOrder.selector);
+    vm.expectRevert(LibErrors.PendingOrder.selector);
     fund.create(order);
 
     _commitDeposit(order);
 
-    vm.expectRevert(PendingOrder.selector);
+    vm.expectRevert(LibErrors.PendingOrder.selector);
     fund.create(order);
   }
 
   function test_Create_RevertsNotAllowedSuperstate() public {
     allowlist.setAllowed(address(fund), "USCC", false);
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    vm.expectRevert(NotAllowedSuperstate.selector);
+    vm.expectRevert(LibErrors.NotAllowedSuperstate.selector);
     fund.create(order);
   }
 
@@ -270,7 +257,7 @@ contract USCCFundTest is Test {
 
     Order memory wrongOrder = order;
     wrongOrder.salt = keccak256("wrong");
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
     fund.cancel(wrongOrder);
   }
 
@@ -279,7 +266,7 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
     fund.cancel(order);
   }
 
@@ -344,13 +331,13 @@ contract USCCFundTest is Test {
 
     Order memory wrongOrder = order;
     wrongOrder.salt = keccak256("wrong");
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
     fund.commit(wrongOrder);
   }
 
   function test_Commit_RevertsInvalidState() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, order.toId(address(fund))));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, order.toId(address(fund))));
     fund.commit(order);
 
     fund.create(order);
@@ -358,7 +345,7 @@ contract USCCFundTest is Test {
     usdc.approve(address(fund), order.input);
     fund.commit(order);
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
     fund.commit(order);
   }
 
@@ -413,18 +400,18 @@ contract USCCFundTest is Test {
 
     Order memory wrongOrder = order;
     wrongOrder.salt = keccak256("wrong");
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
     fund.unlock(wrongOrder);
   }
 
   function test_Unlock_RevertsInvalidState() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.ACCEPTED));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.ACCEPTED));
     fund.unlock(order);
 
     _commitDeposit(order);
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
   }
 
@@ -499,14 +486,14 @@ contract USCCFundTest is Test {
 
     Order memory wrongOrder = order;
     wrongOrder.salt = keccak256("wrong");
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
     fund.recover(wrongOrder);
   }
 
   function test_Recover_RevertsInvalidState() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.ACCEPTED));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.ACCEPTED));
     fund.recover(order);
   }
 
@@ -550,7 +537,7 @@ contract USCCFundTest is Test {
 
   function test_Recovering_RevertsInvalidState() public {
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.EMPTY));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.EMPTY));
     fund.recovering();
   }
 
@@ -578,14 +565,14 @@ contract USCCFundTest is Test {
 
   function test_SetOracle_RevertsInvalidContract() public {
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
     fund.setOracle(address(1));
   }
 
   function test_SetOracle_RevertsInvalidDecimals() public {
     MockChainlinkOracle newOracle = new MockChainlinkOracle(8);
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidOracle.selector, address(newOracle)));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOracle.selector, address(newOracle)));
     fund.setOracle(address(newOracle));
   }
 
@@ -641,7 +628,7 @@ contract USCCFundTest is Test {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.ACCEPTED));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.ACCEPTED));
     fund.resolve(order, ONE_USDC, ONE_USDC);
   }
 
@@ -653,7 +640,7 @@ contract USCCFundTest is Test {
     Order memory wrongOrder = order;
     wrongOrder.salt = keccak256("wrong");
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
     fund.resolve(wrongOrder, ONE_USDC, ONE_USDC);
   }
 
@@ -705,7 +692,7 @@ contract USCCFundTest is Test {
     uscc.mint(address(fund), 1);
     assertEq(uint256(fund.state(originalOrder)), uint256(State.UNLOCKING), "original order unlocking");
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, resolvedId));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOrder.selector, resolvedId));
     fund.unlock(resolvedOrder);
 
     fund.unlock(originalOrder);
@@ -737,21 +724,21 @@ contract USCCFundTest is Test {
   function test_TotalAssets_ChainlinkInvalidAnswer() public {
     oracle.setRoundData(2, 0, block.timestamp, 2);
     oracle.setLatestRound(2);
-    vm.expectRevert(ChainlinkInvalidAnswer.selector);
+    vm.expectRevert(LibErrors.ChainlinkInvalidAnswer.selector);
     fund.totalAssets();
   }
 
   function test_TotalAssets_ChainlinkIncompleteRound() public {
     oracle.setRoundData(2, int256(ONE_USDC), 0, 2);
     oracle.setLatestRound(2);
-    vm.expectRevert(ChainlinkIncompleteRound.selector);
+    vm.expectRevert(LibErrors.ChainlinkIncompleteRound.selector);
     fund.totalAssets();
   }
 
   function test_TotalAssets_ChainlinkStaleRound() public {
     oracle.setRoundData(2, int256(ONE_USDC), block.timestamp, 1);
     oracle.setLatestRound(2);
-    vm.expectRevert(ChainlinkStaleRound.selector);
+    vm.expectRevert(LibErrors.ChainlinkStaleRound.selector);
     fund.totalAssets();
   }
 

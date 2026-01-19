@@ -8,6 +8,7 @@ import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibView
+/// @author 3F Protocol
 /// @notice Library for PositionManager view functions and share calculations.
 /// @dev Used with `using LibView for PositionManagerStorageData`.
 library LibView {

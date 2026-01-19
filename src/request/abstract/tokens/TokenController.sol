@@ -7,8 +7,10 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
 import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
+import {LibErrors} from "../../../libs/request/LibErrors.sol";
 
 /// @title TokenController
+/// @author 3F Protocol
 /// @notice Abstract contract for managing dual-token systems (Principal Token and Yield Token)
 /// @dev Manages PT and YT tokens with packed storage for gas efficiency. All balances, supplies, and
 ///      allowances are stored as uint128 pairs in a single uint256 slot using LibTokenController.
@@ -19,22 +21,6 @@ abstract contract TokenController is ITokenController {
   using LibAllowance for uint128;
   using FixedPointMathLib for bool;
 
-  /// @notice Error thrown when the caller is not authorized as a token contract.
-  /// @dev Only the PT or YT token contracts can call certain internal functions.
-  error UnauthorizedTokenContract();
-
-  /// @notice Error thrown when an account has insufficient balance for a transfer or burn operation.
-  /// @dev This error is thrown when attempting to transfer or burn more tokens than the account owns.
-  error InsufficientBalance();
-
-  /// @notice Error thrown when the spender has insufficient allowance for a transferFrom operation.
-  /// @dev This error is thrown when attempting to spend more tokens than approved, except when
-  ///      both PT and YT allowances are set to type(uint128).max (infinite allowance).
-  error InsufficientAllowance();
-
-  /// @notice Error thrown when attempting to transfer tokens to the same address.
-  error TransferToSelf();
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           Internal                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -44,7 +30,7 @@ abstract contract TokenController is ITokenController {
   ///      This prevents unauthorized external calls to internal token functions.
   /// @param yt True if checking for YT token, false if checking for PT token
   function _checkToken(bool yt) internal view virtual {
-    if (msg.sender != (yt ? _ytToken() : _ptToken())) revert UnauthorizedTokenContract();
+    if (msg.sender != (yt ? _ytToken() : _ptToken())) revert LibErrors.UnauthorizedTokenContract();
   }
 
   /// @dev Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
@@ -61,7 +47,7 @@ abstract contract TokenController is ITokenController {
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {
       (uint128 ptAllowance, uint128 ytAllowance) = from.allowances(spender);
-      if (pt > ptAllowance || yt > ytAllowance) revert InsufficientAllowance();
+      if (pt > ptAllowance || yt > ytAllowance) revert LibErrors.InsufficientAllowance();
       if (ptAllowance == type(uint128).max && ytAllowance == type(uint128).max) return;
       ptAllowance = ptAllowance.consume(uint128(pt));
       ytAllowance = ytAllowance.consume(uint128(yt));
@@ -79,13 +65,13 @@ abstract contract TokenController is ITokenController {
   /// @return success Always returns true if the transfer succeeds (reverts on failure)
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
-    if (from == to) revert TransferToSelf();
+    if (from == to) revert LibErrors.TransferToSelf();
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {
       (uint128 ptBalanceSender, uint128 ytBalanceSender) = from.balances();
       (uint128 ptBalanceReceiver, uint128 ytBalanceReceiver) = to.balances();
-      if (pt > ptBalanceSender || yt > ytBalanceSender) revert InsufficientBalance();
+      if (pt > ptBalanceSender || yt > ytBalanceSender) revert LibErrors.InsufficientBalance();
       from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
       to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
       if (pt > 0) ControlledToken(_ptToken())._emitTransfer(from, to, pt);
@@ -147,13 +133,13 @@ abstract contract TokenController is ITokenController {
   function _burn(address from, uint256 pt, uint256 yt) internal virtual {
     unchecked {
       (uint128 ptSupply, uint128 ytSupply) = LibTokenController.totalSupplies();
-      if (pt > ptSupply || yt > ytSupply) revert InsufficientBalance();
+      if (pt > ptSupply || yt > ytSupply) revert LibErrors.InsufficientBalance();
       // casting to 'uint128' is safe because [The total supply cannot be higher than the total supply which does not overflow a 128 bit number]
       // forge-lint: disable-next-line(unsafe-typecast)
       LibTokenController.updateTotalSupply(ptSupply - uint128(pt), ytSupply - uint128(yt));
 
       (uint128 ptBalance, uint128 ytBalance) = from.balances();
-      if (pt > ptBalance || yt > ytBalance) revert InsufficientBalance();
+      if (pt > ptBalance || yt > ytBalance) revert LibErrors.InsufficientBalance();
       // casting to 'uint128' is safe because [These amounts are lower than 128 bits numbers]
       // forge-lint: disable-next-line(unsafe-typecast)
       from.updateBalances(ptBalance - uint128(pt), ytBalance - uint128(yt));

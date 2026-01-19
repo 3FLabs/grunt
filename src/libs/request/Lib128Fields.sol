@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {MAX_128_BITS} from "../Constants.sol";
 
 /// @title Lib128Fields
+/// @author 3F Protocol
 /// @notice Library for gas-efficient reading and writing of packed uint128 fields in storage.
 /// @dev This library provides low-level storage operations for packing two uint128 values into a single
 ///      uint256 storage slot, optimizing gas usage by reducing the number of SLOAD and SSTORE operations.
