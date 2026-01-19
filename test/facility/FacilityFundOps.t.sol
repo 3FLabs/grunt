@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 
-import {Facility} from "src/Facility.sol";
-import {IntentDescriptor} from "src/IntentDescriptor.sol";
-import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
+import {Facility} from "src/facility/Facility.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {Order, Mode} from "src/libs/Order.sol";
 
@@ -15,18 +15,19 @@ import {MockERC20} from "test/mock/MockERC20.sol";
 import {MockFund} from "test/facility/MockFund.sol";
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
+import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 
 contract FacilityFundHarness is Facility {
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
 
   function amountOf(uint256 id, address token) external view returns (uint256) {
-    FacilityStorage storage $ = _facilityStorage();
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
     (bool exists, uint256 value) = $.intents[id].amounts.tryGet(token);
     return exists ? value : 0;
   }
 
   function orderOwner(uint256 id) external view returns (address) {
-    return _facilityStorage().intents[id].order.owner;
+    return LibStorage.facilityStorage().intents[id].order.owner;
   }
 }
 

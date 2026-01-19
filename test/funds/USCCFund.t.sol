@@ -47,6 +47,10 @@ contract USCCFundTest is Test {
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
   uint256 private constant ONE_USDC = 1e6;
 
+  // WrappedAsset roles (matching internal constants)
+  uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
+  uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           TEST STATE                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -88,13 +92,11 @@ contract USCCFundTest is Test {
     fund = USCCFund(fundAddress);
 
     allowlist.setAllowed(address(fund), "USCC", true);
-    uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(fund), issuerRole);
+    wuscc.grantRoles(address(fund), WUSCC_ISSUER_ROLE);
 
-    uint256 senderRole = wuscc.SENDER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(this), senderRole);
+    wuscc.grantRoles(address(this), WUSCC_SENDER_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1111,6 +1113,6 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     uscc.approve(address(wuscc), amount);
     vm.prank(owner);
-    wuscc.mint(owner, to, amount);
+    wuscc.mint(to, amount);
   }
 }

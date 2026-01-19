@@ -10,6 +10,7 @@ import {
 import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
 import {BPS} from "../../libs/manager/LibConstants.sol";
 import {LibExecutor} from "../../libs/manager/LibExecutor.sol";
@@ -23,6 +24,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   using SafeTransferLib for address;
   using LibExecutor for address;
   using LibView for PositionManagerStorageData;
+  using EnumerableSetLib for EnumerableSetLib.AddressSet;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -102,6 +104,11 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
     address position = operation.position;
     uint256 amount = operation.amount;
     RebalancingOperationType operationType = operation.operationType;
+
+    // Validate that the position is a registered borrow module
+    if (!LibStorage.positionManagerStorage().borrowModules.contains(position)) {
+      revert UnauthorizedPosition();
+    }
 
     if (operationType == RebalancingOperationType.REPAY) {
       position.repay(_debtAsset, amount);

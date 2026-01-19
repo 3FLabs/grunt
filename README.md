@@ -6,136 +6,245 @@
   <i>(wip)</i>
 </p>
 
-## Principal and Yield Token Vaults
-
-The vault system implements a dual-token structure separating principal and yield:
-
-### Deposit Phase
-
-When depositing into the vault, users receive two types of shares:
-- **Principal Shares (PT)**: Equal to the amount of assets deposited
-- **Yield Shares (YT)**: Equal to the expected yield amount
-
-**Example**: Depositing 1,000,000 USDC with an expected 10% return:
-- Receive: 1,000,000 PT + 100,000 YT
-
-During the deposit phase, withdrawals are locked (`canWithdraw = false`).
-
-### Redemption Phase
-
-Once the vault receives assets and unlocks redemption (`canWithdraw = true`), the value of each share type is determined by the total assets in the vault.
-
-#### Redemption Formula
+## Repository Structure
 
 ```
-principalAssets = min(totalAssets, principalTokenSupply)
-yieldAssets = totalAssets - principalAssets
-
-pricePerPrincipalShare = principalAssets / principalTokenSupply
-pricePerYieldShare = yieldAssets / yieldTokenSupply
+src/
+├── facility/                    # Core orchestration hub
+│   ├── Facility.sol             # Main entry point combining all modules
+│   ├── IntentDescriptor.sol     # ERC-6909 metadata provider
+│   └── base/                    # Abstract base contracts
+│       ├── FacilityIntents.sol      # Intent lifecycle management
+│       ├── FacilityLP.sol           # Liquidity provider operations
+│       ├── FacilityFunds.sol        # Fund order operations
+│       ├── FacilityRequests.sol     # Request contract coordination
+│       ├── FacilityPositionManager.sol  # Position manager integration
+│       ├── FacilitySwap.sol         # Token swapping
+│       └── FacilityRoles.sol        # Access control
+├── request/                     # Dual-token PT/YT vault system
+│   ├── Request.sol              # Main request contract
+│   ├── RequestFactory.sol       # Beacon proxy factory
+│   ├── Vault.sol                # ERC4626-style redemption vault
+│   └── abstract/                # Base contracts and token controllers
+├── manager/                     # Multi-position aggregator
+│   ├── PositionManager.sol      # Main position manager
+│   ├── PositionManagerFactory.sol   # Beacon proxy factory
+│   ├── base/                    # Admin, fees, shares, rebalancing
+│   └── rebalancer/              # Flash-loan based rebalancer
+├── funds/                       # External asset wrappers
+│   ├── USCCFund.sol             # Superstate USCC integration
+│   ├── USCCFundFactory.sol      # Beacon proxy factory
+│   └── WrappedAsset.sol         # wUSCC wrapper token
+├── borrow/                      # Lending protocol integrations
+│   ├── MorphoBorrowPosition.sol     # Morpho Blue position
+│   └── MorphoBorrowPositionFactory.sol  # Beacon proxy factory
+├── guard/                       # Compliance controls
+│   ├── TransferGuard.sol        # Blocklist/whitelist transfer guard
+│   └── TransferGuardFactory.sol # Beacon proxy factory
+├── interfaces/                  # All interface definitions
+└── libs/                        # Shared libraries
+    ├── facility/                # Facility storage, intent, errors
+    ├── manager/                 # Position manager operations
+    ├── request/                 # Minting auth, token controller
+    └── borrow/                  # Morpho shares math
 ```
 
-#### Redemption Examples
+## Architecture Overview
 
-Given: 1,000,000 PT and 100,000 YT outstanding
+The protocol consists of interconnected modules orchestrated through the **Facility** contract:
 
-| Total Assets | Principal Assets | Yield Assets | PT Price | YT Price |
-| ------------ | ---------------- | ------------ | -------- | -------- |
-| 900,000      | 900,000          | 0            | 0.9      | 0        |
-| 1,000,000    | 1,000,000        | 0            | 1.0      | 0        |
-| 1,050,000    | 1,000,000        | 50,000       | 1.0      | 0.5      |
-| 1,200,000    | 1,000,000        | 200,000      | 1.0      | 2.0      |
+```mermaid
+flowchart TB
+    subgraph Facility["Facility (Central Hub)"]
+        FI[FacilityIntents]
+        FLP[FacilityLP]
+        FF[FacilityFunds]
+        FR[FacilityRequests]
+        FPM[FacilityPositionManager]
+        FS[FacilitySwap]
+    end
 
-**Key Properties:**
-- Principal holders are prioritized: they receive up to 1:1 redemption of their shares
-- Yield holders receive any assets beyond the principal supply
-- If total assets < principal supply, principal holders share the loss proportionally
-- If total assets > principal supply, yield holders capture all upside
+    subgraph External["External Integrations"]
+        Request[Request<br/>PT/YT Tokens]
+        PM[PositionManager<br/>Multi-Position Aggregator]
+        Fund[Fund<br/>Asset Wrapper]
+        BP[BorrowPosition<br/>Morpho Blue]
+    end
+
+    subgraph Compliance["Compliance"]
+        TG[TransferGuard]
+    end
+
+    LP((LPs)) --> FLP
+    FLP --> FI
+    FF --> Fund
+    FR --> Request
+    FPM --> PM
+    PM --> BP
+    TG -.-> PM
+    TG -.-> Facility
+```
+
+## Facility
+
+The `Facility` contract is the central orchestration hub that manages **intents** - configurable funding requests that coordinate deposits, fund operations, and claims.
+
+### Intent Structure
+
+Each intent tracks:
+- **Deposit Asset**: The asset LPs deposit (can be a PositionManager)
+- **Target Asset**: The target for fund operations (can be a PositionManager)
+- **Fund**: Optional fund wrapper for external asset processing
+- **Request**: Optional request contract for PT/YT issuance
+- **Guard Key**: PositionManager used for transfer compliance checks
+
+### Intent Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> DEPOSITING: createIntent()
+    DEPOSITING --> DEPOSITING: deposit() / withdraw()
+    DEPOSITING --> RESOLVING: lock() or resolveStart reached
+    RESOLVING --> RESOLVING: Fund/Request/PM operations
+    RESOLVING --> RESOLVED: resolve()
+    RESOLVED --> RESOLVED: claim()
+    RESOLVED --> [*]
+
+    note right of DEPOSITING
+        LPs deposit assets
+        Receive ERC-6909 LP tokens
+    end note
+
+    note right of RESOLVING
+        Facilitator executes operations
+        No LP deposits/withdrawals
+    end note
+
+    note right of RESOLVED
+        LPs claim proportional tokens
+        LP tokens are burned
+    end note
+```
+
+### LP Operations
+
+| Phase | Function | Description |
+|-------|----------|-------------|
+| Depositing | `deposit(id, amount)` | Deposit asset, receive LP tokens 1:1 |
+| Depositing | `withdraw(id, from, receiver, amount)` | Burn LP tokens, receive asset 1:1 |
+| Resolved | `claim(id, from, receiver, shares)` | Burn LP tokens, receive proportional share of all accumulated tokens. Returns `(tokens[], amounts[])` for easy tracking of claimed assets |
+
+### View Functions
+
+| Function | Description |
+|----------|-------------|
+| `intentBalances(id)` | Returns all tokens and their balances held by an intent as parallel arrays `(tokens[], amounts[])` |
+| `getIntent(id)` | Returns the full intent properties and current state |
+| `totalSupply(id)` | Returns total LP token supply for an intent |
+
+### Facilitator Operations
+
+The facilitator role can:
+- `lock(id)` - Force intent into resolving phase
+- `setDepositCap(id, cap)` - Update deposit cap
+- `setFund(id, fund)` - Attach/detach fund wrapper
+- `setRequest(id, request)` - Attach/detach request contract
+- `resolve(id)` - Mark intent as resolved, enabling claims
+
+### Role-Based Access
+
+| Role | Permission |
+|------|------------|
+| Owner | Create intents, update target, set descriptor |
+| Facilitator | Lock, resolve, set caps, attach fund/request, execute operations |
 
 ## Request Contract
 
-The `Request` contract is the core contract managing funding requests with dual-token (PT/YT) issuance. It combines multiple functionalities:
+The `Request` contract implements a dual-token (PT/YT) funding mechanism for structured products.
 
-- **OfferReceiver**: Validates and processes signed offers using EIP-712 signatures
-- **VaultController**: Manages PT/YT tokens with ERC4626-style redemptions
-- **OwnableRoles**: Restricts admin functions to the contract owner and allows for the "puller" role to pull funds from the contract
+### Dual-Token Model
+
+When depositing into a request, funders receive:
+- **Principal Tokens (PT)**: Represent the deposited principal (1:1 with assets)
+- **Yield Tokens (YT)**: Represent expected yield (based on expectedReturn)
+
+**Example**: Depositing 1,000,000 USDC with 10% expected return:
+- Receive: 1,000,000 PT + 100,000 YT
+
+### Redemption Formula
+
+```
+principalAssets = min(totalAssets, ptSupply)
+yieldAssets = totalAssets - principalAssets
+
+pricePerPT = principalAssets / ptSupply
+pricePerYT = yieldAssets / ytSupply
+```
+
+| Total Assets | Principal Assets | Yield Assets | PT Price | YT Price |
+|--------------|------------------|--------------|----------|----------|
+| 900,000 | 900,000 | 0 | 0.9 | 0 |
+| 1,000,000 | 1,000,000 | 0 | 1.0 | 0 |
+| 1,050,000 | 1,000,000 | 50,000 | 1.0 | 0.5 |
+| 1,200,000 | 1,000,000 | 200,000 | 1.0 | 2.0 |
+
+**Key Properties:**
+- PT holders are prioritized (up to 1:1 redemption)
+- YT holders capture any upside beyond principal
+- If assets < principal, PT holders share the loss proportionally
 
 ### Request Lifecycle
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           REQUEST LIFECYCLE                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Funding["Funding Phase (canWithdraw = false)"]
+        direction TB
+        C1[consume offer] --> M1[Callback → Transfer → Mint PT/YT]
+        C2[authorizeMinting + mint] --> M2[Transfer → Mint PT/YT]
+    end
 
-1. DEPLOYMENT
-   └─> Factory creates Request + PT Vault + YT Vault (beacon proxies)
-   └─> Owner and puller role are set, contract initialized
+    subgraph Utilization["Fund Utilization"]
+        P[pullFunds] --> U[Use funds]
+        U --> R[repay]
+    end
 
-2. FUNDING PHASE (canWithdraw = false)
-   ├─> Method A: consume() - Process signed offers from prime brokers
-   │   └─> Callback triggers → Funds pulled → PT/YT minted to maker
-   └─> Method B: authorizeMinting() + mint() - Whitelist approach
-       └─> Owner authorizes → Prime broker calls mint() → PT/YT minted
+    subgraph Redemption["Redemption Phase (canWithdraw = true)"]
+        SR[setRepaid / deadline] --> RD[PT/YT holders redeem]
+    end
 
-3. FUND UTILIZATION
-   └─> Puller calls pullFunds(amount, data) to transfer assets to themselves
-   └─> If data is provided, onPullFunds() callback is invoked on the puller
-
-4. REPAYMENT
-   └─> Puller (or borrower) transfers assets back to Request contract
-   └─> Optional: Use repay(amount) helper function
-
-5. REDEMPTION PHASE (canWithdraw = true)
-   └─> Owner calls setRepaid()
-   └─> PT/YT holders can redeem their tokens for underlying assets
+    Deploy[Factory deploys Request + PT + YT] --> Funding
+    Funding --> Utilization
+    Utilization --> Redemption
 ```
 
 ### Funding Methods
 
-The Request contract supports two methods for prime brokers to provide funds:
-
-#### Method 1: Signed Offer Consumption (`consume`)
-
-The owner broadcasts a signed EIP-712 offer to the contract. This method is ideal for prime brokers who implement automated fund management through smart contracts.
-
-**Flow:**
-1. Prime broker creates and signs an `Offer` struct (off-chain)
-2. Owner calls `consume(offer, signature, ptAmount)`
-3. Contract validates the signature and offer parameters
-4. Contract calls `onRequestConsumed()` callback on the maker's contract
-5. Contract pulls `ptAmount` of underlying asset from the maker (offer.maker)
-6. PT and YT tokens are minted to the maker
-7. The maker's offer nonce is updated
+#### Method 1: Signed Offer Consumption
 
 ```solidity
-// Offer struct
 struct Offer {
-  address maker;        // Prime broker address that receives tokens
-  uint256 amount;       // Reference principal amount
-  uint256 expectedReturn; // Expected yield amount
-  uint256 nonce;        // Sequential nonce (must be > stored nonce)
-  uint256 expiration;   // Timestamp when offer expires
+    address maker;          // Funder receiving PT/YT
+    uint256 amount;         // Reference principal
+    uint256 expectedReturn; // Expected yield
+    uint256 nonce;          // Sequential (must be > stored)
+    uint256 expiration;     // Validity deadline
+    bool useCallback;       // Whether to call onRequestConsumed
 }
 
-// YT amount is calculated proportionally
+// YT calculated proportionally
 ytAmount = offer.expectedReturn * ptAmount / offer.amount
-
-// The ptAmount parameter determines how many PT tokens are minted
-// and scales the YT amount proportionally from the offer's expectedReturn
 ```
 
-**Callback Interface:**
-
-Prime brokers implementing automated strategies can implement `IRequestCallback`:
+**Callback Interface** (when `useCallback = true`):
 
 ```solidity
 interface IRequestCallback {
-  function onRequestConsumed(
-    Offer calldata offer,
-    bytes calldata signature,
-    uint256 principal,  // PT amount being minted
-    uint256 yield       // YT amount being minted
-  ) external;
+    function onRequestConsumed(
+        Offer calldata offer,
+        bytes calldata signature,
+        uint256 principal,  // PT amount being minted
+        uint256 yield       // YT amount being minted
+    ) external;
 }
 ```
 
@@ -144,784 +253,57 @@ The callback is invoked **before** funds are pulled, allowing the maker to:
 - Move funds from internal accounting
 - Set ERC20 allowances for the Request contract
 
-#### Method 2: Authorized Minting (`authorizeMinting` + `mint`)
-
-The owner whitelists specific addresses to mint PT/YT tokens. This method is simpler and suitable for prime brokers who manage funds manually or through EOAs.
-
-**Flow:**
-1. Owner calls `authorizeMinting(primebroker, ptAmount, ytAmount)`
-2. Prime broker approves the Request contract to spend their underlying asset
-3. Prime broker calls `mint()`
-4. Contract transfers `ptAmount` of underlying asset from the prime broker
-5. PT and YT tokens are minted to the prime broker
-6. Authorization is consumed (one-time use)
+#### Method 2: Authorized Minting
 
 ```solidity
-// Owner authorizes minting
-request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+// Owner authorizes
+request.authorizeMinting(funder, 1_000_000e6, 100_000e6);
 
-// Prime broker mints (after approving underlying asset)
+// Funder mints (after approving asset)
 asset.approve(address(request), 1_000_000e6);
 request.mint(); // Receives 1M PT + 100k YT
 ```
 
 ### Fund Management
 
-After offers are consumed or minting is complete:
+After funding is complete:
 
-1. **Pull Funds**: Address with puller role calls `pullFunds(amount, data)` to transfer collected assets to themselves
-2. **Callback Invocation**: If `data.length > 0`, the contract calls `onPullFunds(amount, data)` on the puller address
-3. **Fund Utilization**: The puller uses the funds for their intended purpose
-4. **Repayment**: Puller (or borrower) transfers assets back to the Request contract
-5. **Enable Redemptions**: Owner calls `setRepaid()` to unlock withdrawals
+1. **Pull Funds**: Puller calls `pullFunds(amount, data)` to transfer assets to themselves
+2. **Callback**: If `data.length > 0`, invokes `onPullFunds(amount, data)` on the puller
+3. **Utilization**: Puller uses funds for intended purpose
+4. **Repayment**: Transfer assets back via `repay(amount)` or direct transfer
+5. **Enable Redemptions**: Owner calls `setRepaid()` or wait for `repaymentDeadline`
 
-```solidity
-// After funding phase - puller pulls funds
-// Funds are transferred to msg.sender (the puller)
-request.pullFunds(totalFunded, ""); // No callback
-
-// With callback data - useful for automated position management
-bytes memory positionData = abi.encode(positionId, strategy);
-request.pullFunds(totalFunded, positionData); // Calls onPullFunds() on puller
-
-// After repayment (optional helper function)
-request.repay(repaymentAmount);
-// Or direct transfer:
-asset.transfer(address(request), repaymentAmount);
-
-// Enable redemptions
-request.setRepaid(); // Enables PT/YT holders to redeem
-```
-
-**Puller Role:**
-- The puller role is set during contract initialization via the factory
-- Only addresses with the puller role can call `pullFunds()`
-- Funds are always transferred to `msg.sender` (the puller), not a separate recipient
-- The puller can be a smart contract implementing `IRequestInteractionsCallback` for automated fund management
-
-**Callback Interface:**
-
-Position managers implementing automated strategies can implement `IRequestInteractionsCallback`:
+**Puller Callback Interface**:
 
 ```solidity
 interface IRequestInteractionsCallback {
-  function onPullFunds(uint256 amount, bytes calldata data) external;
+    function onPullFunds(uint256 amount, bytes calldata data) external;
 }
 ```
 
-The callback is invoked **after** funds are transferred, allowing the position manager to:
-- Open positions in DeFi protocols
-- Update internal accounting
-- Execute automated strategies based on the provided data
-
-The `pullFunds()` function can be called multiple times by the puller during the funding phase. The `setRepaid()` function toggles the withdrawal lock, enabling PT/YT holders to redeem their tokens for the underlying assets held by the contract.
-
-## RequestFactory
-
-The `RequestFactory` deploys Request instances using the **beacon proxy pattern** for gas-efficient and upgradeable deployments.
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     BEACON PROXY PATTERN                        │
-└─────────────────────────────────────────────────────────────────┘
-
-  ┌──────────────────┐
-  │ RequestFactory   │
-  │                  │
-  │ REQUEST_BEACON ──┼──> UpgradeableBeacon ──> Request Implementation
-  │ PT_VAULT_BEACON ─┼──> UpgradeableBeacon ──> Vault(isPT=false)
-  │ YT_VAULT_BEACON ─┼──> UpgradeableBeacon ──> Vault(isPT=true)
-  └──────────────────┘
-           │
-           │ createRequest()
-           ▼
-  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-  │  Request Proxy   │     │  PT Vault Proxy  │     │  YT Vault Proxy  │
-  │  (ERC1967)       │     │  (ERC1967)       │     │  (ERC1967)       │
-  └────────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘
-           │                        │                        │
-           └────────────────────────┼────────────────────────┘
-                                    │
-                         delegates to beacon
-```
-
-### Deployment
-
-```solidity
-// Deploy factory with beacon owner
-RequestFactory factory = new RequestFactory(beaconOwner);
-
-// Create a new request with PT/YT vaults
-(address request, address ptVault, address ytVault) = factory.createRequest(
-  owner,          // Request owner (admin)
-  puller,         // Address with puller role (can call pullFunds)
-  address(usdc),  // Underlying asset
-  "USDC Request", // Base name (becomes "PT-USDC Request" / "YT-USDC Request")
-  "USDC-REQ"      // Base symbol (becomes "PT-USDC-REQ" / "YT-USDC-REQ")
-);
-```
-
-### Upgrades
-
-The beacon owner can upgrade all proxies by updating the beacon's implementation:
-
-```solidity
-// All existing Request proxies now use the new implementation
-UpgradeableBeacon(factory.REQUEST_BEACON()).upgradeTo(newImplementation);
-```
-
-## Prime Broker Offers
-
-### Offer Creation and Signing
-
-Prime brokers create cryptographically signed offers to lend assets to the protocol. Each offer specifies:
-- **Amount**: The principal amount to lend
-- **Expected Return**: The absolute return expected (not a rate)
-- **Maker**: The address providing the funds
-- **Nonce**: A sequential number for offer management (must start at 1)
-- **Expiration**: Timestamp after which the offer is no longer valid
-
-Offers are signed using either:
-- **EIP-712**: Standard typed data signing for EOA accounts
-- **EIP-1271**: Smart contract signature validation via `isValidSignature()`
+The callback is invoked **after** funds are transferred, allowing automated strategies.
 
 ### Nonce Management
 
-Nonces enable flexible offer lifecycle management:
-
-**Starting Value**: All nonces must start at 1 (nonce 0 is invalid)
-
-**Offer Cancellation**:
-- **Soft Cancel**: Communicate with the off-chain server to mark offers as cancelled (no on-chain transaction)
+Nonces enable flexible offer lifecycle:
+- **Starting Value**: Must start at 1 (nonce 0 is invalid)
+- **Soft Cancel**: Coordinate off-chain to ignore offers
 - **Hard Cancel**: Set nonce on-chain to invalidate all offers at or below that nonce
 
-### Offer Validation
-
-When an offer is consumed, the protocol validates:
-1. **Maker validity**: Maker address is not zero
-2. **Amount validity**: Amount and expectedReturn are non-zero
-3. **Expiration**: Current timestamp < expiration
-4. **Nonce freshness**: Offer nonce > current stored nonce for maker
-5. **Signature validity**: EIP-712 or EIP-1271 signature verification
-
-Upon successful validation, the offer's nonce is stored, preventing replay attacks.
-
-## Borrow Module
-
-The borrow module enables protocol participants to open and manage collateralized borrow positions across different lending protocols through a common `IBorrowPosition` interface.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      BORROW MODULE ARCHITECTURE                  │
-└─────────────────────────────────────────────────────────────────┘
-
-  ┌──────────────────────┐
-  │  IBorrowPosition     │  <-- Common interface for all protocols
-  │  (interface)         │
-  └──────────┬───────────┘
-             │
-             │ implements
-             ▼
-  ┌──────────────────────────────┐
-  │   MorphoBorrowPosition       │  <-- Morpho Blue integration
-  │   - Initializable            │
-  │   - Ownable                  │
-  │   - ERC-7201 Storage         │
-  │   - Custom PreLiquidation    │
-  └──────────────────────────────┘
-             │
-             │ deployed by
-             ▼
-  ┌──────────────────────────────┐
-  │ MorphoBorrowPositionFactory  │  <-- Beacon proxy factory
-  │   - UpgradeableBeacon        │
-  │   - ERC1967 Beacon Proxy     │
-  └──────────────────────────────┘
-```
-
-### MorphoBorrowPosition
-
-Implementation of a borrow position for the Morpho Blue lending protocol with a custom pre-liquidation mechanism.
-
-**Key Features:**
-- **Custom LLTV**: Each position has an immutable LLTV set at initialization, typically lower than the Morpho market LLTV
-- **Proportional Pre-Liquidation**: Custom liquidation mechanism that gives proportional collateral without liquidation incentive factor
-- **ERC-7201 Namespaced Storage**: Proxy-compatible storage pattern preventing storage collisions
-- **Ownable Access Control**: Position manager has exclusive control over operations
-- **PreLiquidation Callback Interface**: Compatible with Morpho's `IPreLiquidationCallback` interface
-
-**Initialization:**
-Requires:
-- `morpho` - The Morpho Blue protocol contract
-- `marketId` - The Morpho market ID for this position
-- `positionManager` - The owner address controlling this position
-- `lltv` - The custom LLTV for this position (immutable after initialization, must be > 0 and ≤ 1e18)
-
-**Operations:**
-- `supplyCollateral(amount)` - Add collateral to increase borrowing capacity
-- `withdrawCollateral(amount)` - Remove collateral (enforces custom LLTV health check)
-- `borrow(amount)` - Borrow assets against collateral (enforces custom LLTV health check)
-- `repay(amount)` - Repay borrowed assets
-- `preLiquidate(borrower, seizedAssets, repaidShares, data)` - Liquidate unhealthy positions
-
-**Views:**
-- `totalBorrowed()` - Current debt including accrued interest
-- `totalCollateral()` - Current collateral amount in the position
-- `totalCollateralQuoted()` - Collateral value **quoted in borrowed asset terms** (using oracle price)
-- `isHealthy(lltv)` - Whether position is above the specified LLTV threshold
-- `maxBorrow(lltv)` - Maximum borrowable amount given current collateral and specified LLTV
-- `availableLiquidity()` - Available liquidity in the market (totalSupplyAssets - totalBorrowAssets)
-- `availableCollateral(lltv)` - Collateral that can be withdrawn while maintaining health at given LLTV
-- `lltv()` - The custom LLTV set for this position
-- `marketId()` - The Morpho market ID
-
-### Health Factor & Pre-Liquidation
-
-Position health is determined by comparing borrowed amount against maximum capacity at a given LLTV:
-
-```
-collateralValue = collateral × oraclePrice / ORACLE_PRICE_SCALE
-maxBorrow = collateralValue × lltv
-isHealthy(lltv) = maxBorrow ≥ totalBorrowed
-```
-
-### Custom Pre-Liquidation Mechanism
-
-Unlike Morpho's native liquidation (which applies a liquidation incentive factor), MorphoBorrowPosition implements a **proportional pre-liquidation** mechanism where liquidators receive collateral proportional to the debt they repay.
-
-**Liquidation Bonus Formula:**
-```
-Liquidation Bonus = 1 - LTV (at time of liquidation)
-```
-
-**Example:**
-If a position has:
-- 100 collateral tokens (worth $100)
-- 80 debt tokens (worth $80)
-- Current LTV = 80%
-
-A liquidator repaying 50% of the debt ($40) will seize 50% of the collateral (50 tokens worth $50):
-- Liquidator pays: $40 (debt)
-- Liquidator receives: $50 (collateral)
-- Liquidator profit: $10 = (1 - 0.80) × $50 = 20% bonus
-
-**Key Properties:**
-- Liquidators always receive their proportional share of collateral
-- Liquidation bonus scales with how underwater the position is
-- At the LLTV threshold, the bonus approaches `1 - LLTV`
-- No cap on seized collateral (unlike some liquidation systems)
-
-### MorphoBorrowPositionFactory
-
-Deploys MorphoBorrowPosition instances using the **beacon proxy pattern**:
-
-```
-┌──────────────────────────────┐
-│ MorphoBorrowPositionFactory  │
-│                              │
-│ BORROW_POSITION_BEACON ──────┼──> UpgradeableBeacon ──> MorphoBorrowPosition Implementation
-└──────────────────────────────┘
-           │
-           │ createBorrowPosition()
-           ▼
-    ┌────────────────┐
-    │ BP Proxy       │
-    │ (ERC1967)      │──> delegates to beacon
-    └────────────────┘
-```
-
-```solidity
-// Deploy factory
-MorphoBorrowPositionFactory factory = new MorphoBorrowPositionFactory(beaconOwner);
-
-// Create a new borrow position
-address bp = factory.createBorrowPosition(
-    morpho,          // IMorpho contract
-    marketId,        // Morpho market ID
-    positionManager, // Owner address
-    0.72e18          // Custom LLTV (72%)
-);
-```
-
-**Events:**
-```solidity
-event BorrowPositionCreated(
-    address indexed borrowPosition,
-    address indexed morpho,
-    Id indexed marketId,
-    address positionManager,
-    uint256 lltv
-);
-```
-
-### Liquidator Integration
-
-The `preLiquidate` function conforms to the same signature as Morpho's PreLiquidation contract:
-
-```solidity
-function preLiquidate(
-    address borrower,      // The position address (pass the MorphoBorrowPosition address)
-    uint256 seizedAssets,  // Collateral to seize (pass 0 to calculate from repaidShares)
-    uint256 repaidShares,  // Borrow shares to repay (pass 0 to calculate from seizedAssets)
-    bytes calldata data    // Callback data (empty for no callback)
-) external returns (uint256 seizedAssets, uint256 repaidAssets);
-```
-
-**Input Options:**
-- Pass `seizedAssets > 0` and `repaidShares = 0` to specify collateral amount
-- Pass `seizedAssets = 0` and `repaidShares > 0` to specify debt shares amount
-- Reverts with `InconsistentInput` if both are non-zero or both are zero
-
-**Callback Interface:**
-
-Liquidators can implement `IPreLiquidationCallback` to receive a callback during liquidation:
-
-```solidity
-interface IPreLiquidationCallback {
-    function onPreLiquidate(uint256 repaidAssets, bytes calldata data) external;
-}
-```
-
-The callback is invoked only if `data` is non-empty, after collateral is transferred to the liquidator but before debt tokens are pulled.
-
-**Discovering Positions:**
-
-Monitor `BorrowPositionCreated` events from the factory to track deployments. Each event includes the position's custom `lltv` threshold for liquidation eligibility
-
-## Position Manager
-
-The `PositionManager` aggregates multiple `IBorrowPosition` contracts into a single vault with ERC20 share-based accounting. It enables complex multi-protocol borrowing strategies while presenting a unified interface to users.
-
-### Architecture Overview
-
-The Position Manager is built with a modular architecture, split into abstract base contracts and libraries for separation of concerns:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                   POSITION MANAGER ARCHITECTURE                   │
-└─────────────────────────────────────────────────────────────────┘
-
-                      ┌──────────────────────┐
-                      │   PositionManager    │  <-- Main entry point
-                      │   (ERC20 Shares)     │
-                      └──────────┬───────────┘
-                                 │ inherits
-        ┌────────────────────────┼────────────────────────┐
-        ▼                        ▼                        ▼
-┌───────────────────┐  ┌─────────────────────┐  ┌────────────────────────┐
-│PositionManager-   │  │PositionManager-     │  │PositionManager-        │
-│Shares             │  │Admin                │  │Rebalancing             │
-│ - Share calc      │  │ - Queue management  │  │ - Rebalance operations │
-│ - Virtual offset  │  │ - Borrow modules    │  │ - Max loss checks      │
-└────────┬──────────┘  │ - LLTV setting      │  └────────────────────────┘
-         │             └─────────────────────┘
-         ▼
-┌───────────────────┐
-│PositionManager-   │
-│Fees               │
-│ - Management fee  │
-│ - Performance fee │
-└───────────────────┘
-
-Libraries (stateless logic):
-┌─────────────────────────────────────────────────────────────────┐
-│ LibPositionManagerStorage   │ ERC-7201 storage accessor         │
-│ LibPositionManagerOperations│ Deposit/withdraw/burn logic       │
-│ LibPositionManagerView      │ View functions & conversions      │
-│ LibPositionExecutor         │ Low-level position interactions   │
-│ LibPositionManagerConstants │ Roles, virtual offsets, limits    │
-│ LibPositionManagerTypes     │ Struct definitions                │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### File Structure
-
-```
-src/
-├── manager/
-│   ├── PositionManager.sol           # Main contract (start here)
-│   ├── PositionManagerFactory.sol    # Beacon proxy factory
-│   ├── base/
-│   │   ├── PositionManagerShares.sol     # Share calculation & settlement
-│   │   ├── PositionManagerAdmin.sol      # Admin functions & access control
-│   │   ├── PositionManagerFees.sol       # Fee accrual & management
-│   │   └── PositionManagerRebalancing.sol# Rebalancing operations
-│   └── rebalancer/
-│       └── MorphoRebalancer.sol      # Flash-loan based rebalancer
-├── libs/manager/
-│   ├── PositionManagerTypes.sol          # Type definitions
-│   ├── LibPositionManagerStorage.sol     # ERC-7201 storage
-│   ├── LibPositionManagerConstants.sol   # Constants & roles
-│   ├── LibPositionManagerOperations.sol  # Core operation logic
-│   ├── LibPositionManagerView.sol        # View functions
-│   └── LibPositionExecutor.sol           # Position interaction helpers
-└── interfaces/manager/
-    └── IPositionManager.sol          # Interface definition
-```
-
-**Reading Order:**
-1. `IPositionManager.sol` - Understand the interface
-2. `PositionManagerTypes.sol` - Learn the data structures
-3. `PositionManager.sol` - Main contract that ties everything together
-4. Base contracts in `base/` - Understand specific concerns
-5. Libraries in `libs/manager/` - Deep dive into implementation details
-
-### Role-Based Access Control
-
-The Position Manager uses Solady's `OwnableRoles` for granular permission management:
-
-| Role                 | Bit Flag | Permission                         |
-| -------------------- | -------- | ---------------------------------- |
-| `PM_ROLE_MINTER`     | `1 << 0` | Call `deposit`, `withdraw`, `burn` |
-| `PM_ROLE_CURATOR`    | `1 << 1` | Set supply/withdrawal queues       |
-| `PM_ROLE_REBALANCER` | `1 << 2` | Execute rebalancing operations     |
-
-The **owner** has exclusive control over:
-- Adding/removing borrow modules (whitelisting)
-- Setting LLTV
-- Setting fee configuration
-- Setting max rebalance loss threshold
-- Granting/revoking roles
-
-### High-Level Design
-
-```
-  ┌──────────────────────┐
-  │   PositionManager    │
-  │                      │
-  │  - Supply Queue      │──> [Position A, Position B, Position C]
-  │  - Withdrawal Queue  │──> [Position C, Position B, Position A]
-  │  - LLTV              │
-  │  - Fee Configuration │
-  └──────────┬───────────┘
-             │
-             │ manages
-             ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │                    IBorrowPosition Pool                       │
-  ├─────────────────┬─────────────────┬─────────────────────────┤
-  │ MorphoPosition1 │ MorphoPosition2 │ ... (other protocols)   │
-  │  - Collateral   │  - Collateral   │                         │
-  │  - Debt         │  - Debt         │                         │
-  └─────────────────┴─────────────────┴─────────────────────────┘
-```
-
-### Key Concepts
-
-**Total Assets**: The net value of all positions, calculated as:
-```
-totalAssets = Σ(collateralQuoted) - Σ(debt)
-```
-Where `collateralQuoted` is collateral value expressed in debt asset terms using each position's oracle.
-
-**Shares**: ERC20 tokens representing ownership of the aggregated position. Share price is derived from total assets with virtual offset protection against inflation attacks.
-
-**Supply Queue**: Ordered list of positions with borrow caps, used for deposits. Each entry contains:
-- `position`: The IBorrowPosition contract address
-- `maxBorrow`: Maximum amount to borrow from this position per deposit
-
-**Withdrawal Queue**: Ordered list of position addresses, used for withdrawals and burns.
-
-**LLTV**: Loan-to-Liquidation-Threshold-Value used for calculating available collateral during withdrawals.
-
-### Share Calculation
-
-Shares use a virtual offset to prevent inflation attacks (similar to ERC4626 with virtual shares):
-
-```
-// Converting assets to shares
-shares = assets × (totalSupply + VIRTUAL_SHARES) / (totalAssets + VIRTUAL_ASSETS)
-
-// Converting shares to assets
-assets = shares × (totalAssets + VIRTUAL_ASSETS) / (totalSupply + VIRTUAL_SHARES)
-
-// Constants
-VIRTUAL_SHARES = 1e6
-VIRTUAL_ASSETS = 1
-```
-
-### Operations
-
-#### Deposit
-
-Deposits collateral and borrows debt across positions in the supply queue.
-
-```solidity
-function deposit(uint256 collateral, uint256 debt) external returns (int256 shares);
-```
-
-**Flow:**
-1. Accrue fees to fee recipient
-2. Pull collateral from caller
-3. If `debt == 0`: supply all collateral to first position in queue
-4. If `debt > 0`: iterate through supply queue:
-   - For each position, borrow up to `min(availableLiquidity, maxBorrow, remainingDebt)`
-   - Supply collateral proportionally: `collateral × (amountBorrowed / totalDebt)`
-   - Always supply collateral before borrowing
-5. Transfer borrowed debt to caller
-6. Calculate share delta based on total assets change:
-   - If assets increased → mint shares (positive return)
-   - If assets decreased → burn shares (negative return)
-7. Update snapshot for performance fees
-
-**Example:**
-```
-Supply Queue: [(PositionA, maxBorrow=1000), (PositionB, maxBorrow=2000)]
-Deposit: collateral=1500, debt=2000
-
-Position A:
-  - Available: 800, MaxBorrow: 1000 → borrows 800
-  - Collateral: 1500 × (800/2000) = 600
-
-Position B:
-  - Remaining debt: 1200
-  - Available: 5000, MaxBorrow: 2000 → borrows 1200
-  - Collateral: 900 (remaining)
-
-Result: 1500 collateral supplied, 2000 debt borrowed, shares minted
-```
-
-#### Withdraw
-
-Withdraws collateral and repays debt across positions in the withdrawal queue.
-
-```solidity
-function withdraw(uint256 collateral, uint256 debt) external returns (int256 shares);
-```
-
-**Flow:**
-1. Accrue fees to fee recipient
-2. Pull debt from caller for repayment
-3. **First pass** - Repay debt through withdrawal queue:
-   - For each position, repay up to `min(positionDebt, remainingDebt)`
-4. **Second pass** - Withdraw collateral through withdrawal queue:
-   - For each position, withdraw up to `min(availableCollateral(lltv), positionCollateral, remainingCollateral)`
-   - Reverts with `InsufficientAvailableCollateral` if unable to withdraw requested amount
-5. Transfer collateral to caller
-6. Calculate share delta based on total assets change:
-   - If assets decreased → burn shares (negative return)
-   - If assets increased → mint shares (positive return)
-7. Update snapshot for performance fees
-
-**Available Collateral:**
-```
-availableCollateral = totalCollateral - requiredCollateral
-requiredCollateral = debt × ORACLE_PRICE_SCALE / (lltv × collateralPrice)
-```
-
-Only "available" collateral can be withdrawn without repaying debt, ensuring positions remain healthy.
-
-#### Burn
-
-Burns shares to exit the position proportionally, maintaining average LTV across all positions.
-
-```solidity
-function burn(uint256 shares) external returns (uint256 collateral, uint256 debt);
-```
-
-**Flow:**
-1. Accrue fees to fee recipient
-2. Calculate proportional amounts:
-   ```
-   collateral = totalCollateral × shares / totalSupply  (round down)
-   debt = totalDebt × shares / totalSupply  (round up)
-   ```
-3. Burn shares from caller
-4. Pull debt from caller for repayment
-5. Process through withdrawal queue - for each position:
-   - Repay: `debtToRepay × positionDebt / totalDebt` (capped at remaining)
-   - Withdraw: `collateralToWithdraw × positionCollateral / totalCollateral` (capped at remaining)
-6. Transfer collateral to caller
-7. Update snapshot for performance fees
-
-**Key Property:** Burns maintain the average LTV across all positions, making exit cost predictable regardless of withdrawal queue order.
-
-### Fee Mechanism
-
-The PositionManager supports two types of fees, accrued before every operation:
-
-#### Management Fee
-Annual fee on total assets, expressed in basis points per year:
-```
-managementFeeAssets = totalAssets × managementFee × elapsedTime / (BPS × SECONDS_PER_YEAR)
-```
-
-#### Performance Fee
-Fee on gains since last snapshot, expressed in basis points:
-```
-if (currentTotalAssets > lastTotalAssets):
-    gains = currentTotalAssets - lastTotalAssets
-    performanceFeeAssets = gains × performanceFee / BPS
-```
-
-Fees are minted as shares to the fee recipient, diluting existing shareholders proportionally.
-
-### Admin Functions
-
-```solidity
-// Owner-only: Add/remove positions to the whitelist
-function addBorrowModule(address module) external;
-function removeBorrowModule(address module) external;
-
-// Owner-only: Set the LLTV for available collateral calculations
-function setLltv(uint256 lltv) external;
-
-// Owner-only: Set fee configuration (accrues pending fees first)
-function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
-
-// Owner-only: Set max allowed loss during rebalance (in basis points)
-function setMaxRebalanceLoss(uint16 maxRebalanceLoss) external;
-
-// Curator role: Set the supply queue for deposits
-function setSupplyQueue(SupplyQueueEntry[] calldata queue) external;
-
-// Curator role: Set the withdrawal queue for withdrawals and burns
-function setWithdrawalQueue(address[] calldata queue) external;
-
-// Rebalancer role: Rebalance positions without minting/burning shares
-function rebalance(RebalancingData calldata data) external returns (uint256 collateralExcess, uint256 debtExcess);
-```
-
-### Rebalancing
-
-The `rebalance` function allows accounts with the `PM_ROLE_REBALANCER` role to redistribute collateral and debt across positions without affecting shares:
-
-```solidity
-struct RebalancingData {
-    uint256 collateral;  // Collateral to pull from caller
-    uint256 debt;        // Debt to pull from caller
-    RebalancingOperation[] operations;
-}
-
-struct RebalancingOperation {
-    address position;
-    RebalancingOperationType operationType;  // REPAY, WITHDRAW, BORROW, SUPPLY
-    uint256 amount;
-}
-```
-
-**Example - Move liquidity from Position A to Position B:**
-```solidity
-RebalancingData({
-    collateral: 0,
-    debt: 1000,  // Need USDC to repay on A
-    operations: [
-        (positionA, REPAY, 1000),     // Repay 1000 USDC on A
-        (positionA, WITHDRAW, 2000),  // Withdraw 2000 collateral from A
-        (positionB, SUPPLY, 2000),    // Supply 2000 collateral to B
-        (positionB, BORROW, 1000)     // Borrow 1000 USDC from B
-    ]
-})
-// Returns excess collateral and debt to caller
-```
-
-### Security Considerations
-
-1. **Inflation Attack Protection**: Virtual share offset prevents first-depositor attacks
-2. **Conservative Rounding**: Debt rounds up, collateral rounds down to protect the vault
-3. **LLTV Enforcement**: Withdrawals check available collateral to maintain position health
-4. **Fee Accrual**: Fees are always accrued before operations to ensure fair accounting
-5. **Access Control**: Operations restricted to MINTER role, admin functions to owner
-6. **Reentrancy Protection**: Uses `ReentrancyGuardTransient` on main operations
-7. **Whitelisted Positions**: Only positions in `borrowModules` set can be used in queues
-8. **Max Rebalance Loss**: Rebalancing reverts if total assets decrease beyond threshold
-
-### PositionManagerFactory
-
-Deploys Position Manager instances using the **beacon proxy pattern**:
-
-```
-┌────────────────────────┐
-│ PositionManagerFactory │
-│                        │
-│ BEACON ────────────────┼──> UpgradeableBeacon ──> PositionManager Implementation
-└────────────────────────┘
-           │
-           │ createPositionManager()
-           ▼
-    ┌────────────────┐
-    │ PM Proxy       │
-    │ (ERC1967)      │──> delegates to beacon
-    └────────────────┘
-```
-
-```solidity
-// Deploy factory
-PositionManagerFactory factory = new PositionManagerFactory(beaconOwner);
-
-// Create a new Position Manager
-address pm = factory.createPositionManager(
-    owner,           // Owner address
-    collateralAsset, // e.g., WETH
-    debtAsset,       // e.g., USDC
-    "PM Shares",     // Share token name
-    "PMS"            // Share token symbol
-);
-```
-
-### Transfer Guard
-
-The Position Manager supports an optional `TransferGuard` for compliance controls on share transfers. When set, all transfers (including mints and burns) are validated through the guard.
-
-**Setting the Guard:**
-```solidity
-// Owner sets the transfer guard (address(0) disables)
-positionManager.setTransferGuard(address(guard));
-
-// Query current guard
-(,, address transferGuard) = positionManager.config();
-```
-
-**Pause Integration:**
-The guard's pause status is also checked before rebalancing operations. When paused:
-- All share transfers are blocked
-- Deposits/withdrawals are blocked (they mint/burn shares)
-- Rebalancing operations revert with `Paused()`
-
-See the [Transfer Guard](#transfer-guard-1) section for full documentation.
-
-### MorphoRebalancer
-
-A standalone rebalancer contract that uses Morpho flash loans to execute rebalancing operations without requiring upfront capital:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    MORPHO REBALANCER FLOW                         │
-└─────────────────────────────────────────────────────────────────┘
-
-1. Owner calls rebalance(positionManager, data)
-           │
-           ▼
-2. Initiate flash loan from Morpho for data.debt amount
-           │
-           ▼
-3. Morpho calls onMorphoFlashLoan() callback
-           │
-           ▼
-4. Callback executes positionManager.rebalance(data)
-           │
-           ▼
-5. Callback approves Morpho to pull back flash loaned amount
-```
-
-The rebalancer requires:
-- `PM_ROLE_REBALANCER` role on the Position Manager
-- Owner permission to initiate rebalances
-- Sufficient liquidity in Morpho for the flash loan
+### Role-Based Access
+
+| Role | Permission |
+|------|------------|
+| Owner | setRepaid, authorizeMinting, consume |
+| Consumer | authorizeMinting, consume |
+| Puller | pullFunds |
 
 ## Fund Module
 
-The fund module standardizes how the protocol wraps external assets and off-chain settlement rails. Each integration implements `IFund` (`src/interfaces/funds/IFund.sol`) and the shared `Order` type (`src/libs/Order.sol`) so callers can rely on a consistent lifecycle across multiple integrations.
+The fund module standardizes wrapping external assets through a state machine interface.
 
-**Order modes**
-- `DEPOSIT`: commit input assets, then unlock share tokens
-- `REDEEM`: commit share tokens, then unlock output assets
-
-### State Machine
-
-Orders follow a single lifecycle with explicit transitions and recovery paths. `create()` returns `ACCEPTED` (ready to commit) or `PENDING` (queued/clearing). `commit()` advances to `PROCESSING`, then the integration moves to `UNLOCKING` on success or `RECOVERING` on failure. `unlock()` and `recover()` finalize orders, with partial fills looping back to `PROCESSING`.
+### Order State Machine
 
 ```mermaid
 stateDiagram-v2
@@ -941,146 +323,409 @@ stateDiagram-v2
     ENDED --> [*]
 ```
 
+### Order Modes
+
+| Mode | Input | Output |
+|------|-------|--------|
+| DEPOSIT | Asset (e.g., USDC) | Shares (e.g., wUSCC) |
+| REDEEM | Shares (e.g., wUSCC) | Asset (e.g., USDC) |
+
 ### USCC Integration (Superstate)
 
-`USCCFund` is the current `IFund` implementation for Superstate USCC. It uses a single active order per fund and exposes a USCC-backed wrapper token (`wUSCC`) via `WrappedAsset`. Multiple funds can share the same wrapper token by granting `ISSUER_ROLE`.
+`USCCFund` wraps Superstate USCC tokens with a wrapper token (`wUSCC`):
 
-**Deposit (USDC → wUSCC)**
-1. `create(DEPOSIT)` initializes the order.
-2. `commit()` transfers USDC to the Superstate recipient.
-3. Once USCC is minted to the fund, `unlock()` mints wUSCC to the receiver.
+**Deposit Flow (USDC → wUSCC):**
+1. `create(DEPOSIT)` - Initialize order
+2. `commit()` - Transfer USDC to Superstate recipient
+3. `unlock()` - Mint wUSCC to receiver once USCC is minted
 
-**Redeem (wUSCC → USDC)**
-1. `create(REDEEM)` initializes the order.
-2. `commit()` burns wUSCC and triggers off-chain redemption.
-3. When USDC settles, `unlock()` releases it (or `recover()` returns inputs if processing fails).
+**Redeem Flow (wUSCC → USDC):**
+1. `create(REDEEM)` - Initialize order
+2. `commit()` - Burn wUSCC, trigger off-chain redemption
+3. `unlock()` - Release USDC when settled (or `recover()` if failed)
 
-USCC accounting uses a Chainlink USCC oracle; operator roles manage oracle configuration and recovery.
+## Position Manager
 
-## Transfer Guard
-
-The `TransferGuard` contract provides compliance controls for token transfers, supporting blocklist mode, whitelist mode, and pause functionality.
+The `PositionManager` aggregates multiple `IBorrowPosition` contracts into a single vault with ERC20 share-based accounting.
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    TRANSFER GUARD ARCHITECTURE                    │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    PM[PositionManager<br/>ERC20 Shares]
 
-  ┌──────────────────────────┐
-  │  TransferGuardFactory    │
-  │                          │
-  │  BEACON ─────────────────┼──> UpgradeableBeacon ──> TransferGuard Implementation
-  └──────────────────────────┘
-             │
-             │ createTransferGuard()
-             ▼
-      ┌────────────────┐
-      │ Guard Proxy    │
-      │ (ERC1967)      │──> delegates to beacon
-      └────────────────┘
-             │
-             │ canTransfer()
-             ▼
-  ┌──────────────────────────┐
-  │    PositionManager       │
-  │                          │
-  │  _beforeTokenTransfer()  │──> Validates via guard
-  │  rebalance()             │──> Checks pause status
-  └──────────────────────────┘
+    subgraph Queues["Queues"]
+        SQ[Supply Queue<br/>position + maxBorrow]
+        WQ[Withdrawal Queue<br/>position addresses]
+    end
+
+    subgraph Positions["IBorrowPosition Pool"]
+        P1[MorphoPosition 1]
+        P2[MorphoPosition 2]
+        P3[MorphoPosition N]
+    end
+
+    PM --> SQ
+    PM --> WQ
+    SQ --> P1
+    SQ --> P2
+    WQ --> P1
+    WQ --> P2
+    WQ --> P3
 ```
+
+### Key Concepts
+
+**Total Assets**: Net value of all positions:
+```
+totalAssets = Σ(collateralQuoted) - Σ(debt)
+```
+Where `collateralQuoted` is collateral value in debt asset terms using each position's oracle.
+
+**Supply Queue**: Ordered list of positions with borrow caps for deposits. Each entry contains:
+- `position`: The IBorrowPosition contract address
+- `maxBorrow`: Maximum amount to borrow from this position per deposit
+
+**Withdrawal Queue**: Ordered list of position addresses for withdrawals and burns.
+
+### Share Calculation
+
+Uses virtual offset to prevent inflation attacks (similar to ERC4626):
+
+```
+shares = assets × (totalSupply + 1e6) / (totalAssets + 1)
+assets = shares × (totalAssets + 1) / (totalSupply + 1e6)
+```
+
+### Deposit
+
+Deposits collateral and borrows debt across positions in the supply queue.
+
+```solidity
+function deposit(uint256 collateral, uint256 debt) external returns (int256 shares);
+```
+
+**Flow:**
+1. Pull collateral from caller
+2. If `debt == 0`: supply all collateral to first position
+3. If `debt > 0`: iterate through supply queue:
+   - For each position, borrow up to `min(availableLiquidity, maxBorrow, remainingDebt)`
+   - Supply collateral proportionally: `collateral × (amountBorrowed / totalDebt)`
+4. Transfer borrowed debt to caller
+5. Mint/burn shares based on total assets change
+
+**Example:**
+```
+Supply Queue: [(PositionA, maxBorrow=1000), (PositionB, maxBorrow=2000)]
+Deposit: collateral=1500, debt=2000
+
+Position A: available=800, maxBorrow=1000 → borrows 800, collateral=600
+Position B: remaining=1200, available=5000, maxBorrow=2000 → borrows 1200, collateral=900
+
+Result: 1500 collateral supplied, 2000 debt borrowed
+```
+
+### Withdraw
+
+Withdraws collateral and repays debt across positions in the withdrawal queue.
+
+```solidity
+function withdraw(uint256 collateral, uint256 debt) external returns (int256 shares);
+```
+
+**Flow:**
+1. Pull debt from caller for repayment
+2. **First pass** - Repay debt through withdrawal queue
+3. **Second pass** - Withdraw collateral through withdrawal queue (respects available collateral at LLTV)
+4. Transfer collateral to caller
+5. Mint/burn shares based on total assets change
+
+**Available Collateral:**
+```
+availableCollateral = totalCollateral - requiredCollateral
+requiredCollateral = debt × ORACLE_PRICE_SCALE / (lltv × collateralPrice)
+```
+
+Only "available" collateral can be withdrawn without repaying debt, ensuring positions remain healthy.
+
+### Burn
+
+Burns shares to exit proportionally, maintaining average LTV across all positions.
+
+```solidity
+function burn(uint256 shares) external returns (uint256 collateral, uint256 debt);
+```
+
+**Flow:**
+1. Calculate proportional amounts:
+   ```
+   collateral = totalCollateral × shares / totalSupply  (round down)
+   debt = totalDebt × shares / totalSupply  (round up)
+   ```
+2. Burn shares from caller
+3. Pull debt from caller for repayment
+4. Process through withdrawal queue proportionally
+5. Transfer collateral to caller
+
+### Rebalancing
+
+The `rebalance` function allows redistributing collateral and debt across positions without affecting shares.
+
+**Position Validation:** All positions referenced in rebalancing operations must be registered in the `borrowModules` set (added via `addBorrowModule`). Attempting to rebalance with unregistered positions reverts with `UnauthorizedPosition()`.
+
+```solidity
+struct RebalancingData {
+    uint256 collateral;  // Collateral to pull from caller
+    uint256 debt;        // Debt to pull from caller
+    RebalancingOperation[] operations;
+}
+
+struct RebalancingOperation {
+    address position;
+    RebalancingOperationType operationType;  // REPAY, WITHDRAW, BORROW, SUPPLY
+    uint256 amount;
+}
+```
+
+**Example - Move liquidity from Position A to Position B:**
+```solidity
+RebalancingData({
+    collateral: 0,
+    debt: 1000,  // Need debt token to repay on A
+    operations: [
+        (positionA, REPAY, 1000),
+        (positionA, WITHDRAW, 2000),
+        (positionB, SUPPLY, 2000),
+        (positionB, BORROW, 1000)
+    ]
+})
+// Returns excess collateral and debt to caller
+```
+
+### Fee Mechanism
+
+Fees are accrued before every operation:
+
+**Management Fee**: Annual fee on total assets (basis points/year)
+```
+managementFeeAssets = totalAssets × managementFee × elapsedTime / (BPS × SECONDS_PER_YEAR)
+```
+
+**Performance Fee**: Fee on gains since last snapshot (basis points)
+```
+if (currentTotalAssets > lastTotalAssets):
+    gains = currentTotalAssets - lastTotalAssets
+    performanceFeeAssets = gains × performanceFee / BPS
+```
+
+Fees are minted as shares to the fee recipient, diluting existing shareholders.
+
+### Role-Based Access
+
+| Role | Permission |
+|------|------------|
+| Owner | Add/remove modules, set LLTV, set fees, set max rebalance loss |
+| Minter | deposit, withdraw, burn |
+| Curator | Set supply/withdrawal queues |
+| Rebalancer | Execute rebalancing operations |
+
+### Transfer Guard Integration
+
+The Position Manager supports an optional `TransferGuard` for compliance controls. When set:
+- All share transfers are validated through the guard
+- Deposits/withdrawals are blocked when paused
+- Rebalancing operations revert with `Paused()`
+
+### MorphoRebalancer
+
+A standalone rebalancer using Morpho flash loans:
+
+```mermaid
+flowchart LR
+    Owner -->|1. rebalance| MR[MorphoRebalancer]
+    MR -->|2. flash loan| Morpho
+    Morpho -->|3. callback| MR
+    MR -->|4. rebalance| PM[PositionManager]
+    MR -->|5. repay| Morpho
+```
+
+Requires `PM_ROLE_REBALANCER` on the Position Manager.
+
+## Borrow Module
+
+### MorphoBorrowPosition
+
+Individual position wrapper for Morpho Blue with custom pre-liquidation:
+
+```mermaid
+flowchart LR
+    subgraph MorphoBorrowPosition
+        C[Collateral]
+        D[Debt]
+        L[Custom LLTV]
+    end
+
+    MorphoBorrowPosition --> Morpho[Morpho Blue Market]
+```
+
+**Key Features:**
+- Custom LLTV per position (immutable after init, must be > 0 and ≤ market LLTV)
+- Proportional pre-liquidation mechanism
+- ERC-7201 namespaced storage for proxy compatibility
+
+**Initialization:**
+```solidity
+function initialize(
+    IMorpho morpho,      // Morpho Blue protocol contract
+    Id marketId,         // Morpho market ID
+    address positionManager,  // Owner controlling this position
+    uint256 lltv         // Custom LLTV (immutable)
+) external;
+```
+
+### Operations
+
+| Function | Description |
+|----------|-------------|
+| `supplyCollateral(amount)` | Add collateral to increase borrowing capacity |
+| `withdrawCollateral(amount)` | Remove collateral (enforces custom LLTV) |
+| `borrow(amount)` | Borrow against collateral (enforces custom LLTV) |
+| `repay(amount)` | Repay borrowed assets |
+| `preLiquidate(...)` | Liquidate unhealthy positions |
+
+### View Functions
+
+| Function | Description |
+|----------|-------------|
+| `totalBorrowed()` | Current debt including accrued interest |
+| `totalCollateral()` | Current collateral amount in position |
+| `totalCollateralQuoted()` | Collateral value in debt asset terms (using oracle) |
+| `isHealthy(lltv)` | Whether position is above specified LLTV |
+| `maxBorrow(lltv)` | Maximum borrowable at given LLTV |
+| `availableLiquidity()` | Available liquidity in market |
+| `availableCollateral(lltv)` | Withdrawable collateral while maintaining health |
+
+### Health Factor & Pre-Liquidation
+
+Position health is determined by:
+```
+collateralValue = collateral × oraclePrice / ORACLE_PRICE_SCALE
+maxBorrow = collateralValue × lltv
+isHealthy(lltv) = maxBorrow ≥ totalBorrowed
+```
+
+### Custom Pre-Liquidation Mechanism
+
+Unlike Morpho's native liquidation (with liquidation incentive factor), MorphoBorrowPosition uses **proportional pre-liquidation** - liquidators receive collateral proportional to debt repaid.
+
+**Liquidation Bonus Formula:**
+```
+Liquidation Bonus = 1 - LTV (at liquidation time)
+```
+
+**Example** at 80% LTV with 100 collateral ($100) and 80 debt ($80):
+
+Liquidating 50% of debt ($40) seizes 50% of collateral ($50):
+- Liquidator pays: $40 (debt)
+- Liquidator receives: $50 (collateral)
+- Profit: $10 = 20% bonus (1 - 0.80)
+
+**Key Properties:**
+- Liquidators receive proportional share of collateral
+- Bonus scales with how underwater the position is
+- No cap on seized collateral
+
+### Liquidator Integration
+
+```solidity
+function preLiquidate(
+    address borrower,      // The MorphoBorrowPosition address
+    uint256 seizedAssets,  // Collateral to seize (0 to calculate from repaidShares)
+    uint256 repaidShares,  // Debt shares to repay (0 to calculate from seizedAssets)
+    bytes calldata data    // Callback data (empty for no callback)
+) external returns (uint256 seizedAssets, uint256 repaidAssets);
+```
+
+**Input Options:**
+- `seizedAssets > 0, repaidShares = 0` → specify collateral amount
+- `seizedAssets = 0, repaidShares > 0` → specify debt shares
+- Both non-zero or both zero → reverts with `InconsistentInput`
+
+**Callback Interface:**
+
+```solidity
+interface IPreLiquidationCallback {
+    function onPreLiquidate(uint256 repaidAssets, bytes calldata data) external;
+}
+```
+
+Invoked (if `data` non-empty) after collateral transfer but before debt is pulled.
+
+### MorphoBorrowPositionFactory
+
+Deploys positions using beacon proxy pattern:
+
+```solidity
+address bp = factory.createBorrowPosition(
+    morpho,          // IMorpho contract
+    marketId,        // Morpho market ID
+    positionManager, // Owner address
+    0.72e18          // Custom LLTV (72%)
+);
+```
+
+Monitor `BorrowPositionCreated` events to track deployments and their LLTV thresholds.
+
+## Transfer Guard
+
+Compliance controls for token transfers with blocklist/whitelist modes.
 
 ### Token Modes
 
-Each token can be configured in one of two modes:
-
-| Mode      | Behavior                                                           |
-| --------- | ------------------------------------------------------------------ |
-| Blocklist | Default - all addresses allowed EXCEPT those with BLOCKLIST status |
-| Whitelist | Only addresses with WHITELIST status are allowed                   |
+| Mode | Behavior |
+|------|----------|
+| Blocklist | All addresses allowed EXCEPT those with BLOCKLIST status |
+| Whitelist | Only addresses with WHITELIST status allowed |
 
 ### Address Status
 
-Each address can have one of three statuses per guard:
+| Status | Blocklist Mode | Whitelist Mode |
+|--------|----------------|----------------|
+| NONE | Allowed | Blocked |
+| WHITELIST | Allowed | Allowed |
+| BLOCKLIST | Blocked | Blocked |
 
-| Status      | Value | Blocklist Mode | Whitelist Mode |
-| ----------- | ----- | -------------- | -------------- |
-| `NONE`      | 0     | Allowed        | Blocked        |
-| `WHITELIST` | 1     | Allowed        | Allowed        |
-| `BLOCKLIST` | 2     | Blocked        | Blocked        |
+### Transfer Validation
 
-### Token Configuration
+```mermaid
+flowchart TB
+    Start[canTransfer] --> Paused{Token Paused?}
+    Paused -->|Yes| Block[BLOCK]
+    Paused -->|No| Mint{Is Mint?}
+    Mint -->|Yes| CheckTo[Check 'to' only]
+    Mint -->|No| Burn{Is Burn?}
+    Burn -->|Yes| CheckFrom[Check 'from' only]
+    Burn -->|No| CheckBoth[Check both addresses]
 
-Each token registered with the guard has:
-- **paused**: Whether all transfers are blocked
-- **whitelist**: Whether the token uses whitelist mode (true) or blocklist mode (false)
+    CheckTo --> Status
+    CheckFrom --> Status
+    CheckBoth --> Status
 
-```solidity
-// Set token configuration (blocklist mode - default)
-guard.setTokenConfig(tokenAddress, false, false);
-
-// Set token configuration (whitelist mode)
-guard.setTokenConfig(tokenAddress, false, true);
-
-// Pause/unpause a token
-guard.pause(tokenAddress);
-guard.unpause(tokenAddress);
-
-// Check mode
-bool isWhitelistMode = guard.isWhitelistMode(tokenAddress);
+    subgraph Status["Per Address"]
+        S1[BLOCKLIST → BLOCK]
+        S2[WHITELIST → ALLOW]
+        S3[NONE + blocklist mode → ALLOW]
+        S4[NONE + whitelist mode → BLOCK]
+    end
 ```
 
-### Transfer Validation Logic
+### Role-Based Access
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    TRANSFER VALIDATION FLOW                       │
-└─────────────────────────────────────────────────────────────────┘
-
-canTransfer(token, from, to, amount)
-           │
-           ▼
-    ┌──────────────┐
-    │ Token Paused?│──Yes──> BLOCK
-    └──────┬───────┘
-           │ No
-           ▼
-    ┌──────────────┐
-    │ Is Mint?     │──Yes──> Check only 'to' address
-    │ (from == 0)  │
-    └──────┬───────┘
-           │ No
-           ▼
-    ┌──────────────┐
-    │ Is Burn?     │──Yes──> Check only 'from' address
-    │ (to == 0)    │
-    └──────┬───────┘
-           │ No (Regular Transfer)
-           ▼
-    Check both 'from' AND 'to' addresses
-           │
-           ▼
-    ┌────────────────────────────────────────┐
-    │ For each address:                      │
-    │                                        │
-    │ BLOCKLIST ────────────────────> BLOCK  │
-    │ WHITELIST ────────────────────> ALLOW  │
-    │ NONE + blocklist mode ────────> ALLOW  │
-    │ NONE + whitelist mode ────────> BLOCK  │
-    └────────────────────────────────────────┘
-```
-
-### Role-Based Access Control
-
-| Role              | Bit Flag | Permission           |
-| ----------------- | -------- | -------------------- |
-| `PAUSER_ROLE`     | `1 << 1` | Pause/unpause tokens |
-| `COMPLIANCE_ROLE` | `1 << 0` | Set address statuses |
-
-The **owner** has exclusive control over:
-- Setting token configuration (paused, whitelist mode)
-- Granting/revoking roles
+| Role | Permission |
+|------|------------|
+| Owner | Set token config (paused, mode), grant roles |
+| Pauser | Pause/unpause tokens |
+| Compliance | Set address statuses |
 
 ### Usage Example
 
@@ -1089,12 +734,8 @@ The **owner** has exclusive control over:
 TransferGuardFactory factory = new TransferGuardFactory(beaconOwner);
 address guard = factory.createTransferGuard(guardOwner);
 
-// Configure the guard (whitelist mode)
-TransferGuard(guard).setTokenConfig(
-    address(positionManager),
-    false,    // not paused
-    true      // whitelist mode
-);
+// Configure (whitelist mode)
+TransferGuard(guard).setTokenConfig(address(positionManager), false, true);
 
 // Set address statuses
 TransferGuard(guard).setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
@@ -1110,22 +751,59 @@ TransferGuard(guard).setAddressStatusBatch(accounts, AddressStatus.WHITELIST);
 positionManager.setTransferGuard(guard);
 ```
 
-### TransferGuardFactory
+## Factory Deployment Pattern
 
-Deploys TransferGuard instances using the **beacon proxy pattern**:
+All major contracts use the **beacon proxy pattern** for gas-efficient, upgradeable deployments:
 
-```solidity
-// Deploy factory
-TransferGuardFactory factory = new TransferGuardFactory(beaconOwner);
+```mermaid
+flowchart TB
+    Factory[Factory Contract]
+    Beacon[UpgradeableBeacon]
+    Impl[Implementation]
 
-// Create a new guard
-address guard = factory.createTransferGuard(owner);
+    Factory -->|owns| Beacon
+    Beacon -->|points to| Impl
 
-// Upgrade all guards (beacon owner only)
-UpgradeableBeacon(factory.BEACON()).upgradeTo(newImplementation);
+    subgraph Proxies["Deployed Proxies"]
+        P1[Proxy 1]
+        P2[Proxy 2]
+        P3[Proxy N]
+    end
+
+    Factory -->|creates| P1
+    Factory -->|creates| P2
+    Factory -->|creates| P3
+
+    P1 -->|delegates to| Beacon
+    P2 -->|delegates to| Beacon
+    P3 -->|delegates to| Beacon
 ```
 
-### Security Considerations
+**Factories:**
+- `RequestFactory` - Deploys Request + PT/YT vaults
+- `PositionManagerFactory` - Deploys PositionManager instances
+- `MorphoBorrowPositionFactory` - Deploys borrow positions
+- `USCCFundFactory` - Deploys USCC fund wrappers
+- `TransferGuardFactory` - Deploys transfer guards
 
-1. **Centralization Risk**: Guard owner can blocklist any address. Use multisig/timelock for production.
-2. **Reentrancy Protection**: Position Manager's `rebalance` function uses `nonReentrant` to prevent guard state manipulation via callbacks.
+**Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.
+
+## Security Considerations
+
+| Mechanism | Purpose |
+|-----------|---------|
+| **Virtual Share Offset** | Prevents first-depositor inflation attacks in PositionManager |
+| **Conservative Rounding** | Debt rounds up, collateral rounds down to protect vaults |
+| **LLTV Enforcement** | Withdrawals check available collateral to maintain position health |
+| **Fee Accrual Ordering** | Fees always accrued before operations for fair accounting |
+| **Role-Based Access** | Operations restricted to specific roles via OwnableRoles |
+| **Reentrancy Guards** | `ReentrancyGuardTransient` on all state-changing operations |
+| **Whitelisted Positions** | Only positions in `borrowModules` set can be used in queues |
+| **Max Rebalance Loss** | Rebalancing reverts if total assets decrease beyond threshold |
+| **ERC-7201 Storage** | Namespaced storage prevents collisions in proxy deployments |
+| **EIP-712 Signatures** | Typed data signing for secure off-chain offer validation |
+
+**Centralization Risks:**
+- Guard owner can blocklist any address (use multisig/timelock for production)
+- Beacon owner can upgrade all proxy implementations
+- Facilitator has broad operational control over intent lifecycle

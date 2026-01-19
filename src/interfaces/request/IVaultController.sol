@@ -2,17 +2,14 @@
 pragma solidity ^0.8.20;
 
 import {ITokenController} from "./ITokenController.sol";
+import {IHasAsset} from "./IHasAsset.sol";
 
 /// @title IVaultController
 /// @notice Interface for managing dual-vault systems with Principal and Yield token separation.
-interface IVaultController is ITokenController {
+interface IVaultController is ITokenController, IHasAsset {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        METADATA/STATUS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Returns the address of the underlying asset (ERC20) held by the vault.
-  /// @return assetAddress The ERC20 token address
-  function asset() external view returns (address);
 
   /// @notice Returns whether withdrawals and redemptions are currently permitted.
   /// @return allowed True if withdrawals/redemptions are enabled

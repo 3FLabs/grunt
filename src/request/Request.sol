@@ -8,6 +8,7 @@ import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
 import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.sol";
+import {IHasAsset} from "../interfaces/request/IHasAsset.sol";
 import {IRequestCallback} from "../interfaces/request/IRequestCallback.sol";
 import {IRequestInteractionsCallback} from "../interfaces/request/IRequestInteractionsCallback.sol";
 import {ITokenController} from "../interfaces/request/ITokenController.sol";
@@ -55,7 +56,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @dev Role for addresses authorized to pull funds from the contract via `pullFunds()`.
   uint256 internal constant _ROLE_PULLER = _ROLE_0;
+
+  /// @dev Role for addresses authorized to consume offers and authorize minting via `consume()` and `authorizeMinting()`.
+  uint256 internal constant _ROLE_CONSUMER = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERRORS                             */
@@ -113,6 +118,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      state where withdrawals are disabled until either setRepaid() is called or the repayment deadline passes.
   /// @param owner_ The address that will own the contract and have admin privileges
   /// @param puller_ The address that will have the puller role
+  /// @param consumer_ The address that will have the consumer role (can call consume and authorizeMinting)
   /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
   /// @param ptToken_ The address of the deployed Principal Token contract
   /// @param ytToken_ The address of the deployed Yield Token contract
@@ -122,6 +128,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   function initialize(
     address owner_,
     address puller_,
+    address consumer_,
     address asset_,
     address ptToken_,
     address ytToken_,
@@ -137,7 +144,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     req.name = name_;
     req.symbol = symbol_;
     _initializeOwner(owner_);
-    _setRoles(puller_, _ROLE_PULLER);
+    _grantRoles(puller_, _ROLE_PULLER);
+    _grantRoles(consumer_, _ROLE_CONSUMER);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -150,11 +158,32 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc VaultController
-  /// @dev Returns true if either the request has been marked as repaid OR the repayment deadline has passed.
-  ///      This allows withdrawals to be enabled automatically after a deadline, even if setRepaid() was never called.
+  /// @dev Returns true only if the request has been marked as repaid.
+  ///      Use syncRepaidStatus() to trigger automatic repayment after the deadline.
   function _canWithdraw() internal view override returns (bool) {
+    return _requestStorage().repaid;
+  }
+
+  /// @inheritdoc VaultController
+  /// @dev Syncs the repaid status if the deadline has passed but repaid is still false.
+  ///      Sets repaid to true and emits the Repaid event when the deadline is reached.
+  function _syncWithdrawalStatus() internal override returns (bool) {
     RequestStorage storage req = _requestStorage();
-    return req.repaid || block.timestamp >= req.repaymentDeadline;
+    // If already repaid, return true
+    if (req.repaid) return true;
+    // else if deadline has passed, set repaid to true and emit the Repaid event
+    if (block.timestamp >= req.repaymentDeadline) {
+      req.repaid = true;
+      emit Repaid(_asset().balanceOf(address(this)));
+      return true;
+    }
+    // else return false
+    return false;
+  }
+
+  /// @inheritdoc IHasAsset
+  function asset() external view override(IHasAsset, VaultController) returns (address) {
+    return _asset();
   }
 
   /// @inheritdoc ITokenController
@@ -189,20 +218,30 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @inheritdoc IRequest
   /// @dev Only callable by the owner. Once called, `canWithdraw()` returns true and users
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
-  ///      Emits a {Repaid} event.
-  /// @custom:reverts If the request has already been repaid
+  ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
+  /// @custom:reverts If the request has already been repaid or the deadline has passed
   function setRepaid() external onlyOwner {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _requestStorage().repaid = true;
-    emit Repaid();
+    emit Repaid(_asset().balanceOf(address(this)));
   }
 
   /// @inheritdoc IRequest
-  /// @dev Only callable by the owner. The authorized address can then call `mint()` to receive
+  /// @dev Allows anyone to sync the repaid status after the repayment deadline has passed.
+  ///      If the deadline has passed and repaid is still false, this will set repaid to true
+  ///      and emit the Repaid event. This is useful to trigger the state change without requiring
+  ///      a withdrawal attempt.
+  /// @return repaid Whether the request is now marked as repaid
+  function syncRepaidStatus() external returns (bool) {
+    return _syncWithdrawalStatus();
+  }
+
+  /// @inheritdoc IRequest
+  /// @dev Only callable by the owner or consumer role. The authorized address can then call `mint()` to receive
   ///      the tokens after transferring the required underlying asset. This is useful for
   ///      whitelisting participants or implementing custom minting logic.
   ///      Emits an {AuthorizedMinting} event.
-  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwner {
+  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwnerOrRoles(_ROLE_CONSUMER) {
     to.updateMintAuth(ptAmount, ytAmount);
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
@@ -212,11 +251,12 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      transfer the collected funds to the puller. The puller
   ///      is then expected to repay by transferring assets back to the contract before
   ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
-  ///      Emits a Transfer event from the underlying asset contract.
-  /// @custom:reverts If the request has been repaid
+  ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
+    emit FundsPulled(msg.sender, amount);
     if (data.length > 0) {
       IRequestInteractionsCallback(msg.sender).onPullFunds(amount, data);
     }
@@ -226,15 +266,15 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Transfers the underlying assets back to the contract. This is purely optional
   ///      with the given implementation and may be done via a simple transfer.
   ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
-  /// @custom:reverts If the request has been repaid (canWithdraw is true)
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   function repay(uint256 amount) external {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 
   /// @inheritdoc IRequestInteractions
-  /// @dev Returns true only when the request has been explicitly marked as repaid via setRepaid().
-  ///      This differs from canWithdraw() which can also return true when the repayment deadline passes.
+  /// @dev Returns true when the request has been marked as repaid via setRepaid() or syncRepaidStatus().
+  ///      Call syncRepaidStatus() after the deadline to update the repaid flag.
   function isRepaid() external view returns (bool) {
     return _requestStorage().repaid;
   }
@@ -257,9 +297,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///
   ///      The caller must have approved this contract to spend the required asset amount.
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
-  /// @custom:reverts If the request has been repaid
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   function mint() external {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
@@ -271,7 +311,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRequest
-  /// @dev Only callable by the owner. This function implements the core offer consumption flow:
+  /// @dev Only callable by the owner or consumer role. This function implements the core offer consumption flow:
   ///      1. Validates the offer signature using EIP-712 (via `_validateOffer`)
   ///      2. Calculates the proportional YT amount based on the PT amount being consumed
   ///      3. If `offer.useCallback` is true, calls the maker's `onRequestConsumed` callback to prepare funds
@@ -285,16 +325,16 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      before the asset transfer occurs. Set `offer.useCallback` to false for EOA makers or
   ///      contracts that don't need the callback (e.g., have pre-approved allowances).
   ///
-  /// @custom:reverts If the request has been repaid
+  /// @custom:reverts If the request has been repaid or the deadline has passed
   /// @custom:reverts If the offer signature is invalid
   /// @custom:reverts If the asset transfer fails
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
-    onlyOwner
+    onlyOwnerOrRoles(_ROLE_CONSUMER)
     nonReentrant
     returns (uint256 ytAmount)
   {
-    if (_canWithdraw()) revert AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert AlreadyRepaid();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     if (offer.useCallback) {

@@ -19,6 +19,10 @@ contract USCCFundFuzzTest is Test {
 
   uint256 private constant ONE_USDC = 1e6;
 
+  // WrappedAsset roles (matching internal constants)
+  uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
+  uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
+
   USCCFundFactory public factory;
   USCCFund public fund;
   WrappedAsset public wuscc;
@@ -53,13 +57,11 @@ contract USCCFundFuzzTest is Test {
     fund = USCCFund(fundAddress);
 
     allowlist.setAllowed(address(fund), "USCC", true);
-    uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(fund), issuerRole);
+    wuscc.grantRoles(address(fund), WUSCC_ISSUER_ROLE);
 
-    uint256 senderRole = wuscc.SENDER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(this), senderRole);
+    wuscc.grantRoles(address(this), WUSCC_SENDER_ROLE);
   }
 
   function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(
@@ -273,7 +275,7 @@ contract USCCFundFuzzTest is Test {
       vm.prank(owner);
       uscc.approve(address(wuscc), preExistingAmount);
       vm.prank(owner);
-      wuscc.mint(owner, owner, preExistingAmount);
+      wuscc.mint(owner, preExistingAmount);
     }
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -317,7 +319,7 @@ contract USCCFundFuzzTest is Test {
       vm.prank(owner);
       uscc.approve(address(wuscc), preExistingAmount);
       vm.prank(owner);
-      wuscc.mint(owner, owner, preExistingAmount);
+      wuscc.mint(owner, preExistingAmount);
     }
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -582,7 +584,7 @@ contract USCCFundFuzzTest is Test {
     vm.prank(owner);
     uscc.approve(address(wuscc), amount);
     vm.prank(owner);
-    wuscc.mint(owner, to, amount);
+    wuscc.mint(to, amount);
   }
 }
 
@@ -806,6 +808,10 @@ contract USCCFundHandler is Test {
 contract USCCFundInvariantTest is StdInvariant, Test {
   uint256 private constant ONE_USDC = 1e6;
 
+  // WrappedAsset roles (matching internal constants)
+  uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
+  uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
+
   USCCFundFactory public factory;
   USCCFund public fund;
   WrappedAsset public wuscc;
@@ -845,13 +851,11 @@ contract USCCFundInvariantTest is StdInvariant, Test {
 
     allowlist.setAllowed(address(fund), "USCC", true);
 
-    uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(fund), issuerRole);
+    wuscc.grantRoles(address(fund), WUSCC_ISSUER_ROLE);
 
-    uint256 senderRole = wuscc.SENDER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(handler), senderRole);
+    wuscc.grantRoles(address(handler), WUSCC_SENDER_ROLE);
 
     uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);

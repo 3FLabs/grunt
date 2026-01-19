@@ -3,9 +3,11 @@ pragma solidity ^0.8.20;
 
 import {Test, Vm} from "forge-std/Test.sol";
 
-import {Facility} from "src/Facility.sol";
-import {IntentDescriptor} from "src/IntentDescriptor.sol";
-import {Asset, IntentProperties, SwapParams} from "src/interfaces/IFacility.sol";
+import {Facility} from "src/facility/Facility.sol";
+import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
+import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -37,6 +39,9 @@ contract MockEIP1271Guardian {
 }
 
 contract FacilitySwapTest is Test {
+  /// @dev GUARDIAN_ROLE from FacilityRoles (_ROLE_1 = 1 << 1 = 2)
+  uint256 internal constant GUARDIAN_ROLE = 2;
+
   FacilityEIP712Harness internal facility;
   PositionManager internal pm;
   MockERC20 internal collateral;
@@ -127,16 +132,19 @@ contract FacilitySwapTest is Test {
     facility.swap(params, new address[](0), new bytes[](0));
 
     bytes32 digest = _digest(params);
-    vm.expectRevert(abi.encodeWithSelector(Facility.SwapDigestUsed.selector, digest));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.SwapDigestUsed.selector, digest));
     facility.swap(params, new address[](0), new bytes[](0));
 
     facility.resolve(id1);
     facility.resolve(id2);
 
+    uint256 aliceShares = facility.balanceOf(alice, id1);
+    uint256 bobShares = facility.balanceOf(bob, id2);
+
     vm.prank(alice);
-    facility.claim(id1);
+    facility.claim(id1, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id2);
+    facility.claim(id2, bob, bob, bobShares);
 
     assertEq(debt.balanceOf(alice), 70, "alice output");
     assertEq(debt.balanceOf(bob), 230, "bob output");
@@ -162,7 +170,7 @@ contract FacilitySwapTest is Test {
       deadline: block.timestamp - 1
     });
 
-    vm.expectRevert(Facility.SwapExpired.selector);
+    vm.expectRevert(LibErrors.SwapExpired.selector);
     facility.swap(params, new address[](0), new bytes[](0));
   }
 
@@ -171,8 +179,8 @@ contract FacilitySwapTest is Test {
     Vm.Wallet memory guardian2 = vm.createWallet("guardian2");
 
     // Grant guardian roles.
-    facility.grantRoles(guardian1.addr, facility.GUARDIAN_ROLE());
-    facility.grantRoles(guardian2.addr, facility.GUARDIAN_ROLE());
+    facility.grantRoles(guardian1.addr, GUARDIAN_ROLE);
+    facility.grantRoles(guardian2.addr, GUARDIAN_ROLE);
 
     uint256 id1 = _createIntent(1);
     uint256 id2 = _createIntent(2);
@@ -216,10 +224,13 @@ contract FacilitySwapTest is Test {
     facility.resolve(id1);
     facility.resolve(id2);
 
+    uint256 aliceShares = facility.balanceOf(alice, id1);
+    uint256 bobShares = facility.balanceOf(bob, id2);
+
     vm.prank(alice);
-    facility.claim(id1);
+    facility.claim(id1, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id2);
+    facility.claim(id2, bob, bob, bobShares);
 
     assertEq(debt.balanceOf(alice), 103, "alice output");
     assertEq(debt.balanceOf(bob), 197, "bob output");
@@ -229,7 +240,7 @@ contract FacilitySwapTest is Test {
     Vm.Wallet memory eoa = vm.createWallet("eoaGuardian");
     MockEIP1271Guardian guardian = new MockEIP1271Guardian(eoa.addr);
 
-    facility.grantRoles(address(guardian), facility.GUARDIAN_ROLE());
+    facility.grantRoles(address(guardian), GUARDIAN_ROLE);
 
     uint256 id1 = _createIntent(1);
     uint256 id2 = _createIntent(0);
@@ -262,10 +273,13 @@ contract FacilitySwapTest is Test {
     facility.resolve(id1);
     facility.resolve(id2);
 
+    uint256 aliceShares = facility.balanceOf(alice, id1);
+    uint256 bobShares = facility.balanceOf(bob, id2);
+
     vm.prank(alice);
-    facility.claim(id1);
+    facility.claim(id1, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id2);
+    facility.claim(id2, bob, bob, bobShares);
 
     assertEq(debt.balanceOf(alice), 9, "alice output");
     assertEq(debt.balanceOf(bob), 11, "bob output");
@@ -275,11 +289,11 @@ contract FacilitySwapTest is Test {
     Vm.Wallet memory guardian1 = vm.createWallet("guardian1");
     Vm.Wallet memory guardian2 = vm.createWallet("guardian2");
 
-    facility.grantRoles(guardian1.addr, facility.GUARDIAN_ROLE());
-    facility.grantRoles(guardian2.addr, facility.GUARDIAN_ROLE());
+    facility.grantRoles(guardian1.addr, GUARDIAN_ROLE);
+    facility.grantRoles(guardian2.addr, GUARDIAN_ROLE);
 
-    uint256 id1 = _createIntent(1);
-    uint256 id2 = _createIntent(1);
+    uint256 id1 = _createIntent(2);
+    uint256 id2 = _createIntent(2);
 
     _deposit(alice, id1, 10);
     _deposit(bob, id2, 10);
@@ -309,7 +323,7 @@ contract FacilitySwapTest is Test {
     signatures[0] = _sign(digest, signers[0] == guardian1.addr ? guardian1 : guardian2);
     signatures[1] = _sign(digest, signers[1] == guardian1.addr ? guardian1 : guardian2);
 
-    vm.expectRevert(Facility.InvalidSignerOrder.selector);
+    vm.expectRevert(LibErrors.InvalidSignerOrder.selector);
     facility.swap(params, signers, signatures);
   }
 }

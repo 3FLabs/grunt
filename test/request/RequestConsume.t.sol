@@ -23,6 +23,7 @@ contract RequestConsumeTest is Test {
   // Test addresses
   address public owner;
   address public puller;
+  address public consumer;
   address public borrower;
   address public beaconOwner;
 
@@ -45,6 +46,7 @@ contract RequestConsumeTest is Test {
   function setUp() public {
     owner = makeAddr("owner");
     puller = makeAddr("puller");
+    consumer = makeAddr("consumer");
     borrower = makeAddr("borrower");
     beaconOwner = makeAddr("beaconOwner");
     callbackSigner = vm.createWallet("callbackSigner");
@@ -58,7 +60,7 @@ contract RequestConsumeTest is Test {
     // Create request via factory with far future deadline
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -225,16 +227,48 @@ contract RequestConsumeTest is Test {
     request.consume(offer, signature, offerAmount);
   }
 
-  function test_consume_onlyOwner() public {
+  function test_consume_onlyOwnerOrConsumer() public {
     uint256 offerAmount = 1_000_000e6;
 
     Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days, true);
     bytes memory signature = _signOffer(offer);
 
-    address notOwner = makeAddr("notOwner");
-    vm.prank(notOwner);
+    address notAuthorized = makeAddr("notAuthorized");
+    vm.prank(notAuthorized);
     vm.expectRevert(Unauthorized.selector);
     request.consume(offer, signature, offerAmount);
+  }
+
+  function test_consume_consumerCanCall() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Create and sign offer (maker is the callback contract)
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
+    bytes memory signature = _signOffer(offer);
+
+    // Fund the callback (maker provides funds, callback approves in onRequestConsumed)
+    asset.mint(address(callback), offerAmount);
+
+    // Consumer consumes the offer
+    vm.prank(consumer);
+    uint256 ytAmount = request.consume(offer, signature, offerAmount);
+
+    // Verify YT amount calculation
+    assertEq(ytAmount, expectedReturn);
+
+    // Verify callback was called
+    assertEq(callback.callbackCalled(), true);
+    assertEq(callback.lastPrincipal(), offerAmount);
+    assertEq(callback.lastYield(), expectedReturn);
+
+    // Verify token minting to maker (callback)
+    assertEq(ptVault.balanceOf(address(callback)), offerAmount);
+    assertEq(ytVault.balanceOf(address(callback)), expectedReturn);
+
+    // Verify asset transfer to request
+    assertEq(asset.balanceOf(address(request)), offerAmount);
+    assertEq(asset.balanceOf(address(callback)), 0);
   }
 
   function test_consume_revertsOnExpiredOffer() public {

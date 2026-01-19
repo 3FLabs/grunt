@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 
-import {Facility} from "src/Facility.sol";
-import {IntentDescriptor} from "src/IntentDescriptor.sol";
-import {Asset, IntentProperties} from "src/interfaces/IFacility.sol";
+import {Facility} from "src/facility/Facility.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -74,12 +74,16 @@ contract FacilityClaimFuzzTest is Test {
     facility.lock(id);
     facility.resolve(id);
 
+    uint256 aliceShares = facility.balanceOf(alice, id);
+    uint256 bobShares = facility.balanceOf(bob, id);
+    uint256 carolShares = facility.balanceOf(carol, id);
+
     vm.prank(alice);
-    facility.claim(id);
+    facility.claim(id, alice, alice, aliceShares);
     vm.prank(bob);
-    facility.claim(id);
+    facility.claim(id, bob, bob, bobShares);
     vm.prank(carol);
-    facility.claim(id);
+    facility.claim(id, carol, carol, carolShares);
 
     uint256 claimed = debt.balanceOf(alice) + debt.balanceOf(bob) + debt.balanceOf(carol);
 

@@ -78,11 +78,23 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
 
   /// @inheritdoc IOfferReceiver
   /// @dev The new nonce must be strictly greater than the current nonce. All offers with
-  ///      nonce <= newNonce become invalid. This is useful for bulk cancellation of offers.
+  ///      nonce <= newNonce become permanently invalid. This is useful for bulk cancellation.
   ///      Emits a {NonceUpdated} event.
   ///
-  ///      Example: If a maker has offers with nonces 1-5 and calls setNonce(3),
-  ///      offers 1, 2, and 3 are invalidated, and new offers must use nonce >= 4.
+  ///      **Example - Partial Cancellation:**
+  ///      If a maker has offers with nonces 1-5 and calls setNonce(3):
+  ///      - Offers 1, 2, 3 are invalidated (nonce <= 3)
+  ///      - Offers 4, 5 remain valid (nonce > 3)
+  ///      - New offers must use nonce >= 4
+  ///
+  ///      **Example - Full Cancellation:**
+  ///      To invalidate ALL pending offers, set nonce to the highest pending offer nonce or higher.
+  ///      If offers exist with nonces 1-5, calling setNonce(5) or setNonce(type(uint256).max)
+  ///      will invalidate all of them.
+  ///
+  ///      **Warning:** Setting nonce to currentNonce + 1 only invalidates ONE offer (the next expected).
+  ///      For bulk cancellation, use a higher value.
+  ///
   /// @custom:reverts InvalidNonceUpdate if newNonce <= current nonce
   function setNonce(uint256 newNonce) external {
     uint256 currentNonce = nonce(msg.sender);

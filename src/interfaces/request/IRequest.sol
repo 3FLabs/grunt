@@ -14,7 +14,13 @@ interface IRequest is IRequestInteractions {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Emitted when the contract is marked as repaid, enabling withdrawals.
-  event Repaid();
+  /// @param amount The total amount of underlying assets available for redemption
+  event Repaid(uint256 amount);
+
+  /// @notice Emitted when funds are pulled from the contract.
+  /// @param puller The address that pulled the funds
+  /// @param amount The amount of underlying assets pulled
+  event FundsPulled(address indexed puller, uint256 amount);
 
   /// @notice Emitted when minting authorization is granted to an address.
   /// @param to The address receiving minting authorization
@@ -28,6 +34,12 @@ interface IRequest is IRequestInteractions {
 
   /// @notice Marks the request as repaid, enabling withdrawals and redemptions.
   function setRepaid() external;
+
+  /// @notice Syncs the repaid status after the repayment deadline has passed.
+  /// @dev If the deadline has passed and repaid is still false, this will set repaid to true
+  ///      and emit the Repaid event. Can be called by anyone.
+  /// @return repaid Whether the request is now marked as repaid
+  function syncRepaidStatus() external returns (bool repaid);
 
   /// @notice Authorizes an address to mint a specific amount of PT and YT tokens.
   /// @param to The address to authorize for minting
