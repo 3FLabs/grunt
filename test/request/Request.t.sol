@@ -23,6 +23,7 @@ contract RequestTest is Test {
   // Test addresses
   address public owner;
   address public puller;
+  address public consumer;
   address public borrower;
   address public beaconOwner;
 
@@ -36,7 +37,8 @@ contract RequestTest is Test {
     keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
   // Events
-  event Repaid();
+  event Repaid(uint256 amount);
+  event FundsPulled(address indexed puller, uint256 amount);
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
   event RequestCreated(address request, address asset, address ptToken, address ytToken);
 
@@ -47,6 +49,7 @@ contract RequestTest is Test {
   function setUp() public {
     owner = makeAddr("owner");
     puller = makeAddr("puller");
+    consumer = makeAddr("consumer");
     borrower = makeAddr("borrower");
     beaconOwner = makeAddr("beaconOwner");
     maker = vm.createWallet("maker");
@@ -61,7 +64,7 @@ contract RequestTest is Test {
     // Create request via factory with far future deadline (effectively disabled for most tests)
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -89,7 +92,7 @@ contract RequestTest is Test {
     vm.expectEmit(false, true, false, false);
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
-    factory.createRequest(owner, puller, address(asset), "New Request", "NEW", uint64(type(uint64).max));
+    factory.createRequest(owner, puller, consumer, address(asset), "New Request", "NEW", uint64(type(uint64).max));
   }
 
   function test_factory_createRequest_initializesCorrectly() public view {
@@ -116,6 +119,30 @@ contract RequestTest is Test {
     assertEq(ytVault.decimals(), 6);
   }
 
+  function test_factory_isRequest_returnsTrueForDeployedRequest() public view {
+    assertEq(factory.isRequest(address(request)), true);
+  }
+
+  function test_factory_isRequest_returnsFalseForRandomAddress() public view {
+    assertEq(factory.isRequest(address(0x1234)), false);
+  }
+
+  function test_factory_isRequest_tracksMultipleRequests() public {
+    // Deploy additional requests
+    (address req1,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(type(uint64).max));
+    (address req2,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(type(uint64).max));
+
+    // All deployed requests should be tracked
+    assertEq(factory.isRequest(address(request)), true);
+    assertEq(factory.isRequest(req1), true);
+    assertEq(factory.isRequest(req2), true);
+
+    // Random addresses should still return false
+    assertEq(factory.isRequest(makeAddr("notARequest")), false);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   INITIALIZATION TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -123,7 +150,15 @@ contract RequestTest is Test {
   function test_initialize_cannotReinitialize() public {
     vm.expectRevert();
     request.initialize(
-      owner, puller, address(asset), address(ptVault), address(ytVault), "New", "NEW", uint64(type(uint64).max)
+      owner,
+      puller,
+      consumer,
+      address(asset),
+      address(ptVault),
+      address(ytVault),
+      "New",
+      "NEW",
+      uint64(type(uint64).max)
     );
   }
 
@@ -145,13 +180,27 @@ contract RequestTest is Test {
     assertEq(ytAmount, 100_000e6);
   }
 
-  function test_authorizeMinting_onlyOwner() public {
+  function test_authorizeMinting_onlyOwnerOrConsumer() public {
     address primeBroker = makeAddr("primeBroker");
-    address notOwner = makeAddr("notOwner");
+    address notAuthorized = makeAddr("notAuthorized");
 
-    vm.prank(notOwner);
+    vm.prank(notAuthorized);
     vm.expectRevert(Unauthorized.selector);
     request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+  }
+
+  function test_authorizeMinting_consumerCanCall() public {
+    address primeBroker = makeAddr("primeBroker");
+
+    vm.expectEmit(true, false, false, true, address(request));
+    emit AuthorizedMinting(primeBroker, 1_000_000e6, 100_000e6);
+
+    vm.prank(consumer);
+    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+
+    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(primeBroker);
+    assertEq(ptAmount, 1_000_000e6);
+    assertEq(ytAmount, 100_000e6);
   }
 
   function test_authorizeMinting_canUpdate() public {
@@ -319,6 +368,11 @@ contract RequestTest is Test {
 
     // Now pull funds (puller receives funds, no callback)
     asset.mint(puller, 0); // Ensure puller exists
+
+    // Expect the FundsPulled event with puller address
+    vm.expectEmit(true, true, true, true, address(request));
+    emit FundsPulled(puller, amount);
+
     vm.prank(puller);
     request.pullFunds(amount, "");
 
@@ -339,7 +393,10 @@ contract RequestTest is Test {
     request.mint();
     vm.stopPrank();
 
-    // Pull partial funds
+    // Pull partial funds - expect event with puller address and partial amount
+    vm.expectEmit(true, true, true, true, address(request));
+    emit FundsPulled(puller, 500_000e6);
+
     vm.prank(puller);
     request.pullFunds(500_000e6, "");
 
@@ -384,7 +441,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -432,7 +489,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -474,7 +531,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -519,7 +576,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -694,7 +751,31 @@ contract RequestTest is Test {
     assertEq(request.canWithdraw(), false);
 
     vm.expectEmit(true, true, true, true, address(request));
-    emit Repaid();
+    emit Repaid(0);
+
+    vm.prank(owner);
+    request.setRepaid();
+
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_emitsAmountWithBalance() public {
+    // First deposit some funds via mint
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint();
+    vm.stopPrank();
+
+    // Now set repaid - should emit with the balance
+    vm.expectEmit(true, true, true, true, address(request));
+    emit Repaid(amount);
 
     vm.prank(owner);
     request.setRepaid();
@@ -740,7 +821,8 @@ contract RequestTest is Test {
     // Create a request with a deadline that will pass
     uint64 deadline = uint64(block.timestamp + 1 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DL", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline);
     Request deadlineRequest = Request(reqAddr);
 
     // Initially both isRepaid and canWithdraw should be false
@@ -750,9 +832,14 @@ contract RequestTest is Test {
     // Warp past the deadline
     vm.warp(deadline + 1);
 
-    // canWithdraw should be true (deadline passed), but isRepaid should still be false
-    assertEq(deadlineRequest.canWithdraw(), true);
+    // Both should still be false until syncRepaidStatus() is called
+    assertEq(deadlineRequest.canWithdraw(), false);
     assertEq(deadlineRequest.isRepaid(), false);
+
+    // After syncing, both should be true
+    deadlineRequest.syncRepaidStatus();
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), true);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1054,14 +1141,16 @@ contract RequestTest is Test {
     MockERC20 asset8 = new MockERC20("WBTC", "WBTC", 8);
 
     // Create request with 18 decimals
-    (, address pt18, address yt18) =
-      factory.createRequest(owner, puller, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max));
+    (, address pt18, address yt18) = factory.createRequest(
+      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max)
+    );
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
-    (, address pt8, address yt8) =
-      factory.createRequest(owner, puller, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max));
+    (, address pt8, address yt8) = factory.createRequest(
+      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max)
+    );
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
   }
@@ -1125,7 +1214,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
     Vault deadlinePtVault = Vault(ptAddr);
@@ -1150,14 +1239,18 @@ contract RequestTest is Test {
     // Fast forward past the deadline
     vm.warp(deadline + 1);
 
-    // Withdrawals should now be enabled even though setRepaid() was never called
-    assertEq(deadlineRequest.canWithdraw(), true);
+    // Withdrawals are still disabled until syncRepaidStatus() is called or a withdrawal is attempted
+    assertEq(deadlineRequest.canWithdraw(), false);
 
-    // PT/YT holders should be able to redeem
+    // PT/YT holders should be able to redeem - this triggers the sync internally
     vm.startPrank(primeBroker);
     uint256 ptAssets = deadlinePtVault.redeem(amount, primeBroker, primeBroker);
     uint256 ytAssets = deadlineYtVault.redeem(100_000e6, primeBroker, primeBroker);
     vm.stopPrank();
+
+    // After a withdrawal, canWithdraw and isRepaid should be true
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), true);
 
     assertEq(ptAssets, amount);
     assertEq(ytAssets, 0); // No yield assets since nothing was repaid
@@ -1166,7 +1259,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_setRepaidStillWorks() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1184,7 +1278,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_blocksOperationsAfterDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1208,7 +1303,7 @@ contract RequestTest is Test {
     // Fast forward past deadline
     vm.warp(deadline + 1);
 
-    // Operations should be blocked after deadline
+    // Operations should be blocked after deadline (they trigger the sync internally and revert)
     vm.prank(owner);
     vm.expectRevert(AlreadyRepaid.selector);
     deadlineRequest.setRepaid();
@@ -1221,14 +1316,19 @@ contract RequestTest is Test {
     vm.expectRevert(AlreadyRepaid.selector);
     deadlineRequest.repay(100e6);
 
-    // But withdrawals should work
+    // canWithdraw is false until syncRepaidStatus() is called (reverts don't persist state changes)
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // After syncing, withdrawals should work
+    deadlineRequest.syncRepaidStatus();
     assertEq(deadlineRequest.canWithdraw(), true);
   }
 
   function test_repaymentDeadline_mintBlockedAfterDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1254,7 +1354,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_consumeBlockedAfterDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1273,7 +1374,8 @@ contract RequestTest is Test {
   function test_repaymentDeadline_beforeDeadlineOperationsWork() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1314,13 +1416,104 @@ contract RequestTest is Test {
   function test_repaymentDeadline_exactlyAtDeadline() public {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
-    (address reqAddr,,) = factory.createRequest(owner, puller, address(asset), "Deadline Request", "DEADLINE", deadline);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
 
     Request deadlineRequest = Request(reqAddr);
 
-    // At exactly the deadline, withdrawals should be enabled
+    // At exactly the deadline, canWithdraw is still false until synced
     vm.warp(deadline);
+    assertEq(deadlineRequest.canWithdraw(), false);
+
+    // syncRepaidStatus returns true and enables withdrawals
+    bool repaid = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid, true);
     assertEq(deadlineRequest.canWithdraw(), true);
+  }
+
+  function test_syncRepaidStatus_returnsFalseBeforeDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Before deadline, syncRepaidStatus should return false
+    bool repaid = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid, false);
+    assertEq(deadlineRequest.canWithdraw(), false);
+    assertEq(deadlineRequest.isRepaid(), false);
+  }
+
+  function test_syncRepaidStatus_idempotentAfterDeadline() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    vm.warp(deadline + 1);
+
+    // First call should return true and emit event
+    vm.expectEmit(true, true, true, true);
+    emit Repaid(0);
+    bool repaid1 = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid1, true);
+
+    // Subsequent calls should also return true but not emit again
+    bool repaid2 = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid2, true);
+
+    bool repaid3 = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid3, true);
+  }
+
+  function test_syncRepaidStatus_returnsTrueIfAlreadyRepaidViaSetRepaid() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // setRepaid before deadline
+    vm.prank(owner);
+    deadlineRequest.setRepaid();
+
+    // syncRepaidStatus should return true
+    bool repaid = deadlineRequest.syncRepaidStatus();
+    assertEq(repaid, true);
+  }
+
+  function test_syncRepaidStatus_emitsRepaidEventWithCorrectBalance() public {
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+
+    Request deadlineRequest = Request(reqAddr);
+
+    // Deposit some funds
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(deadlineRequest), amount);
+    deadlineRequest.mint();
+    vm.stopPrank();
+
+    vm.warp(deadline + 1);
+
+    // syncRepaidStatus should emit Repaid with the correct balance
+    vm.expectEmit(true, true, true, true);
+    emit Repaid(amount);
+    deadlineRequest.syncRepaidStatus();
   }
 }
 

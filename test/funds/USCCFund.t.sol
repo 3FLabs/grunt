@@ -40,10 +40,16 @@ contract USCCFundTest is Test {
   event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
   event OrderRecovering(Id indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
-  event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
+  event OrderResolved(
+    Id indexed orderId, Id indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
+  );
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
   uint256 private constant ONE_USDC = 1e6;
+
+  // WrappedAsset roles (matching internal constants)
+  uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
+  uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           TEST STATE                       */
@@ -86,13 +92,11 @@ contract USCCFundTest is Test {
     fund = USCCFund(fundAddress);
 
     allowlist.setAllowed(address(fund), "USCC", true);
-    uint256 issuerRole = wuscc.ISSUER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(fund), issuerRole);
+    wuscc.grantRoles(address(fund), WUSCC_ISSUER_ROLE);
 
-    uint256 senderRole = wuscc.SENDER_ROLE();
     vm.prank(owner);
-    wuscc.grantRoles(address(this), senderRole);
+    wuscc.grantRoles(address(this), WUSCC_SENDER_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -597,20 +601,29 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    Order memory resolved = Order({
+    Id orderId = order.toId(address(fund));
+    uint256 newInput = order.input;
+    uint256 newOutput = ONE_USDC / 2;
+    Order memory resolvedOrder = Order({
       owner: order.owner,
       receiver: order.receiver,
-      input: ONE_USDC * 2,
-      output: ONE_USDC * 3,
+      input: newInput,
+      output: newOutput,
       mode: order.mode,
       salt: order.salt
     });
-    Id resolvedId = resolved.toId(address(fund));
+    Id resolvedOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(resolvedId, resolved.input, resolved.output, owner);
-    fund.resolve(order, ONE_USDC * 2, ONE_USDC * 3);
+    emit OrderResolved(orderId, resolvedOrderId, newInput, newOutput, owner);
+    fund.resolve(order, newInput, newOutput);
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "original processing");
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved empty");
+
+    uscc.mint(address(fund), newOutput);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "uses resolved output");
   }
 
   function test_Resolve_InRecoveringState() public {
@@ -654,8 +667,8 @@ contract USCCFundTest is Test {
     fund.resolve(order, ONE_USDC, ONE_USDC);
   }
 
-  function test_Resolve_OrderIdChange() public {
-    // Demonstrates that resolve() changes the order ID, requiring use of resolved order for unlock
+  function test_Resolve_DoesNotChangeCurrentOrderId() public {
+    // resolve() keeps the original order id; resolved amounts are internal overrides.
     Order memory originalOrder = _depositOrder(ONE_USDC, ONE_USDC);
     Id originalId = originalOrder.toId(address(fund));
     fund.create(originalOrder);
@@ -665,10 +678,7 @@ contract USCCFundTest is Test {
     uint256 newInput = ONE_USDC;
     uint256 newOutput = (ONE_USDC * 95) / 100; // Only 95% received
 
-    vm.prank(owner);
-    fund.resolve(originalOrder, newInput, newOutput);
-
-    // Create resolved order with updated amounts
+    // A resolved Order struct hashes to a different id and becomes the current order.
     Order memory resolvedOrder = Order({
       owner: originalOrder.owner,
       receiver: originalOrder.receiver,
@@ -678,25 +688,31 @@ contract USCCFundTest is Test {
       salt: originalOrder.salt
     });
     Id resolvedId = resolvedOrder.toId(address(fund));
+    assertFalse(originalId.eq(resolvedId), "resolved order id differs");
 
-    // Verify the order ID changed
-    assertFalse(originalId.eq(resolvedId), "order ID should change after resolve");
+    vm.prank(owner);
+    fund.resolve(originalOrder, newInput, newOutput);
 
-    // Original order is now invalid - state() returns EMPTY
-    assertEq(uint256(fund.state(originalOrder)), uint256(State.EMPTY), "original order is invalid");
+    // Original order id remains valid; resolved order is not recognized.
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.PROCESSING), "original order valid");
+    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved order empty");
 
-    // Resolved order is valid - state() returns current state
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.PROCESSING), "resolved order is valid");
+    // Minting less than the resolved output keeps the order in PROCESSING.
+    uscc.mint(address(fund), newOutput - 1);
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.PROCESSING), "original order processing");
 
-    // Mint the resolved output amount to trigger UNLOCKING
-    uscc.mint(address(fund), newOutput);
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.UNLOCKING), "resolved order unlocking");
+    // Mint remaining amount to reach the resolved output threshold.
+    uscc.mint(address(fund), 1);
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.UNLOCKING), "original order unlocking");
 
-    // Unlock must use the resolved order, not the original
+    vm.expectRevert(abi.encodeWithSelector(InvalidOrder.selector, resolvedId));
     fund.unlock(resolvedOrder);
 
-    // User receives the resolved output amount
-    assertEq(wuscc.balanceOf(address(this)), newOutput, "user receives resolved output");
+    fund.unlock(originalOrder);
+
+    // User receives the full amount minted.
+    assertEq(wuscc.balanceOf(address(this)), newOutput, "user receives output");
+    assertEq(uint256(fund.state(originalOrder)), uint256(State.ENDED), "ended");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -828,6 +844,36 @@ contract USCCFundTest is Test {
     // After completion, both should return ENDED/EMPTY appropriately
     assertEq(uint256(fund.state(order1)), uint256(State.ENDED), "completed order is ENDED");
     assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order still EMPTY");
+  }
+
+  function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    _unlockDeposit(order);
+
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(nextOrder);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order is ENDED");
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder_RecoveryFlow() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering();
+    usdc.mint(address(fund), order.input);
+    fund.recover(order);
+
+    Order memory nextOrder = _depositOrder(ONE_USDC * 3, ONE_USDC * 3);
+    fund.create(nextOrder);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order is ENDED");
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1067,6 +1113,6 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     uscc.approve(address(wuscc), amount);
     vm.prank(owner);
-    wuscc.mint(owner, to, amount);
+    wuscc.mint(to, amount);
   }
 }

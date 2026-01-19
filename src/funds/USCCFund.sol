@@ -189,10 +189,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @notice Emitted when an order is manually resolved by an operator.
   /// @param orderId The unique identifier of the resolved order.
+  /// @param newOrderId The unique identifier of the new resolved order.
   /// @param newInput The new input amount set by the operator.
   /// @param newOutput The new output amount set by the operator.
   /// @param operator The address that resolved the order.
-  event OrderResolved(Id indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
+  event OrderResolved(
+    Id indexed orderId, Id indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
+  );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -202,16 +205,23 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param recipient The superstate address receiving USDC to mint USCC.
-  /// @param currentOrder The current order being processed. We only handle one at a time.
+  /// @param currentOrderId The unique identifier of the current order.
+  /// @param currentOrder The current order (struct) being processed. We only handle one at a time.
   /// @param internalState The internal state of the current order.
   /// @param oracle The address of Chainlink USCC Oracle.
   /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
+  /// @param resolvedOrder The manually resolved order (if any) to override input/output amounts.
+  /// @param endedOrders Mapping of ended order Ids to boolean (true if ended). To archive ended orders
+  ///                    (since we only handle one at a time).
   struct UsccFundStorage {
     address recipient;
-    Id currentOrder;
+    Id currentOrderId;
+    Order currentOrder;
     State internalState;
     address oracle;
     uint256 cachedBalance;
+    Order resolvedOrder;
+    mapping(Id => bool) endedOrders;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -279,11 +289,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert NotAllowedSuperstate();
     }
 
+    if (_internalState == State.ENDED) {
+      // Archive ended order
+      $.endedOrders[$.currentOrderId] = true;
+    }
+
     // No pending state, always accepted or revert.
     Id _orderId = order.toId(address(this));
-    $.currentOrder = _orderId;
+    $.currentOrderId = _orderId;
+    $.currentOrder = order;
     $.internalState = State.ACCEPTED;
     $.cachedBalance = 0;
+    delete $.resolvedOrder;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -295,14 +312,16 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert InvalidOwner();
 
     UsccFundStorage storage $ = _usccFundStorage();
-    Id _currentOrder = $.currentOrder;
+    Id _currentOrderId = $.currentOrderId;
     Id _orderId = order.toId(address(this));
-    if (!_orderId.eq(_currentOrder)) revert InvalidOrder(_orderId);
+    if (!_orderId.eq(_currentOrderId)) revert InvalidOrder(_orderId);
 
     State _internalState = $.internalState;
     if (_internalState != State.ACCEPTED && _internalState != State.PENDING) revert InvalidState(_internalState);
 
-    $.currentOrder = Id.wrap(bytes32(0));
+    $.currentOrderId = Id.wrap(bytes32(0));
+    delete $.currentOrder;
+    delete $.resolvedOrder;
     $.internalState = State.EMPTY;
     $.cachedBalance = 0;
 
@@ -317,8 +336,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert InvalidOwner();
 
     UsccFundStorage storage $ = _usccFundStorage();
-    Id _currentOrder = $.currentOrder;
-    if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    Id _currentOrderId = $.currentOrderId;
+    if (!order.toId(address(this)).eq(_currentOrderId)) revert InvalidOrder(order.toId(address(this)));
     if ($.internalState != State.ACCEPTED) revert InvalidState($.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
@@ -336,7 +355,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     $.internalState = State.PROCESSING;
 
-    emit OrderCommitted(_currentOrder, order.mode, order.input);
+    emit OrderCommitted(_currentOrderId, order.mode, order.input);
 
     return (State.PROCESSING, order.input);
   }
@@ -347,8 +366,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert InvalidOwner();
 
     UsccFundStorage storage $ = _usccFundStorage();
-    Id _currentOrder = $.currentOrder;
-    if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    Id _currentOrderId = $.currentOrderId;
+    if (!order.toId(address(this)).eq(_currentOrderId)) revert InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.RECOVERING) revert InvalidState($.internalState);
@@ -358,12 +377,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     } else {
       // Mint wUSCC back to depositor (pulls USCC from this contract)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
+    delete $.resolvedOrder;
 
-    emit OrderRecovered(_currentOrder, order.mode, _amount, msg.sender);
+    emit OrderRecovered(_currentOrderId, order.mode, _amount, msg.sender);
 
     return (State.ENDED, _amount);
   }
@@ -374,8 +394,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert InvalidOwner();
 
     UsccFundStorage storage $ = _usccFundStorage();
-    Id _currentOrder = $.currentOrder;
-    if (!order.toId(address(this)).eq(_currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    Id _currentOrderId = $.currentOrderId;
+    if (!order.toId(address(this)).eq(_currentOrderId)) revert InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.UNLOCKING) revert InvalidState($.internalState);
@@ -383,15 +403,16 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(address(this), msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
       USDC.safeTransfer(msg.sender, _amount);
     }
 
     $.internalState = State.ENDED;
+    delete $.resolvedOrder;
 
-    emit OrderUnlocked(_currentOrder, order.mode, _amount, msg.sender);
+    emit OrderUnlocked(_currentOrderId, order.mode, _amount, msg.sender);
 
     return (State.ENDED, _amount);
   }
@@ -410,7 +431,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if ($.internalState != State.PROCESSING) revert InvalidState($.internalState);
     $.internalState = State.RECOVERING;
 
-    emit OrderRecovering($.currentOrder);
+    emit OrderRecovering($.currentOrderId);
   }
 
   /// @notice Sets the oracle address.
@@ -435,10 +456,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
   ///      differ from expected ones (e.g., due to unexpected conditions).
   ///
-  ///      IMPORTANT: Modifying the input/output amounts generates a NEW order ID, since the order ID is
-  ///      a hash of all order parameters. After calling resolve(), the original order ID becomes invalid.
-  ///      Subsequent unlock() or recover() calls MUST use the resolved order with the updated input/output
-  ///      amounts, not the original order. The new order ID is emitted in the OrderResolved event.
+  ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id remains
+  ///      valid for `state/unlock/recover`, but the fund will use the resolved `input/output` amounts as
+  ///      the effective thresholds for PROCESSING/RECOVERING balance comparisons.
+  ///      It's possible to resolve multiple times if needed, always overriding the previous resolution.
   ///
   /// @param order The order to resolve (must match current order ID before resolution).
   /// @param input The new input amount.
@@ -447,15 +468,14 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     UsccFundStorage storage $ = _usccFundStorage();
     State _internalState = $.internalState;
     if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) revert InvalidState($.internalState);
-    if (!order.toId(address(this)).eq($.currentOrder)) revert InvalidOrder(order.toId(address(this)));
+    if (!order.toId(address(this)).eq($.currentOrderId)) revert InvalidOrder(order.toId(address(this)));
 
     order.input = input;
     order.output = output;
 
-    Id newOrderId = order.toId(address(this));
-    $.currentOrder = newOrderId;
+    $.resolvedOrder = order;
 
-    emit OrderResolved(newOrderId, input, output, msg.sender);
+    emit OrderResolved($.currentOrderId, order.toId(address(this)), input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -532,24 +552,39 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage $ = _usccFundStorage();
+    Id _orderId = order.toId(address(this));
+
+    // Return ENDED for archived orders
+    if ($.endedOrders[_orderId]) {
+      return (State.ENDED, 0);
+    }
 
     // Return EMPTY to indicate this order doesn't exist
-    if (!order.toId(address(this)).eq($.currentOrder)) {
+    if (!_orderId.eq($.currentOrderId)) {
       return (State.EMPTY, 0);
     }
 
     State _internalState = $.internalState;
+
+    uint256 _effectiveInput = order.input;
+    uint256 _effectiveOutput = order.output;
+
+    // If order resolved, use resolved amounts
+    if ($.resolvedOrder.owner != address(0)) {
+      _effectiveInput = $.resolvedOrder.input;
+      _effectiveOutput = $.resolvedOrder.output;
+    }
 
     if (_internalState == State.PROCESSING) {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
         _amount = USCC.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
-        return _amount >= order.output ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
+        return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we received USDC
         _amount = USDC.balanceOf(address(this));
-        return _amount >= order.output ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
+        return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       }
     }
 
@@ -558,11 +593,11 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
         _amount = USDC.balanceOf(address(this));
-        return _amount >= order.input ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
+        return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we can recover USCC
         _amount = USCC.balanceOf(address(this)).zeroFloorSub($.cachedBalance);
-        return _amount >= order.input ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
+        return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       }
     }
 

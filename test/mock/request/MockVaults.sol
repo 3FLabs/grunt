@@ -77,6 +77,10 @@ contract MockVaultController is VaultController {
     return __canWithdraw;
   }
 
+  function _syncWithdrawalStatus() internal override returns (bool) {
+    return __canWithdraw;
+  }
+
   // Test helper functions
   function setCanWithdraw(bool canWithdraw_) public {
     __canWithdraw = canWithdraw_;

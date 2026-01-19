@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+
+import {Facility} from "src/facility/Facility.sol";
+import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
+import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
+
+import {PositionManager} from "src/manager/PositionManager.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
+
+contract FacilityDecimalsTest is Test {
+  Facility internal facility;
+  PositionManager internal positionManager;
+  MockERC20 internal debt;
+
+  function setUp() public {
+    facility = new Facility();
+    IntentDescriptor descriptor = new IntentDescriptor();
+    facility.initialize(address(this), address(this), address(descriptor));
+
+    MockERC20 collateral = new MockERC20("Collateral", "COL", 18);
+    debt = new MockERC20("Debt", "DEBT", 6);
+
+    positionManager = new PositionManager();
+    positionManager.initialize(address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18, address(0));
+  }
+
+  function test_Decimals_EqualsDepositAssetDecimals() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(positionManager), isPositionManager: true});
+
+    uint256 id = facility.createIntent(
+      IntentProperties({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(positionManager),
+        depositCap: 1,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0
+      })
+    );
+
+    assertEq(facility.decimals(id), 6, "decimals(id)");
+  }
+}

@@ -40,8 +40,21 @@ interface IOfferReceiver {
   /// @return result The current nonce value stored for the maker
   function nonce(address owner) external view returns (uint256 result);
 
-  /// @notice Allows a maker to manually update their nonce to cancel offers (hard cancel).
-  /// @param newNonce The new nonce value to set (must be > current nonce)
+  /// @notice Allows a maker to manually update their nonce to cancel pending offers.
+  /// @dev This function enables bulk cancellation of offers. When you set a new nonce N,
+  ///      ALL offers with nonce <= N become permanently invalid. Offers are only valid
+  ///      if their nonce is strictly greater than the stored nonce.
+  ///
+  ///      **Cancellation Examples:**
+  ///      - If stored nonce is 0 and you have pending offers with nonces 1, 2, 3:
+  ///        - `setNonce(1)` invalidates only offer 1 (offers 2, 3 remain valid)
+  ///        - `setNonce(3)` invalidates offers 1, 2, AND 3
+  ///        - `setNonce(100)` invalidates all offers up to nonce 100
+  ///
+  ///      **Important:** To cancel ALL pending offers, set the nonce to a value >= the highest
+  ///      nonce among your pending offers. Future offers must use nonces > the new stored nonce.
+  ///
+  /// @param newNonce The new nonce value to set (must be strictly > current nonce)
   function setNonce(uint256 newNonce) external;
 }
 
