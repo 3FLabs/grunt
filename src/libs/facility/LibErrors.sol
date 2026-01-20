@@ -71,6 +71,10 @@ library LibErrors {
   /// @param id The intent ID.
   error IntentNotFound(uint256 id);
 
+  /// @notice Thrown when intent token transfers are disabled.
+  /// @param id The intent ID.
+  error IntentTransfersLocked(uint256 id);
+
   /// @notice Thrown when a TransferGuard blocks a transfer.
   /// @param guard The TransferGuard address.
   /// @param from The token sender.

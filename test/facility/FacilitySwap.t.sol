@@ -73,7 +73,8 @@ contract FacilitySwapTest is Test {
         guardKey: address(pm),
         depositCap: type(uint256).max,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: quorum
+        quorum: quorum,
+        transferableIntent: true
       })
     );
   }

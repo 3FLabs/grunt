@@ -29,6 +29,7 @@ struct Asset {
 /// @param guardKey Guard key address associated with intent authorization.
 /// @param resolveStart Earliest timestamp when the intent can be resolved.
 /// @param quorum Quorum threshold required for guard approvals.
+/// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
 struct IntentProperties {
   Asset depositAsset;
   Asset targetAsset;
@@ -36,6 +37,7 @@ struct IntentProperties {
   address guardKey;
   uint40 resolveStart;
   uint8 quorum;
+  bool transferableIntent;
 }
 
 /// @dev Intent state for a facility request, including configuration and accounting.
@@ -160,12 +162,16 @@ library LibIntent {
   /// @param id The intent ID.
   /// @param depositAsset The deposit asset configuration.
   /// @param quorum The quorum threshold required for guardian approvals.
-  function init(Intent storage _self, uint256 id, Asset calldata depositAsset, uint8 quorum) internal {
+  /// @param transferableIntent Whether intent token transfers are allowed.
+  function init(Intent storage _self, uint256 id, Asset calldata depositAsset, uint8 quorum, bool transferableIntent)
+    internal
+  {
     depositAsset.asset.checkContract();
 
     _self.properties.depositAsset = depositAsset;
     _self.properties.quorum = quorum;
-    emit IFacilityIntents.IntentCreated(id, depositAsset, quorum);
+    _self.properties.transferableIntent = transferableIntent;
+    emit IFacilityIntents.IntentCreated(id, depositAsset, quorum, transferableIntent);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

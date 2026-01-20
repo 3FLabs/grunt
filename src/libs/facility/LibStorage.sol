@@ -121,16 +121,19 @@ library LibStorage {
   /// @param self The storage pointer to the FacilityStorageData struct.
   /// @param depositAsset The deposit asset configuration.
   /// @param quorum The quorum threshold for guard approvals.
+  /// @param transferableIntent Whether intent token transfers are allowed.
   /// @return _intent A reference to the newly allocated intent struct.
   /// @return id The newly allocated intent ID.
-  function createIntent(FacilityStorageData storage self, Asset calldata depositAsset, uint8 quorum)
-    internal
-    returns (Intent storage _intent, uint256 id)
-  {
+  function createIntent(
+    FacilityStorageData storage self,
+    Asset calldata depositAsset,
+    uint8 quorum,
+    bool transferableIntent
+  ) internal returns (Intent storage _intent, uint256 id) {
     id = self.lastIntentId + 1;
     self.lastIntentId = id;
     _intent = self.intents[id];
-    _intent.init(id, depositAsset, quorum);
+    _intent.init(id, depositAsset, quorum, transferableIntent);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -60,7 +60,7 @@ contract MockRequest {
 }
 
 contract FacilityCreateIntentTest is Test {
-  event IntentCreated(uint256 indexed id, Asset depositAsset, uint8 quorum);
+  event IntentCreated(uint256 indexed id, Asset depositAsset, uint8 quorum, bool transferableIntent);
 
   Facility internal facility;
 
@@ -106,7 +106,8 @@ contract FacilityCreateIntentTest is Test {
         guardKey: guardKey,
         depositCap: depositCap,
         resolveStart: resolveStart,
-        quorum: quorum
+        quorum: quorum,
+        transferableIntent: true
       })
     );
   }
@@ -200,7 +201,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(debt), isPositionManager: false});
 
     vm.expectEmit(true, false, false, true);
-    emit IntentCreated(1, depositAsset, 7);
+    emit IntentCreated(1, depositAsset, 7, true);
 
     uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 123, uint40(block.timestamp + 1 days), 7);
 
@@ -212,7 +213,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(pm), isPositionManager: true});
 
     vm.expectEmit(true, false, false, true);
-    emit IntentCreated(1, depositAsset, 0);
+    emit IntentCreated(1, depositAsset, 0, true);
 
     uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 456, uint40(block.timestamp + 1 days), 0);
 
@@ -224,7 +225,7 @@ contract FacilityCreateIntentTest is Test {
     Asset memory targetAsset = Asset({asset: address(pmSame), isPositionManager: true});
 
     vm.expectEmit(true, false, false, true);
-    emit IntentCreated(1, depositAsset, 1);
+    emit IntentCreated(1, depositAsset, 1, true);
 
     uint256 id = _createIntent(depositAsset, targetAsset, address(pm), 1, uint40(block.timestamp + 1 days), 1);
 
@@ -470,6 +471,7 @@ contract FacilityCreateIntentTest is Test {
     assertEq(props.guardKey, address(pm));
     assertEq(props.resolveStart, uint40(block.timestamp + 1 days));
     assertEq(props.quorum, 3);
+    assertTrue(props.transferableIntent);
 
     // Check fund and request
     assertEq(fundAddr, address(fund));

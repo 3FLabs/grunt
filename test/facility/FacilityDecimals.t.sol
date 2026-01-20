@@ -38,7 +38,8 @@ contract FacilityDecimalsTest is Test {
         guardKey: address(positionManager),
         depositCap: 1,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: 0
+        quorum: 0,
+        transferableIntent: true
       })
     );
 

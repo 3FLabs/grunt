@@ -54,7 +54,8 @@ contract FacilityTransferGuardTest is Test {
         guardKey: address(positionManager),
         depositCap: type(uint256).max,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: 0
+        quorum: 0,
+        transferableIntent: true
       })
     );
   }
@@ -100,5 +101,58 @@ contract FacilityTransferGuardTest is Test {
 
     assertEq(facility.balanceOf(alice, id), amount, "alice balance");
     assertEq(facility.balanceOf(bob, id), 0, "bob balance");
+  }
+
+  function test_TransferLock_RevertsTransfersEvenIfWhitelisted() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(positionManager), isPositionManager: true});
+
+    uint256 id = facility.createIntent(
+      IntentProperties({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(positionManager),
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0,
+        transferableIntent: false
+      })
+    );
+
+    transferGuard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    transferGuard.setAddressStatus(bob, AddressStatus.WHITELIST);
+
+    _deposit(alice, id, TRANSFER_AMOUNT);
+
+    vm.startPrank(alice);
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.IntentTransfersLocked.selector, id));
+    facility.transfer(bob, id, TRANSFER_AMOUNT);
+    vm.stopPrank();
+  }
+
+  function test_TransferLock_DoesNotBlockMintOrBurn() public {
+    Asset memory depositAsset = Asset({asset: address(debt), isPositionManager: false});
+    Asset memory targetAsset = Asset({asset: address(positionManager), isPositionManager: true});
+
+    uint256 id = facility.createIntent(
+      IntentProperties({
+        depositAsset: depositAsset,
+        targetAsset: targetAsset,
+        guardKey: address(positionManager),
+        depositCap: type(uint256).max,
+        resolveStart: uint40(block.timestamp + 1 days),
+        quorum: 0,
+        transferableIntent: false
+      })
+    );
+
+    transferGuard.setAddressStatus(alice, AddressStatus.WHITELIST);
+
+    _deposit(alice, id, TRANSFER_AMOUNT);
+    assertEq(facility.balanceOf(alice, id), TRANSFER_AMOUNT, "alice intent balance");
+
+    vm.prank(alice);
+    facility.withdraw(id, alice, alice, TRANSFER_AMOUNT);
+    assertEq(facility.balanceOf(alice, id), 0, "alice intent balance after burn");
   }
 }

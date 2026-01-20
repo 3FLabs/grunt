@@ -132,6 +132,10 @@ contract Facility is
   function _beforeTokenTransfer(address from, address to, uint256 id, uint256 amount) internal override {
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
 
+    if (from != address(0) && to != address(0) && !_intent.properties.transferableIntent) {
+      revert LibErrors.IntentTransfersLocked(id);
+    }
+
     (,, address guard) = IPositionManager(_intent.properties.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.properties.guardKey, from, to, amount)) {

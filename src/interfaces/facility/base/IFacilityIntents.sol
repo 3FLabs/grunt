@@ -14,7 +14,8 @@ interface IFacilityIntents {
   /// @param id The intent ID.
   /// @param depositAsset The deposit asset configuration.
   /// @param quorum The quorum threshold for guard approvals.
-  event IntentCreated(uint256 indexed id, Asset depositAsset, uint8 quorum);
+  /// @param transferableIntent Whether intent token transfers are allowed.
+  event IntentCreated(uint256 indexed id, Asset depositAsset, uint8 quorum, bool transferableIntent);
 
   /// @notice Emitted when an intent is resolved.
   /// @param id The intent ID.

@@ -54,7 +54,8 @@ contract FacilityUpdateTargetTest is Test {
         guardKey: address(pm1),
         depositCap: 1,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: 0
+        quorum: 0,
+        transferableIntent: true
       })
     );
   }
@@ -70,7 +71,8 @@ contract FacilityUpdateTargetTest is Test {
         guardKey: address(pm1),
         depositCap: 1,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: 0
+        quorum: 0,
+        transferableIntent: true
       })
     );
   }

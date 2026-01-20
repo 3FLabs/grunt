@@ -39,7 +39,8 @@ contract FacilityIntentIdTest is Test {
         guardKey: address(positionManager),
         depositCap: 1_000_000,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: 0
+        quorum: 0,
+        transferableIntent: true
       })
     );
   }
