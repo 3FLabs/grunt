@@ -90,9 +90,11 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     // commit the funds
     _tokenIn.safeApproveWithRetry(_fund, _order.input);
-    IFund(_fund).commit(_order);
+    (, uint256 _committedAmount) = IFund(_fund).commit(_order);
+    if (_committedAmount != _order.input) revert LibErrors.CommitAmountMismatch(id, _order.input, _committedAmount);
+
     // remove tokens from intent (since this is non reentrant, we can call this after sending the funds)
-    _intent.transferredTokenTo(id, _tokenIn, _fund, _order.input);
+    _intent.transferredTokenTo(id, _tokenIn, _fund, _committedAmount);
   }
 
   /// @inheritdoc IFacilityFunds
