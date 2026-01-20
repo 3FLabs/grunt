@@ -330,6 +330,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     returns (uint256 ytAmount)
   {
     if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
+    if (ptAmount == 0 || ptAmount > offer.amount) revert LibErrors.InvalidPtAmount();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     if (offer.useCallback) {
