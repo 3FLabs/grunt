@@ -129,10 +129,7 @@ library LibStorage {
     Asset calldata depositAsset,
     uint8 quorum,
     bool transferableIntent
-  )
-    internal
-    returns (Intent storage _intent, uint256 id)
-  {
+  ) internal returns (Intent storage _intent, uint256 id) {
     id = self.lastIntentId + 1;
     self.lastIntentId = id;
     _intent = self.intents[id];
