@@ -13,6 +13,7 @@ import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol"
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 
 /// @title FacilityPositionManager
+/// @author 3F Protocol
 /// @notice Abstract contract implementing position manager operations for intents.
 /// @dev Allows depositing into, withdrawing from, and burning shares of position managers.
 abstract contract FacilityPositionManager is IFacilityPositionManager, ReentrancyGuardTransient, FacilityRoles {

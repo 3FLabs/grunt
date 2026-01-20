@@ -6,6 +6,7 @@ import {ControlledToken} from "./abstract/tokens/ControlledToken.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 /// @title Vault
+/// @author 3F Protocol
 /// @notice Concrete implementation of an ERC4626-compliant vault for PT or YT tokens.
 /// @dev This contract combines multiple functionalities:
 ///      - **ControlledVault**: Provides ERC4626 vault logic with controlled minting/burning

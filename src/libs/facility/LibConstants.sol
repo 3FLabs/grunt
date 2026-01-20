@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
+/// @title LibConstants
+/// @author 3F Protocol
 /// @notice Shared constants used across the Facility contracts.
 /// @dev This file contains compile-time constants that are inlined by the compiler for gas efficiency.
 ///      Constants are defined at the file level (outside of contracts) to enable direct imports

@@ -7,6 +7,7 @@ import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {LibErrors} from "../../libs/manager/LibErrors.sol";
 
 /// @title MorphoRebalancer
 /// @notice A rebalancer contract that uses Morpho flash loans to rebalance PositionManager positions.
@@ -24,16 +25,6 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 /// @author 3F Protocol
 contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardTransient {
   using SafeTransferLib for address;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           ERRORS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when the callback is called by an address other than Morpho.
-  error UnauthorizedCaller();
-
-  /// @notice Thrown when collateral is provided in rebalancing data (must be zero).
-  error CollateralNotAllowed();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
@@ -81,7 +72,7 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     nonReentrant
   {
     // Collateral cannot be provided through this rebalancer
-    if (data.collateral != 0) revert CollateralNotAllowed();
+    if (data.collateral != 0) revert LibErrors.CollateralNotAllowed();
 
     // Get assets from position manager
     (address collateralAsset, address debtAsset) = positionManager.assets();
@@ -111,7 +102,7 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
   /// @param assets The amount of assets that was flash loaned
   /// @param data The encoded PositionManager, RebalancingData, and receiver
   function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
-    if (msg.sender != address(MORPHO)) revert UnauthorizedCaller();
+    if (msg.sender != address(MORPHO)) revert LibErrors.UnauthorizedCaller();
 
     // Decode the position manager, rebalancing data, and receiver
     (IPositionManager positionManager, RebalancingData memory rebalancingData,) =

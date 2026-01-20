@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title Constants
+/// @author 3F Protocol
 /// @notice Shared constants used across the request module libraries.
 /// @dev This file contains compile-time constants that are inlined by the compiler for gas efficiency.
 ///      Constants are defined at the file level (outside of contracts) to enable direct imports

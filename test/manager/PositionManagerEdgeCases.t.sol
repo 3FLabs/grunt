@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
 
 /// @title PositionManagerEdgeCasesTest
 /// @notice Tests for PositionManager edge cases, underwater positions, and inflation attack protection
@@ -322,7 +323,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     _mintCollateral(minter, 1);
 
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.ZeroShares.selector);
+    vm.expectRevert(LibErrors.ZeroShares.selector);
     positionManager.deposit(1, 0);
   }
 
@@ -347,7 +348,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Step 3: Try to withdraw just 1 wei of collateral
     // The asset change is tiny relative to totalAssets, so shares calculation rounds to 0
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.ZeroShares.selector);
+    vm.expectRevert(LibErrors.ZeroShares.selector);
     positionManager.withdraw(1, 0);
   }
 }

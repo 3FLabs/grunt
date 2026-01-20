@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Lib128Fields} from "./Lib128Fields.sol";
 
 /// @title LibMintAuth
+/// @author 3F Protocol
 /// @notice Library for gas-efficient storage and manipulation of PT and YT mint authorization data.
 /// @dev Implements packed storage where PT and YT mint authorization values are stored together in single uint256 slots:
 ///      - Lower 128 bits: PT (Principal Token) mint authorization

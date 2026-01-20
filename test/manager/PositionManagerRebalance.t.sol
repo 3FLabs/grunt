@@ -9,6 +9,7 @@ import {
   RebalancingOperationType,
   SupplyQueueEntry
 } from "src/interfaces/manager/IPositionManager.sol";
+import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
 
 /// @title PositionManagerRebalanceTest
 /// @notice Tests for PositionManager rebalance functionality
@@ -204,7 +205,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     vm.prank(rebalancer);
-    vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
+    vm.expectRevert(LibErrors.RebalanceLossExceedsMax.selector);
     positionManager.rebalance(data, rebalancer);
   }
 
@@ -314,7 +315,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     vm.prank(rebalancer);
-    vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
+    vm.expectRevert(LibErrors.RebalanceLossExceedsMax.selector);
     positionManager.rebalance(data, rebalancer);
   }
 
@@ -351,7 +352,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     vm.prank(rebalancer);
     if (actualLossBps > maxLossPercent) {
-      vm.expectRevert(IPositionManager.RebalanceLossExceedsMax.selector);
+      vm.expectRevert(LibErrors.RebalanceLossExceedsMax.selector);
     }
     positionManager.rebalance(data, rebalancer);
   }
@@ -375,7 +376,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.startPrank(rebalancer);
     collateralToken.approve(address(positionManager), 1000e18);
 
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
   }
@@ -392,7 +393,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     vm.prank(rebalancer);
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
   }
 
@@ -408,7 +409,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: ops});
 
     vm.prank(rebalancer);
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
   }
 
@@ -427,7 +428,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.startPrank(rebalancer);
     debtToken.approve(address(positionManager), 1000e18);
 
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
   }
@@ -468,7 +469,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     collateralToken.approve(address(positionManager), 1000e18);
 
     // Should revert because position 2 is no longer a borrow module
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
   }
@@ -519,7 +520,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     collateralToken.approve(address(positionManager), 1e18);
 
     // Should always revert for unauthorized positions
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
   }
@@ -545,7 +546,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     vm.prank(rebalancer);
     // Should revert on the second operation (unauthorized position)
-    vm.expectRevert(IPositionManager.UnauthorizedPosition.selector);
+    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
     positionManager.rebalance(data, rebalancer);
   }
 }

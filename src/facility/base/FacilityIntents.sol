@@ -10,13 +10,16 @@ import {LibIntent, Intent, IntentProperties, Asset} from "src/libs/facility/LibI
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {LibAddress} from "src/libs/facility/LibAddress.sol";
+import {LibChecks} from "src/libs/common/LibChecks.sol";
 
 /// @title FacilityIntents
+/// @author 3F Protocol
 /// @notice Abstract contract implementing intent management operations.
 /// @dev Allows creating intents and updating their configuration.
 abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
+  using LibChecks for address;
   using LibAddress for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

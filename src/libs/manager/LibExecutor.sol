@@ -5,6 +5,7 @@ import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @title LibExecutor
+/// @author 3F Protocol
 /// @notice Library providing low-level position interaction helpers.
 /// @dev Handles supply, withdraw, borrow, and repay operations on IBorrowPosition contracts.
 ///      Use with `using LibExecutor for address;`

@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
 
 /// @title PositionManagerDepositTest
 /// @notice Tests for PositionManager deposit functionality
@@ -56,7 +57,7 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
 
   function test_deposit_revertOnZeroAmount() public {
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.ZeroAmount.selector);
+    vm.expectRevert(LibErrors.ZeroAmount.selector);
     positionManager.deposit(0, 0);
   }
 
@@ -150,7 +151,7 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
 
     // Deposit with collateral should revert when supply queue is empty
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.EmptySupplyQueue.selector);
+    vm.expectRevert(LibErrors.EmptySupplyQueue.selector);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
   }
 
@@ -164,7 +165,7 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
 
     // Deposit with debt should revert due to insufficient borrow capacity
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.InsufficientBorrowCapacity.selector);
+    vm.expectRevert(LibErrors.InsufficientBorrowCapacity.selector);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
   }
 

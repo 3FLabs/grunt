@@ -16,6 +16,30 @@ struct FeeData {
 }
 
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
+/// @dev Uses ERC-7201 namespaced storage pattern at slot `keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))`
+///      for upgradeability. Fields are ordered to minimize storage slots.
+/// @param feeData Fee configuration containing recipient address, management fee, and performance fee rates.
+/// @param supplyQueue Ordered list of supply positions where assets are deposited.
+///        Each entry contains a market identifier and allocation cap.
+/// @param withdrawalQueue Ordered list of market addresses for withdrawal priority.
+///        Assets are withdrawn in this order when processing redemptions.
+/// @param borrowModules Set of approved borrow module addresses that can interact with positions.
+///        Uses Solady's EnumerableSetLib for O(1) add/remove/contains operations.
+/// @param name The ERC20 name of the position manager share token.
+/// @param symbol The ERC20 symbol of the position manager share token.
+/// @param decimals The number of decimals for the share token (matches the collateral asset).
+/// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
+/// @param debtAsset The address of the debt asset borrowed against positions.
+/// @param lastTotalAssets Cached total assets value from the last fee accrual, used for
+///        calculating high water mark and performance fees.
+/// @param lltv Liquidation loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
+///        Positions below this threshold are subject to liquidation.
+/// @param lastFeeAccrualTimestamp Unix timestamp of the last fee accrual, used for
+///        calculating time-weighted management fees.
+/// @param maxRebalanceLoss Maximum allowed loss during rebalancing operations in basis points
+///        (e.g., 100 = 1%). Protects against excessive slippage or manipulation.
+/// @param transferGuard Address of the TransferGuard contract that validates share transfers
+///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -34,6 +58,7 @@ struct PositionManagerStorageData {
 }
 
 /// @title LibStorage
+/// @author 3F Protocol
 /// @notice Library providing storage accessor for PositionManager contracts.
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibStorage {

@@ -4,14 +4,14 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {LibErrors} from "src/libs/funds/LibErrors.sol";
+import {LibErrors as CommonErrors} from "src/libs/common/LibErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract WrappedAssetTest is Test {
   error InvalidInitialization();
   error Unauthorized();
-  error MintToZeroAddress();
-  error BurnToZeroAddress();
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x17335d0a3e97e0293c2bb91805cb7279c336f9ba807e8dbe36cf5097172d3300;
   uint256 private constant EXTRA_ROLE = 1 << 3;
@@ -116,7 +116,7 @@ contract WrappedAssetTest is Test {
     underlying.approve(address(token), 100);
 
     vm.prank(issuer);
-    vm.expectRevert(MintToZeroAddress.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     token.mint(address(0), 100);
   }
 
@@ -280,7 +280,7 @@ contract WrappedAssetTest is Test {
     token.mint(user, 100);
 
     vm.prank(user);
-    vm.expectRevert(BurnToZeroAddress.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     token.burn(user, address(0), 50);
   }
 

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Order, State} from "../../libs/Order.sol";
+import {Order, State} from "../../libs/funds/Order.sol";
 
+/// @title IFund
+/// @author 3F Protocol
 /// @notice Interface for on-chain fund wrappers managing asset deposits and redemptions.
 /// @dev Implements a state machine for order lifecycle management:
 ///

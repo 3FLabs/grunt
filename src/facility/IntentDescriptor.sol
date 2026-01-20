@@ -7,6 +7,7 @@ import {LibString} from "lib/solady/src/utils/LibString.sol";
 import {Base64} from "lib/solady/src/utils/Base64.sol";
 
 /// @title IntentDescriptor
+/// @author 3F Protocol
 /// @notice Generates metadata for 3F facility intent tokens (ERC6909).
 /// @dev Provides on-chain SVG images and JSON metadata for intent tokens.
 contract IntentDescriptor is IIntentDescriptor {

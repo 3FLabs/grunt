@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
+/// @title IWrappedAsset
+/// @author 3F Protocol
 /// @notice Interface for a wrapped asset token with wrap/unwrap capabilities.
 /// @dev The wrapper holds underlying assets 1:1 and mints/burns wrapper tokens accordingly.
 interface IWrappedAsset {

@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
 
 /// @title PositionManagerWithdrawTest
 /// @notice Tests for PositionManager withdraw functionality
@@ -73,13 +74,13 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
 
     // Try to withdraw collateral without repaying (would exceed LLTV)
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.InsufficientAvailableCollateral.selector);
+    vm.expectRevert(LibErrors.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(5000e18, 0);
   }
 
   function test_withdraw_revertOnZeroAmount() public {
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.ZeroAmount.selector);
+    vm.expectRevert(LibErrors.ZeroAmount.selector);
     positionManager.withdraw(0, 0);
   }
 
@@ -96,7 +97,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
 
     // Try to withdraw collateral - should revert
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.InsufficientAvailableCollateral.selector);
+    vm.expectRevert(LibErrors.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(1000e18, 0);
   }
 
@@ -180,7 +181,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     _mintDebt(minter, excessRepay);
 
     vm.prank(minter);
-    vm.expectRevert(IPositionManager.ExcessDebtRepay.selector);
+    vm.expectRevert(LibErrors.ExcessDebtRepay.selector);
     positionManager.withdraw(0, excessRepay);
   }
 

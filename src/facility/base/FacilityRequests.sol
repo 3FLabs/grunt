@@ -12,6 +12,7 @@ import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol"
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 
 /// @title FacilityRequests
+/// @author 3F Protocol
 /// @notice Abstract contract implementing request operations for intents.
 /// @dev Allows pulling funds from and repaying to request contracts.
 abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransient, FacilityRoles {

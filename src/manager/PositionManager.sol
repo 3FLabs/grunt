@@ -11,6 +11,7 @@ import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibOperations} from "../libs/manager/LibOperations.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibExecutor} from "../libs/manager/LibExecutor.sol";
+import {LibErrors} from "../libs/manager/LibErrors.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -19,6 +20,7 @@ import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 
 /// @title PositionManager
+/// @author 3F Protocol
 /// @notice Aggregates multiple borrow positions into a single vault with share-based accounting.
 /// @dev Uses supply/withdrawal queues for deposit/withdraw operations, implements fee accrual,
 ///      and uses virtual share offset for inflation attack protection.
@@ -68,21 +70,21 @@ contract PositionManager is
     address transferGuard_
   ) external initializer {
     _initializeOwner(owner_);
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
-    ps.name = name_;
-    ps.symbol = symbol_;
-    ps.decimals = decimals_;
-    ps.collateralAsset = collateralAsset_;
-    ps.debtAsset = debtAsset_;
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    _storage.name = name_;
+    _storage.symbol = symbol_;
+    _storage.decimals = decimals_;
+    _storage.collateralAsset = collateralAsset_;
+    _storage.debtAsset = debtAsset_;
     // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
     // forge-lint: disable-next-line(unsafe-typecast)
-    ps.lltv = uint64(lltv_);
+    _storage.lltv = uint64(lltv_);
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
-    ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
+    _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
     emit IPositionManager.LLTVSet(lltv_);
     if (transferGuard_ != address(0)) {
-      ps.transferGuard = transferGuard_;
+      _storage.transferGuard = transferGuard_;
       emit IPositionManager.TransferGuardSet(transferGuard_);
     }
   }
@@ -128,9 +130,9 @@ contract PositionManager is
 
   /// @inheritdoc IPositionManager
   function assets() public view returns (address collateralAsset, address debtAsset) {
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
-    collateralAsset = ps.collateralAsset;
-    debtAsset = ps.debtAsset;
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    collateralAsset = _storage.collateralAsset;
+    debtAsset = _storage.debtAsset;
   }
 
   /// @inheritdoc IPositionManager
@@ -165,21 +167,21 @@ contract PositionManager is
       uint256 lastFeeAccrualTimestamp
     )
   {
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
-    FeeData memory fd = ps.feeData;
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    FeeData memory fd = _storage.feeData;
     feeRecipient = fd.feeRecipient;
     managementFee = fd.managementFee;
     performanceFee = fd.performanceFee;
-    lastTotalAssets = ps.lastTotalAssets;
-    lastFeeAccrualTimestamp = ps.lastFeeAccrualTimestamp;
+    lastTotalAssets = _storage.lastTotalAssets;
+    lastFeeAccrualTimestamp = _storage.lastFeeAccrualTimestamp;
   }
 
   /// @inheritdoc IPositionManager
   function config() public view returns (uint256 lltv, uint16 maxRebalanceLoss, address transferGuard) {
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
-    lltv = ps.lltv;
-    maxRebalanceLoss = ps.maxRebalanceLoss;
-    transferGuard = ps.transferGuard;
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    lltv = _storage.lltv;
+    maxRebalanceLoss = _storage.maxRebalanceLoss;
+    transferGuard = _storage.transferGuard;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -187,15 +189,17 @@ contract PositionManager is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManager
+  /// @dev Reverts with {LibErrors.ZeroAmount} if both collateral and debt are zero.
+  ///      Reverts with {LibErrors.EmptySupplyQueue} if debt is zero but collateral > 0 and supply queue is empty.
   function deposit(uint256 collateral, uint256 debt)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
     returns (int256 shares)
   {
-    if (collateral == 0 && debt == 0) revert ZeroAmount();
+    if (collateral == 0 && debt == 0) revert LibErrors.ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Accrue fees and get current total assets
     uint256 totalAssetsBefore = _accrueFees();
@@ -203,24 +207,24 @@ contract PositionManager is
 
     // Pull collateral from caller
     if (collateral > 0) {
-      ps.collateralAsset.safeTransferFrom(msg.sender, address(this), collateral);
+      _storage.collateralAsset.safeTransferFrom(msg.sender, address(this), collateral);
     }
 
     // Process deposits through supply queue
     if (debt == 0) {
       // No debt: deposit all collateral to first position
       if (collateral > 0) {
-        if (ps.supplyQueue.length == 0) revert EmptySupplyQueue();
-        ps.supplyQueue[0].position.supply(ps.collateralAsset, collateral);
+        if (_storage.supplyQueue.length == 0) revert LibErrors.EmptySupplyQueue();
+        _storage.supplyQueue[0].position.supply(_storage.collateralAsset, collateral);
       }
     } else {
       // With debt: iterate through queue
-      ps.processDeposit(collateral, debt);
+      _storage.processDeposit(collateral, debt);
     }
 
     // Send borrowed debt to caller
     if (debt > 0) {
-      ps.debtAsset.safeTransfer(msg.sender, debt);
+      _storage.debtAsset.safeTransfer(msg.sender, debt);
     }
 
     // Settle shares based on assets delta
@@ -230,15 +234,16 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
+  /// @dev Reverts with {LibErrors.ZeroAmount} if both collateral and debt are zero.
   function withdraw(uint256 collateral, uint256 debt)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
     returns (int256 shares)
   {
-    if (collateral == 0 && debt == 0) revert ZeroAmount();
+    if (collateral == 0 && debt == 0) revert LibErrors.ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Accrue fees and get current total assets
     uint256 totalAssetsBefore = _accrueFees();
@@ -246,15 +251,15 @@ contract PositionManager is
 
     // Pull debt from caller for repayment
     if (debt > 0) {
-      ps.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
+      _storage.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
     // Process withdrawals through withdrawal queue
-    ps.processWithdrawal(collateral, debt);
+    _storage.processWithdrawal(collateral, debt);
 
     // Send collateral to caller
     if (collateral > 0) {
-      ps.collateralAsset.safeTransfer(msg.sender, collateral);
+      _storage.collateralAsset.safeTransfer(msg.sender, collateral);
     }
 
     // Settle shares based on assets delta
@@ -264,15 +269,16 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
+  /// @dev Reverts with {LibErrors.ZeroAmount} if shares is zero.
   function burn(uint256 shares)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
     returns (uint256 collateral, uint256 debt)
   {
-    if (shares == 0) revert ZeroAmount();
+    if (shares == 0) revert LibErrors.ZeroAmount();
 
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Accrue fees first
     _accrueFees();
@@ -291,15 +297,15 @@ contract PositionManager is
 
     // Pull debt from caller for repayment
     if (debt > 0) {
-      ps.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
+      _storage.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
     // Process burn through withdrawal queue - withdraws/repays proportionally on each position
-    ps.processBurn(collateral, debt, _totalCollateral, _totalDebt);
+    _storage.processBurn(collateral, debt, _totalCollateral, _totalDebt);
 
     // Send collateral to caller
     if (collateral > 0) {
-      ps.collateralAsset.safeTransfer(msg.sender, collateral);
+      _storage.collateralAsset.safeTransfer(msg.sender, collateral);
     }
 
     // Update snapshot for performance fees
@@ -337,11 +343,12 @@ contract PositionManager is
 
   /// @inheritdoc ERC20
   /// @dev Validates transfers through the transfer guard if one is set.
+  ///      Reverts with {LibErrors.TransferBlocked} if the transfer is blocked by the guard.
   function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
     address guard = LibStorage.positionManagerStorage().transferGuard;
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(address(this), from, to, amount)) {
-        revert IPositionManager.TransferBlocked();
+        revert LibErrors.TransferBlocked();
       }
     }
   }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 /// @title FacilityRoles
+/// @author 3F Protocol
 /// @notice Abstract contract defining role constants for the Facility contract.
 /// @dev Inherits OwnableRoles from solady for role-based access control.
 abstract contract FacilityRoles is OwnableRoles {
