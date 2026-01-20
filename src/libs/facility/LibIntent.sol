@@ -29,6 +29,7 @@ struct Asset {
 /// @param guardKey Guard key address associated with intent authorization.
 /// @param resolveStart Earliest timestamp when the intent can be resolved.
 /// @param quorum Quorum threshold required for guard approvals.
+/// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
 struct IntentProperties {
   Asset depositAsset;
   Asset targetAsset;
@@ -36,6 +37,7 @@ struct IntentProperties {
   address guardKey;
   uint40 resolveStart;
   uint8 quorum;
+  bool transferableIntent;
 }
 
 /// @dev Intent state for a facility request, including configuration and accounting.

@@ -43,7 +43,8 @@ contract FacilityClaimFuzzTest is Test {
         guardKey: address(pm),
         depositCap: type(uint256).max,
         resolveStart: uint40(block.timestamp + 1 days),
-        quorum: 0
+        quorum: 0,
+        transferableIntent: true
       })
     );
   }

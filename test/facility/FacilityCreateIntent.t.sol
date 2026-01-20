@@ -106,7 +106,8 @@ contract FacilityCreateIntentTest is Test {
         guardKey: guardKey,
         depositCap: depositCap,
         resolveStart: resolveStart,
-        quorum: quorum
+        quorum: quorum,
+        transferableIntent: true
       })
     );
   }
@@ -470,6 +471,7 @@ contract FacilityCreateIntentTest is Test {
     assertEq(props.guardKey, address(pm));
     assertEq(props.resolveStart, uint40(block.timestamp + 1 days));
     assertEq(props.quorum, 3);
+    assertTrue(props.transferableIntent);
 
     // Check fund and request
     assertEq(fundAddr, address(fund));

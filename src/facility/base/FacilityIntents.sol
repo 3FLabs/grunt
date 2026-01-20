@@ -53,6 +53,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     Intent storage _intent;
     (_intent, id) = _facilityStorage.createIntent(params.depositAsset, params.quorum);
 
+    _intent.properties.transferableIntent = params.transferableIntent;
     _intent.updateTargetAsset(id, params.targetAsset, params.guardKey);
     _intent.updateDepositCap(id, params.depositCap);
     _intent.updateResolveStart(id, params.resolveStart);
