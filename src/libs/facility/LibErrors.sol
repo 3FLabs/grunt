@@ -59,6 +59,12 @@ library LibErrors {
   /// @param actual The actual amount.
   error AmountMismatch(uint256 expected, uint256 actual);
 
+  /// @notice Thrown when a fund commits an amount different from the order input.
+  /// @param id The intent ID.
+  /// @param expected The expected committed amount (order input).
+  /// @param actual The actual committed amount returned by the fund.
+  error CommitAmountMismatch(uint256 id, uint256 expected, uint256 actual);
+
   /// @notice Thrown when resolveStart is not in the future.
   /// @param resolveStart The provided resolve start timestamp.
   /// @param currentTime The current block timestamp.
@@ -140,4 +146,7 @@ library LibErrors {
   /// @param request The request address.
   /// @param intentId The intent ID.
   error RequestAlreadyInUse(address request, uint256 intentId);
+
+  /// @notice Thrown when attempting to commit an already saved balance snapshot.
+  error SnapshotAlreadySaved();
 }

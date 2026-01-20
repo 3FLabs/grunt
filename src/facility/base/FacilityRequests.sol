@@ -7,7 +7,7 @@ import {FacilityRoles} from "./FacilityRoles.sol";
 
 import {IFacilityRequests} from "src/interfaces/facility/base/IFacilityRequests.sol";
 import {IRequestInteractions} from "src/interfaces/request/IRequestInteractions.sol";
-import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
+import {LibIntent, Intent, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 
@@ -31,11 +31,14 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     // getting the initial request parameters
     (Intent storage _intent, address _request, address _asset) = _initialRequestParameters(id);
 
+    // take snapshot before the operation
+    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_asset);
+
     // pulling funds from the request
     IRequestInteractions(_request).pullFunds(amount, bytes(""));
 
-    // marking the funds as received from the request contract
-    _intent.receivedTokenFrom(id, _asset, _request, amount);
+    // commit snapshot to record the balance change
+    _intent.commitBalanceSnapshot(id, snapshot, _request);
   }
 
   /// @inheritdoc IFacilityRequests
@@ -45,13 +48,18 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     // getting the initial request parameters
     (Intent storage _intent, address _request, address _asset) = _initialRequestParameters(id);
 
+    // take snapshot before the operation
+    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_asset);
+
     // approve the request to spend the asset
     _asset.safeApproveWithRetry(_request, amount);
     // repaying the request
     IRequestInteractions(_request).repay(amount);
+    // reset approval to 0
+    _asset.safeApproveWithRetry(_request, 0);
 
-    // marking the assets as transferred to the request contract (safe to call after repaying since we are non reentrant)
-    _intent.transferredTokenTo(id, _asset, _request, amount);
+    // commit snapshot to record the balance change
+    _intent.commitBalanceSnapshot(id, snapshot, _request);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

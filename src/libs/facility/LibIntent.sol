@@ -59,6 +59,16 @@ struct Intent {
   uint256 totalSupply;
 }
 
+/// @dev Struct to capture a token balance snapshot for non-transfer balance changes.
+/// @param token The token address.
+/// @param balance The ERC20 balanceOf(facility) at the time of the snapshot.
+/// @param saved Whether the snapshot has been committed (prevents reuse).
+struct BalanceSnapshot {
+  address token;
+  uint256 balance;
+  bool saved;
+}
+
 /// @title LibIntent
 /// @author 3F Protocol
 /// @notice Library for Intent storage operations.
@@ -246,7 +256,7 @@ library LibIntent {
   /// @param token The token address that was transferred.
   /// @param to The recipient address.
   /// @param amount The amount that was transferred.
-  function transferredTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
+  function _transferredTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) private {
     _self.amounts.sub(token, amount);
     emit IFacility.TokenSent(id, token, to, amount);
   }
@@ -261,7 +271,7 @@ library LibIntent {
   /// @param amount The amount to transfer.
   function transferTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
     token.safeTransfer(to, amount);
-    _self.transferredTokenTo(id, token, to, amount);
+    _transferredTokenTo(_self, id, token, to, amount);
   }
 
   /// @notice Records that tokens were received by the intent without performing the transfer.
@@ -272,7 +282,7 @@ library LibIntent {
   /// @param token The token address that was received.
   /// @param from The sender address.
   /// @param amount The amount that was received.
-  function receivedTokenFrom(Intent storage _self, uint256 id, address token, address from, uint256 amount) internal {
+  function _receivedTokenFrom(Intent storage _self, uint256 id, address token, address from, uint256 amount) private {
     _self.amounts.add(token, amount);
     emit IFacility.TokenReceived(id, token, from, amount);
   }
@@ -287,7 +297,52 @@ library LibIntent {
   /// @param amount The amount to transfer.
   function receiveTokenFrom(Intent storage _self, uint256 id, address token, address from, uint256 amount) internal {
     token.safeTransferFrom(from, address(this), amount);
-    _self.receivedTokenFrom(id, token, from, amount);
+    _receivedTokenFrom(_self, id, token, from, amount);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    BALANCE SNAPSHOTS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Takes a snapshot of the facility's ERC20 balance for a token.
+  /// @dev Creates a BalanceSnapshot struct capturing the token address and current balanceOf.
+  ///      The snapshot can later be committed to record the balance difference.
+  /// @param token The token address to snapshot.
+  /// @return snapshot The balance snapshot struct.
+  function takeBalanceSnapshot(address token) internal view returns (BalanceSnapshot memory snapshot) {
+    uint256 balance = token.balanceOf(address(this));
+    snapshot = BalanceSnapshot({token: token, balance: balance, saved: false});
+  }
+
+  /// @notice Commits a balance snapshot by calculating the difference and updating accounting.
+  /// @dev Compares the snapshot balance with the current ERC20 balance and updates internal accounting.
+  ///      Emits TokenReceived if balance increased, TokenSent if balance decreased.
+  ///      Reverts if the snapshot has already been saved (prevents reuse).
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  /// @param snapshot The snapshot to commit (will be marked as saved).
+  /// @param counterparty The address to use as from/to in the emitted event.
+  function commitBalanceSnapshot(
+    Intent storage _self,
+    uint256 id,
+    BalanceSnapshot memory snapshot,
+    address counterparty
+  ) internal {
+    if (snapshot.saved) revert LibErrors.SnapshotAlreadySaved();
+
+    uint256 currentBalance = snapshot.token.balanceOf(address(this));
+
+    if (currentBalance > snapshot.balance) {
+      // Balance increased - record as received
+      uint256 amount = currentBalance - snapshot.balance;
+      _receivedTokenFrom(_self, id, snapshot.token, counterparty, amount);
+    } else if (currentBalance < snapshot.balance) {
+      // Balance decreased - record as sent
+      uint256 amount = snapshot.balance - currentBalance;
+      _transferredTokenTo(_self, id, snapshot.token, counterparty, amount);
+    }
+
+    snapshot.saved = true;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
