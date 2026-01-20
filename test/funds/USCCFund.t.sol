@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {USCCFund} from "src/funds/USCCFund.sol";
 import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Order, Mode, State, Id} from "src/libs/funds/Order.sol";
+import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibErrors} from "src/libs/funds/LibErrors.sol";
 import {LibErrors as CommonErrors} from "src/libs/common/LibErrors.sol";
@@ -16,20 +16,22 @@ import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
 import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
+  using LibOrder for Order;
+
   error InvalidInitialization();
   error Unauthorized();
 
   event OrderCreated(
-    Id indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
+    bytes32 indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
   );
-  event OrderCommitted(Id indexed orderId, Mode mode, uint256 amount);
-  event OrderRecovered(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
-  event OrderUnlocked(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
-  event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
-  event OrderRecovering(Id indexed orderId);
+  event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
+  event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+  event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+  event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
+  event OrderRecovering(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
   event OrderResolved(
-    Id indexed orderId, Id indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
+    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
   );
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
@@ -157,7 +159,7 @@ contract USCCFundTest is Test {
 
   function test_Create_DepositSuccess() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
 
     vm.expectEmit(true, true, true, true);
     emit OrderCreated(orderId, order.mode, order.owner, order.receiver, order.input, order.output);
@@ -168,7 +170,7 @@ contract USCCFundTest is Test {
 
   function test_Create_RedeemSuccess() public {
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
 
     vm.expectEmit(true, true, true, true);
     emit OrderCreated(orderId, order.mode, order.owner, order.receiver, order.input, order.output);
@@ -239,7 +241,7 @@ contract USCCFundTest is Test {
 
   function test_Cancel_Success() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
     fund.create(order);
 
     vm.expectEmit(true, true, true, true);
@@ -291,7 +293,7 @@ contract USCCFundTest is Test {
     usdc.mint(address(this), order.input);
     usdc.approve(address(fund), order.input);
 
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
     vm.expectEmit(true, true, true, true);
     emit OrderCommitted(orderId, order.mode, order.input);
     (State state, uint256 amount) = fund.commit(order);
@@ -368,7 +370,7 @@ contract USCCFundTest is Test {
     _commitDeposit(order);
     uscc.mint(address(fund), order.output);
 
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
     vm.expectEmit(true, true, true, true);
     emit OrderUnlocked(orderId, order.mode, order.output, address(this));
     (State state, uint256 amount) = fund.unlock(order);
@@ -448,7 +450,7 @@ contract USCCFundTest is Test {
     fund.recovering();
     usdc.mint(address(fund), order.input);
 
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
     vm.expectEmit(true, true, true, true);
     emit OrderRecovered(orderId, order.mode, order.input, address(this));
     (State state, uint256 amount) = fund.recover(order);
@@ -589,18 +591,18 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    Id orderId = order.toId(address(fund));
+    bytes32 orderId = order.toId(address(fund));
     uint256 newInput = order.input;
     uint256 newOutput = ONE_USDC / 2;
     Order memory resolvedOrder = Order({
+      mode: order.mode,
       owner: order.owner,
       receiver: order.receiver,
       input: newInput,
       output: newOutput,
-      mode: order.mode,
       salt: order.salt
     });
-    Id resolvedOrderId = resolvedOrder.toId(address(fund));
+    bytes32 resolvedOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
@@ -658,7 +660,7 @@ contract USCCFundTest is Test {
   function test_Resolve_DoesNotChangeCurrentOrderId() public {
     // resolve() keeps the original order id; resolved amounts are internal overrides.
     Order memory originalOrder = _depositOrder(ONE_USDC, ONE_USDC);
-    Id originalId = originalOrder.toId(address(fund));
+    bytes32 originalId = originalOrder.toId(address(fund));
     fund.create(originalOrder);
     _commitDeposit(originalOrder);
 
@@ -668,15 +670,15 @@ contract USCCFundTest is Test {
 
     // A resolved Order struct hashes to a different id and becomes the current order.
     Order memory resolvedOrder = Order({
+      mode: originalOrder.mode,
       owner: originalOrder.owner,
       receiver: originalOrder.receiver,
       input: newInput,
       output: newOutput,
-      mode: originalOrder.mode,
       salt: originalOrder.salt
     });
-    Id resolvedId = resolvedOrder.toId(address(fund));
-    assertFalse(originalId.eq(resolvedId), "resolved order id differs");
+    bytes32 resolvedId = resolvedOrder.toId(address(fund));
+    assertFalse(originalId == resolvedId, "resolved order id differs");
 
     vm.prank(owner);
     fund.resolve(originalOrder, newInput, newOutput);
@@ -942,14 +944,14 @@ contract USCCFundTest is Test {
   function test_Edge_OrderIdCollision() public view {
     Order memory orderA = _depositOrder(ONE_USDC, ONE_USDC);
     Order memory orderB = Order({
+      mode: orderA.mode,
       owner: orderA.owner,
       receiver: orderA.receiver,
       input: orderA.input,
       output: orderA.output,
-      mode: orderA.mode,
       salt: keccak256("different")
     });
-    assertFalse(orderA.toId(address(fund)).eq(orderB.toId(address(fund))), "different ids");
+    assertFalse(orderA.toId(address(fund)) == orderB.toId(address(fund)), "different ids");
   }
 
   function test_Edge_ExcessFunds_DepositUnlock() public {
@@ -1060,22 +1062,22 @@ contract USCCFundTest is Test {
 
   function _depositOrder(uint256 input, uint256 output) internal view returns (Order memory) {
     return Order({
+      mode: Mode.DEPOSIT,
       owner: address(this),
       receiver: address(this),
       input: input,
       output: output,
-      mode: Mode.DEPOSIT,
       salt: keccak256("deposit")
     });
   }
 
   function _redeemOrder(uint256 input, uint256 output) internal view returns (Order memory) {
     return Order({
+      mode: Mode.REDEEM,
       owner: address(this),
       receiver: address(this),
       input: input,
       output: output,
-      mode: Mode.REDEEM,
       salt: keccak256("redeem")
     });
   }
@@ -1092,7 +1094,9 @@ contract USCCFundTest is Test {
   }
 
   function _cachedBalance() internal view returns (uint256) {
-    return uint256(vm.load(address(fund), bytes32(uint256(_MAIN_STORAGE_SLOT) + 6)));
+    // Storage layout: recipient(+0), currentOrderId(+1), Order(+2..+6, 5 slots),
+    // internalState+oracle(+7 packed), cachedBalance(+8)
+    return uint256(vm.load(address(fund), bytes32(uint256(_MAIN_STORAGE_SLOT) + 8)));
   }
 
   /// @dev Helper to mint wUSCC to a recipient. Wraps USCC into wUSCC.

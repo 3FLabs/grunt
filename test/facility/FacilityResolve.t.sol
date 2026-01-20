@@ -12,9 +12,11 @@ import {PositionManager} from "src/manager/PositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 import {IFund} from "src/interfaces/funds/IFund.sol";
-import {Order, Mode, State, Id} from "src/libs/funds/Order.sol";
+import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 
 contract MockFundState is IFund {
+  using LibOrder for Order;
+
   address internal immutable ASSET;
   address internal immutable SHARE;
 
@@ -26,11 +28,11 @@ contract MockFundState is IFund {
   }
 
   function _id(Order memory order) internal view returns (bytes32) {
-    return Id.unwrap(order.toId(address(this)));
+    return order.toId(address(this));
   }
 
   function forceState(Order calldata order, State state_) external {
-    _stateById[Id.unwrap(order.toId(address(this)))] = state_;
+    _stateById[order.toId(address(this))] = state_;
   }
 
   function create(Order calldata order) external returns (State) {
@@ -59,7 +61,7 @@ contract MockFundState is IFund {
   }
 
   function state(Order calldata order) external view returns (State) {
-    return _stateById[Id.unwrap(order.toId(address(this)))];
+    return _stateById[order.toId(address(this))];
   }
 
   function asset() external view returns (address) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {State, Id} from "./Order.sol";
+import {State} from "./Order.sol";
 
 /// @title LibErrors
 /// @author 3F Protocol
@@ -22,7 +22,7 @@ library LibErrors {
 
   /// @notice Thrown when the order Id does not match the current one.
   /// @param orderId The invalid order Id.
-  error InvalidOrder(Id orderId);
+  error InvalidOrder(bytes32 orderId);
 
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();

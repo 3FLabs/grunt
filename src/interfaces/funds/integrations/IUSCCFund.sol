@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IFund} from "../IFund.sol";
-import {Order, Id, Mode} from "../../../libs/funds/Order.sol";
+import {Order, Mode} from "../../../libs/funds/Order.sol";
 
 /// @title IUSCCFund
 /// @author 3F Protocol
@@ -21,38 +21,38 @@ interface IUSCCFund is IFund {
   /// @param input The input amount for the order.
   /// @param output The expected output amount for the order.
   event OrderCreated(
-    Id indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
+    bytes32 indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
   );
 
   /// @notice Emitted when an order is committed and assets are transferred.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount committed.
-  event OrderCommitted(Id indexed orderId, Mode mode, uint256 amount);
+  event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
 
   /// @notice Emitted when an order is recovered and funds are returned.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount recovered.
   /// @param receiver The address receiving the recovered funds.
-  event OrderRecovered(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+  event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
   /// @notice Emitted when an order is unlocked and completed successfully.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount unlocked.
   /// @param receiver The address receiving the unlocked funds.
-  event OrderUnlocked(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+  event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
   /// @notice Emitted when an order is canceled before commitment.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param owner The owner of the canceled order.
-  event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
+  event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
 
   /// @notice Emitted when the internal state is manually set to RECOVERING.
   /// @param orderId The unique identifier of the order being recovered.
-  event OrderRecovering(Id indexed orderId);
+  event OrderRecovering(bytes32 indexed orderId);
 
   /// @notice Emitted when the oracle address is updated.
   /// @param newOracle The new oracle address.
@@ -66,7 +66,7 @@ interface IUSCCFund is IFund {
   /// @param newOutput The new output amount set by the operator.
   /// @param operator The address that resolved the order.
   event OrderResolved(
-    Id indexed orderId, Id indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
+    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
   );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

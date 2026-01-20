@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Order, Mode, Id} from "../../../libs/funds/Order.sol";
+import {Order, Mode} from "../../../libs/funds/Order.sol";
 
 /// @title IFacilityFunds
 /// @author 3F Protocol
@@ -14,7 +14,17 @@ interface IFacilityFunds {
   /// @notice Emitted when a fund order is being created.
   /// @param id The intent ID.
   /// @param orderId The order ID.
-  event CreatingOrder(uint256 indexed id, Id orderId);
+  event CreatingOrder(uint256 indexed id, bytes32 orderId);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns the current fund order for an intent, if any.
+  /// @param id The intent ID.
+  /// @return order The current order for the intent.
+  /// @return orderId The order ID.
+  function getOrder(uint256 id) external view returns (Order memory order, bytes32 orderId);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        FUND OPERATIONS                     */
