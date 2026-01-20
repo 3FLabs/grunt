@@ -55,6 +55,8 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     _asset.safeApproveWithRetry(_request, amount);
     // repaying the request
     IRequestInteractions(_request).repay(amount);
+    // reset approval to 0
+    _asset.safeApproveWithRetry(_request, 0);
 
     // commit snapshot to record the balance change
     _intent.commitBalanceSnapshot(id, snapshot, _request);

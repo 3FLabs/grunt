@@ -52,6 +52,11 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     // deposit the collateral and borrow the debt
     IPositionManager(_positionManager).deposit(depositAmount, borrowAmount);
 
+    if (depositAmount > 0) {
+      // reset approval to 0
+      _collateralAsset.safeApproveWithRetry(_positionManager, 0);
+    }
+
     // commit snapshots to record the balance changes
     _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
   }
@@ -83,6 +88,11 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
 
     // repay the debt and withdraw the collateral
     IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount);
+
+    if (repayAmount > 0) {
+      // reset approval to 0
+      _debtAsset.safeApproveWithRetry(_positionManager, 0);
+    }
 
     // commit snapshots to record the balance changes
     _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
