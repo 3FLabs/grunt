@@ -16,7 +16,7 @@ struct FeeData {
 }
 
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
-/// @dev Uses ERC-7201 namespaced storage pattern at slot `keccak256("grunt.storage.position.manager") - 1`
+/// @dev Uses ERC-7201 namespaced storage pattern at slot `keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))`
 ///      for upgradeability. Fields are ordered to minimize storage slots.
 /// @param feeData Fee configuration containing recipient address, management fee, and performance fee rates.
 /// @param supplyQueue Ordered list of supply positions where assets are deposited.
