@@ -6,7 +6,7 @@ import {FacilityRoles} from "./FacilityRoles.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IFacilityFunds} from "src/interfaces/facility/base/IFacilityFunds.sol";
 import {IFund} from "src/interfaces/funds/IFund.sol";
-import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
+import {LibIntent, Intent, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
@@ -88,11 +88,15 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
     address _fund = _intent.fund;
     address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_fund).asset() : IFund(_fund).share();
 
+    // take snapshot before the operation
+    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_tokenIn);
+
     // commit the funds
     _tokenIn.safeApproveWithRetry(_fund, _order.input);
     IFund(_fund).commit(_order);
-    // remove tokens from intent (since this is non reentrant, we can call this after sending the funds)
-    _intent.transferredTokenTo(id, _tokenIn, _fund, _order.input);
+
+    // commit snapshot to record the balance change
+    _intent.commitBalanceSnapshot(id, snapshot, _fund);
   }
 
   /// @inheritdoc IFacilityFunds
@@ -107,14 +111,17 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     Order memory _order = _intent.order;
     address _fund = _intent.fund;
-
-    // unlock the funds
-    (State _state, uint256 _unlockedAmount) = IFund(_fund).unlock(_order);
     // If this is the deposit, an unlock gives shares, otherwise it gives assets
     address _tokenOut = _order.mode == Mode.DEPOSIT ? IFund(_fund).share() : IFund(_fund).asset();
 
-    // add tokens to intent
-    _intent.receivedTokenFrom(id, _tokenOut, _fund, _unlockedAmount);
+    // take snapshot before the operation
+    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_tokenOut);
+
+    // unlock the funds
+    (State _state,) = IFund(_fund).unlock(_order);
+
+    // commit snapshot to record the balance change
+    _intent.commitBalanceSnapshot(id, snapshot, _fund);
 
     if (_state == State.ENDED) {
       // if the order is ended, delete the order
@@ -134,14 +141,17 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     Order memory _order = _intent.order;
     address _fund = _intent.fund;
-
-    // recover the funds
-    (State _state, uint256 _recoveredAmount) = IFund(_fund).recover(_order);
     // If this is the deposit, a recover gives assets back, otherwise it gives shares back
     address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_fund).asset() : IFund(_fund).share();
 
-    // add tokens to intent
-    _intent.receivedTokenFrom(id, _tokenIn, _fund, _recoveredAmount);
+    // take snapshot before the operation
+    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_tokenIn);
+
+    // recover the funds
+    (State _state,) = IFund(_fund).recover(_order);
+
+    // commit snapshot to record the balance change
+    _intent.commitBalanceSnapshot(id, snapshot, _fund);
 
     if (_state == State.ENDED) {
       // if the order is ended, delete the order
