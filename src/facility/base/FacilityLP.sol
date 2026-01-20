@@ -32,6 +32,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      Reverts if the deposit would exceed the intent's deposit cap.
   function deposit(uint256 id, uint256 amount) external override nonReentrant {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     // ensure we do not exceed the deposit cap
@@ -49,6 +50,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
   function withdraw(uint256 id, address from, address receiver, uint256 amount) external override nonReentrant {
+    LibStorage.checkNotPaused();
     // if amount is 0, return early
     if (amount == 0) return;
 
@@ -71,6 +73,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     nonReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
+    LibStorage.checkNotPaused();
     // if shares is 0, return early with empty arrays
     if (shares == 0) return (new address[](0), new uint256[](0));
 

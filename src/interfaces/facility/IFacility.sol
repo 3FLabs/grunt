@@ -23,6 +23,10 @@ interface IFacility is
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Emitted when the facility pause state is updated.
+  /// @param pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent).
+  event FacilityPausedSet(uint40 pausedUntil);
+
   /// @notice Emitted when the intent descriptor is updated.
   /// @param descriptor The new descriptor address.
   event DescriptorSet(address descriptor);
@@ -45,6 +49,11 @@ interface IFacility is
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Returns the pause state of the facility.
+  /// @return isPaused True if paused, false otherwise.
+  /// @return pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent).
+  function paused() external view returns (bool isPaused, uint40 pausedUntil);
+
   /// @notice Returns all tokens and their balances held by an intent.
   /// @dev Useful for displaying intent holdings and calculating claim previews.
   ///      The tokens and amounts arrays are parallel (same length, same order).
@@ -60,4 +69,14 @@ interface IFacility is
   /// @notice Sets a new intent descriptor address.
   /// @param descriptor The new descriptor address.
   function setDescriptor(address descriptor) external;
+
+  /// @notice Pauses the facility indefinitely.
+  function pause() external;
+
+  /// @notice Pauses the facility for a specified duration.
+  /// @param duration The duration to pause for (in seconds).
+  function pauseFor(uint256 duration) external;
+
+  /// @notice Unpauses the facility.
+  function unpause() external;
 }

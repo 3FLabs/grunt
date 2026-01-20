@@ -35,6 +35,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
+    LibStorage.checkNotPaused();
     // getting the initial parameters
     (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
       _intialPmParameters(id, useTarget);
@@ -66,6 +67,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
+    LibStorage.checkNotPaused();
     // getting the initial parameters
     (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
       _intialPmParameters(id, useTarget);
@@ -97,6 +99,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
+    LibStorage.checkNotPaused();
     // getting the initial parameters
     (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
       _intialPmParameters(id, useTarget);

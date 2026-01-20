@@ -5,6 +5,9 @@ pragma solidity ^0.8.20;
 /// @author 3F Protocol
 /// @notice Error definitions for the Facility contract.
 library LibErrors {
+  /// @notice Thrown when the facility is paused.
+  error Paused();
+
   /// @notice Thrown when the intent is already resolving.
   /// @param id The intent ID.
   error AlreadyResolving(uint256 id);

@@ -34,6 +34,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
     nonReentrant
     returns (Order memory order)
   {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // checks that the intent has a fund
@@ -63,6 +64,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   /// @dev Cancels the current fund order for the intent.
   ///      The intent must have an active order.
   function cancel(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // ensure the intent has an active order
@@ -78,6 +80,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   ///      Transfers the input tokens to the fund and calls commit on it.
   ///      The intent must have an active order.
   function commit(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // ensure the intent has an active order
@@ -100,6 +103,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   ///      Receives the output tokens from the fund after successful processing.
   ///      Deletes the order if the state reaches ENDED.
   function unlock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // ensure the intent has an active order
@@ -127,6 +131,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   ///      Receives the input tokens back from the fund.
   ///      Deletes the order if the state reaches ENDED.
   function recover(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // ensure the intent has an active order

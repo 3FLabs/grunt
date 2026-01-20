@@ -13,4 +13,7 @@ abstract contract FacilityRoles is OwnableRoles {
 
   /// @notice Role for addresses authorized to sign swaps as guardians.
   uint256 internal constant GUARDIAN_ROLE = _ROLE_1;
+
+  /// @notice Role for addresses authorized to pause/unpause the facility.
+  uint256 internal constant PAUSER_ROLE = _ROLE_2;
 }
