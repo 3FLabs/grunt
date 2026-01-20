@@ -15,7 +15,6 @@ import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Interface.sol";
 import {Order, State, Id, Mode} from "../libs/funds/Order.sol";
 import {LibErrors} from "../libs/funds/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../libs/common/LibErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 
 /// @title USCCFund

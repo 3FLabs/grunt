@@ -6,7 +6,6 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
-import {LibErrors} from "../libs/funds/LibErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 
 /// @title WrappedAsset

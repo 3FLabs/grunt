@@ -9,7 +9,6 @@ import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/i
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
 import {LibErrors} from "../libs/borrow/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../libs/common/LibErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
 import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
