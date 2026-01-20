@@ -507,6 +507,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.assume(randomPosition != address(borrowPosition1));
     vm.assume(randomPosition != address(borrowPosition2));
     vm.assume(randomPosition != address(0));
+    vm.assume(randomPosition != address(0xfbb67fda52d4bfb8bf)); // zero sentinel (from EnumerableSetLib)
 
     // Try to supply to the random position
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);

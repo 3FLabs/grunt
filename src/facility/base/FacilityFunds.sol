@@ -9,7 +9,7 @@ import {IFund} from "src/interfaces/funds/IFund.sol";
 import {LibIntent, Intent, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {Order, Mode, State} from "src/libs/funds/Order.sol";
+import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 
 /// @title FacilityFunds
 /// @author 3F Protocol
@@ -19,6 +19,18 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
   using SafeTransferLib for address;
+  using LibOrder for Order;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IFacilityFunds
+  function getOrder(uint256 id) external view override returns (Order memory order, bytes32 orderId) {
+    Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
+    order = _intent.order;
+    orderId = order.toId(_intent.fund);
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        FUND OPERATIONS                     */
@@ -45,11 +57,11 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     // create order with a block/id unique salt
     order = Order({
+      mode: mode,
       owner: address(this),
       receiver: address(this),
       input: amount,
       output: minAmountOut,
-      mode: mode,
       salt: keccak256(abi.encode(address(this), block.timestamp, id))
     });
     emit CreatingOrder(id, order.toId(_fund));

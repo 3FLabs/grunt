@@ -13,7 +13,7 @@ import {IAllowlist} from "../interfaces/integrations/superstate/IAllowlist.sol";
 import {IFund} from "../interfaces/funds/IFund.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Interface.sol";
-import {Order, State, Id, Mode} from "../libs/funds/Order.sol";
+import {Order, State, Mode, LibOrder} from "../libs/funds/Order.sol";
 import {LibErrors} from "../libs/funds/LibErrors.sol";
 import {LibErrors as CommonErrors} from "../libs/common/LibErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
@@ -35,6 +35,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeCastLib for int256;
   using LibChecks for address;
   using LibChecks for uint256;
+  using LibOrder for Order;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -98,38 +99,38 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param input The input amount for the order.
   /// @param output The expected output amount for the order.
   event OrderCreated(
-    Id indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
+    bytes32 indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
   );
 
   /// @notice Emitted when an order is committed and assets are transferred.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount committed.
-  event OrderCommitted(Id indexed orderId, Mode mode, uint256 amount);
+  event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
 
   /// @notice Emitted when an order is recovered and funds are returned.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount recovered.
   /// @param receiver The address receiving the recovered funds.
-  event OrderRecovered(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+  event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
   /// @notice Emitted when an order is unlocked and completed successfully.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount unlocked.
   /// @param receiver The address receiving the unlocked funds.
-  event OrderUnlocked(Id indexed orderId, Mode mode, uint256 amount, address indexed receiver);
+  event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
   /// @notice Emitted when an order is canceled before commitment.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param owner The owner of the canceled order.
-  event OrderCanceled(Id indexed orderId, Mode mode, address indexed owner);
+  event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
 
   /// @notice Emitted when the internal state is manually set to RECOVERING.
   /// @param orderId The unique identifier of the order being recovered.
-  event OrderRecovering(Id indexed orderId);
+  event OrderRecovering(bytes32 indexed orderId);
 
   /// @notice Emitted when the oracle address is updated.
   /// @param newOracle The new oracle address.
@@ -143,7 +144,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param newOutput The new output amount set by the operator.
   /// @param operator The address that resolved the order.
   event OrderResolved(
-    Id indexed orderId, Id indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
+    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
   );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -164,13 +165,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///                    (since we only handle one at a time).
   struct UsccFundStorage {
     address recipient;
-    Id currentOrderId;
+    bytes32 currentOrderId;
     Order currentOrder;
     State internalState;
     address oracle;
     uint256 cachedBalance;
     Order resolvedOrder;
-    mapping(Id => bool) endedOrders;
+    mapping(bytes32 => bool) endedOrders;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -244,7 +245,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     // No pending state, always accepted or revert.
-    Id _orderId = order.toId(address(this));
+    bytes32 _orderId = order.toId(address(this));
     _storage.currentOrderId = _orderId;
     _storage.currentOrder = order;
     _storage.internalState = State.ACCEPTED;
@@ -261,16 +262,16 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert LibErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
-    Id _currentOrderId = _storage.currentOrderId;
-    Id _orderId = order.toId(address(this));
-    if (!_orderId.eq(_currentOrderId)) revert LibErrors.InvalidOrder(_orderId);
+    bytes32 _currentOrderId = _storage.currentOrderId;
+    bytes32 _orderId = order.toId(address(this));
+    if (_orderId != _currentOrderId) revert LibErrors.InvalidOrder(_orderId);
 
     State _internalState = _storage.internalState;
     if (_internalState != State.ACCEPTED && _internalState != State.PENDING) {
       revert LibErrors.InvalidState(_internalState);
     }
 
-    _storage.currentOrderId = Id.wrap(bytes32(0));
+    _storage.currentOrderId = bytes32(0);
     delete _storage.currentOrder;
     delete _storage.resolvedOrder;
     _storage.internalState = State.EMPTY;
@@ -287,8 +288,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert LibErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
-    Id _currentOrderId = _storage.currentOrderId;
-    if (!order.toId(address(this)).eq(_currentOrderId)) revert LibErrors.InvalidOrder(order.toId(address(this)));
+    bytes32 _currentOrderId = _storage.currentOrderId;
+    if (order.toId(address(this)) != _currentOrderId) revert LibErrors.InvalidOrder(order.toId(address(this)));
     if (_storage.internalState != State.ACCEPTED) revert LibErrors.InvalidState(_storage.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
@@ -317,8 +318,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert LibErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
-    Id _currentOrderId = _storage.currentOrderId;
-    if (!order.toId(address(this)).eq(_currentOrderId)) revert LibErrors.InvalidOrder(order.toId(address(this)));
+    bytes32 _currentOrderId = _storage.currentOrderId;
+    if (order.toId(address(this)) != _currentOrderId) revert LibErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.RECOVERING) revert LibErrors.InvalidState(_storage.internalState);
@@ -345,8 +346,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert LibErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
-    Id _currentOrderId = _storage.currentOrderId;
-    if (!order.toId(address(this)).eq(_currentOrderId)) revert LibErrors.InvalidOrder(order.toId(address(this)));
+    bytes32 _currentOrderId = _storage.currentOrderId;
+    if (order.toId(address(this)) != _currentOrderId) revert LibErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.UNLOCKING) revert LibErrors.InvalidState(_storage.internalState);
@@ -421,7 +422,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) {
       revert LibErrors.InvalidState(_storage.internalState);
     }
-    if (!order.toId(address(this)).eq(_storage.currentOrderId)) {
+    if (order.toId(address(this)) != _storage.currentOrderId) {
       revert LibErrors.InvalidOrder(order.toId(address(this)));
     }
 
@@ -507,7 +508,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage _storage = _usccFundStorage();
-    Id _orderId = order.toId(address(this));
+    bytes32 _orderId = order.toId(address(this));
 
     // Return ENDED for archived orders
     if (_storage.endedOrders[_orderId]) {
@@ -515,7 +516,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     // Return EMPTY to indicate this order doesn't exist
-    if (!_orderId.eq(_storage.currentOrderId)) {
+    if (_orderId != _storage.currentOrderId) {
       return (State.EMPTY, 0);
     }
 
