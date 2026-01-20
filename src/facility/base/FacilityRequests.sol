@@ -28,7 +28,6 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
   /// @dev Pulls funds from the request contract associated with the intent.
   ///      The intent must be in resolving state and have a request configured.
   function pull(uint256 id, uint256 amount) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
-    LibStorage.checkNotPaused();
     // getting the initial request parameters
     (Intent storage _intent, address _request, address _asset) = _initialRequestParameters(id);
 
@@ -43,7 +42,6 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
   /// @dev Repays funds to the request contract associated with the intent.
   ///      The intent must be in resolving state and have a request configured.
   function repay(uint256 id, uint256 amount) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
-    LibStorage.checkNotPaused();
     // getting the initial request parameters
     (Intent storage _intent, address _request, address _asset) = _initialRequestParameters(id);
 
@@ -72,6 +70,8 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     view
     returns (Intent storage _intent, address request, address asset)
   {
+    // check if the facility is paused
+    LibStorage.checkNotPaused();
     // getting the intent
     _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 

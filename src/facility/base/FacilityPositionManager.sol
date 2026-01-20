@@ -35,7 +35,6 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
-    LibStorage.checkNotPaused();
     // getting the initial parameters
     (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
       _intialPmParameters(id, useTarget);
@@ -67,7 +66,6 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
-    LibStorage.checkNotPaused();
     // getting the initial parameters
     (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
       _intialPmParameters(id, useTarget);
@@ -99,7 +97,6 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
-    LibStorage.checkNotPaused();
     // getting the initial parameters
     (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
       _intialPmParameters(id, useTarget);
@@ -145,6 +142,9 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     view
     returns (Intent storage _intent, address positionManager, address collateralAsset, address debtAsset)
   {
+    // check if the facility is paused
+    LibStorage.checkNotPaused();
+    // getting the resolving intent
     _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // getting the selected asset (simple ternary since we read from storage)
