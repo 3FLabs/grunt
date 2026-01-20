@@ -3,12 +3,11 @@ pragma solidity ^0.8.20;
 
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {FacilityRoles} from "./FacilityRoles.sol";
 
 import {IFacilityPositionManager} from "src/interfaces/facility/base/IFacilityPositionManager.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
-import {LibIntent, Intent, Asset} from "src/libs/facility/LibIntent.sol";
+import {LibIntent, Intent, Asset, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 
@@ -20,7 +19,6 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   using SafeTransferLib for address;
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
-  using SafeCastLib for int256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 POSITION MANAGER OPERATIONS                */
@@ -36,25 +34,31 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     onlyRoles(FACILITATOR_ROLE)
   {
     // getting the initial parameters
-    (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
-      _intialPmParameters(id, useTarget);
+    (
+      Intent storage _intent,
+      address _positionManager,
+      address _collateralAsset,
+      address _debtAsset,
+      BalanceSnapshot memory collateralSnapshot,
+      BalanceSnapshot memory debtSnapshot,
+      BalanceSnapshot memory sharesSnapshot
+    ) = _intialPmParameters(id, useTarget);
 
     if (depositAmount > 0) {
-      // if we have non null collateral, transfer it to the position manager
-      _intent.transferredTokenTo(id, _collateralAsset, _positionManager, depositAmount);
+      // if we have non null collateral, approve the position manager to pull it
       _collateralAsset.safeApproveWithRetry(_positionManager, depositAmount);
     }
 
     // deposit the collateral and borrow the debt
-    int256 shares = IPositionManager(_positionManager).deposit(depositAmount, borrowAmount);
+    IPositionManager(_positionManager).deposit(depositAmount, borrowAmount);
 
-    if (borrowAmount > 0) {
-      // if we have non null debt, mark it as received from the position manager
-      _intent.receivedTokenFrom(id, _debtAsset, _positionManager, borrowAmount);
+    if (depositAmount > 0) {
+      // reset approval to 0
+      _collateralAsset.safeApproveWithRetry(_positionManager, 0);
     }
 
-    // handle the shares change
-    _handleSharesChange(_intent, id, _positionManager, shares);
+    // commit snapshots to record the balance changes
+    _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
   }
 
   /// @inheritdoc IFacilityPositionManager
@@ -67,25 +71,31 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     onlyRoles(FACILITATOR_ROLE)
   {
     // getting the initial parameters
-    (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
-      _intialPmParameters(id, useTarget);
+    (
+      Intent storage _intent,
+      address _positionManager,
+      address _collateralAsset,
+      address _debtAsset,
+      BalanceSnapshot memory collateralSnapshot,
+      BalanceSnapshot memory debtSnapshot,
+      BalanceSnapshot memory sharesSnapshot
+    ) = _intialPmParameters(id, useTarget);
 
     if (repayAmount > 0) {
-      // if we have non null debt, transfer it to the position manager
-      _intent.transferredTokenTo(id, _debtAsset, _positionManager, repayAmount);
+      // if we have non null debt, approve the position manager to pull it
       _debtAsset.safeApproveWithRetry(_positionManager, repayAmount);
     }
 
     // repay the debt and withdraw the collateral
-    int256 shares = IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount);
+    IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount);
 
-    if (withdrawAmount > 0) {
-      // if we have non null collateral, mark it as received from the position manager
-      _intent.receivedTokenFrom(id, _collateralAsset, _positionManager, withdrawAmount);
+    if (repayAmount > 0) {
+      // reset approval to 0
+      _debtAsset.safeApproveWithRetry(_positionManager, 0);
     }
 
-    // handle the shares change
-    _handleSharesChange(_intent, id, _positionManager, shares);
+    // commit snapshots to record the balance changes
+    _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
   }
 
   /// @inheritdoc IFacilityPositionManager
@@ -98,27 +108,24 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     onlyRoles(FACILITATOR_ROLE)
   {
     // getting the initial parameters
-    (Intent storage _intent, address _positionManager, address _collateralAsset, address _debtAsset) =
-      _intialPmParameters(id, useTarget);
+    (
+      Intent storage _intent,
+      address _positionManager,
+      address _collateralAsset,
+      address _debtAsset,
+      BalanceSnapshot memory collateralSnapshot,
+      BalanceSnapshot memory debtSnapshot,
+      BalanceSnapshot memory sharesSnapshot
+    ) = _intialPmParameters(id, useTarget);
 
     // give infinite approval of the debt asset to the position manager
     _debtAsset.safeApproveWithRetry(_positionManager, type(uint256).max);
 
     // burn the shares by sending debt to the position manager and receiving collateral back
-    (uint256 collateral, uint256 debt) = IPositionManager(_positionManager).burn(shares);
+    IPositionManager(_positionManager).burn(shares);
 
-    // marked the shares as burned (safe to call after burn since we are non reentrant)
-    _intent.transferredTokenTo(id, _positionManager, address(0), shares);
-
-    if (debt > 0) {
-      // if we have non null debt, transfer it to the position manager (reverts if not enough debt)
-      _intent.transferredTokenTo(id, _debtAsset, _positionManager, debt);
-    }
-
-    if (collateral > 0) {
-      // if we have non null collateral, mark it as received from the position manager
-      _intent.receivedTokenFrom(id, _collateralAsset, _positionManager, collateral);
-    }
+    // commit snapshots to record the balance changes
+    _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
 
     // reset approval of the debt asset to the position manager to 0
     _debtAsset.safeApproveWithRetry(_positionManager, 0);
@@ -137,10 +144,21 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @return positionManager Address of the position manager contract.
   /// @return collateralAsset Address of the collateral asset handled by the position manager.
   /// @return debtAsset Address of the debt asset handled by the position manager.
+  /// @return collateralSnapshot Snapshot of the collateral asset balance before the operation.
+  /// @return debtSnapshot Snapshot of the debt asset balance before the operation.
+  /// @return sharesSnapshot Snapshot of the shares balance before the operation.
   function _intialPmParameters(uint256 id, bool useTarget)
     private
     view
-    returns (Intent storage _intent, address positionManager, address collateralAsset, address debtAsset)
+    returns (
+      Intent storage _intent,
+      address positionManager,
+      address collateralAsset,
+      address debtAsset,
+      BalanceSnapshot memory collateralSnapshot,
+      BalanceSnapshot memory debtSnapshot,
+      BalanceSnapshot memory sharesSnapshot
+    )
   {
     _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
@@ -153,21 +171,32 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     positionManager = _selected.asset;
     // get the position manager assets
     (collateralAsset, debtAsset) = IPositionManager(positionManager).assets();
+
+    // take snapshots before the operation
+    collateralSnapshot = LibIntent.takeBalanceSnapshot(collateralAsset);
+    debtSnapshot = LibIntent.takeBalanceSnapshot(debtAsset);
+    sharesSnapshot = LibIntent.takeBalanceSnapshot(positionManager);
   }
 
-  /// @notice Handles an update in shares for a position manager, recording the transfer in the intent.
-  /// @dev Mints shares if positive, burns shares if negative, and calls appropriate intent functions to record.
-  /// @param _intent Storage pointer to the current intent struct.
+  /// @notice Commits all balance snapshots after a position manager operation.
+  /// @dev Records balance changes for collateral, debt, and shares by comparing
+  ///      pre-operation snapshots with current balances.
+  /// @param _intent Storage pointer to the intent struct.
   /// @param id The intent id.
-  /// @param positionManager Address of the position manager.
-  /// @param shares The signed change in shares (positive for mint, negative for burn).
-  function _handleSharesChange(Intent storage _intent, uint256 id, address positionManager, int256 shares) private {
-    if (shares > 0) {
-      // if shares are positive, mark them as received from address(0) (since we are minting shares)
-      _intent.receivedTokenFrom(id, positionManager, address(0), shares.toUint256());
-    } else if (shares < 0) {
-      // if shares are negative, mark them as transferred to address(0) (since we are burning shares)
-      _intent.transferredTokenTo(id, positionManager, address(0), (-shares).toUint256());
-    }
+  /// @param collateralSnapshot Snapshot of the collateral asset balance before the operation.
+  /// @param debtSnapshot Snapshot of the debt asset balance before the operation.
+  /// @param sharesSnapshot Snapshot of the shares balance before the operation.
+  /// @param positionManager Address of the position manager (counterparty for collateral/debt events).
+  function _commitSnapshots(
+    Intent storage _intent,
+    uint256 id,
+    BalanceSnapshot memory collateralSnapshot,
+    BalanceSnapshot memory debtSnapshot,
+    BalanceSnapshot memory sharesSnapshot,
+    address positionManager
+  ) private {
+    _intent.commitBalanceSnapshot(id, collateralSnapshot, positionManager);
+    _intent.commitBalanceSnapshot(id, debtSnapshot, positionManager);
+    _intent.commitBalanceSnapshot(id, sharesSnapshot, address(0));
   }
 }
