@@ -160,6 +160,9 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory sharesSnapshot
     )
   {
+    // check if the facility is paused
+    LibStorage.checkNotPaused();
+    // getting the resolving intent
     _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // getting the selected asset (simple ternary since we read from storage)

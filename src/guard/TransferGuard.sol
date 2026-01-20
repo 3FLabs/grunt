@@ -1,27 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
+import {ITransferGuard, AddressStatus} from "../interfaces/guard/ITransferGuard.sol";
+import {LibPause} from "../libs/common/LibPause.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-
-/// @notice Status of an address in the transfer guard.
-/// @dev NONE must be 0 so unset mappings default to the token's mode behavior.
-enum AddressStatus {
-  /// @notice Not explicitly set - behavior depends on token mode (blocklist vs whitelist).
-  NONE,
-  /// @notice Explicitly whitelisted - allowed in whitelist mode, also allowed in blocklist mode.
-  WHITELIST,
-  /// @notice Explicitly blocklisted - blocked in both modes.
-  BLOCKLIST
-}
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @notice Per-token configuration packed into a single storage slot.
-/// @param paused Whether transfers are paused for this token.
+/// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
 /// @param whitelist If true, token uses whitelist mode (only WHITELIST allowed). If false, blocklist mode (only BLOCKLIST blocked).
-/// @dev Layout: paused (8 bits) + whitelist (8 bits) = 16 bits (fits in single slot)
+/// @dev Layout: pausedUntil (40 bits) + whitelist (8 bits) = 48 bits (fits in single slot)
 struct TokenConfig {
-  bool paused;
+  uint40 pausedUntil;
   bool whitelist;
 }
 
@@ -52,6 +43,9 @@ struct TokenConfig {
 ///      - COMPLIANCE_ROLE: Manage address statuses
 ///      - PAUSER_ROLE: Pause/unpause tokens
 contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
+  using LibPause for uint40;
+  using FixedPointMathLib for bool;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -91,8 +85,8 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   function canTransfer(address token, address from, address to, uint256 amount) external view returns (bool) {
     TokenConfig memory config = tokenConfig[token];
 
-    // Check pause status
-    if (config.paused) return false;
+    // Check pause status using LibPause
+    if (config.pausedUntil.paused()) return false;
 
     // Check sender (skip for mints)
     if (from != address(0) && !_isAllowed(from, config.whitelist)) {
@@ -109,7 +103,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @inheritdoc ITransferGuard
   function paused(address token) external view returns (bool) {
-    return tokenConfig[token].paused;
+    return tokenConfig[token].pausedUntil.paused();
   }
 
   /// @notice Returns whether a token is in whitelist mode.
@@ -155,7 +149,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param status The new status
   function setAddressStatus(address account, AddressStatus status) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
     addressStatus[account] = status;
-    emit AddressStatusSet(account, uint8(status));
+    emit AddressStatusSet(account, status);
   }
 
   /// @notice Batch update address statuses.
@@ -167,7 +161,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   {
     for (uint256 i = 0; i < accounts.length; ++i) {
       addressStatus[accounts[i]] = status;
-      emit AddressStatusSet(accounts[i], uint8(status));
+      emit AddressStatusSet(accounts[i], status);
     }
   }
 
@@ -175,18 +169,27 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*                      PAUSE FUNCTIONS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Pauses all transfers for a token.
+  /// @notice Pauses all transfers for a token indefinitely.
   /// @param token The token to pause
   function pause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
-    tokenConfig[token].paused = true;
-    emit TokenPaused(token);
+    tokenConfig[token].pausedUntil = LibPause.PERMANENT_PAUSE;
+    emit TokenPausedSet(token, LibPause.PERMANENT_PAUSE);
+  }
+
+  /// @notice Pauses all transfers for a token for a specified duration.
+  /// @param token The token to pause
+  /// @param duration The duration to pause for (in seconds)
+  function pauseFor(address token, uint256 duration) external onlyOwnerOrRoles(PAUSER_ROLE) {
+    uint40 pauseUntil = LibPause.pauseFor(duration);
+    tokenConfig[token].pausedUntil = pauseUntil;
+    emit TokenPausedSet(token, pauseUntil);
   }
 
   /// @notice Unpauses transfers for a token.
   /// @param token The token to unpause
   function unpause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
-    tokenConfig[token].paused = false;
-    emit TokenUnpaused(token);
+    tokenConfig[token].pausedUntil = LibPause.NOT_PAUSED;
+    emit TokenPausedSet(token, LibPause.NOT_PAUSED);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -195,10 +198,13 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @notice Sets the full configuration for a token.
   /// @param token The token to configure
-  /// @param paused_ Whether transfers should be paused
+  /// @param paused_ Whether transfers should be paused (true = permanent pause, false = not paused)
   /// @param whitelist_ Whether to use whitelist mode (true) or blocklist mode (false)
   function setTokenConfig(address token, bool paused_, bool whitelist_) external onlyOwner {
-    tokenConfig[token] = TokenConfig({paused: paused_, whitelist: whitelist_});
-    emit TokenConfigSet(token, paused_, whitelist_);
+    // converting to uint40 is safe because the result is less than 2^40
+    // forge-lint: disable-next-line(unsafe-typecast)
+    uint40 pausedUntil = uint40(paused_.ternary(LibPause.PERMANENT_PAUSE, LibPause.NOT_PAUSED));
+    tokenConfig[token] = TokenConfig({pausedUntil: pausedUntil, whitelist: whitelist_});
+    emit TokenConfigSet(token, pausedUntil, whitelist_);
   }
 }

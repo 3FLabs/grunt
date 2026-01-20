@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
+/// @notice Status of an address in the transfer guard.
+/// @dev NONE must be 0 so unset mappings default to the token's mode behavior.
+enum AddressStatus {
+  /// @notice Not explicitly set - behavior depends on token mode (blocklist vs whitelist).
+  NONE,
+  /// @notice Explicitly whitelisted - allowed in whitelist mode, also allowed in blocklist mode.
+  WHITELIST,
+  /// @notice Explicitly blocklisted - blocked in both modes.
+  BLOCKLIST
+}
+
 /// @title ITransferGuard
 /// @author 3F Protocol
 /// @notice Interface for transfer validation and pause functionality.
@@ -12,22 +23,19 @@ interface ITransferGuard {
 
   /// @notice Emitted when an address status is updated.
   /// @param account The address whose status was updated
-  /// @param status The new status (0=NONE, 1=WHITELIST, 2=BLOCKLIST)
-  event AddressStatusSet(address indexed account, uint8 status);
+  /// @param status The new status
+  event AddressStatusSet(address indexed account, AddressStatus status);
 
   /// @notice Emitted when a token's configuration is updated.
   /// @param token The token address
-  /// @param paused Whether the token is paused
+  /// @param pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent)
   /// @param whitelist Whether the token uses whitelist mode
-  event TokenConfigSet(address indexed token, bool paused, bool whitelist);
+  event TokenConfigSet(address indexed token, uint40 pausedUntil, bool whitelist);
 
-  /// @notice Emitted when a token is paused.
-  /// @param token The token that was paused
-  event TokenPaused(address indexed token);
-
-  /// @notice Emitted when a token is unpaused.
-  /// @param token The token that was unpaused
-  event TokenUnpaused(address indexed token);
+  /// @notice Emitted when a token's pause state is updated.
+  /// @param token The token address
+  /// @param pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent)
+  event TokenPausedSet(address indexed token, uint40 pausedUntil);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       VIEW FUNCTIONS                       */

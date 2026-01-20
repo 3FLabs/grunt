@@ -32,6 +32,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      Reverts if the deposit would exceed the intent's deposit cap.
   function deposit(uint256 id, uint256 amount) external override nonReentrant {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     // ensure we do not exceed the deposit cap
@@ -105,6 +106,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   /// @param from The address to withdraw from.
   /// @param amount The amount to withdraw.
   function _withdrawalLpChecks(uint256 id, address from, uint256 amount) internal {
+    LibStorage.checkNotPaused();
     // check operator if from is not msg.sender
     if (from != msg.sender && !isOperator(from, msg.sender)) revert InsufficientPermission();
     // check if the user has enough balance

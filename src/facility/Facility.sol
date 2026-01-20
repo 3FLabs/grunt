@@ -22,6 +22,7 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {LibChecks} from "src/libs/common/LibChecks.sol";
+import {LibPause} from "src/libs/common/LibPause.sol";
 
 /// @title Facility
 /// @author 3F Protocol
@@ -42,6 +43,7 @@ contract Facility is
   using LibIntent for Intent;
   using LibChecks for address;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
+  using LibPause for uint40;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -63,6 +65,12 @@ contract Facility is
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IFacility
+  function paused() external view override returns (bool isPaused, uint40 pausedUntil) {
+    pausedUntil = LibStorage.facilityStorage().pausedUntil;
+    isPaused = pausedUntil.paused();
+  }
 
   /// @inheritdoc IFacility
   function intentBalances(uint256 id)
@@ -95,6 +103,29 @@ contract Facility is
     descriptor_.checkContract();
     LibStorage.facilityStorage().descriptor = IIntentDescriptor(descriptor_);
     emit DescriptorSet(descriptor_);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          PAUSE                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IFacility
+  function pause() external override onlyOwnerOrRoles(PAUSER_ROLE) {
+    LibStorage.facilityStorage().pausedUntil = LibPause.PERMANENT_PAUSE;
+    emit FacilityPausedSet(LibPause.PERMANENT_PAUSE);
+  }
+
+  /// @inheritdoc IFacility
+  function pauseFor(uint256 duration) external override onlyOwnerOrRoles(PAUSER_ROLE) {
+    uint40 pauseUntil = LibPause.pauseFor(duration);
+    LibStorage.facilityStorage().pausedUntil = pauseUntil;
+    emit FacilityPausedSet(pauseUntil);
+  }
+
+  /// @inheritdoc IFacility
+  function unpause() external override onlyOwnerOrRoles(PAUSER_ROLE) {
+    LibStorage.facilityStorage().pausedUntil = LibPause.NOT_PAUSED;
+    emit FacilityPausedSet(LibPause.NOT_PAUSED);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -131,6 +162,7 @@ contract Facility is
 
   /// @dev Hook called before any token transfer. Handles transfer guards and total supply tracking.
   function _beforeTokenTransfer(address from, address to, uint256 id, uint256 amount) internal override {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
 
     if (from != address(0) && to != address(0) && !_intent.properties.transferableIntent) {

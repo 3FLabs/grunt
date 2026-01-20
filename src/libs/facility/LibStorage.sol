@@ -5,6 +5,7 @@ import {Intent, LibIntent, Asset} from "./LibIntent.sol";
 import {IIntentDescriptor} from "../../interfaces/facility/IIntentDescriptor.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 import {LibErrors} from "./LibErrors.sol";
+import {LibPause} from "../common/LibPause.sol";
 
 /// @notice Storage struct containing all persistent state for the Facility contract.
 /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
@@ -15,6 +16,7 @@ import {LibErrors} from "./LibErrors.sol";
 /// @param usedSwapDigests Mapping of used swap digests to prevent replay attacks.
 /// @param fundsIntent Mapping from fund address to intent ID.
 /// @param requestsIntent Mapping from request address to intent ID.
+/// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
 struct FacilityStorageData {
   mapping(uint256 => Intent) intents;
   IIntentDescriptor descriptor;
@@ -22,6 +24,7 @@ struct FacilityStorageData {
   mapping(bytes32 => bool) usedSwapDigests;
   mapping(address => uint256) fundsIntent;
   mapping(address => uint256) requestsIntent;
+  uint40 pausedUntil;
 }
 
 /// @title LibStorage
@@ -30,6 +33,7 @@ struct FacilityStorageData {
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibStorage {
   using LibIntent for Intent;
+  using LibPause for uint40;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       STORAGE ACCESS                       */
@@ -140,6 +144,11 @@ library LibStorage {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         VALIDATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Checks if the facility is paused. Reverts with `Paused` error if paused.
+  function checkNotPaused() internal view {
+    if (facilityStorage().pausedUntil.paused()) revert LibErrors.Paused();
+  }
 
   /// @dev Checks if a digest has been used and marks it as used. Reverts if already used.
   ///      Sets the digest as used in the mapping if not already used.

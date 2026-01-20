@@ -48,6 +48,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @dev Creates a new intent with the given properties. The resolve start must be in the future.
   ///      At least one of deposit or target asset must be a position manager.
   function createIntent(IntentProperties calldata params) external override onlyOwner returns (uint256 id) {
+    LibStorage.checkNotPaused();
     if (params.resolveStart <= block.timestamp) {
       revert LibErrors.InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
     }
@@ -65,6 +66,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @dev Updates the target asset and guard key for an intent.
   ///      The new configuration must be compatible with the deposit asset.
   function updateTarget(uint256 id, Asset calldata newTargetAsset, address newGuardKey) external override onlyOwner {
+    LibStorage.checkNotPaused();
     LibStorage.facilityStorage().getIntent(id).updateTargetAsset(id, newTargetAsset, newGuardKey);
   }
 
@@ -72,6 +74,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @dev Locks the intent by setting resolve start to current timestamp.
   ///      The intent must not already be resolving or resolved.
   function lock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
+    LibStorage.checkNotPaused();
     LibStorage.facilityStorage().getDepositingIntent(id).updateResolveStart(id, uint40(block.timestamp));
   }
 
@@ -80,6 +83,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   ///      The intent must be in resolving state with no active order.
   ///      If a request is set, it must be repaid.
   function resolve(uint256 id) external override onlyRoles(FACILITATOR_ROLE) {
+    LibStorage.checkNotPaused();
     Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // checks that the request is repaid
@@ -97,6 +101,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @dev Sets a new deposit cap for the intent.
   ///      The intent must be in the depositing state.
   function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
+    LibStorage.checkNotPaused();
     LibStorage.facilityStorage().getDepositingIntent(id).updateDepositCap(id, newDepositCap);
   }
 
@@ -106,6 +111,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   ///      The intent must not have an active order.
   ///      If the fund is address(0), the fund is removed from the intent.
   function setFund(uint256 id, address newFund) external override onlyRoles(FACILITATOR_ROLE) {
+    LibStorage.checkNotPaused();
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 
@@ -143,6 +149,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   ///      If a previous request exists, it must be repaid.
   ///      If the request is address(0), the request is removed from the intent.
   function setRequest(uint256 id, address newRequest) external override onlyRoles(FACILITATOR_ROLE) {
+    LibStorage.checkNotPaused();
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 

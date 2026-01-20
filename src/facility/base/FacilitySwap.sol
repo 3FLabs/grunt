@@ -47,6 +47,7 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
     nonReentrant
     onlyRoles(FACILITATOR_ROLE)
   {
+    LibStorage.checkNotPaused();
     // ensure the intent IDs are not the same
     if (params.id1 == params.id2) revert LibErrors.SameIntent();
     // ensure the swap is not expired
