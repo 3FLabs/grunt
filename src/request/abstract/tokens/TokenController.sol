@@ -8,6 +8,7 @@ import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
 import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
 import {LibErrors} from "../../../libs/request/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../../libs/common/LibErrors.sol";
 
 /// @title TokenController
 /// @author 3F Protocol
@@ -71,7 +72,7 @@ abstract contract TokenController is ITokenController {
     unchecked {
       (uint128 ptBalanceSender, uint128 ytBalanceSender) = from.balances();
       (uint128 ptBalanceReceiver, uint128 ytBalanceReceiver) = to.balances();
-      if (pt > ptBalanceSender || yt > ytBalanceSender) revert LibErrors.InsufficientBalance();
+      if (pt > ptBalanceSender || yt > ytBalanceSender) revert CommonErrors.InsufficientBalance();
       from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
       to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
       if (pt > 0) ControlledToken(_ptToken())._emitTransfer(from, to, pt);
@@ -133,13 +134,13 @@ abstract contract TokenController is ITokenController {
   function _burn(address from, uint256 pt, uint256 yt) internal virtual {
     unchecked {
       (uint128 ptSupply, uint128 ytSupply) = LibTokenController.totalSupplies();
-      if (pt > ptSupply || yt > ytSupply) revert LibErrors.InsufficientBalance();
+      if (pt > ptSupply || yt > ytSupply) revert CommonErrors.InsufficientBalance();
       // casting to 'uint128' is safe because [The total supply cannot be higher than the total supply which does not overflow a 128 bit number]
       // forge-lint: disable-next-line(unsafe-typecast)
       LibTokenController.updateTotalSupply(ptSupply - uint128(pt), ytSupply - uint128(yt));
 
       (uint128 ptBalance, uint128 ytBalance) = from.balances();
-      if (pt > ptBalance || yt > ytBalance) revert LibErrors.InsufficientBalance();
+      if (pt > ptBalance || yt > ytBalance) revert CommonErrors.InsufficientBalance();
       // casting to 'uint128' is safe because [These amounts are lower than 128 bits numbers]
       // forge-lint: disable-next-line(unsafe-typecast)
       from.updateBalances(ptBalance - uint128(pt), ytBalance - uint128(yt));

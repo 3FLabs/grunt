@@ -4,8 +4,8 @@ pragma solidity ^0.8.20;
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {ISuperstateToken} from "../interfaces/integrations/superstate/ISuperstateToken.sol";
@@ -15,6 +15,8 @@ import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Interface.sol";
 import {Order, State, Id, Mode} from "../libs/funds/Order.sol";
 import {LibErrors} from "../libs/funds/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../libs/common/LibErrors.sol";
+import {LibChecks} from "../libs/common/LibChecks.sol";
 
 /// @title USCCFund
 /// @author 3F Protocol
@@ -31,6 +33,8 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using SafeCastLib for int256;
+  using LibChecks for address;
+  using LibChecks for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -70,9 +74,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param uscc The USCC token address.
   /// @param wuscc The wUSCC token address.
   constructor(address usdc, address uscc, address wuscc) {
-    _checkContract(usdc);
-    _checkContract(uscc);
-    _checkContract(wuscc);
+    usdc.checkContract();
+    uscc.checkContract();
+    wuscc.checkContract();
     _checkDecimals(usdc);
     _checkDecimals(uscc);
     _checkDecimals(wuscc);
@@ -197,10 +201,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param recipient_ The superstate address receiving USDC to mint USCC.
   /// @param oracle_ The address of Chainlink USCC Oracle.
   function initialize(address owner_, address depositor_, address recipient_, address oracle_) public initializer {
-    _checkNotZero(owner_);
-    _checkNotZero(recipient_);
-    _checkContract(depositor_);
-    _checkContract(oracle_);
+    owner_.checkNotZero();
+    recipient_.checkNotZero();
+    depositor_.checkContract();
+    oracle_.checkContract();
 
     // Ensure oracle has 6 decimals
     if (AggregatorV3Interface(oracle_).decimals() != _DECIMALS) {
@@ -221,7 +225,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
-    if (order.input == 0) revert LibErrors.AmountZero(); // no restrictions on output
+    order.input.checkNotZero(); // no restrictions on output
     if (order.owner != msg.sender) revert LibErrors.InvalidOwner();
     if (order.receiver != msg.sender) revert LibErrors.InvalidReceiver();
 
@@ -385,7 +389,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
   function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
-    _checkContract(oracle);
+    oracle.checkContract();
 
     // Ensure oracle decimals match USCC decimals
     if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
@@ -553,18 +557,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
-  }
-
-  /// @dev Reverts if the address is the zero address.
-  /// @param addr The address to check.
-  function _checkNotZero(address addr) internal pure {
-    if (addr == address(0)) revert LibErrors.AddressZero();
-  }
-
-  /// @dev Reverts if the address is not a contract.
-  /// @param addr The address to check.
-  function _checkContract(address addr) internal view {
-    if (addr.code.length == 0) revert LibErrors.InvalidContract(addr);
   }
 
   /// @dev Internal function to check that a token has the expected decimals (6).

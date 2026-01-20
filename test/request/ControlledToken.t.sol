@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {MockTokenController, ControlledToken, TokenController} from "../mock/request/MockTokens.sol";
 import {LibErrors} from "../../src/libs/request/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 contract ControlledTokenTest is Test {
   MockTokenController public tokenController;
@@ -74,7 +75,7 @@ contract ControlledTokenTest is Test {
 
     vm.prank(from);
     if (ptTransfer > ptMint) {
-      vm.expectRevert(LibErrors.InsufficientBalance.selector);
+      vm.expectRevert(CommonErrors.InsufficientBalance.selector);
       success = false;
     } else if (ptTransfer > 0) {
       vm.expectEmit(true, true, true, true, address(ptToken));
@@ -94,7 +95,7 @@ contract ControlledTokenTest is Test {
 
     vm.prank(from);
     if (ytTransfer > ytMint) {
-      vm.expectRevert(LibErrors.InsufficientBalance.selector);
+      vm.expectRevert(CommonErrors.InsufficientBalance.selector);
       success = false;
     } else if (ytTransfer > 0) {
       vm.expectEmit(true, true, true, true, address(ytToken));
@@ -636,11 +637,11 @@ contract ControlledTokenTest is Test {
     tokenController.mint(user, 100 ether, 200 ether);
 
     // Try to burn more PT than supply
-    vm.expectRevert(LibErrors.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user, 101 ether, 0);
 
     // Try to burn more YT than supply
-    vm.expectRevert(LibErrors.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user, 0, 201 ether);
   }
 
@@ -654,10 +655,10 @@ contract ControlledTokenTest is Test {
     // Total supply is 100 PT, 200 YT
     // user1 has 50 PT, 100 YT
     // Try to burn more than user1's balance but within supply
-    vm.expectRevert(LibErrors.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user1, 51 ether, 0);
 
-    vm.expectRevert(LibErrors.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user1, 0, 101 ether);
   }
 

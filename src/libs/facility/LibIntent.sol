@@ -10,6 +10,7 @@ import {IFacilityIntents} from "../../interfaces/facility/base/IFacilityIntents.
 import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibAddress} from "./LibAddress.sol";
+import {LibChecks} from "../common/LibChecks.sol";
 import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
@@ -65,6 +66,7 @@ library LibIntent {
   using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
   using LibIntent for Intent;
   using FixedPointMathLib for bool;
+  using LibChecks for address;
   using LibAddress for address;
   using SafeTransferLib for address;
   using LibStorage for FacilityStorageData;

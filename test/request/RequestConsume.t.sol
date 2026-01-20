@@ -10,6 +10,7 @@ import {MockERC20} from "../mock/MockERC20.sol";
 import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {LibErrors} from "../../src/libs/request/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 /// @title RequestConsumeTest
 /// @notice Tests for the Request.consume() function with EIP-1271 callback contracts
@@ -301,7 +302,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidOffer.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     request.consume(offer, signature, 1_000_000e6);
   }
 
@@ -310,7 +311,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidOffer.selector);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     request.consume(offer, signature, 0);
   }
 
@@ -319,7 +320,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidOffer.selector);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     request.consume(offer, signature, 1_000_000e6);
   }
 

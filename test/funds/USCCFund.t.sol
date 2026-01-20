@@ -8,6 +8,7 @@ import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, Id} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibErrors} from "src/libs/funds/LibErrors.sol";
+import {LibErrors as CommonErrors} from "src/libs/common/LibErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAllowlist} from "./mocks/MockAllowlist.sol";
@@ -100,23 +101,23 @@ contract USCCFundTest is Test {
 
   function test_Initialize_RevertsInvalidContract() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(0xBEEF)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
     local.initialize(owner, address(0xBEEF), recipient, address(oracle));
 
     local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     local.initialize(owner, address(this), recipient, address(1));
   }
 
   function test_Initialize_RevertsInvalidOwner() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(LibErrors.AddressZero.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     local.initialize(address(0), address(this), recipient, address(oracle));
   }
 
   function test_Initialize_RevertsInvalidRecipient() public {
     USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
-    vm.expectRevert(LibErrors.AddressZero.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     local.initialize(owner, address(this), address(0), address(oracle));
   }
 
@@ -176,7 +177,7 @@ contract USCCFundTest is Test {
 
   function test_Create_RevertsAmountZero() public {
     Order memory order = _depositOrder(0, ONE_USDC);
-    vm.expectRevert(LibErrors.AmountZero.selector);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     fund.create(order);
   }
 
@@ -565,7 +566,7 @@ contract USCCFundTest is Test {
 
   function test_SetOracle_RevertsInvalidContract() public {
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     fund.setOracle(address(1));
   }
 

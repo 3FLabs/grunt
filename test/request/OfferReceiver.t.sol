@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {MockOfferReceiver} from "../mock/request/MockOfferReceiver.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {LibErrors} from "../../src/libs/request/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 contract OfferReceiverTest is Test {
   MockOfferReceiver public receiver;
@@ -202,7 +203,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(address(0), 1000e6, 100e6, 1, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOffer.selector));
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     receiver.validateOffer(offer, signature);
   }
 
@@ -210,7 +211,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 0, 100e6, 1, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOffer.selector));
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     receiver.validateOffer(offer, signature);
   }
 
@@ -218,7 +219,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 1000e6, 0, 1, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOffer.selector));
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     receiver.validateOffer(offer, signature);
   }
 
@@ -366,7 +367,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 0, expectedReturn, nonce_, block.timestamp + timeUntilExpiry, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOffer.selector));
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     receiver.validateOffer(offer, signature);
   }
 
@@ -378,7 +379,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, amount, 0, nonce_, block.timestamp + timeUntilExpiry, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidOffer.selector));
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     receiver.validateOffer(offer, signature);
   }
 

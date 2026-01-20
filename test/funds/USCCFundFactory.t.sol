@@ -7,6 +7,7 @@ import {USCCFund} from "src/funds/USCCFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibErrors} from "src/libs/funds/LibErrors.sol";
+import {LibErrors as CommonErrors} from "src/libs/common/LibErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAllowlist} from "./mocks/MockAllowlist.sol";
@@ -93,27 +94,27 @@ contract USCCFundFactoryTest is Test {
   }
 
   function test_Factory_RevertsInvalidContracts() public {
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     factory.createFund(owner, address(1), recipient, address(oracle));
   }
 
   function test_Factory_RevertsInvalidUsdc() public {
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     new USCCFundFactory(owner, address(1), address(uscc), address(wuscc));
   }
 
   function test_Factory_RevertsInvalidUscc() public {
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     new USCCFundFactory(owner, address(usdc), address(1), address(wuscc));
   }
 
   function test_Factory_RevertsInvalidWrappedAsset() public {
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     new USCCFundFactory(owner, address(usdc), address(uscc), address(1));
   }
 
   function test_Factory_RevertsInvalidOracle() public {
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidContract.selector, address(1)));
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     factory.createFund(owner, depositor, recipient, address(1));
   }
 }

@@ -7,16 +7,6 @@ import {State, Id} from "./Order.sol";
 /// @author 3F Protocol
 /// @notice Error definitions for the Funds contracts.
 library LibErrors {
-  /// @notice Thrown when a required address parameter is the zero address.
-  error AddressZero();
-
-  /// @notice Thrown when an operation is called with a zero amount.
-  error AmountZero();
-
-  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
-  /// @param addr The invalid address.
-  error InvalidContract(address addr);
-
   /// @notice Thrown when the order owner does not match the caller (the owner).
   error InvalidOwner();
 
@@ -60,10 +50,4 @@ library LibErrors {
   /// @param decimalsA The decimals of the first token.
   /// @param decimalsB The decimals of the second token.
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
-
-  /// @notice Thrown when minting to the zero address.
-  error MintToZeroAddress();
-
-  /// @notice Thrown when burning to the zero address.
-  error BurnToZeroAddress();
 }

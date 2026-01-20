@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IFund} from "./IFund.sol";
-import {Order, Id, Mode} from "../../libs/funds/Order.sol";
+import {IFund} from "../IFund.sol";
+import {Order, Id, Mode} from "../../../libs/funds/Order.sol";
 
 /// @title IUSCCFund
 /// @author 3F Protocol

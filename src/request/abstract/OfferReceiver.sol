@@ -5,6 +5,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 import {IOfferReceiver, Offer} from "../../interfaces/request/IOfferReceiver.sol";
 import {LibErrors} from "../../libs/request/LibErrors.sol";
+import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title OfferReceiver
 /// @author 3F Protocol
@@ -25,6 +26,8 @@ import {LibErrors} from "../../libs/request/LibErrors.sol";
 ///      - Expiration timestamps provide time-bound validity for offers
 abstract contract OfferReceiver is EIP712, IOfferReceiver {
   using SignatureCheckerLib for address;
+  using LibChecks for address;
+  using LibChecks for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          CONSTANTS                         */
@@ -119,13 +122,16 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   ///
   /// @param offer The offer struct containing all offer parameters
   /// @param signature The cryptographic signature (EIP-712 or EIP-1271)
-  /// @custom:reverts InvalidOffer if maker is zero or amounts are zero
+  /// @custom:reverts AddressZero if maker is zero address
+  /// @custom:reverts AmountZero if amount or expectedReturn is zero
   /// @custom:reverts OfferExpired if block.timestamp >= offer.expiration
   /// @custom:reverts InvalidNonce if offer.nonce <= stored nonce for maker
   /// @custom:reverts InvalidSignature if signature verification fails
   function _validateOffer(Offer calldata offer, bytes calldata signature) internal {
     // Validate offer parameters are non-zero
-    if (offer.maker == address(0) || offer.amount == 0 || offer.expectedReturn == 0) revert LibErrors.InvalidOffer();
+    offer.maker.checkNotZero();
+    offer.amount.checkNotZero();
+    offer.expectedReturn.checkNotZero();
 
     // Check offer has not expired
     if (offer.expiration <= block.timestamp) revert LibErrors.OfferExpired();

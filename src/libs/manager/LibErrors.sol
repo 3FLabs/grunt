@@ -43,4 +43,10 @@ library LibErrors {
 
   /// @notice Thrown when an operation is attempted while the contract is paused.
   error Paused();
+
+  /// @notice Thrown when the callback is called by an unauthorized address.
+  error UnauthorizedCaller();
+
+  /// @notice Thrown when collateral is provided in rebalancing data (must be zero).
+  error CollateralNotAllowed();
 }

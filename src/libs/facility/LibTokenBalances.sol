@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
-import {LibErrors} from "./LibErrors.sol";
+import {LibErrors as CommonErrors} from "../common/LibErrors.sol";
 
 /// @title LibTokenBalances
 /// @author 3F Protocol
@@ -32,7 +32,7 @@ library LibTokenBalances {
   function sub(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
     unchecked {
       (, uint256 currentAmount) = _balances.tryGet(token);
-      if (currentAmount < amount) revert LibErrors.InsufficientBalance();
+      if (currentAmount < amount) revert CommonErrors.InsufficientBalance();
       uint256 result = currentAmount - amount;
       if (result == 0) {
         _balances.remove(token);

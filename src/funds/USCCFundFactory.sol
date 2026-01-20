@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {USCCFund} from "./USCCFund.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {LibChecks} from "../libs/common/LibChecks.sol";
 
 /// @title USCCFundFactory
 /// @author 3F Protocol
@@ -32,6 +33,7 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///      3. All existing proxies immediately use the new implementation
 contract USCCFundFactory {
   using LibClone for address;
+  using LibChecks for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -66,14 +68,6 @@ contract USCCFundFactory {
   address public immutable WUSCC;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         ERRORS                             */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
-  /// @param addr The invalid address.
-  error InvalidContract(address addr);
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -85,9 +79,9 @@ contract USCCFundFactory {
   /// @param uscc The USCC token address used by all funds.
   /// @param wuscc The wUSCC token address used by all funds.
   constructor(address initialBeaconOwner, address usdc, address uscc, address wuscc) {
-    if (usdc.code.length == 0) revert InvalidContract(usdc);
-    if (uscc.code.length == 0) revert InvalidContract(uscc);
-    if (wuscc.code.length == 0) revert InvalidContract(wuscc);
+    usdc.checkContract();
+    uscc.checkContract();
+    wuscc.checkContract();
 
     USDC = usdc;
     USCC = uscc;
@@ -121,9 +115,6 @@ contract USCCFundFactory {
     external
     returns (address fund)
   {
-    if (depositor.code.length == 0) revert InvalidContract(depositor);
-    if (oracle.code.length == 0) revert InvalidContract(oracle);
-
     // Deploy USCCFund proxy
     fund = USCC_FUND_BEACON.deployERC1967BeaconProxy();
 

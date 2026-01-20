@@ -7,6 +7,7 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {LibErrors} from "../libs/funds/LibErrors.sol";
+import {LibChecks} from "../libs/common/LibChecks.sol";
 
 /// @title WrappedAsset
 /// @author 3F Protocol
@@ -19,6 +20,7 @@ import {LibErrors} from "../libs/funds/LibErrors.sol";
 ///      The underlying asset is held centrally in this contract.
 contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   using SafeTransferLib for address;
+  using LibChecks for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ROLES                            */
@@ -108,7 +110,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @dev Wraps underlying asset: pulls underlying from caller, mints wrapper to `to`.
   ///      If `to != msg.sender`, the caller must have ISSUER_ROLE.
   function mint(address to, uint256 amount) external override {
-    if (to == address(0)) revert LibErrors.MintToZeroAddress();
+    to.checkNotZero();
     if (to != msg.sender) _checkRoles(ISSUER_ROLE);
     WrappedAssetStorage storage _storage = _wrappedAssetStorage();
     _storage.underlying.safeTransferFrom(msg.sender, address(this), amount);
@@ -119,7 +121,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @dev Unwraps to underlying asset: burns wrapper from `from`, sends underlying to `to`.
   ///      If `from != msg.sender`, caller must have sufficient allowance.
   function burn(address from, address to, uint256 amount) external override {
-    if (to == address(0)) revert LibErrors.BurnToZeroAddress();
+    to.checkNotZero();
     if (from != msg.sender) {
       _spendAllowance(from, msg.sender, amount);
     }

@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibErrors} from "src/libs/funds/LibErrors.sol";
+import {LibErrors as CommonErrors} from "src/libs/common/LibErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 
@@ -115,7 +116,7 @@ contract WrappedAssetTest is Test {
     underlying.approve(address(token), 100);
 
     vm.prank(issuer);
-    vm.expectRevert(LibErrors.MintToZeroAddress.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     token.mint(address(0), 100);
   }
 
@@ -279,7 +280,7 @@ contract WrappedAssetTest is Test {
     token.mint(user, 100);
 
     vm.prank(user);
-    vm.expectRevert(LibErrors.BurnToZeroAddress.selector);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
     token.burn(user, address(0), 50);
   }
 

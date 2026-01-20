@@ -8,9 +8,6 @@ library LibErrors {
   /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
 
-  /// @notice Thrown when an offer has invalid parameters (zero maker, amount, or expectedReturn).
-  error InvalidOffer();
-
   /// @notice Thrown when the offer signature verification fails.
   error InvalidSignature();
 
@@ -25,9 +22,6 @@ library LibErrors {
 
   /// @notice Thrown when the caller is not authorized as a token contract.
   error UnauthorizedTokenContract();
-
-  /// @notice Thrown when an account has insufficient balance for a transfer or burn operation.
-  error InsufficientBalance();
 
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();

@@ -5,13 +5,6 @@ pragma solidity ^0.8.20;
 /// @author 3F Protocol
 /// @notice Error definitions for the Facility contract.
 library LibErrors {
-  /// @notice Thrown when a required address parameter is the zero address.
-  error AddressZero();
-
-  /// @notice Thrown when an address parameter is not a contract (code.length == 0).
-  /// @param addr The invalid address.
-  error InvalidContract(address addr);
-
   /// @notice Thrown when the intent is already resolving.
   /// @param id The intent ID.
   error AlreadyResolving(uint256 id);
@@ -130,9 +123,6 @@ library LibErrors {
   /// @notice Thrown when a signature is invalid.
   /// @param signer The address of the signer.
   error InvalidSignature(address signer);
-
-  /// @notice Thrown when there is insufficient balance for a token operation.
-  error InsufficientBalance();
 
   /// @notice Thrown when a fund is already in use.
   /// @param fund The fund address.
