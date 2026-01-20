@@ -306,13 +306,16 @@ contract RequestConsumeTest is Test {
     request.consume(offer, signature, 1_000_000e6);
   }
 
-  function test_consume_revertsOnZeroAmount() public {
+  function test_consume_revertsOnZeroOfferAmount() public {
+    // Create an offer with amount=0
     Offer memory offer = _createOffer(address(callback), 0, 100_000e6, 1, block.timestamp + 1 days, true);
     bytes memory signature = _signOffer(offer);
 
+    // Use a non-zero ptAmount to ensure we hit the offer.amount validation
+    // ptAmount > offer.amount (1 > 0) triggers InvalidPtAmount first
     vm.prank(owner);
-    vm.expectRevert(CommonErrors.AmountZero.selector);
-    request.consume(offer, signature, 0);
+    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    request.consume(offer, signature, 1);
   }
 
   function test_consume_revertsOnZeroExpectedReturn() public {
@@ -561,6 +564,81 @@ contract RequestConsumeTest is Test {
 
     assertEq(callbackTotal, consumeAmount + consumeReturn);
     assertEq(broker2Total, mintAmount + mintYield);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              PTAMOUNT VALIDATION TESTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Test that consume() reverts when ptAmount == 0
+  /// @dev ptAmount = 0 would burn the offer nonce without any transfer
+  function test_consume_revertsOnZeroPtAmount() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Create an EOA maker wallet
+    Vm.Wallet memory eoaMaker = vm.createWallet("eoaMaker");
+
+    Offer memory offer = _createOffer(eoaMaker.addr, offerAmount, expectedReturn, 1, block.timestamp + 1 days, false);
+    bytes memory signature = _signOfferWithWallet(offer, eoaMaker);
+
+    asset.mint(eoaMaker.addr, offerAmount);
+    vm.prank(eoaMaker.addr);
+    asset.approve(address(request), offerAmount);
+
+    // Should revert with InvalidPtAmount when ptAmount == 0
+    vm.prank(owner);
+    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    request.consume(offer, signature, 0);
+
+    // Verify nonce was NOT burned
+    assertEq(request.nonce(eoaMaker.addr), 0, "Nonce should not be consumed on revert");
+  }
+
+  /// @notice Test that consume() reverts when ptAmount > offer.amount
+  /// @dev ptAmount > offer.amount would pull more assets than the maker signed for
+  function test_consume_revertsOnPtAmountExceedsOffer() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+    uint256 attackAmount = 2_000_000e6; // Double the signed amount
+
+    // Create an EOA maker wallet
+    Vm.Wallet memory eoaMaker = vm.createWallet("eoaMaker");
+
+    Offer memory offer = _createOffer(eoaMaker.addr, offerAmount, expectedReturn, 1, block.timestamp + 1 days, false);
+    bytes memory signature = _signOfferWithWallet(offer, eoaMaker);
+
+    asset.mint(eoaMaker.addr, attackAmount);
+    vm.prank(eoaMaker.addr);
+    asset.approve(address(request), type(uint256).max); // Infinite approval
+
+    // Should revert with InvalidPtAmount when ptAmount > offer.amount
+    vm.prank(owner);
+    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    request.consume(offer, signature, attackAmount);
+
+    // Verify nonce was NOT burned
+    assertEq(request.nonce(eoaMaker.addr), 0, "Nonce should not be consumed on revert");
+  }
+
+  /// @notice Test that consume() reverts when ptAmount > offer.amount with callback
+  function test_consume_revertsOnPtAmountExceedsOffer_withCallback() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+    uint256 attackAmount = 1_500_000e6; // 1.5x the signed amount
+
+    asset.mint(address(callback), attackAmount);
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
+    bytes memory signature = _signOffer(offer);
+
+    // Should revert with InvalidPtAmount when ptAmount > offer.amount
+    vm.prank(owner);
+    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    request.consume(offer, signature, attackAmount);
+
+    // Verify nonce was NOT burned
+    assertEq(request.nonce(address(callback)), 0, "Nonce should not be consumed on revert");
   }
 }
 

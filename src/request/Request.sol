@@ -310,7 +310,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      1. Validates the offer signature using EIP-712 (via `_validateOffer`)
   ///      2. Calculates the proportional YT amount based on the PT amount being consumed
   ///      3. If `offer.useCallback` is true, calls the maker's `onRequestConsumed` callback to prepare funds
-  ///      4. Transfers the PT amount of underlying asset from owner to this contract
+  ///      4. Transfers the PT amount of underlying asset from the maker to this contract
   ///      5. Mints PT and YT tokens to the offer maker
   ///
   ///      The YT amount is calculated as: `ytAmount = offer.expectedReturn * ptAmount / offer.amount`
@@ -330,6 +330,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     returns (uint256 ytAmount)
   {
     if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
+    if (ptAmount == 0 || ptAmount > offer.amount) revert LibErrors.InvalidPtAmount();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     if (offer.useCallback) {

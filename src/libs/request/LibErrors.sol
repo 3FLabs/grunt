@@ -37,4 +37,7 @@ library LibErrors {
 
   /// @notice Thrown when the caller is not the authorized controller.
   error Unauthorized();
+
+  /// @notice Thrown when ptAmount is invalid (must be > 0 and <= offer.amount).
+  error InvalidPtAmount();
 }
