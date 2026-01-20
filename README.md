@@ -2,10 +2,6 @@
   <img src="static/grunt_visual.jpg" alt="grunt" />
 </p>
 
-<p align="center" style="font-size: smaller;">
-  <i>(wip)</i>
-</p>
-
 ## Repository Structure
 
 ```
