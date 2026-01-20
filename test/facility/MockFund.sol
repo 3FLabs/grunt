@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {Order, Mode, State} from "src/libs/Order.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Minimal deterministic IFund mock for Facility tests.
@@ -19,6 +20,8 @@ contract MockFund is IFund {
   uint256 public remainingRecover;
 
   bool public recoveringMode;
+
+  int256 public committedDelta;
 
   bool public didPartialUnlock;
   bool public didPartialRecover;
@@ -55,6 +58,10 @@ contract MockFund is IFund {
 
   function setRecoveringMode(bool value) external {
     recoveringMode = value;
+  }
+
+  function setCommittedDelta(int256 delta) external {
+    committedDelta = delta;
   }
 
   function state(Order calldata order) external view returns (State) {
@@ -109,7 +116,11 @@ contract MockFund is IFund {
     tokenIn.safeTransferFrom(msg.sender, address(this), order.input);
 
     internalState = State.PROCESSING;
-    return (State.PROCESSING, order.input);
+    uint256 committedAmount = order.input;
+    if (committedDelta != 0) {
+      committedAmount = SafeCastLib.toUint256(SafeCastLib.toInt256(order.input) + committedDelta);
+    }
+    return (State.PROCESSING, committedAmount);
   }
 
   function unlock(Order calldata order) external returns (State, uint256) {

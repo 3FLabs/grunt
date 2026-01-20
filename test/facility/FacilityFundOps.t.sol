@@ -8,6 +8,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {Order, Mode} from "src/libs/Order.sol";
+import {LibErrors} from "src/libs/facility/LibErrors.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 
@@ -117,5 +118,26 @@ contract FacilityFundOpsTest is Test {
 
     // Silence unused variable warning.
     order;
+  }
+
+  function test_RevertWhen_FundCommitAmountMismatch() public {
+    uint256 facilityAssetBefore = asset.balanceOf(address(facility));
+    uint256 fundAssetBefore = asset.balanceOf(address(fund));
+
+    uint256 amountIn = 600_000;
+    uint256 amountOut = 400_000;
+
+    facility.create(intentId, amountIn, amountOut, Mode.DEPOSIT);
+    assertEq(facility.orderOwner(intentId), address(facility), "order active after create");
+
+    fund.setCommittedDelta(-1);
+
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.CommitAmountMismatch.selector, intentId, amountIn, amountIn - 1));
+    facility.commit(intentId);
+
+    assertEq(asset.balanceOf(address(facility)), facilityAssetBefore, "facility asset unchanged");
+    assertEq(asset.balanceOf(address(fund)), fundAssetBefore, "fund asset unchanged");
+    assertEq(facility.amountOf(intentId, address(asset)), facilityAssetBefore, "intent tracks unchanged asset");
+    assertEq(facility.orderOwner(intentId), address(facility), "order still active");
   }
 }
