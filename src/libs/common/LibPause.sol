@@ -9,26 +9,28 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 /// @dev The uint40 value represents a pause-until timestamp.
 ///
 ///      Pause states:
-///      - Value of 0: Not paused
+///      - Value of 0 (NOT_PAUSED): Not paused
 ///      - Value > 0: Paused until block.timestamp > value
-///      - Value of type(uint40).max: Effectively permanent pause (~35,000 years)
+///      - Value of type(uint40).max (PERMANENT_PAUSE): Effectively permanent pause (~35,000 years)
 library LibPause {
   using LibChecks for uint256;
   using FixedPointMathLib for uint256;
 
+  /// @notice Value representing a permanent pause state.
+  /// @dev Set to type(uint40).max, which corresponds to a timestamp ~35,000 years in the future.
+  ///      Use this constant to pause indefinitely.
   uint40 internal constant PERMANENT_PAUSE = type(uint40).max;
+
+  /// @notice Value representing an unpaused state.
+  /// @dev Set to 0. Since block.timestamp is always > 0 in practice,
+  ///      a value of 0 means not paused.
+  uint40 internal constant NOT_PAUSED = 0;
 
   /// @notice Checks if the pause state indicates paused.
   /// @param self The pause state value (pause-until timestamp).
   /// @return True if paused, false otherwise.
   function paused(uint40 self) internal view returns (bool) {
     return block.timestamp <= self;
-  }
-
-  /// @notice Returns a pause state representing permanent pause.
-  /// @return The maximum uint40 value (effectively permanent).
-  function pause() internal pure returns (uint40) {
-    return PERMANENT_PAUSE;
   }
 
   /// @notice Returns a pause state representing a timed pause.
@@ -41,11 +43,5 @@ library LibPause {
     // casting to 'uint40' is safe because pauseUntil is equal or less than PERMANENT_PAUSE
     // forge-lint: disable-next-line(unsafe-typecast)
     return uint40(pauseUntil.min(PERMANENT_PAUSE));
-  }
-
-  /// @notice Returns a pause state representing not paused.
-  /// @return Zero (not paused).
-  function unpause() internal pure returns (uint40) {
-    return 0;
   }
 }

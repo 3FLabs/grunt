@@ -24,12 +24,6 @@ contract LibPauseTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         CONSTANTS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  uint40 constant PERMANENT_PAUSE = type(uint40).max;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CONSTANTS TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -37,18 +31,50 @@ contract LibPauseTest is Test {
     assertEq(LibPause.PERMANENT_PAUSE, type(uint40).max);
   }
 
+  function test_constants_NotPaused() public pure {
+    assertEq(LibPause.NOT_PAUSED, 0);
+  }
+
+  function test_constants_PermanentPauseIsPaused() public {
+    uint40 pauseState = LibPause.PERMANENT_PAUSE;
+    assertTrue(pauseState.paused());
+  }
+
+  function test_constants_NotPausedIsNotPaused() public {
+    vm.warp(1); // Ensure block.timestamp > 0
+    uint40 pauseState = LibPause.NOT_PAUSED;
+    assertFalse(pauseState.paused());
+  }
+
+  function testFuzz_constants_PermanentPauseAlwaysPaused(uint256 warpTo) public {
+    // Bound to uint40.max since paused() checks block.timestamp <= self
+    warpTo = bound(warpTo, 0, type(uint40).max);
+    vm.warp(warpTo);
+
+    uint40 pauseState = LibPause.PERMANENT_PAUSE;
+    assertTrue(pauseState.paused());
+  }
+
+  function testFuzz_constants_NotPausedAlwaysNotPaused(uint256 warpTo) public {
+    warpTo = bound(warpTo, 1, type(uint64).max);
+    vm.warp(warpTo);
+
+    uint40 pauseState = LibPause.NOT_PAUSED;
+    assertFalse(pauseState.paused());
+  }
+
+  function testFuzz_constants_PermanentPauseGreaterThanNotPaused(uint256 warpTo) public pure {
+    assertGt(LibPause.PERMANENT_PAUSE, LibPause.NOT_PAUSED);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      PAUSED TESTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_paused_ZeroIsNotPaused() public {
+    vm.warp(1);
     uint40 pauseState = 0;
     assertFalse(pauseState.paused());
-  }
-
-  function test_paused_PermanentPauseIsPaused() public {
-    uint40 pauseState = PERMANENT_PAUSE;
-    assertTrue(pauseState.paused());
   }
 
   function test_paused_FutureTimestampIsPaused() public {
@@ -95,30 +121,6 @@ contract LibPauseTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      PAUSE TESTS                            */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_pause_ReturnsPermanentPause() public pure {
-    uint40 result = LibPause.pause();
-    assertEq(result, PERMANENT_PAUSE);
-  }
-
-  function test_pause_ResultIsPaused() public {
-    uint40 pauseState = LibPause.pause();
-    assertTrue(pauseState.paused());
-  }
-
-  function testFuzz_pause_AlwaysPaused(uint256 warpTo) public {
-    // Bound to uint40.max since paused() checks block.timestamp <= self
-    // and PERMANENT_PAUSE is type(uint40).max
-    warpTo = bound(warpTo, 0, type(uint40).max);
-    vm.warp(warpTo);
-
-    uint40 pauseState = LibPause.pause();
-    assertTrue(pauseState.paused());
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    PAUSE_FOR TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -155,14 +157,14 @@ contract LibPauseTest is Test {
     // Use a value that will overflow uint40 but not cause arithmetic overflow
     uint256 hugeValue = uint256(type(uint40).max) + 1;
     uint40 result = LibPause.pauseFor(hugeValue);
-    assertEq(result, PERMANENT_PAUSE);
+    assertEq(result, LibPause.PERMANENT_PAUSE);
   }
 
   function test_pauseFor_CapsWhenOverflow() public {
     vm.warp(type(uint40).max - 100);
     uint256 duration = 200;
     uint40 result = LibPause.pauseFor(duration);
-    assertEq(result, PERMANENT_PAUSE);
+    assertEq(result, LibPause.PERMANENT_PAUSE);
   }
 
   function testFuzz_pauseFor_ReturnsCorrectTimestamp(uint256 duration) public {
@@ -177,7 +179,7 @@ contract LibPauseTest is Test {
     duration = bound(duration, uint256(type(uint40).max) - block.timestamp + 1, type(uint128).max);
 
     uint40 result = LibPause.pauseFor(duration);
-    assertEq(result, PERMANENT_PAUSE);
+    assertEq(result, LibPause.PERMANENT_PAUSE);
   }
 
   function testFuzz_pauseFor_ResultIsPaused(uint256 duration) public {
@@ -188,40 +190,8 @@ contract LibPauseTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                     UNPAUSE TESTS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_unpause_ReturnsZero() public pure {
-    uint40 result = LibPause.unpause();
-    assertEq(result, 0);
-  }
-
-  function test_unpause_ResultIsNotPaused() public {
-    uint40 pauseState = LibPause.unpause();
-    assertFalse(pauseState.paused());
-  }
-
-  function testFuzz_unpause_AlwaysNotPaused(uint256 warpTo) public {
-    warpTo = bound(warpTo, 1, type(uint64).max);
-    vm.warp(warpTo);
-
-    uint40 pauseState = LibPause.unpause();
-    assertFalse(pauseState.paused());
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INVARIANT TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function testFuzz_invariant_PauseAlwaysGreaterThanUnpause(uint256 warpTo) public {
-    warpTo = bound(warpTo, 0, type(uint64).max);
-    vm.warp(warpTo);
-
-    uint40 pauseResult = LibPause.pause();
-    uint40 unpauseResult = LibPause.unpause();
-
-    assertGt(pauseResult, unpauseResult);
-  }
 
   function testFuzz_invariant_PausedStateTransitions(uint256 duration, uint256 timeElapsed) public {
     duration = bound(duration, 1, type(uint40).max / 2);
@@ -249,7 +219,7 @@ contract LibPauseTest is Test {
     duration = bound(duration, 1, type(uint40).max);
 
     uint40 result = LibPause.pauseFor(duration);
-    assertLe(result, PERMANENT_PAUSE);
+    assertLe(result, LibPause.PERMANENT_PAUSE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -264,7 +234,7 @@ contract LibPauseTest is Test {
 
   function test_edge_MaxUint40Duration() public {
     uint40 result = LibPause.pauseFor(type(uint40).max);
-    assertEq(result, PERMANENT_PAUSE);
+    assertEq(result, LibPause.PERMANENT_PAUSE);
   }
 
   function test_edge_TimestampAtZero() public {
@@ -283,20 +253,22 @@ contract LibPauseTest is Test {
 
     // pauseFor with any duration should cap at PERMANENT_PAUSE
     uint40 result = LibPause.pauseFor(1);
-    assertEq(result, PERMANENT_PAUSE);
+    assertEq(result, LibPause.PERMANENT_PAUSE);
   }
 
   function test_edge_PauseUnpauseCycle() public {
+    vm.warp(1); // Ensure block.timestamp > 0
+
     // Start unpaused
-    uint40 state = LibPause.unpause();
+    uint40 state = LibPause.NOT_PAUSED;
     assertFalse(state.paused());
 
-    // Pause
-    state = LibPause.pause();
+    // Pause permanently
+    state = LibPause.PERMANENT_PAUSE;
     assertTrue(state.paused());
 
     // Unpause
-    state = LibPause.unpause();
+    state = LibPause.NOT_PAUSED;
     assertFalse(state.paused());
 
     // Pause for duration
