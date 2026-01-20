@@ -629,8 +629,7 @@ contract RequestConsumeTest is Test {
 
     asset.mint(address(callback), attackAmount);
 
-    Offer memory offer =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
     bytes memory signature = _signOffer(offer);
 
     // Should revert with InvalidPtAmount when ptAmount > offer.amount
