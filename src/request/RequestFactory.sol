@@ -7,6 +7,7 @@ import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title RequestFactory
+/// @author 3F Protocol
 /// @notice Factory contract for deploying Request instances with their associated PT and YT tokens.
 /// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
 ///      - **UpgradeableBeacon**: Each contract type (Request, PT Token, YT Token) has its own beacon

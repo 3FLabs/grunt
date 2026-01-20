@@ -5,6 +5,7 @@ import {Lib128Fields} from "./Lib128Fields.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibTokenController
+/// @author 3F Protocol
 /// @notice Library for gas-efficient storage and manipulation of PT and YT token data.
 /// @dev Implements packed storage where PT and YT values are stored together in single uint256 slots:
 ///      - Lower 128 bits: PT (Principal Token) values

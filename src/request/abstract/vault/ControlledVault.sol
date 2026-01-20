@@ -5,8 +5,10 @@ import {ControlledToken} from "../tokens/ControlledToken.sol";
 import {VaultController} from "./VaultController.sol";
 import {IERC4626} from "../../../interfaces/integrations/IERC4626.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {LibErrors} from "../../../libs/request/LibErrors.sol";
 
 /// @title ControlledVault
+/// @author 3F Protocol
 /// @notice ERC4626-compliant vault wrapper for either PT (Principal Token) or YT (Yield Token).
 /// @dev Combines ControlledToken (for ERC20 functionality) with ERC4626 (for vault functionality).
 ///      This contract is read-only for deposits/mints (always reverts) as shares are minted by the
@@ -15,10 +17,6 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 abstract contract ControlledVault is ControlledToken, IERC4626 {
   using FixedPointMathLib for bool;
   using FixedPointMathLib for uint256;
-
-  /// @notice Error thrown when attempting to directly mint shares via deposit() or mint().
-  /// @dev Shares can only be minted through the VaultController, not directly via ERC4626 methods.
-  error CannotMintShares();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ERC4626 INTERFACE                  */
@@ -75,7 +73,7 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   /// @inheritdoc IERC4626
   /// @dev Always reverts with {CannotMintShares}. Shares can only be minted through the VaultController.
   function deposit(uint256, address) external pure returns (uint256) {
-    revert CannotMintShares();
+    revert LibErrors.CannotMintShares();
   }
 
   /// @inheritdoc IERC4626
@@ -93,7 +91,7 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   /// @inheritdoc IERC4626
   /// @dev Always reverts with {CannotMintShares}. Shares can only be minted through the VaultController.
   function mint(uint256, address) external pure returns (uint256) {
-    revert CannotMintShares();
+    revert LibErrors.CannotMintShares();
   }
 
   /// @inheritdoc IERC4626

@@ -8,8 +8,10 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ControlledVault} from "./ControlledVault.sol";
 import {IVaultController} from "../../../interfaces/request/IVaultController.sol";
 import {IHasAsset} from "../../../interfaces/request/IHasAsset.sol";
+import {LibErrors} from "../../../libs/request/LibErrors.sol";
 
 /// @title VaultController
+/// @author 3F Protocol
 /// @notice Abstract base contract for managing dual-vault systems with Principal and Yield token separation.
 /// @dev Extends TokenController to add ERC4626-style vault functionality. Implements the redemption model
 ///      where principal holders are prioritized (receive up to 1:1 redemption) and yield holders receive
@@ -19,10 +21,6 @@ abstract contract VaultController is TokenController, IVaultController {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using FixedPointMathLib for bool;
-
-  /// @notice Error thrown when attempting to withdraw or redeem while withdrawals are locked.
-  /// @dev Withdrawals are typically locked during the deposit phase and unlocked during redemption.
-  error CannotWithdraw();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      Abstract Metadata                     */
@@ -136,7 +134,7 @@ abstract contract VaultController is TokenController, IVaultController {
     uint256 ytShares
   ) internal virtual {
     unchecked {
-      if (!_syncWithdrawalStatus()) revert CannotWithdraw();
+      if (!_syncWithdrawalStatus()) revert LibErrors.CannotWithdraw();
       if (caller != owner) {
         _consumeAllowance(owner, caller, ptShares, ytShares);
       }

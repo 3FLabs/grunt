@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title IFacilityLP
+/// @author 3F Protocol
 /// @notice Interface for liquidity provider operations.
 interface IFacilityLP {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

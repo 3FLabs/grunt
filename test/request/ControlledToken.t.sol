@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {MockTokenController, ControlledToken, TokenController} from "../mock/request/MockTokens.sol";
+import {LibErrors} from "../../src/libs/request/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 contract ControlledTokenTest is Test {
   MockTokenController public tokenController;
@@ -73,7 +75,7 @@ contract ControlledTokenTest is Test {
 
     vm.prank(from);
     if (ptTransfer > ptMint) {
-      vm.expectRevert(TokenController.InsufficientBalance.selector);
+      vm.expectRevert(CommonErrors.InsufficientBalance.selector);
       success = false;
     } else if (ptTransfer > 0) {
       vm.expectEmit(true, true, true, true, address(ptToken));
@@ -93,7 +95,7 @@ contract ControlledTokenTest is Test {
 
     vm.prank(from);
     if (ytTransfer > ytMint) {
-      vm.expectRevert(TokenController.InsufficientBalance.selector);
+      vm.expectRevert(CommonErrors.InsufficientBalance.selector);
       success = false;
     } else if (ytTransfer > 0) {
       vm.expectEmit(true, true, true, true, address(ytToken));
@@ -191,7 +193,7 @@ contract ControlledTokenTest is Test {
     ptToken.approve(spender, 50 ether);
 
     vm.prank(spender);
-    vm.expectRevert(TokenController.InsufficientAllowance.selector);
+    vm.expectRevert(LibErrors.InsufficientAllowance.selector);
     ptToken.transferFrom(owner, recipient, 51 ether);
   }
 
@@ -285,12 +287,12 @@ contract ControlledTokenTest is Test {
 
     // Try to transfer more PT than allowed
     vm.prank(spender);
-    vm.expectRevert(TokenController.InsufficientAllowance.selector);
+    vm.expectRevert(LibErrors.InsufficientAllowance.selector);
     tokenController.transferFromBatch(owner, recipient, 51 ether, 60 ether);
 
     // Try to transfer more YT than allowed
     vm.prank(spender);
-    vm.expectRevert(TokenController.InsufficientAllowance.selector);
+    vm.expectRevert(LibErrors.InsufficientAllowance.selector);
     tokenController.transferFromBatch(owner, recipient, 30 ether, 101 ether);
   }
 
@@ -369,7 +371,7 @@ contract ControlledTokenTest is Test {
     tokenController.mint(owner, 100 ether, 200 ether);
 
     vm.prank(owner);
-    vm.expectRevert(TokenController.TransferToSelf.selector);
+    vm.expectRevert(LibErrors.TransferToSelf.selector);
     ptToken.transfer(owner, 50 ether);
   }
 
@@ -518,11 +520,11 @@ contract ControlledTokenTest is Test {
     address randomCaller = address(0x999);
 
     vm.prank(randomCaller);
-    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     ptToken._emitApproval(address(1), address(2), 100 ether);
 
     vm.prank(randomCaller);
-    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     ytToken._emitApproval(address(1), address(2), 100 ether);
   }
 
@@ -530,11 +532,11 @@ contract ControlledTokenTest is Test {
     address randomCaller = address(0x999);
 
     vm.prank(randomCaller);
-    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     ptToken._emitTransfer(address(1), address(2), 100 ether);
 
     vm.prank(randomCaller);
-    vm.expectRevert(ControlledToken.Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     ytToken._emitTransfer(address(1), address(2), 100 ether);
   }
 
@@ -547,11 +549,11 @@ contract ControlledTokenTest is Test {
 
     // Try to call _transfer directly from a non-token contract
     vm.prank(randomCaller);
-    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
     tokenController._transfer(owner, owner, recipient, 50 ether, false);
 
     vm.prank(randomCaller);
-    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
     tokenController._transfer(owner, owner, recipient, 50 ether, true);
   }
 
@@ -562,11 +564,11 @@ contract ControlledTokenTest is Test {
 
     // Try to call _approve directly from a non-token contract
     vm.prank(randomCaller);
-    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
     tokenController._approve(owner, spender, 100 ether, false);
 
     vm.prank(randomCaller);
-    vm.expectRevert(TokenController.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
     tokenController._approve(owner, spender, 100 ether, true);
   }
 
@@ -635,11 +637,11 @@ contract ControlledTokenTest is Test {
     tokenController.mint(user, 100 ether, 200 ether);
 
     // Try to burn more PT than supply
-    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user, 101 ether, 0);
 
     // Try to burn more YT than supply
-    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user, 0, 201 ether);
   }
 
@@ -653,10 +655,10 @@ contract ControlledTokenTest is Test {
     // Total supply is 100 PT, 200 YT
     // user1 has 50 PT, 100 YT
     // Try to burn more than user1's balance but within supply
-    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user1, 51 ether, 0);
 
-    vm.expectRevert(TokenController.InsufficientBalance.selector);
+    vm.expectRevert(CommonErrors.InsufficientBalance.selector);
     tokenController.burn(user1, 0, 101 ether);
   }
 

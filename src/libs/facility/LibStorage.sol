@@ -25,6 +25,7 @@ struct FacilityStorageData {
 }
 
 /// @title LibStorage
+/// @author 3F Protocol
 /// @notice Library providing storage accessor for Facility contracts.
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibStorage {

@@ -6,8 +6,9 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {USCCFund} from "src/funds/USCCFund.sol";
 import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Order, Mode, State} from "src/libs/Order.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {LibErrors} from "src/libs/funds/LibErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAllowlist} from "./mocks/MockAllowlist.sol";
@@ -15,8 +16,6 @@ import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
 import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
 
 contract USCCFundFuzzTest is Test {
-  error InvalidState(State actual);
-
   uint256 private constant ONE_USDC = 1e6;
 
   // WrappedAsset roles (matching internal constants)
@@ -124,7 +123,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
   }
 
@@ -179,7 +178,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.RECOVERING));
     fund.recover(order);
   }
 
@@ -253,7 +252,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
   }
 
@@ -336,7 +335,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.RECOVERING));
     fund.recover(order);
   }
 

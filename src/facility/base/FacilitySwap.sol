@@ -16,6 +16,7 @@ import {LibErrors} from "src/libs/facility/LibErrors.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title FacilitySwap
+/// @author 3F Protocol
 /// @notice Abstract contract implementing swap functionality between intents.
 /// @dev Descendant contracts must implement `_checkSigner` to define signer validation logic.
 abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransient, FacilityRoles {

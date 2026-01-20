@@ -4,20 +4,9 @@ pragma solidity ^0.8.20;
 import {LibErrors} from "./LibErrors.sol";
 
 /// @title LibAddress
-/// @notice Library for address validation utilities.
+/// @author 3F Protocol
+/// @notice Library for facility-specific address validation utilities.
 library LibAddress {
-  /// @dev Reverts if the address is the zero address.
-  /// @param addr The address to check.
-  function checkNotZero(address addr) internal pure {
-    if (addr == address(0)) revert LibErrors.AddressZero();
-  }
-
-  /// @dev Reverts if the address is not a contract.
-  /// @param addr The address to check.
-  function checkContract(address addr) internal view {
-    if (addr.code.length == 0) revert LibErrors.InvalidContract(addr);
-  }
-
   /// @dev Reverts if the two assets do not match.
   /// @param asset1 The first asset.
   /// @param asset2 The second asset.

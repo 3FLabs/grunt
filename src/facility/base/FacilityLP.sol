@@ -12,6 +12,7 @@ import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol"
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
 /// @title FacilityLP
+/// @author 3F Protocol
 /// @notice Abstract contract implementing liquidity provider operations for intents.
 /// @dev Inherits ERC6909 for multi-token accounting. Descendant contracts must implement
 ///      ERC6909 metadata functions (name, symbol, tokenURI, decimals).

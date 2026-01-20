@@ -21,9 +21,10 @@ import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibErrors} from "src/libs/facility/LibErrors.sol";
-import {LibAddress} from "src/libs/facility/LibAddress.sol";
+import {LibChecks} from "src/libs/common/LibChecks.sol";
 
 /// @title Facility
+/// @author 3F Protocol
 /// @notice Main contract combining all facility functionality for managing intents, funds, requests, position managers, LPs, and swaps.
 /// @dev Inherits from all abstract facility components and implements required abstract functions.
 contract Facility is
@@ -39,7 +40,7 @@ contract Facility is
 {
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
-  using LibAddress for address;
+  using LibChecks for address;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

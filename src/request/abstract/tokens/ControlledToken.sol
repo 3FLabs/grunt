@@ -4,8 +4,10 @@ pragma solidity ^0.8.20;
 import {TokenController} from "./TokenController.sol";
 import {IERC20} from "../../../interfaces/integrations/IERC20.sol";
 import {LibString} from "lib/solady/src/utils/LibString.sol";
+import {LibErrors} from "../../../libs/request/LibErrors.sol";
 
 /// @title ControlledToken
+/// @author 3F Protocol
 /// @notice Abstract ERC20 token contract that delegates all logic to a TokenController.
 /// @dev This contract serves as a lightweight wrapper around TokenController, implementing the
 ///      ERC20 interface by forwarding all calls to the controller. Each token (PT or YT) has its
@@ -13,10 +15,6 @@ import {LibString} from "lib/solady/src/utils/LibString.sol";
 ///      prefixed with "PT-" or "YT-" based on the token type.
 abstract contract ControlledToken is IERC20 {
   using LibString for string;
-
-  /// @notice Error thrown when the caller is not the authorized controller.
-  /// @dev Only the TokenController can call functions that emit events.
-  error Unauthorized();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           Internal                         */
@@ -36,7 +34,7 @@ abstract contract ControlledToken is IERC20 {
   ///      Reverts with {Unauthorized} if msg.sender is not the controller.
   ///      Used to restrict event emission to the controller only.
   function _checkController() internal view virtual {
-    if (msg.sender != _controller()) revert Unauthorized();
+    if (msg.sender != _controller()) revert LibErrors.Unauthorized();
   }
 
   /// @dev Returns the prefix for the token name and symbol based on token type.

@@ -10,6 +10,7 @@ import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title PositionManagerFees
+/// @author 3F Protocol
 /// @notice Abstract contract handling fee accrual and snapshot management for PositionManager.
 /// @dev Implements management and performance fee calculation and distribution.
 abstract contract PositionManagerFees is ERC20 {
@@ -25,16 +26,16 @@ abstract contract PositionManagerFees is ERC20 {
   ///      Returns the current total assets after fee accrual for use in share calculations.
   /// @return currentTotalAssets The total assets after fee accrual
   function _accrueFees() internal returns (uint256 currentTotalAssets) {
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
-    FeeData memory fd = ps.feeData;
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    FeeData memory fd = _storage.feeData;
 
-    currentTotalAssets = ps.totalAssets();
+    currentTotalAssets = _storage.totalAssets();
 
     if (fd.feeRecipient == address(0)) {
-      ps.lastTotalAssets = currentTotalAssets;
+      _storage.lastTotalAssets = currentTotalAssets;
       // Safe: block.timestamp fits in uint40 for ~35,000 years
       // forge-lint: disable-next-line(unsafe-typecast)
-      ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
+      _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
       return currentTotalAssets;
     }
 
@@ -43,7 +44,7 @@ abstract contract PositionManagerFees is ERC20 {
 
     // Management fee: based on time elapsed and total assets
     if (fd.managementFee > 0 && _totalSupply > 0) {
-      uint256 elapsed = block.timestamp - ps.lastFeeAccrualTimestamp;
+      uint256 elapsed = block.timestamp - _storage.lastFeeAccrualTimestamp;
       // Fee = totalAssets * managementFee * elapsed / (BPS * SECONDS_PER_YEAR)
       uint256 managementFeeAssets = currentTotalAssets.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
       if (managementFeeAssets > 0) {
@@ -52,8 +53,8 @@ abstract contract PositionManagerFees is ERC20 {
     }
 
     // Performance fee: based on gains since last snapshot
-    if (fd.performanceFee > 0 && currentTotalAssets > ps.lastTotalAssets && _totalSupply > 0) {
-      uint256 gains = currentTotalAssets - ps.lastTotalAssets;
+    if (fd.performanceFee > 0 && currentTotalAssets > _storage.lastTotalAssets && _totalSupply > 0) {
+      uint256 gains = currentTotalAssets - _storage.lastTotalAssets;
       uint256 performanceFeeAssets = gains.mulDiv(fd.performanceFee, BPS);
       if (performanceFeeAssets > 0) {
         feeShares += performanceFeeAssets.convertToShares(_totalSupply, currentTotalAssets);
@@ -67,17 +68,17 @@ abstract contract PositionManagerFees is ERC20 {
     }
 
     // Update snapshot to prevent double-counting performance fees on the same gains
-    ps.lastTotalAssets = currentTotalAssets;
+    _storage.lastTotalAssets = currentTotalAssets;
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
-    ps.lastFeeAccrualTimestamp = uint40(block.timestamp);
+    _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
 
     return currentTotalAssets;
   }
 
   /// @dev Updates the lastTotalAssets snapshot after an operation.
   function _updateSnapshot() internal {
-    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
-    ps.lastTotalAssets = ps.totalAssets();
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    _storage.lastTotalAssets = _storage.totalAssets();
   }
 }

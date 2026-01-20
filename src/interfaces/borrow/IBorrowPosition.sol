@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title IBorrowPosition
+/// @author 3F Protocol
 /// @notice Interface for borrow position contracts that manages a single borrowing position (e.g. Morpho, Euler, etc.)
 interface IBorrowPosition {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

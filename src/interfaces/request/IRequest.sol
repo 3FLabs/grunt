@@ -5,9 +5,8 @@ import {Offer} from "./IOfferReceiver.sol";
 import {IRequestInteractions} from "./IRequestInteractions.sol";
 
 /// @title IRequest
+/// @author 3F Protocol
 /// @notice Interface for the Request contract that manages funding requests with dual-token (PT/YT) issuance.
-/// @dev This interface focuses on the operational aspects of requests (minting, consuming offers).
-///      The implementation contract should also inherit IVaultController for PT/YT redemption functionality.
 interface IRequest is IRequestInteractions {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
@@ -36,8 +35,6 @@ interface IRequest is IRequestInteractions {
   function setRepaid() external;
 
   /// @notice Syncs the repaid status after the repayment deadline has passed.
-  /// @dev If the deadline has passed and repaid is still false, this will set repaid to true
-  ///      and emit the Repaid event. Can be called by anyone.
   /// @return repaid Whether the request is now marked as repaid
   function syncRepaidStatus() external returns (bool repaid);
 

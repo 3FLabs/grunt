@@ -12,6 +12,7 @@ import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
 import {MockRequestInteractionsCallback} from "../mock/request/MockRequestInteractionsCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
+import {LibErrors} from "../../src/libs/request/LibErrors.sol";
 
 contract RequestTest is Test {
   RequestFactory public factory;
@@ -41,10 +42,6 @@ contract RequestTest is Test {
   event FundsPulled(address indexed puller, uint256 amount);
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
   event RequestCreated(address request, address asset, address ptToken, address ytToken);
-
-  // Errors
-  error AlreadyRepaid();
-  error Unauthorized();
 
   function setUp() public {
     owner = makeAddr("owner");
@@ -185,7 +182,7 @@ contract RequestTest is Test {
     address notAuthorized = makeAddr("notAuthorized");
 
     vm.prank(notAuthorized);
-    vm.expectRevert(Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
   }
 
@@ -275,7 +272,7 @@ contract RequestTest is Test {
 
     // Try to mint
     vm.prank(primeBroker);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     request.mint();
   }
 
@@ -408,7 +405,7 @@ contract RequestTest is Test {
     address notPuller = makeAddr("notPuller");
 
     vm.prank(notPuller);
-    vm.expectRevert(Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     request.pullFunds(1_000_000e6, "");
   }
 
@@ -417,7 +414,7 @@ contract RequestTest is Test {
     request.setRepaid();
 
     vm.prank(puller);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     request.pullFunds(1_000_000e6, "");
   }
 
@@ -706,7 +703,7 @@ contract RequestTest is Test {
     asset.mint(puller, amount);
     vm.startPrank(puller);
     asset.approve(address(request), amount);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     request.repay(amount);
     vm.stopPrank();
   }
@@ -787,7 +784,7 @@ contract RequestTest is Test {
     address notOwner = makeAddr("notOwner");
 
     vm.prank(notOwner);
-    vm.expectRevert(Unauthorized.selector);
+    vm.expectRevert(LibErrors.Unauthorized.selector);
     request.setRepaid();
   }
 
@@ -796,7 +793,7 @@ contract RequestTest is Test {
     request.setRepaid();
 
     vm.prank(owner);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     request.setRepaid();
   }
 
@@ -1181,10 +1178,10 @@ contract RequestTest is Test {
     asset.approve(address(ptVault), 1_000_000e6);
 
     // Direct deposit should fail
-    vm.expectRevert(ControlledVault.CannotMintShares.selector);
+    vm.expectRevert(LibErrors.CannotMintShares.selector);
     ptVault.deposit(1_000_000e6, user);
 
-    vm.expectRevert(ControlledVault.CannotMintShares.selector);
+    vm.expectRevert(LibErrors.CannotMintShares.selector);
     ytVault.deposit(1_000_000e6, user);
 
     vm.stopPrank();
@@ -1196,10 +1193,10 @@ contract RequestTest is Test {
     vm.startPrank(user);
 
     // Direct mint should fail
-    vm.expectRevert(ControlledVault.CannotMintShares.selector);
+    vm.expectRevert(LibErrors.CannotMintShares.selector);
     ptVault.mint(1_000_000e6, user);
 
-    vm.expectRevert(ControlledVault.CannotMintShares.selector);
+    vm.expectRevert(LibErrors.CannotMintShares.selector);
     ytVault.mint(1_000_000e6, user);
 
     vm.stopPrank();
@@ -1305,15 +1302,15 @@ contract RequestTest is Test {
 
     // Operations should be blocked after deadline (they trigger the sync internally and revert)
     vm.prank(owner);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     deadlineRequest.setRepaid();
 
     vm.prank(puller);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     deadlineRequest.pullFunds(100e6, "");
 
     vm.prank(puller);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     deadlineRequest.repay(100e6);
 
     // canWithdraw is false until syncRepaidStatus() is called (reverts don't persist state changes)
@@ -1346,7 +1343,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(deadlineRequest), amount);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     deadlineRequest.mint();
     vm.stopPrank();
   }
@@ -1367,7 +1364,7 @@ contract RequestTest is Test {
     bytes memory signature = _signOffer(offer, maker);
 
     vm.prank(owner);
-    vm.expectRevert(AlreadyRepaid.selector);
+    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
     deadlineRequest.consume(offer, signature, 1_000_000e6);
   }
 

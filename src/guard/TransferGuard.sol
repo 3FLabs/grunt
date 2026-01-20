@@ -26,6 +26,7 @@ struct TokenConfig {
 }
 
 /// @title TransferGuard
+/// @author 3F Protocol
 /// @notice Gas-optimized transfer validation with single mapping for address status.
 /// @dev Uses a single mapping with enum status instead of separate blocklist/allowlist mappings.
 ///      Token config (paused, whitelist mode) is packed into a single slot per token.
@@ -70,27 +71,6 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @notice Per-token configuration (paused, whitelist mode) packed in one slot.
   mapping(address token => TokenConfig config) public tokenConfig;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          EVENTS                            */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Emitted when an address status is updated.
-  event AddressStatusSet(address indexed account, AddressStatus status);
-
-  /// @notice Emitted when a token's configuration is updated.
-  /// @param token The token address
-  /// @param paused Whether the token is paused
-  /// @param whitelist Whether the token uses whitelist mode
-  event TokenConfigSet(address indexed token, bool paused, bool whitelist);
-
-  /// @notice Emitted when a token is paused.
-  /// @param token The token that was paused
-  event TokenPaused(address indexed token);
-
-  /// @notice Emitted when a token is unpaused.
-  /// @param token The token that was unpaused
-  event TokenUnpaused(address indexed token);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -175,7 +155,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param status The new status
   function setAddressStatus(address account, AddressStatus status) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
     addressStatus[account] = status;
-    emit AddressStatusSet(account, status);
+    emit AddressStatusSet(account, uint8(status));
   }
 
   /// @notice Batch update address statuses.
@@ -187,7 +167,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   {
     for (uint256 i = 0; i < accounts.length; ++i) {
       addressStatus[accounts[i]] = status;
-      emit AddressStatusSet(accounts[i], status);
+      emit AddressStatusSet(accounts[i], uint8(status));
     }
   }
 

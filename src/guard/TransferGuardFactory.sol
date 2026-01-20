@@ -6,6 +6,7 @@ import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardFactory
+/// @author 3F Protocol
 /// @notice Factory contract for deploying TransferGuard instances.
 /// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
 ///      - **UpgradeableBeacon**: The contract type (TransferGuard) has its own beacon

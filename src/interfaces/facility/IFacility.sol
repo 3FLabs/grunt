@@ -9,6 +9,7 @@ import {IFacilityLP} from "./base/IFacilityLP.sol";
 import {IFacilitySwap} from "./base/IFacilitySwap.sol";
 
 /// @title IFacility
+/// @author 3F Protocol
 /// @notice Combined interface for managing intents, funds, requests, position managers, liquidity providers, and swaps.
 interface IFacility is
   IFacilityIntents,

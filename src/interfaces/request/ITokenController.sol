@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title ITokenController
+/// @author 3F Protocol
 /// @notice Interface for managing dual-token systems (Principal Token and Yield Token).
 interface ITokenController {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

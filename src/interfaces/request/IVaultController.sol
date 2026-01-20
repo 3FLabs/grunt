@@ -5,6 +5,7 @@ import {ITokenController} from "./ITokenController.sol";
 import {IHasAsset} from "./IHasAsset.sol";
 
 /// @title IVaultController
+/// @author 3F Protocol
 /// @notice Interface for managing dual-vault systems with Principal and Yield token separation.
 interface IVaultController is ITokenController, IHasAsset {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
