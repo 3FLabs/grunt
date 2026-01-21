@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {TokenController} from "./TokenController.sol";
 import {IERC20} from "../../../interfaces/integrations/IERC20.sol";
 import {LibString} from "lib/solady/src/utils/LibString.sol";
-import {LibErrors} from "../../../libs/request/LibErrors.sol";
+import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 
 /// @title ControlledToken
 /// @author 3F Protocol
@@ -34,7 +34,7 @@ abstract contract ControlledToken is IERC20 {
   ///      Reverts with {Unauthorized} if msg.sender is not the controller.
   ///      Used to restrict event emission to the controller only.
   function _checkController() internal view virtual {
-    if (msg.sender != _controller()) revert LibErrors.Unauthorized();
+    if (msg.sender != _controller()) revert LibRequestErrors.Unauthorized();
   }
 
   /// @dev Returns the prefix for the token name and symbol based on token type.

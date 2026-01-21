@@ -9,7 +9,7 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
-import {LibErrors} from "src/libs/manager/LibErrors.sol";
+import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
 
 /// @title MorphoRebalancerTest
 /// @notice Test suite for MorphoRebalancer contract
@@ -174,7 +174,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     });
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.CollateralNotAllowed.selector);
+    vm.expectRevert(LibManagerErrors.CollateralNotAllowed.selector);
     morphoRebalancer.rebalance(positionManager, data, owner);
   }
 
@@ -211,7 +211,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
     bytes memory callbackData = abi.encode(positionManager, data, owner);
 
     vm.prank(user);
-    vm.expectRevert(LibErrors.UnauthorizedCaller.selector);
+    vm.expectRevert(LibManagerErrors.UnauthorizedCaller.selector);
     morphoRebalancer.onMorphoFlashLoan(1000e18, callbackData);
   }
 

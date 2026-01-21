@@ -5,8 +5,8 @@ import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
 import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
 import {IPositionManager, RebalancingData, RebalancingOperation} from "src/interfaces/manager/IPositionManager.sol";
-import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 /// @title PositionManagerTransferGuardTest
 /// @notice Test suite for PositionManager integration with TransferGuard
@@ -130,7 +130,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Transfer from blocked user should fail
     vm.prank(blockedUser);
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.transfer(whitelistedUser, shares);
   }
 
@@ -144,7 +144,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Transfer to blocked user should fail
     vm.prank(minter);
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.transfer(blockedUser, shares);
   }
 
@@ -158,7 +158,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Transfer to user (not whitelisted, NONE status) should fail in whitelist mode
     vm.prank(minter);
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.transfer(user, shares);
   }
 
@@ -196,7 +196,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     collateralToken.approve(address(positionManager), type(uint256).max);
 
     // Deposit should fail because blockedUser can't receive minted shares
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
     vm.stopPrank();
   }
@@ -212,7 +212,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     collateralToken.approve(address(positionManager), type(uint256).max);
 
     // Deposit should fail because user is not whitelisted
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
     vm.stopPrank();
   }
@@ -246,7 +246,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     vm.startPrank(tempUser);
     debtToken.approve(address(positionManager), type(uint256).max);
 
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.burn(shares);
     vm.stopPrank();
   }
@@ -269,7 +269,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Transfer should fail
     vm.prank(minter);
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.transfer(whitelistedUser, shares);
   }
 
@@ -282,7 +282,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Deposit should fail (minting is blocked)
     vm.prank(minter);
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
   }
 
@@ -375,7 +375,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Transfer to blocked user should always fail
     vm.prank(minter);
-    vm.expectRevert(LibErrors.TransferBlocked.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.transfer(blockedUser, amount);
   }
 }

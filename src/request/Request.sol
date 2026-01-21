@@ -5,7 +5,7 @@ import {OfferReceiver} from "./abstract/OfferReceiver.sol";
 import {VaultController} from "./abstract/vault/VaultController.sol";
 import {TokenController} from "./abstract/tokens/TokenController.sol";
 import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
-import {LibErrors} from "../libs/request/LibErrors.sol";
+import {LibRequestErrors} from "../libs/request/LibRequestErrors.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
 import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.sol";
@@ -216,7 +216,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
   /// @custom:reverts If the request has already been repaid or the deadline has passed
   function setRepaid() external onlyOwner {
-    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     _requestStorage().repaid = true;
     emit Repaid(_asset().balanceOf(address(this)));
   }
@@ -249,7 +249,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
-    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
     emit FundsPulled(msg.sender, amount);
     if (data.length > 0) {
@@ -263,7 +263,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Cannot be called after the request has been repaid (when withdrawals are enabled).
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function repay(uint256 amount) external {
-    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     _asset().safeTransferFrom(msg.sender, address(this), amount);
   }
 
@@ -294,7 +294,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function mint() external {
-    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
+    if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
@@ -329,8 +329,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     nonReentrant
     returns (uint256 ytAmount)
   {
-    if (_syncWithdrawalStatus()) revert LibErrors.AlreadyRepaid();
-    if (ptAmount == 0 || ptAmount > offer.amount) revert LibErrors.InvalidPtAmount();
+    if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
+    if (ptAmount == 0 || ptAmount > offer.amount) revert LibRequestErrors.InvalidPtAmount();
     _validateOffer(offer, signature);
     ytAmount = offer.expectedReturn.mulDiv(ptAmount, offer.amount);
     if (offer.useCallback) {

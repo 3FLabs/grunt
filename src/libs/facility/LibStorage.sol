@@ -4,8 +4,8 @@ pragma solidity ^0.8.20;
 import {Intent, LibIntent, Asset} from "./LibIntent.sol";
 import {IIntentDescriptor} from "../../interfaces/facility/IIntentDescriptor.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
-import {LibErrors} from "./LibErrors.sol";
-import {LibErrors as CommonErrors} from "../common/LibErrors.sol";
+import {LibFacilityErrors} from "./LibFacilityErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../common/LibCommonErrors.sol";
 import {LibPause} from "../common/LibPause.sol";
 
 /// @notice Storage struct containing all persistent state for the Facility contract.
@@ -59,7 +59,7 @@ library LibStorage {
   /// @param id The ID of the intent.
   /// @return _intent A reference to the intent struct.
   function getIntent(FacilityStorageData storage self, uint256 id) internal view returns (Intent storage _intent) {
-    if (id == 0 || id > self.lastIntentId) revert LibErrors.IntentNotFound(id);
+    if (id == 0 || id > self.lastIntentId) revert LibFacilityErrors.IntentNotFound(id);
     _intent = self.intents[id];
   }
 
@@ -74,7 +74,7 @@ library LibStorage {
     returns (Intent storage _intent)
   {
     _intent = getIntent(self, id);
-    if (!LibIntent.isResolving(_intent)) revert LibErrors.NotResolving(id);
+    if (!LibIntent.isResolving(_intent)) revert LibFacilityErrors.NotResolving(id);
   }
 
   /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
@@ -88,7 +88,7 @@ library LibStorage {
     returns (Intent storage _intent)
   {
     _intent = getIntent(self, id);
-    if (!LibIntent.isDepositing(_intent)) revert LibErrors.NotDepositing(id);
+    if (!LibIntent.isDepositing(_intent)) revert LibFacilityErrors.NotDepositing(id);
   }
 
   /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
@@ -102,7 +102,7 @@ library LibStorage {
     returns (Intent storage _intent)
   {
     _intent = getIntent(self, id);
-    if (!LibIntent.isResolved(_intent)) revert LibErrors.NotResolved(id);
+    if (!LibIntent.isResolved(_intent)) revert LibFacilityErrors.NotResolved(id);
   }
 
   /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
@@ -116,7 +116,7 @@ library LibStorage {
     returns (Intent storage _intent)
   {
     _intent = getIntent(self, id);
-    if (LibIntent.isResolved(_intent)) revert LibErrors.AlreadyResolved(id);
+    if (LibIntent.isResolved(_intent)) revert LibFacilityErrors.AlreadyResolved(id);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -156,7 +156,7 @@ library LibStorage {
   /// @param self The storage pointer to the FacilityStorageData struct.
   /// @param digest The digest to check and mark as used.
   function checkDigest(FacilityStorageData storage self, bytes32 digest) internal {
-    if (self.usedSwapDigests[digest]) revert LibErrors.SwapDigestUsed(digest);
+    if (self.usedSwapDigests[digest]) revert LibFacilityErrors.SwapDigestUsed(digest);
     self.usedSwapDigests[digest] = true;
   }
 
@@ -170,7 +170,7 @@ library LibStorage {
       self.fundsIntent[fund] = targetIntentId;
       return;
     }
-    if (intentId != targetIntentId) revert LibErrors.FundAlreadyInUse(fund, intentId);
+    if (intentId != targetIntentId) revert LibFacilityErrors.FundAlreadyInUse(fund, intentId);
   }
 
   /// @dev Checks if a request is already in use and sets it to the target intent ID if not.
@@ -183,7 +183,7 @@ library LibStorage {
       self.requestsIntent[request] = targetIntentId;
       return;
     }
-    if (intentId != targetIntentId) revert LibErrors.RequestAlreadyInUse(request, intentId);
+    if (intentId != targetIntentId) revert LibFacilityErrors.RequestAlreadyInUse(request, intentId);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

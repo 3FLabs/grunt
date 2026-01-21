@@ -9,7 +9,7 @@ import {IFacilityRequests} from "src/interfaces/facility/base/IFacilityRequests.
 import {IRequestInteractions} from "src/interfaces/request/IRequestInteractions.sol";
 import {LibIntent, Intent, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 /// @title FacilityRequests
 /// @author 3F Protocol
@@ -86,7 +86,7 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     // getting the request address
     request = _intent.request;
     // ensure the request is set
-    if (request == address(0)) revert LibErrors.MissingRequest(id);
+    if (request == address(0)) revert LibFacilityErrors.MissingRequest(id);
 
     // getting the request asset
     asset = IRequestInteractions(request).asset();

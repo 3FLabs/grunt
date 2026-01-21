@@ -8,7 +8,7 @@ import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {IRequestInteractions} from "src/interfaces/request/IRequestInteractions.sol";
 import {LibIntent, Intent, IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibAddress} from "src/libs/facility/LibAddress.sol";
 import {LibChecks} from "src/libs/common/LibChecks.sol";
 
@@ -50,7 +50,7 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   function createIntent(IntentProperties calldata params) external override onlyOwner returns (uint256 id) {
     LibStorage.checkNotPaused();
     if (params.resolveStart <= block.timestamp) {
-      revert LibErrors.InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
+      revert LibFacilityErrors.InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
     }
 
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();

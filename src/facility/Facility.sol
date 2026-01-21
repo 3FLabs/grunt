@@ -20,7 +20,7 @@ import {IERC20} from "src/interfaces/integrations/IERC20.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibChecks} from "src/libs/common/LibChecks.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
 
@@ -166,13 +166,13 @@ contract Facility is
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
 
     if (from != address(0) && to != address(0) && !_intent.properties.transferableIntent) {
-      revert LibErrors.IntentTransfersLocked(id);
+      revert LibFacilityErrors.IntentTransfersLocked(id);
     }
 
     (,, address guard) = IPositionManager(_intent.properties.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.properties.guardKey, from, to, amount)) {
-        revert LibErrors.TransferBlocked(guard, from, to, amount);
+        revert LibFacilityErrors.TransferBlocked(guard, from, to, amount);
       }
     }
 

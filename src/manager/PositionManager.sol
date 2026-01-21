@@ -11,8 +11,8 @@ import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibOperations} from "../libs/manager/LibOperations.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibExecutor} from "../libs/manager/LibExecutor.sol";
-import {LibErrors} from "../libs/manager/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../libs/common/LibErrors.sol";
+import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../libs/common/LibCommonErrors.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -188,8 +188,8 @@ contract PositionManager is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.ZeroAmount} if both collateral and debt are zero.
-  ///      Reverts with {LibErrors.EmptySupplyQueue} if debt is zero but collateral > 0 and supply queue is empty.
+  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
+  ///      Reverts with {LibManagerErrors.EmptySupplyQueue} if debt is zero but collateral > 0 and supply queue is empty.
   function deposit(uint256 collateral, uint256 debt)
     external
     onlyRoles(MINTER_ROLE)
@@ -213,7 +213,7 @@ contract PositionManager is
     if (debt == 0) {
       // No debt: deposit all collateral to first position
       if (collateral > 0) {
-        if (_storage.supplyQueue.length == 0) revert LibErrors.EmptySupplyQueue();
+        if (_storage.supplyQueue.length == 0) revert LibManagerErrors.EmptySupplyQueue();
         _storage.supplyQueue[0].position.supply(_storage.collateralAsset, collateral);
       }
     } else {
@@ -233,7 +233,7 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.ZeroAmount} if both collateral and debt are zero.
+  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
   function withdraw(uint256 collateral, uint256 debt)
     external
     onlyRoles(MINTER_ROLE)
@@ -268,7 +268,7 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.ZeroAmount} if shares is zero.
+  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if shares is zero.
   function burn(uint256 shares)
     external
     onlyRoles(MINTER_ROLE)
@@ -342,12 +342,12 @@ contract PositionManager is
 
   /// @inheritdoc ERC20
   /// @dev Validates transfers through the transfer guard if one is set.
-  ///      Reverts with {LibErrors.TransferBlocked} if the transfer is blocked by the guard.
+  ///      Reverts with {LibManagerErrors.TransferBlocked} if the transfer is blocked by the guard.
   function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
     address guard = LibStorage.positionManagerStorage().transferGuard;
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(address(this), from, to, amount)) {
-        revert LibErrors.TransferBlocked();
+        revert LibManagerErrors.TransferBlocked();
       }
     }
   }

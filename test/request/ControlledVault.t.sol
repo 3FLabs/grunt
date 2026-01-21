@@ -7,7 +7,7 @@ import {ControlledToken} from "../../src/request/abstract/tokens/ControlledToken
 import {TokenController} from "../../src/request/abstract/tokens/TokenController.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {IERC4626} from "../../src/interfaces/integrations/IERC4626.sol";
-import {LibErrors} from "../../src/libs/request/LibErrors.sol";
+import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
 
 contract ControlledVaultTest is Test {
   MockVaultController public vaultController;
@@ -109,10 +109,10 @@ contract ControlledVaultTest is Test {
   }
 
   function test_depositReverts() public {
-    vm.expectRevert(LibErrors.CannotMintShares.selector);
+    vm.expectRevert(LibRequestErrors.CannotMintShares.selector);
     ptVault.deposit(100 ether, address(0x1));
 
-    vm.expectRevert(LibErrors.CannotMintShares.selector);
+    vm.expectRevert(LibRequestErrors.CannotMintShares.selector);
     ytVault.deposit(100 ether, address(0x1));
   }
 
@@ -122,10 +122,10 @@ contract ControlledVaultTest is Test {
   }
 
   function test_mintReverts() public {
-    vm.expectRevert(LibErrors.CannotMintShares.selector);
+    vm.expectRevert(LibRequestErrors.CannotMintShares.selector);
     ptVault.mint(100 ether, address(0x1));
 
-    vm.expectRevert(LibErrors.CannotMintShares.selector);
+    vm.expectRevert(LibRequestErrors.CannotMintShares.selector);
     ytVault.mint(100 ether, address(0x1));
   }
 
@@ -232,7 +232,7 @@ contract ControlledVaultTest is Test {
     asset.approve(address(vaultController), 1000 ether);
     vaultController.deposit(user, 1000 ether, 100 ether);
 
-    vm.expectRevert(LibErrors.CannotWithdraw.selector);
+    vm.expectRevert(LibRequestErrors.CannotWithdraw.selector);
     ptVault.withdraw(100 ether, user, user);
     vm.stopPrank();
   }
@@ -800,11 +800,11 @@ contract ControlledVaultTest is Test {
     address randomCaller = address(0x999);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ptVault._emitDeposit(address(1), address(2), 100 ether, 100 ether);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ytVault._emitDeposit(address(1), address(2), 100 ether, 100 ether);
   }
 
@@ -812,11 +812,11 @@ contract ControlledVaultTest is Test {
     address randomCaller = address(0x999);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ptVault._emitWithdraw(address(1), address(2), address(3), 100 ether, 100 ether);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ytVault._emitWithdraw(address(1), address(2), address(3), 100 ether, 100 ether);
   }
 
@@ -853,7 +853,7 @@ contract ControlledVaultTest is Test {
     asset.approve(address(vaultController), 1000 ether);
     vaultController.deposit(user, 1000 ether, 100 ether);
 
-    vm.expectRevert(LibErrors.CannotWithdraw.selector);
+    vm.expectRevert(LibRequestErrors.CannotWithdraw.selector);
     ptVault.redeem(100 ether, user, user);
     vm.stopPrank();
   }
@@ -939,11 +939,11 @@ contract ControlledVaultTest is Test {
 
     // Try to call _withdraw directly from a non-vault contract
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     vaultController._withdraw(user, 100 ether, user, user, false);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     vaultController._withdraw(user, 100 ether, user, user, true);
   }
 
@@ -953,11 +953,11 @@ contract ControlledVaultTest is Test {
 
     // Try to call _redeem directly from a non-vault contract
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     vaultController._redeem(user, 100 ether, user, user, false);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     vaultController._redeem(user, 100 ether, user, user, true);
   }
 

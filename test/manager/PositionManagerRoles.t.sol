@@ -9,8 +9,8 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
-import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 /// @title PositionManagerRolesTest
 /// @notice Tests for PositionManager admin functions and role-based access control
@@ -139,7 +139,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
     // Should revert because borrowPosition1 is still in supply queue
     vm.prank(owner);
-    vm.expectRevert(LibErrors.ModuleStillInQueue.selector);
+    vm.expectRevert(LibManagerErrors.ModuleStillInQueue.selector);
     positionManager.removeBorrowModule(address(borrowPosition1));
   }
 
@@ -155,7 +155,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
     // Should revert because borrowPosition1 is still in withdrawal queue
     vm.prank(owner);
-    vm.expectRevert(LibErrors.ModuleStillInQueue.selector);
+    vm.expectRevert(LibManagerErrors.ModuleStillInQueue.selector);
     positionManager.removeBorrowModule(address(borrowPosition1));
   }
 
@@ -204,7 +204,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     queue[0] = SupplyQueueEntry({position: unauthorizedPosition, maxBorrow: uint96(type(uint96).max)});
 
     vm.prank(curator);
-    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
+    vm.expectRevert(LibManagerErrors.UnauthorizedPosition.selector);
     positionManager.setSupplyQueue(queue);
   }
 
@@ -215,7 +215,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     queue[0] = unauthorizedPosition;
 
     vm.prank(curator);
-    vm.expectRevert(LibErrors.UnauthorizedPosition.selector);
+    vm.expectRevert(LibManagerErrors.UnauthorizedPosition.selector);
     positionManager.setWithdrawalQueue(queue);
   }
 

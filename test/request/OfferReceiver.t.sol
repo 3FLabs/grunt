@@ -5,8 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {MockOfferReceiver} from "../mock/request/MockOfferReceiver.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
-import {LibErrors} from "../../src/libs/request/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 contract OfferReceiverTest is Test {
   MockOfferReceiver public receiver;
@@ -99,7 +99,7 @@ contract OfferReceiverTest is Test {
     vm.startPrank(maker.addr);
     receiver.setNonce(5);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonceUpdate.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonceUpdate.selector));
     receiver.setNonce(5);
     vm.stopPrank();
   }
@@ -108,14 +108,14 @@ contract OfferReceiverTest is Test {
     vm.startPrank(maker.addr);
     receiver.setNonce(10);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonceUpdate.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonceUpdate.selector));
     receiver.setNonce(5);
     vm.stopPrank();
   }
 
   function test_RevertWhen_SetNonceToZeroFromZero() public {
     vm.prank(maker.addr);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonceUpdate.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonceUpdate.selector));
     receiver.setNonce(0);
   }
 
@@ -227,7 +227,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 1000e6, 100e6, 1, block.timestamp - 1, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.OfferExpired.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.OfferExpired.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -236,7 +236,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 1000e6, 100e6, 1, block.timestamp, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.OfferExpired.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.OfferExpired.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -244,7 +244,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 1000e6, 100e6, 0, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -257,7 +257,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 1000e6, 100e6, 5, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -270,7 +270,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, 1000e6, 100e6, 5, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -279,7 +279,7 @@ contract OfferReceiverTest is Test {
     // Sign with wrong wallet
     bytes memory signature = _signOffer(offer, maker2);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidSignature.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidSignature.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -290,7 +290,7 @@ contract OfferReceiverTest is Test {
     // Modify the signature
     signature[0] = bytes1(uint8(signature[0]) ^ 0xff);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidSignature.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidSignature.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -302,7 +302,7 @@ contract OfferReceiverTest is Test {
     receiver.validateOffer(offer, signature);
 
     // Second validation with same offer should fail (replay attack)
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -318,19 +318,19 @@ contract OfferReceiverTest is Test {
     // Offer with nonce 1 should fail
     Offer memory offer1 = _createOffer(maker.addr, 1000e6, 100e6, 1, block.timestamp + 1 days, false);
     bytes memory signature1 = _signOffer(offer1, maker);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer1, signature1);
 
     // Offer with nonce 2 should fail
     Offer memory offer2 = _createOffer(maker.addr, 1000e6, 100e6, 2, block.timestamp + 1 days, false);
     bytes memory signature2 = _signOffer(offer2, maker);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer2, signature2);
 
     // Offer with nonce 3 should fail
     Offer memory offer3 = _createOffer(maker.addr, 1000e6, 100e6, 3, block.timestamp + 1 days, false);
     bytes memory signature3 = _signOffer(offer3, maker);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer3, signature3);
 
     // Offer with nonce 4 should succeed
@@ -391,7 +391,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, amount, expectedReturn, 0, block.timestamp + timeUntilExpiry, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -411,7 +411,7 @@ contract OfferReceiverTest is Test {
       _createOffer(maker.addr, amount, expectedReturn, nonce_, block.timestamp - timeSinceExpiry, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.OfferExpired.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.OfferExpired.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -430,7 +430,7 @@ contract OfferReceiverTest is Test {
     Offer memory offer = _createOffer(maker.addr, amount, expectedReturn, offerNonce, block.timestamp + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonce.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonce.selector));
     receiver.validateOffer(offer, signature);
   }
 
@@ -451,7 +451,7 @@ contract OfferReceiverTest is Test {
     receiver.setNonce(currentNonce);
 
     vm.prank(maker.addr);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidNonceUpdate.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidNonceUpdate.selector));
     receiver.setNonce(newNonce);
   }
 
@@ -580,7 +580,7 @@ contract OfferReceiverTest is Test {
     // maker2 tries invalid signature (signed by maker3)
     Offer memory invalidSigOffer = _createOffer(maker2.addr, 2000e6, 200e6, 1, block.timestamp + 1 days, false);
     bytes memory invalidSignature = _signOffer(invalidSigOffer, maker3);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidSignature.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InvalidSignature.selector));
     receiver.validateOffer(invalidSigOffer, invalidSignature);
 
     // maker2's nonce is still 0
@@ -595,7 +595,7 @@ contract OfferReceiverTest is Test {
     // maker3 has expired offer
     Offer memory expiredOffer = _createOffer(maker3.addr, 3000e6, 300e6, 1, block.timestamp - 1, false);
     bytes memory expiredSignature = _signOffer(expiredOffer, maker3);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.OfferExpired.selector));
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.OfferExpired.selector));
     receiver.validateOffer(expiredOffer, expiredSignature);
 
     // maker3's nonce is still 0

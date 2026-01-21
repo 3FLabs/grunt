@@ -5,7 +5,7 @@ import {ControlledToken} from "../tokens/ControlledToken.sol";
 import {VaultController} from "./VaultController.sol";
 import {IERC4626} from "../../../interfaces/integrations/IERC4626.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
-import {LibErrors} from "../../../libs/request/LibErrors.sol";
+import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 
 /// @title ControlledVault
 /// @author 3F Protocol
@@ -73,7 +73,7 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   /// @inheritdoc IERC4626
   /// @dev Always reverts with {CannotMintShares}. Shares can only be minted through the VaultController.
   function deposit(uint256, address) external pure returns (uint256) {
-    revert LibErrors.CannotMintShares();
+    revert LibRequestErrors.CannotMintShares();
   }
 
   /// @inheritdoc IERC4626
@@ -91,7 +91,7 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   /// @inheritdoc IERC4626
   /// @dev Always reverts with {CannotMintShares}. Shares can only be minted through the VaultController.
   function mint(uint256, address) external pure returns (uint256) {
-    revert LibErrors.CannotMintShares();
+    revert LibRequestErrors.CannotMintShares();
   }
 
   /// @inheritdoc IERC4626

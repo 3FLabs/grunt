@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {LibErrors} from "./LibErrors.sol";
+import {LibFacilityErrors} from "./LibFacilityErrors.sol";
 
 /// @title LibAddress
 /// @author 3F Protocol
@@ -11,6 +11,6 @@ library LibAddress {
   /// @param asset1 The first asset.
   /// @param asset2 The second asset.
   function checkAssetsMatch(address asset1, address asset2) internal pure {
-    if (asset1 != asset2) revert LibErrors.AssetMismatch(asset1, asset2);
+    if (asset1 != asset2) revert LibFacilityErrors.AssetMismatch(asset1, asset2);
   }
 }

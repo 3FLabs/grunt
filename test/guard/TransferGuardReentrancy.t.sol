@@ -10,8 +10,8 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
-import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
 import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";

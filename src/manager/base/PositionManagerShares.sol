@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
-import {LibErrors} from "../../libs/manager/LibErrors.sol";
+import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {PositionManagerFees} from "./PositionManagerFees.sol";
 
 /// @title PositionManagerShares
@@ -31,7 +31,7 @@ abstract contract PositionManagerShares is PositionManagerFees {
       // Assets increased: mint shares to caller
       uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
       uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore);
-      if (sharesToMint == 0) revert LibErrors.ZeroShares();
+      if (sharesToMint == 0) revert LibManagerErrors.ZeroShares();
       _mint(msg.sender, sharesToMint);
       // Safe: sharesToMint is capped by total supply which fits in uint128
       // forge-lint: disable-next-line(unsafe-typecast)
@@ -40,7 +40,7 @@ abstract contract PositionManagerShares is PositionManagerFees {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
       uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore);
-      if (sharesToBurn == 0) revert LibErrors.ZeroShares();
+      if (sharesToBurn == 0) revert LibManagerErrors.ZeroShares();
       _burn(msg.sender, sharesToBurn);
       // Safe: sharesToBurn is capped by total supply which fits in uint128
       // forge-lint: disable-next-line(unsafe-typecast)

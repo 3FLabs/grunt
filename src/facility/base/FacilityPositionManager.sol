@@ -9,7 +9,7 @@ import {IFacilityPositionManager} from "src/interfaces/facility/base/IFacilityPo
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {LibIntent, Intent, Asset, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 /// @title FacilityPositionManager
 /// @author 3F Protocol
@@ -168,7 +168,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     // getting the selected asset (simple ternary since we read from storage)
     Asset storage _selected = useTarget ? _intent.properties.targetAsset : _intent.properties.depositAsset;
     // ensure the selected asset is a position manager
-    if (!_selected.isPositionManager) revert LibErrors.AssetNotPositionManager(_selected.asset);
+    if (!_selected.isPositionManager) revert LibFacilityErrors.AssetNotPositionManager(_selected.asset);
 
     // get the position manager address
     positionManager = _selected.asset;

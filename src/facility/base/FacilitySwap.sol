@@ -12,7 +12,7 @@ import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {LibTokenBalances} from "src/libs/facility/LibTokenBalances.sol";
 
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title FacilitySwap
@@ -49,11 +49,11 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
   {
     LibStorage.checkNotPaused();
     // ensure the intent IDs are not the same
-    if (params.id1 == params.id2) revert LibErrors.SameIntent();
+    if (params.id1 == params.id2) revert LibFacilityErrors.SameIntent();
     // ensure the swap is not expired
-    if (block.timestamp > params.deadline) revert LibErrors.SwapExpired();
+    if (block.timestamp > params.deadline) revert LibFacilityErrors.SwapExpired();
     // ensure the amounts are not zero
-    if (params.amount1 == 0 || params.amount2 == 0) revert LibErrors.InvalidSwapAmount();
+    if (params.amount1 == 0 || params.amount2 == 0) revert LibFacilityErrors.InvalidSwapAmount();
 
     // get existing intents
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
@@ -96,19 +96,19 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
     // if there is no quorum, we don't need to check signatures
     if (quorum == 0) return;
     // ensure the number of signers and signatures match
-    if (signers.length != signatures.length) revert LibErrors.InvalidSignatureLength();
+    if (signers.length != signatures.length) revert LibFacilityErrors.InvalidSignatureLength();
     // ensure the number of signers is at least the quorum
-    if (signers.length < quorum) revert LibErrors.InvalidSignatureCount(quorum, signers.length);
+    if (signers.length < quorum) revert LibFacilityErrors.InvalidSignatureCount(quorum, signers.length);
 
     address lastSigner;
     // loop until quorum is reached
     for (uint256 i = 0; i < quorum; i++) {
       address signer = signers[i];
       // ensure the signer is strictly increasing (avoids passing multiple times the same signer)
-      if (signer <= lastSigner) revert LibErrors.InvalidSignerOrder();
-      if (!hasAnyRole(signer, GUARDIAN_ROLE)) revert LibErrors.NotGuardian(signer);
+      if (signer <= lastSigner) revert LibFacilityErrors.InvalidSignerOrder();
+      if (!hasAnyRole(signer, GUARDIAN_ROLE)) revert LibFacilityErrors.NotGuardian(signer);
       if (!SignatureCheckerLib.isValidSignatureNowCalldata(signer, digest, signatures[i])) {
-        revert LibErrors.InvalidSignature(signer);
+        revert LibFacilityErrors.InvalidSignature(signer);
       }
       lastSigner = signer;
     }

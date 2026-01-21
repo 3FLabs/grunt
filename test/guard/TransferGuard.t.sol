@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
 import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
-import {LibErrors} from "src/libs/common/LibErrors.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
 /// @title TransferGuardTest
 /// @notice Test suite for TransferGuard contract
@@ -262,7 +262,7 @@ contract TransferGuardTest is Test {
 
   function test_pauseFor_revertsOnZeroDuration() public {
     vm.prank(pauser);
-    vm.expectRevert(LibErrors.AmountZero.selector);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
     guard.pauseFor(token, 0);
   }
 

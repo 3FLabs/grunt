@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
-import {LibErrors} from "src/libs/common/LibErrors.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
 /// @dev Helper contract to test LibPause reverts via external calls
 contract LibPauseWrapper {
@@ -125,7 +125,7 @@ contract LibPauseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_pauseFor_RevertsOnZeroDuration() public {
-    vm.expectRevert(LibErrors.AmountZero.selector);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
     wrapper.pauseFor(0);
   }
 

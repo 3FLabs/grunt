@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {Order} from "../funds/Order.sol";
 import {LibTokenBalances} from "./LibTokenBalances.sol";
-import {LibErrors} from "./LibErrors.sol";
+import {LibFacilityErrors} from "./LibFacilityErrors.sol";
 import {IFacility} from "../../interfaces/facility/IFacility.sol";
 import {IFacilityIntents} from "../../interfaces/facility/base/IFacilityIntents.sol";
 import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
@@ -129,7 +129,7 @@ library LibIntent {
   function checkCap(Intent storage _self, uint256 id, uint256 amount) internal view {
     uint256 attemptedTotal = _self.totalSupply + amount;
     if (attemptedTotal > _self.properties.depositCap) {
-      revert LibErrors.DepositCapExceeded(id, _self.properties.depositCap, attemptedTotal);
+      revert LibFacilityErrors.DepositCapExceeded(id, _self.properties.depositCap, attemptedTotal);
     }
   }
 
@@ -141,7 +141,7 @@ library LibIntent {
   function checkRequestRepaid(Intent storage _self) internal {
     address _request = _self.request;
     if (_request != address(0) && !IRequest(_request).syncRepaidStatus()) {
-      revert LibErrors.RequestNotRepaid(_request);
+      revert LibFacilityErrors.RequestNotRepaid(_request);
     }
   }
 
@@ -150,7 +150,7 @@ library LibIntent {
   /// @param _self The intent storage reference.
   /// @param id The intent ID (used for error reporting).
   function checkNoPendingOrder(Intent storage _self, uint256 id) internal view {
-    if (_self.hasActiveOrder()) revert LibErrors.ActiveOrder(id);
+    if (_self.hasActiveOrder()) revert LibFacilityErrors.ActiveOrder(id);
   }
 
   /// @notice Validates that the intent has an active fund order.
@@ -158,7 +158,7 @@ library LibIntent {
   /// @param _self The intent storage reference.
   /// @param id The intent ID (used for error reporting).
   function checkActiveOrder(Intent storage _self, uint256 id) internal view {
-    if (!_self.hasActiveOrder()) revert LibErrors.NoActiveOrder(id);
+    if (!_self.hasActiveOrder()) revert LibFacilityErrors.NoActiveOrder(id);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -355,12 +355,12 @@ library LibIntent {
     bool targetIsPm = targetAsset.isPositionManager;
 
     // At least one asset must be a position manager.
-    if (!depositIsPm && !targetIsPm) revert LibErrors.MissingPositionManager();
+    if (!depositIsPm && !targetIsPm) revert LibFacilityErrors.MissingPositionManager();
 
     if (depositIsPm && !targetIsPm) {
       // If the deposit asset is the only position manager, the guard key must match the deposit asset,
       // and the target asset can be anything.
-      if (guardKey != depositAsset.asset) revert LibErrors.InvalidGuardKey(guardKey);
+      if (guardKey != depositAsset.asset) revert LibFacilityErrors.InvalidGuardKey(guardKey);
       return;
     }
 
@@ -369,15 +369,17 @@ library LibIntent {
 
     if (!depositIsPm && targetIsPm) {
       // If the target asset is the only Position Manager, the guard key must match the target asset,
-      if (guardKey != targetAsset.asset) revert LibErrors.InvalidGuardKey(guardKey);
+      if (guardKey != targetAsset.asset) revert LibFacilityErrors.InvalidGuardKey(guardKey);
 
       // and the deposit asset must be either the collateral or debt asset of the position manager.
       if (_pmCollateral != depositAsset.asset && _pmDebt != depositAsset.asset) {
-        revert LibErrors.AssetMismatch(_pmCollateral, depositAsset.asset);
+        revert LibFacilityErrors.AssetMismatch(_pmCollateral, depositAsset.asset);
       }
     } else if (depositIsPm && targetIsPm) {
       // If both assets are position managers, the guard key must match one of the assets,
-      if (guardKey != depositAsset.asset && guardKey != targetAsset.asset) revert LibErrors.InvalidGuardKey(guardKey);
+      if (guardKey != depositAsset.asset && guardKey != targetAsset.asset) {
+        revert LibFacilityErrors.InvalidGuardKey(guardKey);
+      }
 
       // and both position managers must have the same collateral and debt assets.
       (address _otherCollateral, address _otherDebt) =

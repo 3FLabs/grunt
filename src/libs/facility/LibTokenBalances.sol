@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
-import {LibErrors as CommonErrors} from "../common/LibErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../common/LibCommonErrors.sol";
 
 /// @title LibTokenBalances
 /// @author 3F Protocol

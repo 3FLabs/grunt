@@ -3,8 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {MockTokenController, ControlledToken, TokenController} from "../mock/request/MockTokens.sol";
-import {LibErrors} from "../../src/libs/request/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 contract ControlledTokenTest is Test {
   MockTokenController public tokenController;
@@ -193,7 +193,7 @@ contract ControlledTokenTest is Test {
     ptToken.approve(spender, 50 ether);
 
     vm.prank(spender);
-    vm.expectRevert(LibErrors.InsufficientAllowance.selector);
+    vm.expectRevert(LibRequestErrors.InsufficientAllowance.selector);
     ptToken.transferFrom(owner, recipient, 51 ether);
   }
 
@@ -287,12 +287,12 @@ contract ControlledTokenTest is Test {
 
     // Try to transfer more PT than allowed
     vm.prank(spender);
-    vm.expectRevert(LibErrors.InsufficientAllowance.selector);
+    vm.expectRevert(LibRequestErrors.InsufficientAllowance.selector);
     tokenController.transferFromBatch(owner, recipient, 51 ether, 60 ether);
 
     // Try to transfer more YT than allowed
     vm.prank(spender);
-    vm.expectRevert(LibErrors.InsufficientAllowance.selector);
+    vm.expectRevert(LibRequestErrors.InsufficientAllowance.selector);
     tokenController.transferFromBatch(owner, recipient, 30 ether, 101 ether);
   }
 
@@ -371,7 +371,7 @@ contract ControlledTokenTest is Test {
     tokenController.mint(owner, 100 ether, 200 ether);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.TransferToSelf.selector);
+    vm.expectRevert(LibRequestErrors.TransferToSelf.selector);
     ptToken.transfer(owner, 50 ether);
   }
 
@@ -520,11 +520,11 @@ contract ControlledTokenTest is Test {
     address randomCaller = address(0x999);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ptToken._emitApproval(address(1), address(2), 100 ether);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ytToken._emitApproval(address(1), address(2), 100 ether);
   }
 
@@ -532,11 +532,11 @@ contract ControlledTokenTest is Test {
     address randomCaller = address(0x999);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ptToken._emitTransfer(address(1), address(2), 100 ether);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     ytToken._emitTransfer(address(1), address(2), 100 ether);
   }
 
@@ -549,11 +549,11 @@ contract ControlledTokenTest is Test {
 
     // Try to call _transfer directly from a non-token contract
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     tokenController._transfer(owner, owner, recipient, 50 ether, false);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     tokenController._transfer(owner, owner, recipient, 50 ether, true);
   }
 
@@ -564,11 +564,11 @@ contract ControlledTokenTest is Test {
 
     // Try to call _approve directly from a non-token contract
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     tokenController._approve(owner, spender, 100 ether, false);
 
     vm.prank(randomCaller);
-    vm.expectRevert(LibErrors.UnauthorizedTokenContract.selector);
+    vm.expectRevert(LibRequestErrors.UnauthorizedTokenContract.selector);
     tokenController._approve(owner, spender, 100 ether, true);
   }
 
