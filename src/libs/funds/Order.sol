@@ -56,10 +56,24 @@ struct Order {
 library LibOrder {
   /// @notice Computes the unique ID of an order.
   /// @dev The ID is chain-specific and includes the fund address to prevent cross-chain/cross-fund collisions.
+  ///      Computes `keccak256(abi.encode(block.chainid, fund, order))` using memory-safe assembly.
   /// @param order The order to compute the ID for.
   /// @param fund The address of the fund (IFund) creating the order.
-  /// @return The unique ID of the order as bytes32.
-  function toId(Order memory order, address fund) internal view returns (bytes32) {
-    return keccak256(abi.encode(block.chainid, fund, order));
+  /// @return id The unique ID of the order as bytes32.
+  function toId(Order memory order, address fund) internal view returns (bytes32 id) {
+    assembly ("memory-safe") {
+      // load the free memory pointer
+      let start := mload(0x40)
+      // store the chain ID
+      mstore(start, chainid())
+      // store the fund address
+      mstore(add(start, 0x20), fund)
+      // store the order
+      mcopy(add(start, 0x40), order, 0xC0)
+      // compute the hash
+      id := keccak256(start, 0x100)
+      // update the free memory pointer
+      mstore(0x40, add(start, 0x100))
+    }
   }
 }

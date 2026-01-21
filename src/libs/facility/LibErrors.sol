@@ -5,8 +5,9 @@ pragma solidity ^0.8.20;
 /// @author 3F Protocol
 /// @notice Error definitions for the Facility contract.
 library LibErrors {
-  /// @notice Thrown when the facility is paused.
-  error Paused();
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      INTENT STATE                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when the intent is already resolving.
   /// @param id The intent ID.
@@ -28,48 +29,6 @@ library LibErrors {
   /// @param id The intent ID.
   error NotDepositing(uint256 id);
 
-  /// @notice Thrown when the deposit cap is exceeded.
-  /// @param id The intent ID.
-  /// @param depositCap The configured deposit cap.
-  /// @param attemptedTotal The attempted total supply after deposit.
-  error DepositCapExceeded(uint256 id, uint256 depositCap, uint256 attemptedTotal);
-
-  /// @notice Thrown when an expected asset does not match the actual asset.
-  /// @param expected The expected asset address.
-  /// @param actual The actual asset address.
-  error AssetMismatch(address expected, address actual);
-
-  /// @notice Thrown when no position manager is provided on either side of the intent.
-  error MissingPositionManager();
-
-  /// @notice Thrown when the guard key does not match the required position manager.
-  /// @param guardKey The provided guard key.
-  error InvalidGuardKey(address guardKey);
-
-  /// @notice Thrown when an asset is expected to be a position manager but is not.
-  /// @param asset The asset address that is not a position manager.
-  error AssetNotPositionManager(address asset);
-
-  /// @notice Thrown when the request has not reached a withdrawable state.
-  /// @param request The request address.
-  error RequestNotRepaid(address request);
-
-  /// @notice Thrown when an amount differs from the expected value.
-  /// @param expected The expected amount.
-  /// @param actual The actual amount.
-  error AmountMismatch(uint256 expected, uint256 actual);
-
-  /// @notice Thrown when a fund commits an amount different from the order input.
-  /// @param id The intent ID.
-  /// @param expected The expected committed amount (order input).
-  /// @param actual The actual committed amount returned by the fund.
-  error CommitAmountMismatch(uint256 id, uint256 expected, uint256 actual);
-
-  /// @notice Thrown when resolveStart is not in the future.
-  /// @param resolveStart The provided resolve start timestamp.
-  /// @param currentTime The current block timestamp.
-  error InvalidResolveStart(uint40 resolveStart, uint40 currentTime);
-
   /// @notice Thrown when an intent ID does not exist.
   /// @param id The intent ID.
   error IntentNotFound(uint256 id);
@@ -78,12 +37,94 @@ library LibErrors {
   /// @param id The intent ID.
   error IntentTransfersLocked(uint256 id);
 
-  /// @notice Thrown when a TransferGuard blocks a transfer.
-  /// @param guard The TransferGuard address.
-  /// @param from The token sender.
-  /// @param to The token receiver.
-  /// @param amount The token amount.
-  error TransferBlocked(address guard, address from, address to, uint256 amount);
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    INTENT VALIDATION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when resolveStart is not in the future.
+  /// @param resolveStart The provided resolve start timestamp.
+  /// @param currentTime The current block timestamp.
+  error InvalidResolveStart(uint40 resolveStart, uint40 currentTime);
+
+  /// @notice Thrown when no position manager is provided on either side of the intent.
+  error MissingPositionManager();
+
+  /// @notice Thrown when the guard key does not match the required position manager.
+  /// @param guardKey The provided guard key.
+  error InvalidGuardKey(address guardKey);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         DEPOSITS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when the deposit cap is exceeded.
+  /// @param id The intent ID.
+  /// @param depositCap The configured deposit cap.
+  /// @param attemptedTotal The attempted total supply after deposit.
+  error DepositCapExceeded(uint256 id, uint256 depositCap, uint256 attemptedTotal);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          ASSETS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when an expected asset does not match the actual asset.
+  /// @param expected The expected asset address.
+  /// @param actual The actual asset address.
+  error AssetMismatch(address expected, address actual);
+
+  /// @notice Thrown when an asset is expected to be a position manager but is not.
+  /// @param asset The asset address that is not a position manager.
+  error AssetNotPositionManager(address asset);
+
+  /// @notice Thrown when an amount differs from the expected value.
+  /// @param expected The expected amount.
+  /// @param actual The actual amount.
+  error AmountMismatch(uint256 expected, uint256 actual);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          FUNDS                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when a fund is required but not configured.
+  /// @param id The intent ID.
+  error MissingFund(uint256 id);
+
+  /// @notice Thrown when a fund is already in use.
+  /// @param fund The fund address.
+  /// @param intentId The intent ID.
+  error FundAlreadyInUse(address fund, uint256 intentId);
+
+  /// @notice Thrown when a fund commits an amount different from the order input.
+  /// @param id The intent ID.
+  /// @param expected The expected committed amount (order input).
+  /// @param actual The actual committed amount returned by the fund.
+  error CommitAmountMismatch(uint256 id, uint256 expected, uint256 actual);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         REQUESTS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when a request is required but not configured.
+  /// @param id The intent ID.
+  error MissingRequest(uint256 id);
+
+  /// @notice Thrown when a request is already in use.
+  /// @param request The request address.
+  /// @param intentId The intent ID.
+  error RequestAlreadyInUse(address request, uint256 intentId);
+
+  /// @notice Thrown when the request has not reached a withdrawable state.
+  /// @param request The request address.
+  error RequestNotRepaid(address request);
+  
+  /// @notice Thrown when a request is already in use.
+  /// @param request The request address.
+  /// @param intentId The intent ID.
+  error RequestAlreadyInUse(address request, uint256 intentId);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          ORDERS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when a fund order already exists.
   /// @param id The intent ID.
@@ -97,13 +138,9 @@ library LibErrors {
   /// @param id The intent ID.
   error OrderNotEnded(uint256 id);
 
-  /// @notice Thrown when a fund is required but not configured.
-  /// @param id The intent ID.
-  error MissingFund(uint256 id);
-
-  /// @notice Thrown when a request is required but not configured.
-  /// @param id The intent ID.
-  error MissingRequest(uint256 id);
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           SWAP                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when swap params reference the same intent.
   error SameIntent();
@@ -117,6 +154,10 @@ library LibErrors {
   /// @notice Thrown when a swap digest has already been used.
   /// @param digest The used swap digest.
   error SwapDigestUsed(bytes32 digest);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       SIGNATURES                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when signatures length mismatches.
   error InvalidSignatureLength();
@@ -137,13 +178,14 @@ library LibErrors {
   /// @param signer The address of the signer.
   error InvalidSignature(address signer);
 
-  /// @notice Thrown when a fund is already in use.
-  /// @param fund The fund address.
-  /// @param intentId The intent ID.
-  error FundAlreadyInUse(address fund, uint256 intentId);
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        TRANSFERS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when a request is already in use.
-  /// @param request The request address.
-  /// @param intentId The intent ID.
-  error RequestAlreadyInUse(address request, uint256 intentId);
+  /// @notice Thrown when a TransferGuard blocks a transfer.
+  /// @param guard The TransferGuard address.
+  /// @param from The token sender.
+  /// @param to The token receiver.
+  /// @param amount The token amount.
+  error TransferBlocked(address guard, address from, address to, uint256 amount);
 }

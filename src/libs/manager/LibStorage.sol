@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
+import {LibChecks} from "../common/LibChecks.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 
 /// @notice Fee configuration data for the PositionManager.
@@ -62,10 +63,32 @@ struct PositionManagerStorageData {
 /// @notice Library providing storage accessor for PositionManager contracts.
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibStorage {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       STORAGE ACCESS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @dev Returns a reference to the contract's storage struct.
   function positionManagerStorage() internal pure returns (PositionManagerStorageData storage data) {
     assembly ("memory-safe") {
       data.slot := STORAGE_SLOT
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          SETTERS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Sets the LLTV value after validation.
+  /// @param self The storage pointer to the PositionManagerStorageData struct.
+  /// @param lltv_ The LLTV value to set (WAD precision).
+  function setLltv(PositionManagerStorageData storage self, uint256 lltv_) internal {
+    // LLTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
+    LibChecks.checkValidLltv(lltv_);
+    unchecked {
+      // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
+      // forge-lint: disable-next-line(unsafe-typecast)
+      self.lltv = uint64(lltv_);
+      emit IPositionManager.LLTVSet(lltv_);
     }
   }
 }

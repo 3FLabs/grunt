@@ -7,14 +7,9 @@ import {State} from "./Order.sol";
 /// @author 3F Protocol
 /// @notice Error definitions for the Funds contracts.
 library LibErrors {
-  /// @notice Thrown when the order owner does not match the caller (the owner).
-  error InvalidOwner();
-
-  /// @notice Thrown when the order receiver does not match the caller (the owner).
-  error InvalidReceiver();
-
-  /// @notice Thrown when trying to create an order while another is still pending.
-  error PendingOrder();
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      ORDER STATE                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when the current state does not match the expected one.
   /// @param actual The actual state.
@@ -24,8 +19,29 @@ library LibErrors {
   /// @param orderId The invalid order Id.
   error InvalidOrder(bytes32 orderId);
 
+  /// @notice Thrown when trying to create an order while another is still pending.
+  error PendingOrder();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      AUTHORIZATION                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when the order owner does not match the caller (the owner).
+  error InvalidOwner();
+
+  /// @notice Thrown when the order receiver does not match the caller (the owner).
+  error InvalidReceiver();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      INTEGRATIONS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    CHAINLINK ORACLE                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when the Chainlink oracle returns a non-positive price.
   /// @dev Indicates an invalid or paused oracle feed, or corrupted round data.
@@ -45,6 +61,10 @@ library LibErrors {
   /// @notice Thrown when the provided oracle address is invalid (e.g., decimals mismatch).
   /// @param oracle The invalid oracle address.
   error InvalidOracle(address oracle);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    TOKEN VALIDATION                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when there is a decimals mismatch between two tokens.
   /// @param decimalsA The decimals of the first token.

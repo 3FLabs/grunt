@@ -255,7 +255,7 @@ contract PositionManagerFactoryTest is Test {
     address transferGuard
   ) public {
     vm.assume(owner != address(0));
-    lltv = bound(lltv, 0, 1e18); // LLTV should be <= 100%
+    lltv = bound(lltv, 1, 1e18); // LLTV must be > 0 and <= 100%
 
     address positionManager = factory.createPositionManager(
       owner, name, symbol, decimals, address(collateralToken), address(debtToken), lltv, transferGuard

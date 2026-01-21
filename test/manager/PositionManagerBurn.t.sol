@@ -9,6 +9,7 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
 import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 /// @title PositionManagerBurnTest
 /// @notice Tests for PositionManager burn functionality
@@ -75,7 +76,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
 
   function test_burn_revertOnZeroShares() public {
     vm.prank(minter);
-    vm.expectRevert(LibErrors.ZeroAmount.selector);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     positionManager.burn(0);
   }
 

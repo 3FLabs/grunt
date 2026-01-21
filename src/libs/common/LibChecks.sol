@@ -2,11 +2,16 @@
 pragma solidity ^0.8.20;
 
 import {LibErrors} from "./LibErrors.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibChecks
 /// @author 3F Protocol
 /// @notice Common validation utilities shared across all modules.
 library LibChecks {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      GENERAL CHECKS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @dev Reverts if the address is the zero address.
   /// @param addr The address to check.
   function checkNotZero(address addr) internal pure {
@@ -23,5 +28,15 @@ library LibChecks {
   /// @param amount The amount to check.
   function checkNotZero(uint256 amount) internal pure {
     if (amount == 0) revert LibErrors.AmountZero();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       LLTV CHECKS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Reverts if the LLTV is invalid (zero or greater than WAD).
+  /// @param lltv The LLTV value to check (WAD precision).
+  function checkValidLltv(uint256 lltv) internal pure {
+    if (lltv == 0 || lltv > FixedPointMathLib.WAD) revert LibErrors.InvalidLltv();
   }
 }

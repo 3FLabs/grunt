@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 /// @title PositionManagerWithdrawTest
 /// @notice Tests for PositionManager withdraw functionality
@@ -80,7 +81,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
 
   function test_withdraw_revertOnZeroAmount() public {
     vm.prank(minter);
-    vm.expectRevert(LibErrors.ZeroAmount.selector);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
     positionManager.withdraw(0, 0);
   }
 
