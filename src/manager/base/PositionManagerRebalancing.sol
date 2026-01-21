@@ -57,8 +57,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     // Accrue fees based on pre-rebalance state and capture totalAssets before operations
     uint256 totalAssetsBefore = _accrueFees();
 
-    address _collateralAsset = _storage.collateralAsset;
-    address _debtAsset = _storage.debtAsset;
+    address _collateralAsset = _storage.metadata.collateralAsset;
+    address _debtAsset = _storage.metadata.debtAsset;
 
     if (data.collateral > 0) {
       _collateralAsset.safeTransferFrom(msg.sender, address(this), data.collateral);

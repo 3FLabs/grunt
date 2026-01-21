@@ -10,6 +10,7 @@ import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
@@ -59,7 +60,14 @@ contract FacilitySwapTest is Test {
     debt = new MockERC20("Debt", "DEBT", 6);
 
     pm = new PositionManager();
-    pm.initialize(address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18, address(0));
+    pm.initialize(
+      address(this),
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", decimals: 6, collateralAsset: address(collateral), debtAsset: address(debt)
+      }),
+      0.8e18,
+      address(0)
+    );
   }
 
   function _createIntent(uint8 quorum) internal returns (uint256 id) {

@@ -49,7 +49,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Pull collateral from caller
     if (collateral > 0) {
-      _storage.collateralAsset.safeTransferFrom(msg.sender, address(this), collateral);
+      _storage.metadata.collateralAsset.safeTransferFrom(msg.sender, address(this), collateral);
     }
 
     // Process deposits through supply queue
@@ -57,7 +57,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       // No debt: deposit all collateral to first position
       if (collateral > 0) {
         if (_storage.supplyQueue.length == 0) revert LibManagerErrors.EmptySupplyQueue();
-        _storage.supplyQueue[0].position.supply(_storage.collateralAsset, collateral);
+        _storage.supplyQueue[0].position.supply(_storage.metadata.collateralAsset, collateral);
       }
     } else {
       // With debt: iterate through queue
@@ -66,7 +66,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Send borrowed debt to caller
     if (debt > 0) {
-      _storage.debtAsset.safeTransfer(msg.sender, debt);
+      _storage.metadata.debtAsset.safeTransfer(msg.sender, debt);
     }
 
     // Settle shares based on assets delta
@@ -93,7 +93,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Pull debt from caller for repayment
     if (debt > 0) {
-      _storage.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
+      _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
     // Process withdrawals through withdrawal queue
@@ -101,7 +101,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Send collateral to caller
     if (collateral > 0) {
-      _storage.collateralAsset.safeTransfer(msg.sender, collateral);
+      _storage.metadata.collateralAsset.safeTransfer(msg.sender, collateral);
     }
 
     // Settle shares based on assets delta
@@ -139,7 +139,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Pull debt from caller for repayment
     if (debt > 0) {
-      _storage.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
+      _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
     // Process burn through withdrawal queue - withdraws/repays proportionally on each position
@@ -147,7 +147,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Send collateral to caller
     if (collateral > 0) {
-      _storage.collateralAsset.safeTransfer(msg.sender, collateral);
+      _storage.metadata.collateralAsset.safeTransfer(msg.sender, collateral);
     }
 
     // Update snapshot for performance fees

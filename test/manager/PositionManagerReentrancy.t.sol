@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {ReentrantMinter} from "../mock/manager/ReentrantMinter.sol";
 import {ReentrantCollateral} from "../mock/manager/ReentrantCollateral.sol";
@@ -26,11 +27,13 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     reentrantPm = new PositionManager();
     reentrantPm.initialize(
       owner,
-      "Reentrant PM",
-      "RPM",
-      18,
-      address(reentrantCollateral),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Reentrant PM",
+        symbol: "RPM",
+        decimals: 18,
+        collateralAsset: address(reentrantCollateral),
+        debtAsset: address(debtToken)
+      }),
       POSITION_MANAGER_LLTV,
       address(0)
     );
@@ -68,7 +71,16 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     ReentrantCollateral reentrantDebt = new ReentrantCollateral();
     PositionManager pm2 = new PositionManager();
     pm2.initialize(
-      owner, "PM2", "PM2", 18, address(collateralToken), address(reentrantDebt), POSITION_MANAGER_LLTV, address(0)
+      owner,
+      PositionManagerMetadata({
+        name: "PM2",
+        symbol: "PM2",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(reentrantDebt)
+      }),
+      POSITION_MANAGER_LLTV,
+      address(0)
     );
 
     ReentrantMinter attacker2 = new ReentrantMinter(pm2);

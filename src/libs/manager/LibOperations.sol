@@ -46,7 +46,7 @@ library LibOperations {
 
         // Supply collateral first (if any)
         if (collateralToSupply > 0) {
-          position.supply(_storage.collateralAsset, collateralToSupply);
+          position.supply(_storage.metadata.collateralAsset, collateralToSupply);
           remainingCollateral -= collateralToSupply;
         }
 
@@ -75,7 +75,7 @@ library LibOperations {
       uint256 remainingCollateral = collateral;
       uint256 queueLength = _storage.withdrawalQueue.length;
 
-      address debtAsset = _storage.debtAsset;
+      address debtAsset = _storage.metadata.debtAsset;
 
       for (uint256 i = 0; i < queueLength && (remainingDebt > 0 || remainingCollateral > 0); i++) {
         address position = _storage.withdrawalQueue[i];
@@ -136,7 +136,7 @@ library LibOperations {
         if (remainingDebt > 0 && positionDebt > 0 && totalDebt > 0) {
           uint256 toRepay = debtToRepay.mulDiv(positionDebt, totalDebt);
           if (toRepay > 0) {
-            position.repay(_storage.debtAsset, toRepay);
+            position.repay(_storage.metadata.debtAsset, toRepay);
             remainingDebt -= toRepay;
           }
         }

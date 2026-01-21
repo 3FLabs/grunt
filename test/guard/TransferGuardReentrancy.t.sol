@@ -10,6 +10,7 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
@@ -227,11 +228,13 @@ contract TransferGuardReentrancyTest is Test {
     positionManager = new PositionManager();
     positionManager.initialize(
       owner,
-      "Test PM",
-      "TPM",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Test PM",
+        symbol: "TPM",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       0.8e18, // 80% LLTV
       address(0)
     );

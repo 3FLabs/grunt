@@ -17,6 +17,20 @@ struct FeeData {
   uint24 performanceFee;
 }
 
+/// @notice Metadata for the PositionManager share token and assets.
+/// @param name The ERC20 name of the position manager share token.
+/// @param symbol The ERC20 symbol of the position manager share token.
+/// @param decimals The number of decimals for the share token (matches the collateral asset).
+/// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
+/// @param debtAsset The address of the debt asset borrowed against positions.
+struct PositionManagerMetadata {
+  string name;
+  string symbol;
+  uint8 decimals;
+  address collateralAsset;
+  address debtAsset;
+}
+
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
 /// @dev Uses ERC-7201 namespaced storage pattern at slot `keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))`
 ///      for upgradeability. Fields are ordered to minimize storage slots.
@@ -27,11 +41,7 @@ struct FeeData {
 ///        Assets are withdrawn in this order when processing redemptions.
 /// @param borrowModules Set of approved borrow module addresses that can interact with positions.
 ///        Uses Solady's EnumerableSetLib for O(1) add/remove/contains operations.
-/// @param name The ERC20 name of the position manager share token.
-/// @param symbol The ERC20 symbol of the position manager share token.
-/// @param decimals The number of decimals for the share token (matches the collateral asset).
-/// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
-/// @param debtAsset The address of the debt asset borrowed against positions.
+/// @param metadata Token metadata and asset addresses for the position manager.
 /// @param lastTotalAssets Cached total assets value from the last fee accrual, used for
 ///        calculating high water mark and performance fees.
 /// @param lltv Liquidation loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
@@ -47,11 +57,7 @@ struct PositionManagerStorageData {
   SupplyQueueEntry[] supplyQueue;
   address[] withdrawalQueue;
   EnumerableSetLib.AddressSet borrowModules;
-  string name;
-  string symbol;
-  uint8 decimals;
-  address collateralAsset;
-  address debtAsset;
+  PositionManagerMetadata metadata;
   uint256 lastTotalAssets;
   uint64 lltv;
   uint40 lastFeeAccrualTimestamp;

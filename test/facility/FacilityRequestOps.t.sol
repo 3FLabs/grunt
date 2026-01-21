@@ -8,6 +8,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 
 import {RequestFactory} from "src/request/RequestFactory.sol";
 
@@ -49,7 +50,14 @@ contract FacilityRequestOpsTest is Test {
     MockERC20 collateral = new MockERC20("COL", "COL", 18);
 
     pm = new PositionManager();
-    pm.initialize(address(this), "PM", "PM", 18, address(collateral), address(asset), 0.8e18, address(0));
+    pm.initialize(
+      address(this),
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", decimals: 18, collateralAsset: address(collateral), debtAsset: address(asset)
+      }),
+      0.8e18,
+      address(0)
+    );
 
     RequestFactory factory = new RequestFactory(address(this));
     (request,,) = factory.createRequest(

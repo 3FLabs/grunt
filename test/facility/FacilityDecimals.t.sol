@@ -8,6 +8,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 contract FacilityDecimalsTest is Test {
@@ -24,7 +25,14 @@ contract FacilityDecimalsTest is Test {
     debt = new MockERC20("Debt", "DEBT", 6);
 
     positionManager = new PositionManager();
-    positionManager.initialize(address(this), "PM", "PM", 6, address(collateral), address(debt), 0.8e18, address(0));
+    positionManager.initialize(
+      address(this),
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", decimals: 6, collateralAsset: address(collateral), debtAsset: address(debt)
+      }),
+      0.8e18,
+      address(0)
+    );
   }
 
   function test_Decimals_EqualsDepositAssetDecimals() public {

@@ -7,7 +7,7 @@ import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerLP} from "./base/PositionManagerLP.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
-import {FeeData, PositionManagerStorageData} from "../libs/manager/LibStorage.sol";
+import {FeeData, PositionManagerMetadata, PositionManagerStorageData} from "../libs/manager/LibStorage.sol";
 import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
@@ -37,30 +37,16 @@ contract PositionManager is
 
   /// @notice Initializes the PositionManager.
   /// @param owner_ The owner of the contract
-  /// @param name_ The name of the share token
-  /// @param symbol_ The symbol of the share token
-  /// @param decimals_ The decimals of the share token
-  /// @param collateralAsset_ The collateral asset address
-  /// @param debtAsset_ The debt asset address
+  /// @param metadata_ The metadata containing name, symbol, decimals, collateral and debt assets
   /// @param lltv_ The LLTV for available collateral calculation (WAD precision)
   /// @param transferGuard_ The initial transfer guard address (address(0) to disable)
-  function initialize(
-    address owner_,
-    string memory name_,
-    string memory symbol_,
-    uint8 decimals_,
-    address collateralAsset_,
-    address debtAsset_,
-    uint256 lltv_,
-    address transferGuard_
-  ) external initializer {
+  function initialize(address owner_, PositionManagerMetadata memory metadata_, uint256 lltv_, address transferGuard_)
+    external
+    initializer
+  {
     _initializeOwner(owner_);
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    _storage.name = name_;
-    _storage.symbol = symbol_;
-    _storage.decimals = decimals_;
-    _storage.collateralAsset = collateralAsset_;
-    _storage.debtAsset = debtAsset_;
+    _storage.metadata = metadata_;
     _storage.setLltv(lltv_);
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -77,17 +63,17 @@ contract PositionManager is
 
   /// @inheritdoc ERC20
   function name() public view override returns (string memory) {
-    return LibStorage.positionManagerStorage().name;
+    return LibStorage.positionManagerStorage().metadata.name;
   }
 
   /// @inheritdoc ERC20
   function symbol() public view override returns (string memory) {
-    return LibStorage.positionManagerStorage().symbol;
+    return LibStorage.positionManagerStorage().metadata.symbol;
   }
 
   /// @inheritdoc ERC20
   function decimals() public view override returns (uint8) {
-    return LibStorage.positionManagerStorage().decimals;
+    return LibStorage.positionManagerStorage().metadata.decimals;
   }
 
   /// @inheritdoc IPositionManager
@@ -113,8 +99,8 @@ contract PositionManager is
   /// @inheritdoc IPositionManager
   function assets() public view returns (address collateralAsset, address debtAsset) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    collateralAsset = _storage.collateralAsset;
-    debtAsset = _storage.debtAsset;
+    collateralAsset = _storage.metadata.collateralAsset;
+    debtAsset = _storage.metadata.debtAsset;
   }
 
   /// @inheritdoc IPositionManager
