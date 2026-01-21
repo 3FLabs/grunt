@@ -116,11 +116,6 @@ library LibErrors {
   /// @notice Thrown when the request has not reached a withdrawable state.
   /// @param request The request address.
   error RequestNotRepaid(address request);
-  
-  /// @notice Thrown when a request is already in use.
-  /// @param request The request address.
-  /// @param intentId The intent ID.
-  error RequestAlreadyInUse(address request, uint256 intentId);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ORDERS                            */
