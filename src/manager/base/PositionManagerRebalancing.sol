@@ -11,6 +11,7 @@ import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibErrors} from "../../libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../libs/common/LibErrors.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
 import {BPS} from "../../libs/manager/LibConstants.sol";
@@ -54,7 +55,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
     // Check if paused via transfer guard
     address guard = _storage.transferGuard;
     if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
-      revert LibErrors.Paused();
+      revert CommonErrors.Paused();
     }
 
     // Accrue fees based on pre-rebalance state and capture totalAssets before operations

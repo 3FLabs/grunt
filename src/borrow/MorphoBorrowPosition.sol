@@ -84,7 +84,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     address(morpho_).checkNotZero();
     if (Id.unwrap(marketId_) == bytes32(0)) revert LibErrors.InvalidMarketId(marketId_);
     if (morpho_.market(marketId_).lastUpdate == 0) revert LibErrors.MarketNotCreated();
-    if (lltv_ == 0 || lltv_ > FixedPointMathLib.WAD) revert LibErrors.InvalidLltv();
+    LibChecks.checkValidLltv(lltv_);
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     _storage.morpho = morpho_;

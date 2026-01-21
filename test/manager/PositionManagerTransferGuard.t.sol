@@ -6,6 +6,7 @@ import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard
 import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
 import {IPositionManager, RebalancingData, RebalancingOperation} from "src/interfaces/manager/IPositionManager.sol";
 import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 /// @title PositionManagerTransferGuardTest
 /// @notice Test suite for PositionManager integration with TransferGuard
@@ -297,7 +298,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Rebalance should fail
     vm.prank(rebalancer);
-    vm.expectRevert(LibErrors.Paused.selector);
+    vm.expectRevert(CommonErrors.Paused.selector);
     positionManager.rebalance(
       RebalancingData({collateral: 0, debt: 0, operations: new RebalancingOperation[](0)}), rebalancer
     );
