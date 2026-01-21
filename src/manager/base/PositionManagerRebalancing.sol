@@ -10,8 +10,8 @@ import {
 import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
-import {LibErrors} from "../../libs/manager/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../libs/common/LibErrors.sol";
+import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../libs/common/LibCommonErrors.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
 import {BPS} from "../../libs/manager/LibConstants.sol";
@@ -41,8 +41,8 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.Paused} if the contract is paused.
-  ///      Reverts with {LibErrors.RebalanceLossExceedsMax} if total assets decrease exceeds maxRebalanceLoss.
+  /// @dev Reverts with {LibManagerErrors.Paused} if the contract is paused.
+  ///      Reverts with {LibManagerErrors.RebalanceLossExceedsMax} if total assets decrease exceeds maxRebalanceLoss.
   function rebalance(RebalancingData calldata data, address receiver)
     public
     virtual
@@ -92,13 +92,13 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
       // loss * BPS / totalAssetsBefore > maxRebalanceLoss
       // Rearranged to avoid division: loss * BPS > maxRebalanceLoss * totalAssetsBefore
       if (loss * BPS > uint256(_storage.maxRebalanceLoss) * totalAssetsBefore) {
-        revert LibErrors.RebalanceLossExceedsMax();
+        revert LibManagerErrors.RebalanceLossExceedsMax();
       }
     }
   }
 
   /// @dev Dispatches a single rebalancing operation to the appropriate helper.
-  ///      Reverts with {LibErrors.UnauthorizedPosition} if the position is not a registered borrow module.
+  ///      Reverts with {LibManagerErrors.UnauthorizedPosition} if the position is not a registered borrow module.
   /// @param operation The rebalancing operation to execute
   /// @param _collateralAsset The collateral asset address
   /// @param _debtAsset The debt asset address
@@ -113,7 +113,7 @@ abstract contract PositionManagerRebalancing is IPositionManager, OwnableRoles {
 
     // Validate that the position is a registered borrow module
     if (!LibStorage.positionManagerStorage().borrowModules.contains(position)) {
-      revert LibErrors.UnauthorizedPosition();
+      revert LibManagerErrors.UnauthorizedPosition();
     }
 
     if (operationType == RebalancingOperationType.REPAY) {

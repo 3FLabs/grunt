@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 import {IOfferReceiver, Offer} from "../../interfaces/request/IOfferReceiver.sol";
-import {LibErrors} from "../../libs/request/LibErrors.sol";
+import {LibRequestErrors} from "../../libs/request/LibRequestErrors.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title OfferReceiver
@@ -84,7 +84,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @custom:reverts InvalidNonceUpdate if newNonce <= current nonce
   function setNonce(uint256 newNonce) external {
     uint256 currentNonce = nonce(msg.sender);
-    if (currentNonce >= newNonce) revert LibErrors.InvalidNonceUpdate();
+    if (currentNonce >= newNonce) revert LibRequestErrors.InvalidNonceUpdate();
     _setNonce(msg.sender, newNonce);
   }
 
@@ -134,16 +134,16 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
     offer.expectedReturn.checkNotZero();
 
     // Check offer has not expired
-    if (offer.expiration <= block.timestamp) revert LibErrors.OfferExpired();
+    if (offer.expiration <= block.timestamp) revert LibRequestErrors.OfferExpired();
 
     // Ensure offer nonce is fresh (greater than stored nonce)
-    if (nonce(offer.maker) >= offer.nonce) revert LibErrors.InvalidNonce();
+    if (nonce(offer.maker) >= offer.nonce) revert LibRequestErrors.InvalidNonce();
 
     // Update stored nonce BEFORE signature verification to prevent reentrancy replays
     _setNonce(offer.maker, offer.nonce);
 
     // Compute EIP-712 typed data hash and verify signature
     bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
-    if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert LibErrors.InvalidSignature();
+    if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert LibRequestErrors.InvalidSignature();
   }
 }

@@ -8,7 +8,7 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
-import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
+import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerLiquidationTest
 /// @notice Tests for PositionManager liquidation scenarios
@@ -299,7 +299,7 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
 
     // Trying to withdraw should fail (no available collateral)
     vm.prank(minter);
-    vm.expectRevert(LibErrors.InsufficientAvailableCollateral.selector);
+    vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(1, 0);
   }
 }

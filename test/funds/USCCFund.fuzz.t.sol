@@ -8,7 +8,7 @@ import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {LibErrors} from "src/libs/funds/LibErrors.sol";
+import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAllowlist} from "./mocks/MockAllowlist.sol";
@@ -123,7 +123,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
   }
 
@@ -178,7 +178,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
     fund.recover(order);
   }
 
@@ -252,7 +252,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
   }
 
@@ -335,7 +335,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
     fund.recover(order);
   }
 

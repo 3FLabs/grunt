@@ -8,8 +8,8 @@ import {
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
-import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 /// @title PositionManagerBurnTest
 /// @notice Tests for PositionManager burn functionality

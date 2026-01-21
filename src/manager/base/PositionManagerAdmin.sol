@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
-import {LibErrors} from "../../libs/manager/LibErrors.sol";
+import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
@@ -35,14 +35,14 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
+  /// @dev Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
   function removeBorrowModule(address module) external override onlyOwner {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Check module is not in supply queue
     uint256 supplyQueueLength = _storage.supplyQueue.length;
     for (uint256 i = 0; i < supplyQueueLength;) {
-      if (_storage.supplyQueue[i].position == module) revert LibErrors.ModuleStillInQueue();
+      if (_storage.supplyQueue[i].position == module) revert LibManagerErrors.ModuleStillInQueue();
       unchecked {
         ++i;
       }
@@ -51,7 +51,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
     // Check module is not in withdrawal queue
     uint256 withdrawalQueueLength = _storage.withdrawalQueue.length;
     for (uint256 i = 0; i < withdrawalQueueLength;) {
-      if (_storage.withdrawalQueue[i] == module) revert LibErrors.ModuleStillInQueue();
+      if (_storage.withdrawalQueue[i] == module) revert LibManagerErrors.ModuleStillInQueue();
       unchecked {
         ++i;
       }
@@ -62,14 +62,14 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
+  /// @dev Reverts with {LibManagerErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
   function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     delete _storage.supplyQueue;
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
-      if (!_storage.borrowModules.contains(queue[i].position)) revert LibErrors.UnauthorizedPosition();
+      if (!_storage.borrowModules.contains(queue[i].position)) revert LibManagerErrors.UnauthorizedPosition();
       _storage.supplyQueue.push(queue[i]);
       unchecked {
         ++i;
@@ -79,13 +79,13 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
+  /// @dev Reverts with {LibManagerErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
   function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
-      if (!_storage.borrowModules.contains(queue[i])) revert LibErrors.UnauthorizedPosition();
+      if (!_storage.borrowModules.contains(queue[i])) revert LibManagerErrors.UnauthorizedPosition();
       unchecked {
         ++i;
       }
@@ -95,7 +95,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.InvalidLltv} if lltv is zero or greater than WAD.
+  /// @dev Reverts with {LibManagerErrors.InvalidLltv} if lltv is zero or greater than WAD.
   function setLltv(uint256 lltv_) external override onlyOwner {
     LibStorage.positionManagerStorage().setLltv(lltv_);
   }
@@ -115,10 +115,10 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   }
 
   /// @inheritdoc IPositionManager
-  /// @dev Reverts with {LibErrors.FeeExceedsMax} if management or performance fee exceeds the maximum.
+  /// @dev Reverts with {LibManagerErrors.FeeExceedsMax} if management or performance fee exceeds the maximum.
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external override onlyOwner {
     if (managementFee > MAX_MANAGEMENT_FEE || performanceFee > MAX_PERFORMANCE_FEE) {
-      revert LibErrors.FeeExceedsMax();
+      revert LibManagerErrors.FeeExceedsMax();
     }
 
     // Accrue fees to current recipient first

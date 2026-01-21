@@ -4,8 +4,8 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {LibErrors} from "src/libs/funds/LibErrors.sol";
-import {LibErrors as CommonErrors} from "src/libs/common/LibErrors.sol";
+import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
+import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
 import {MockERC20} from "./mocks/MockERC20.sol";
 

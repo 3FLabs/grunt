@@ -3,10 +3,10 @@ pragma solidity ^0.8.20;
 
 import {State} from "./Order.sol";
 
-/// @title LibErrors
+/// @title LibFundsErrors
 /// @author 3F Protocol
 /// @notice Error definitions for the Funds contracts.
-library LibErrors {
+library LibFundsErrors {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      ORDER STATE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

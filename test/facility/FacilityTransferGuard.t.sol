@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/facility/Facility.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
@@ -94,7 +94,7 @@ contract FacilityTransferGuardTest is Test {
 
     vm.startPrank(alice);
     vm.expectRevert(
-      abi.encodeWithSelector(LibErrors.TransferBlocked.selector, address(transferGuard), alice, bob, amount)
+      abi.encodeWithSelector(LibFacilityErrors.TransferBlocked.selector, address(transferGuard), alice, bob, amount)
     );
     facility.transfer(bob, id, amount);
     vm.stopPrank();
@@ -125,7 +125,7 @@ contract FacilityTransferGuardTest is Test {
     _deposit(alice, id, TRANSFER_AMOUNT);
 
     vm.startPrank(alice);
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.IntentTransfersLocked.selector, id));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentTransfersLocked.selector, id));
     facility.transfer(bob, id, TRANSFER_AMOUNT);
     vm.stopPrank();
   }

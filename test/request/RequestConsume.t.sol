@@ -9,8 +9,8 @@ import {Vault} from "../../src/request/Vault.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {MockRequestCallback} from "../mock/request/MockRequestCallback.sol";
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
-import {LibErrors} from "../../src/libs/request/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
+import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 /// @title RequestConsumeTest
 /// @notice Tests for the Request.consume() function with EIP-1271 callback contracts
@@ -217,7 +217,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.AlreadyRepaid.selector);
+    vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
     request.consume(offer, signature, offerAmount);
   }
 
@@ -229,7 +229,7 @@ contract RequestConsumeTest is Test {
 
     address notAuthorized = makeAddr("notAuthorized");
     vm.prank(notAuthorized);
-    vm.expectRevert(LibErrors.Unauthorized.selector);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
     request.consume(offer, signature, offerAmount);
   }
 
@@ -272,7 +272,7 @@ contract RequestConsumeTest is Test {
     bytes memory signature = _signOffer(offer);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.OfferExpired.selector);
+    vm.expectRevert(LibRequestErrors.OfferExpired.selector);
     request.consume(offer, signature, offerAmount);
   }
 
@@ -293,7 +293,7 @@ contract RequestConsumeTest is Test {
     bytes memory sig2 = _signOffer(offer2);
 
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidNonce.selector);
+    vm.expectRevert(LibRequestErrors.InvalidNonce.selector);
     request.consume(offer2, sig2, offerAmount);
   }
 
@@ -314,7 +314,7 @@ contract RequestConsumeTest is Test {
     // Use a non-zero ptAmount to ensure we hit the offer.amount validation
     // ptAmount > offer.amount (1 > 0) triggers InvalidPtAmount first
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    vm.expectRevert(LibRequestErrors.InvalidPtAmount.selector);
     request.consume(offer, signature, 1);
   }
 
@@ -588,7 +588,7 @@ contract RequestConsumeTest is Test {
 
     // Should revert with InvalidPtAmount when ptAmount == 0
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    vm.expectRevert(LibRequestErrors.InvalidPtAmount.selector);
     request.consume(offer, signature, 0);
 
     // Verify nonce was NOT burned
@@ -614,7 +614,7 @@ contract RequestConsumeTest is Test {
 
     // Should revert with InvalidPtAmount when ptAmount > offer.amount
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    vm.expectRevert(LibRequestErrors.InvalidPtAmount.selector);
     request.consume(offer, signature, attackAmount);
 
     // Verify nonce was NOT burned
@@ -634,7 +634,7 @@ contract RequestConsumeTest is Test {
 
     // Should revert with InvalidPtAmount when ptAmount > offer.amount
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidPtAmount.selector);
+    vm.expectRevert(LibRequestErrors.InvalidPtAmount.selector);
     request.consume(offer, signature, attackAmount);
 
     // Verify nonce was NOT burned

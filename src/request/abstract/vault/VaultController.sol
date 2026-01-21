@@ -8,7 +8,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ControlledVault} from "./ControlledVault.sol";
 import {IVaultController} from "../../../interfaces/request/IVaultController.sol";
 import {IHasAsset} from "../../../interfaces/request/IHasAsset.sol";
-import {LibErrors} from "../../../libs/request/LibErrors.sol";
+import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 
 /// @title VaultController
 /// @author 3F Protocol
@@ -134,7 +134,7 @@ abstract contract VaultController is TokenController, IVaultController {
     uint256 ytShares
   ) internal virtual {
     unchecked {
-      if (!_syncWithdrawalStatus()) revert LibErrors.CannotWithdraw();
+      if (!_syncWithdrawalStatus()) revert LibRequestErrors.CannotWithdraw();
       if (caller != owner) {
         _consumeAllowance(owner, caller, ptShares, ytShares);
       }

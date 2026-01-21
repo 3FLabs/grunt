@@ -8,7 +8,7 @@ import {IFacilityFunds} from "src/interfaces/facility/base/IFacilityFunds.sol";
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {LibIntent, Intent, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 
 /// @title FacilityFunds
@@ -51,7 +51,7 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
 
     // checks that the intent has a fund
     address _fund = _intent.fund;
-    if (_fund == address(0)) revert LibErrors.MissingFund(id);
+    if (_fund == address(0)) revert LibFacilityErrors.MissingFund(id);
 
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
@@ -109,7 +109,9 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
     // commit the funds
     _tokenIn.safeApproveWithRetry(_fund, _order.input);
     (, uint256 _committedAmount) = IFund(_fund).commit(_order);
-    if (_committedAmount != _order.input) revert LibErrors.CommitAmountMismatch(id, _order.input, _committedAmount);
+    if (_committedAmount != _order.input) {
+      revert LibFacilityErrors.CommitAmountMismatch(id, _order.input, _committedAmount);
+    }
     // reset approval to 0
     _tokenIn.safeApproveWithRetry(_fund, 0);
 

@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/facility/Facility.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
@@ -134,7 +134,7 @@ contract FacilityResolveTest is Test {
 
     facility.create(id, 1, 1, Mode.DEPOSIT);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.ActiveOrder.selector, id));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.ActiveOrder.selector, id));
     facility.resolve(id);
   }
 }

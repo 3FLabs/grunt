@@ -8,7 +8,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
-import {LibErrors} from "../libs/borrow/LibErrors.sol";
+import {LibBorrowErrors} from "../libs/borrow/LibBorrowErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
 import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
@@ -76,14 +76,14 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @param positionManager_ The address of the position manager (owner) that will control this position.
   /// @param lltv_ The custom LLTV for this borrow position. Must be > 0, <= WAD, and <= market LLTV.
   /// @dev Reverts with {CommonErrors.AddressZero} if morpho_ is zero address.
-  ///      Reverts with {LibErrors.InvalidMarketId} if marketId_ is zero.
-  ///      Reverts with {LibErrors.MarketNotCreated} if the market doesn't exist in Morpho.
-  ///      Reverts with {LibErrors.InvalidLltv} if lltv_ is zero or greater than WAD.
-  ///      Reverts with {LibErrors.CustomLltvExceedsMarketLltv} if lltv_ exceeds the Morpho market LLTV.
+  ///      Reverts with {LibBorrowErrors.InvalidMarketId} if marketId_ is zero.
+  ///      Reverts with {LibBorrowErrors.MarketNotCreated} if the market doesn't exist in Morpho.
+  ///      Reverts with {LibBorrowErrors.InvalidLltv} if lltv_ is zero or greater than WAD.
+  ///      Reverts with {LibBorrowErrors.CustomLltvExceedsMarketLltv} if lltv_ exceeds the Morpho market LLTV.
   function initialize(IMorpho morpho_, Id marketId_, address positionManager_, uint256 lltv_) public initializer {
     address(morpho_).checkNotZero();
-    if (Id.unwrap(marketId_) == bytes32(0)) revert LibErrors.InvalidMarketId(marketId_);
-    if (morpho_.market(marketId_).lastUpdate == 0) revert LibErrors.MarketNotCreated();
+    if (Id.unwrap(marketId_) == bytes32(0)) revert LibBorrowErrors.InvalidMarketId(marketId_);
+    if (morpho_.market(marketId_).lastUpdate == 0) revert LibBorrowErrors.MarketNotCreated();
     LibChecks.checkValidLltv(lltv_);
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
@@ -94,7 +94,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // Validate custom LLTV does not exceed market LLTV
     // This ensures pre-liquidation triggers before Morpho's native liquidation
     if (lltv_ > _storage.marketParams.lltv) {
-      revert LibErrors.CustomLltvExceedsMarketLltv(lltv_, _storage.marketParams.lltv);
+      revert LibBorrowErrors.CustomLltvExceedsMarketLltv(lltv_, _storage.marketParams.lltv);
     }
 
     _storage.lltv = lltv_;
@@ -133,7 +133,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      Morpho enforces health checks and will revert if the withdrawal would make the position unhealthy.
   ///      If there is an active borrow, the remaining collateral must maintain adequate collateralization.
   ///      Reverts with {CommonErrors.AmountZero} if amount is 0.
-  ///      Reverts with {LibErrors.InsufficientCollateral} if withdrawal would make position unhealthy.
+  ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if withdrawal would make position unhealthy.
   function withdrawCollateral(uint256 amount) external override onlyOwner {
     amount.checkNotZero();
 
@@ -145,7 +145,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     _storage.morpho.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
 
     if (!_isHealthy(_storage.lltv, _marketParams.oracle)) {
-      revert LibErrors.InsufficientCollateral();
+      revert LibBorrowErrors.InsufficientCollateral();
     }
   }
 
@@ -154,7 +154,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      Requires sufficient collateral to maintain a healthy position based on the market's LLTV.
   ///      Morpho enforces health checks and liquidity constraints.
   ///      Reverts with {CommonErrors.AmountZero} if amount is 0.
-  ///      Reverts with {LibErrors.InsufficientCollateral} if borrowing would exceed LLTV limits.
+  ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if borrowing would exceed LLTV limits.
   function borrow(uint256 amount) external override onlyOwner {
     amount.checkNotZero();
 
@@ -166,7 +166,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     _storage.morpho.borrow(_marketParams, amount, 0, address(this), msg.sender);
 
     if (!_isHealthy(_storage.lltv, _marketParams.oracle)) {
-      revert LibErrors.InsufficientCollateral();
+      revert LibBorrowErrors.InsufficientCollateral();
     }
   }
 
@@ -224,16 +224,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @param data Arbitrary data to pass to the `onPreLiquidate` callback. Pass empty data if not needed.
   /// @return The amount of collateral seized.
   /// @return The amount of debt assets repaid.
-  /// @dev Reverts with {LibErrors.InconsistentInput} if both seizedAssets and repaidShares are non-zero or both are zero.
-  ///      Reverts with {LibErrors.PositionHealthy} if the position is healthy based on the custom LLTV.
+  /// @dev Reverts with {LibBorrowErrors.InconsistentInput} if both seizedAssets and repaidShares are non-zero or both are zero.
+  ///      Reverts with {LibBorrowErrors.PositionHealthy} if the position is healthy based on the custom LLTV.
   function preLiquidate(address borrower, uint256 seizedAssets, uint256 repaidShares, bytes calldata data)
     external
     returns (uint256, uint256)
   {
-    if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert LibErrors.InconsistentInput();
+    if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert LibBorrowErrors.InconsistentInput();
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    if (_isHealthy(_storage.lltv, _storage.marketParams.oracle)) revert LibErrors.PositionHealthy();
+    if (_isHealthy(_storage.lltv, _storage.marketParams.oracle)) revert LibBorrowErrors.PositionHealthy();
 
     _storage.morpho.accrueInterest(_storage.marketParams);
 
@@ -262,14 +262,14 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      3. This callback withdraws collateral to the liquidator
   ///      4. Optionally calls the liquidator's onPreLiquidate callback
   ///      5. Pulls loan tokens from the liquidator to complete the repayment
-  ///      Reverts with {LibErrors.NotMorpho} if called by any address other than the Morpho contract.
+  ///      Reverts with {LibBorrowErrors.NotMorpho} if called by any address other than the Morpho contract.
   /// @param repaidAssets The amount of loan tokens that were repaid.
   /// @param callbackData Encoded data containing (seizedAssets, borrower, liquidator, data).
   function onMorphoRepay(uint256 repaidAssets, bytes calldata callbackData) external {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     IMorpho _morpho = _storage.morpho;
 
-    if (msg.sender != address(_morpho)) revert LibErrors.NotMorpho();
+    if (msg.sender != address(_morpho)) revert LibBorrowErrors.NotMorpho();
 
     (uint256 seizedAssets, address borrower, address liquidator, bytes memory data) =
       abi.decode(callbackData, (uint256, address, address, bytes));

@@ -8,7 +8,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
 import {Order, Mode} from "src/libs/funds/Order.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
 
@@ -132,7 +132,9 @@ contract FacilityFundOpsTest is Test {
 
     fund.setCommittedDelta(-1);
 
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.CommitAmountMismatch.selector, intentId, amountIn, amountIn - 1));
+    vm.expectRevert(
+      abi.encodeWithSelector(LibFacilityErrors.CommitAmountMismatch.selector, intentId, amountIn, amountIn - 1)
+    );
     facility.commit(intentId);
 
     assertEq(asset.balanceOf(address(facility)), facilityAssetBefore, "facility asset unchanged");

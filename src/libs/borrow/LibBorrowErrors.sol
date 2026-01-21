@@ -3,10 +3,10 @@ pragma solidity ^0.8.20;
 
 import {Id} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 
-/// @title LibErrors
+/// @title LibBorrowErrors
 /// @author 3F Protocol
 /// @notice Error definitions for the Borrow contracts.
-library LibErrors {
+library LibBorrowErrors {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         MARKETS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

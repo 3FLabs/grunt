@@ -7,8 +7,8 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
 import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
-import {LibErrors} from "../../../libs/request/LibErrors.sol";
-import {LibErrors as CommonErrors} from "../../../libs/common/LibErrors.sol";
+import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
+import {LibCommonErrors as CommonErrors} from "../../../libs/common/LibCommonErrors.sol";
 
 /// @title TokenController
 /// @author 3F Protocol
@@ -31,7 +31,7 @@ abstract contract TokenController is ITokenController {
   ///      This prevents unauthorized external calls to internal token functions.
   /// @param yt True if checking for YT token, false if checking for PT token
   function _checkToken(bool yt) internal view virtual {
-    if (msg.sender != (yt ? _ytToken() : _ptToken())) revert LibErrors.UnauthorizedTokenContract();
+    if (msg.sender != (yt ? _ytToken() : _ptToken())) revert LibRequestErrors.UnauthorizedTokenContract();
   }
 
   /// @dev Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
@@ -48,7 +48,7 @@ abstract contract TokenController is ITokenController {
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {
       (uint128 ptAllowance, uint128 ytAllowance) = from.allowances(spender);
-      if (pt > ptAllowance || yt > ytAllowance) revert LibErrors.InsufficientAllowance();
+      if (pt > ptAllowance || yt > ytAllowance) revert LibRequestErrors.InsufficientAllowance();
       if (ptAllowance == type(uint128).max && ytAllowance == type(uint128).max) return;
       ptAllowance = ptAllowance.consume(uint128(pt));
       ytAllowance = ytAllowance.consume(uint128(yt));
@@ -66,7 +66,7 @@ abstract contract TokenController is ITokenController {
   /// @return success Always returns true if the transfer succeeds (reverts on failure)
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
-    if (from == to) revert LibErrors.TransferToSelf();
+    if (from == to) revert LibRequestErrors.TransferToSelf();
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {

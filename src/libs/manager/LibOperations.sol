@@ -5,7 +5,7 @@ import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
 import {LibExecutor} from "./LibExecutor.sol";
-import {LibErrors} from "./LibErrors.sol";
+import {LibManagerErrors} from "./LibManagerErrors.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibOperations
@@ -17,7 +17,7 @@ library LibOperations {
   using LibExecutor for address;
 
   /// @dev Processes deposit through the supply queue.
-  ///      Reverts with {LibErrors.InsufficientBorrowCapacity} if the requested debt cannot be borrowed.
+  ///      Reverts with {LibManagerErrors.InsufficientBorrowCapacity} if the requested debt cannot be borrowed.
   /// @param _storage The position manager storage data
   /// @param collateral The amount of collateral to deposit
   /// @param debt The amount of debt to borrow
@@ -56,7 +56,7 @@ library LibOperations {
       }
 
       // If we couldn't borrow all the requested debt, revert
-      if (remainingDebt > 0) revert LibErrors.InsufficientBorrowCapacity();
+      if (remainingDebt > 0) revert LibManagerErrors.InsufficientBorrowCapacity();
 
       // Note: remainingCollateral is guaranteed to be 0 here due to proportional math.
       // When toBorrow == remainingDebt (final iteration), collateralToSupply = remainingCollateral.
@@ -64,8 +64,8 @@ library LibOperations {
   }
 
   /// @dev Processes withdrawal through the withdrawal queue.
-  ///      Reverts with {LibErrors.ExcessDebtRepay} if the requested debt cannot be fully repaid.
-  ///      Reverts with {LibErrors.InsufficientAvailableCollateral} if the requested collateral cannot be withdrawn.
+  ///      Reverts with {LibManagerErrors.ExcessDebtRepay} if the requested debt cannot be fully repaid.
+  ///      Reverts with {LibManagerErrors.InsufficientAvailableCollateral} if the requested collateral cannot be withdrawn.
   /// @param _storage The position manager storage data
   /// @param collateral The amount of collateral to withdraw
   /// @param debt The amount of debt to repay
@@ -101,10 +101,10 @@ library LibOperations {
       }
 
       // If we couldn't repay all debt, revert (would leave tokens stuck in contract)
-      if (remainingDebt > 0) revert LibErrors.ExcessDebtRepay();
+      if (remainingDebt > 0) revert LibManagerErrors.ExcessDebtRepay();
 
       // If we couldn't withdraw all requested collateral, revert
-      if (remainingCollateral > 0) revert LibErrors.InsufficientAvailableCollateral();
+      if (remainingCollateral > 0) revert LibManagerErrors.InsufficientAvailableCollateral();
     }
   }
 

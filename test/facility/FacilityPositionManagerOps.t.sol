@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Facility} from "src/facility/Facility.sol";
-import {LibErrors} from "src/libs/facility/LibErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 
@@ -159,7 +159,7 @@ contract FacilityPositionManagerOpsTest is PositionManagerBaseTest {
   }
 
   function test_RevertWhen_DepositManager_SelectedSideNotPM() public {
-    vm.expectRevert(abi.encodeWithSelector(LibErrors.AssetNotPositionManager.selector, address(debtToken)));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.AssetNotPositionManager.selector, address(debtToken)));
     facility.depositManager(intentId, 1, 0, false);
   }
 
