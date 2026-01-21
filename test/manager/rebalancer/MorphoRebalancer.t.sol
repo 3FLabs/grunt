@@ -3,12 +3,12 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "../PositionManagerBase.t.sol";
 import {MorphoRebalancer} from "src/manager/rebalancer/MorphoRebalancer.sol";
+import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {
-  IPositionManager,
   RebalancingData,
   RebalancingOperation,
   RebalancingOperationType
-} from "src/interfaces/manager/IPositionManager.sol";
+} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
 
 /// @title MorphoRebalancerTest

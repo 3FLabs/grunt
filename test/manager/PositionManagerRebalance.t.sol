@@ -2,13 +2,12 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
+import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {
-  IPositionManager,
   RebalancingData,
   RebalancingOperation,
-  RebalancingOperationType,
-  SupplyQueueEntry
-} from "src/interfaces/manager/IPositionManager.sol";
+  RebalancingOperationType
+} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {IPositionManagerAdmin} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
