@@ -188,8 +188,8 @@ contract Facility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Returns the EIP-712 domain name and version.
-  function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
-    name = "3Facility";
+  function _domainNameAndVersion() internal pure override returns (string memory name_, string memory version) {
+    name_ = "3Facility";
     version = "1.0.0";
   }
 
