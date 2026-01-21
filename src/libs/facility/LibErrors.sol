@@ -146,7 +146,4 @@ library LibErrors {
   /// @param request The request address.
   /// @param intentId The intent ID.
   error RequestAlreadyInUse(address request, uint256 intentId);
-
-  /// @notice Thrown when attempting to commit an already saved balance snapshot.
-  error SnapshotAlreadySaved();
 }
