@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.24;
 
-import {IPositionManager, RebalancingData} from "../../interfaces/manager/IPositionManager.sol";
+import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
+import {RebalancingData} from "../../interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {IMorphoFlashLoanCallback} from "lib/morpho-blue/src/interfaces/IMorphoCallbacks.sol";
 import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";

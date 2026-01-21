@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibChecks} from "../common/LibChecks.sol";
+import {LibView} from "./LibView.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 
 /// @notice Fee configuration data for the PositionManager.
@@ -16,6 +17,20 @@ struct FeeData {
   uint24 performanceFee;
 }
 
+/// @notice Metadata for the PositionManager share token and assets.
+/// @param name The ERC20 name of the position manager share token.
+/// @param symbol The ERC20 symbol of the position manager share token.
+/// @param decimals The number of decimals for the share token (matches the collateral asset).
+/// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
+/// @param debtAsset The address of the debt asset borrowed against positions.
+struct PositionManagerMetadata {
+  string name;
+  string symbol;
+  uint8 decimals;
+  address collateralAsset;
+  address debtAsset;
+}
+
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
 /// @dev Uses ERC-7201 namespaced storage pattern at slot `keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))`
 ///      for upgradeability. Fields are ordered to minimize storage slots.
@@ -26,11 +41,7 @@ struct FeeData {
 ///        Assets are withdrawn in this order when processing redemptions.
 /// @param borrowModules Set of approved borrow module addresses that can interact with positions.
 ///        Uses Solady's EnumerableSetLib for O(1) add/remove/contains operations.
-/// @param name The ERC20 name of the position manager share token.
-/// @param symbol The ERC20 symbol of the position manager share token.
-/// @param decimals The number of decimals for the share token (matches the collateral asset).
-/// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
-/// @param debtAsset The address of the debt asset borrowed against positions.
+/// @param metadata Token metadata and asset addresses for the position manager.
 /// @param lastTotalAssets Cached total assets value from the last fee accrual, used for
 ///        calculating high water mark and performance fees.
 /// @param lltv Liquidation loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
@@ -46,11 +57,7 @@ struct PositionManagerStorageData {
   SupplyQueueEntry[] supplyQueue;
   address[] withdrawalQueue;
   EnumerableSetLib.AddressSet borrowModules;
-  string name;
-  string symbol;
-  uint8 decimals;
-  address collateralAsset;
-  address debtAsset;
+  PositionManagerMetadata metadata;
   uint256 lastTotalAssets;
   uint64 lltv;
   uint40 lastFeeAccrualTimestamp;
@@ -88,7 +95,13 @@ library LibStorage {
       // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
       // forge-lint: disable-next-line(unsafe-typecast)
       self.lltv = uint64(lltv_);
-      emit IPositionManager.LLTVSet(lltv_);
+      emit IPositionManagerAdmin.LLTVSet(lltv_);
     }
+  }
+
+  /// @dev Updates the lastTotalAssets snapshot to the current total assets.
+  /// @param self The storage pointer to the PositionManagerStorageData struct.
+  function updateSnapshot(PositionManagerStorageData storage self) internal {
+    self.lastTotalAssets = LibView.totalAssets(self);
   }
 }

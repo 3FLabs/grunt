@@ -10,6 +10,7 @@ import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 contract MockFund {
@@ -88,7 +89,14 @@ contract FacilityCreateIntentTest is Test {
 
   function _newPositionManager(address collateralAsset, address debtAsset) internal returns (PositionManager manager) {
     manager = new PositionManager();
-    manager.initialize(address(this), "PM", "PM", 6, collateralAsset, debtAsset, 0.8e18, address(0));
+    manager.initialize(
+      address(this),
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", decimals: 6, collateralAsset: collateralAsset, debtAsset: debtAsset
+      }),
+      0.8e18,
+      address(0)
+    );
   }
 
   function _createIntent(

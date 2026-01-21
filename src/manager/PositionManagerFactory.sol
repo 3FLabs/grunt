@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManager} from "./PositionManager.sol";
+import {PositionManagerMetadata} from "../libs/manager/LibStorage.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
@@ -83,29 +84,22 @@ contract PositionManagerFactory {
   ///      The owner becomes the admin and has exclusive control over the position manager.
   ///      Emits a {PositionManagerCreated} event.
   /// @param owner The address that will own the PositionManager
-  /// @param name The name of the share token
-  /// @param symbol The symbol of the share token
-  /// @param decimals The decimals of the share token
-  /// @param collateralAsset The collateral asset address
-  /// @param debtAsset The debt asset address
+  /// @param metadata The metadata containing name, symbol, decimals, collateral and debt assets
   /// @param lltv The LLTV for available collateral calculation (WAD precision)
   /// @param transferGuard The initial transfer guard address (address(0) to disable)
   /// @return positionManager The address of the newly deployed PositionManager proxy
   function createPositionManager(
     address owner,
-    string memory name,
-    string memory symbol,
-    uint8 decimals,
-    address collateralAsset,
-    address debtAsset,
+    PositionManagerMetadata memory metadata,
     uint256 lltv,
     address transferGuard
   ) external returns (address positionManager) {
     positionManager = POSITION_MANAGER_BEACON.deployERC1967BeaconProxy();
 
-    PositionManager(positionManager)
-      .initialize(owner, name, symbol, decimals, collateralAsset, debtAsset, lltv, transferGuard);
+    PositionManager(positionManager).initialize(owner, metadata, lltv, transferGuard);
 
-    emit PositionManagerCreated(positionManager, owner, collateralAsset, debtAsset, lltv, transferGuard);
+    emit PositionManagerCreated(
+      positionManager, owner, metadata.collateralAsset, metadata.debtAsset, lltv, transferGuard
+    );
   }
 }

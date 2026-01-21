@@ -3,13 +3,13 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {
-  IPositionManager,
-  SupplyQueueEntry,
   RebalancingData,
   RebalancingOperation,
   RebalancingOperationType
-} from "src/interfaces/manager/IPositionManager.sol";
+} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
@@ -146,11 +146,13 @@ abstract contract PositionManagerBaseTest is Test {
     positionManager = new PositionManager();
     positionManager.initialize(
       owner,
-      "Position Manager Shares",
-      "PMS",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Position Manager Shares",
+        symbol: "PMS",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       POSITION_MANAGER_LLTV,
       address(0)
     );

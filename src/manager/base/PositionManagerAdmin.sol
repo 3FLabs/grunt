@@ -1,40 +1,33 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
+import {PositionManagerBase} from "./PositionManagerBase.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
-import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
 /// @title PositionManagerAdmin
 /// @author 3F Protocol
 /// @notice Abstract contract handling administrative functions for PositionManager.
 /// @dev Manages borrow modules, supply/withdrawal queues, LLTV, and max rebalance loss.
-abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
+abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManagerBase {
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using LibStorage for PositionManagerStorageData;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         CONSTANTS                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Role for setting supply/withdrawal queues.
-  uint256 internal constant CURATOR_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   function addBorrowModule(address module) external override onlyOwner {
     LibStorage.positionManagerStorage().borrowModules.add(module);
-    emit IPositionManager.BorrowModuleAdded(module);
+    emit IPositionManagerAdmin.BorrowModuleAdded(module);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
   function removeBorrowModule(address module) external override onlyOwner {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
@@ -58,10 +51,10 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
     }
 
     _storage.borrowModules.remove(module);
-    emit IPositionManager.BorrowModuleRemoved(module);
+    emit IPositionManagerAdmin.BorrowModuleRemoved(module);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
   function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
@@ -75,10 +68,10 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
         ++i;
       }
     }
-    emit IPositionManager.SupplyQueueSet(queue);
+    emit IPositionManagerAdmin.SupplyQueueSet(queue);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
   function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
@@ -91,30 +84,30 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
       }
     }
     _storage.withdrawalQueue = queue;
-    emit IPositionManager.WithdrawalQueueSet(queue);
+    emit IPositionManagerAdmin.WithdrawalQueueSet(queue);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.InvalidLltv} if lltv is zero or greater than WAD.
   function setLltv(uint256 lltv_) external override onlyOwner {
     LibStorage.positionManagerStorage().setLltv(lltv_);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external override onlyOwner {
     LibStorage.positionManagerStorage().maxRebalanceLoss = maxRebalanceLoss_;
-    emit IPositionManager.MaxRebalanceLossSet(maxRebalanceLoss_);
+    emit IPositionManagerAdmin.MaxRebalanceLossSet(maxRebalanceLoss_);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Setting transferGuard_ to address(0) disables transfer restrictions,
   ///      allowing all transfers without validation. This is intentional behavior.
   function setTransferGuard(address transferGuard_) external override onlyOwner {
     LibStorage.positionManagerStorage().transferGuard = transferGuard_;
-    emit IPositionManager.TransferGuardSet(transferGuard_);
+    emit IPositionManagerAdmin.TransferGuardSet(transferGuard_);
   }
 
-  /// @inheritdoc IPositionManager
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.FeeExceedsMax} if management or performance fee exceeds the maximum.
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external override onlyOwner {
     if (managementFee > MAX_MANAGEMENT_FEE || performanceFee > MAX_PERFORMANCE_FEE) {
@@ -122,7 +115,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
     }
 
     // Accrue fees to current recipient first
-    _accrueFeesBeforeFeeDataChange();
+    _accrueFees();
 
     FeeData memory fd;
     fd.feeRecipient = feeRecipient;
@@ -130,13 +123,6 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
     fd.performanceFee = performanceFee;
     LibStorage.positionManagerStorage().feeData = fd;
 
-    emit IPositionManager.FeeDataSet(feeRecipient, managementFee, performanceFee);
+    emit IPositionManagerAdmin.FeeDataSet(feeRecipient, managementFee, performanceFee);
   }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    INTERNAL HOOKS                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Hook called before fee data change to accrue fees to current recipient.
-  function _accrueFeesBeforeFeeDataChange() internal virtual;
 }

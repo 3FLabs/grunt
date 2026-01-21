@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {PositionManagerFactory} from "src/manager/PositionManagerFactory.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
 
@@ -94,11 +95,13 @@ contract PositionManagerFactoryTest is Test {
   function test_createPositionManager_deploysProxy() public {
     address positionManager = factory.createPositionManager(
       positionManagerOwner,
-      "Test Position Manager",
-      "TPM",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Test Position Manager",
+        symbol: "TPM",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       DEFAULT_LLTV,
       address(0)
     );
@@ -109,11 +112,13 @@ contract PositionManagerFactoryTest is Test {
   function test_createPositionManager_initializesCorrectly() public {
     address positionManager = factory.createPositionManager(
       positionManagerOwner,
-      "Test Position Manager",
-      "TPM",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Test Position Manager",
+        symbol: "TPM",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       DEFAULT_LLTV,
       address(0)
     );
@@ -145,11 +150,13 @@ contract PositionManagerFactoryTest is Test {
 
     factory.createPositionManager(
       positionManagerOwner,
-      "Test Position Manager",
-      "TPM",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Test Position Manager",
+        symbol: "TPM",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       DEFAULT_LLTV,
       address(0)
     );
@@ -158,17 +165,28 @@ contract PositionManagerFactoryTest is Test {
   function test_createPositionManager_multipleDeployments() public {
     address pm1 = factory.createPositionManager(
       positionManagerOwner,
-      "Position Manager 1",
-      "PM1",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Position Manager 1",
+        symbol: "PM1",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       DEFAULT_LLTV,
       address(0)
     );
 
     address pm2 = factory.createPositionManager(
-      user, "Position Manager 2", "PM2", 18, address(collateralToken), address(debtToken), 0.6e18, address(0)
+      user,
+      PositionManagerMetadata({
+        name: "Position Manager 2",
+        symbol: "PM2",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      0.6e18,
+      address(0)
     );
 
     assertTrue(pm1 != pm2, "Each deployment should create a unique address");
@@ -182,11 +200,13 @@ contract PositionManagerFactoryTest is Test {
     vm.prank(user);
     address positionManager = factory.createPositionManager(
       positionManagerOwner,
-      "Test Position Manager",
-      "TPM",
-      18,
-      address(collateralToken),
-      address(debtToken),
+      PositionManagerMetadata({
+        name: "Test Position Manager",
+        symbol: "TPM",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
       DEFAULT_LLTV,
       address(0)
     );
@@ -219,11 +239,29 @@ contract PositionManagerFactoryTest is Test {
   function test_beaconUpgrade_affectsAllProxies() public {
     // Create two position managers
     address pm1 = factory.createPositionManager(
-      positionManagerOwner, "PM1", "PM1", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV, address(0)
+      positionManagerOwner,
+      PositionManagerMetadata({
+        name: "PM1",
+        symbol: "PM1",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      DEFAULT_LLTV,
+      address(0)
     );
 
     address pm2 = factory.createPositionManager(
-      user, "PM2", "PM2", 18, address(collateralToken), address(debtToken), DEFAULT_LLTV, address(0)
+      user,
+      PositionManagerMetadata({
+        name: "PM2",
+        symbol: "PM2",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      DEFAULT_LLTV,
+      address(0)
     );
 
     // Verify both work before upgrade
@@ -258,7 +296,16 @@ contract PositionManagerFactoryTest is Test {
     lltv = bound(lltv, 1, 1e18); // LLTV must be > 0 and <= 100%
 
     address positionManager = factory.createPositionManager(
-      owner, name, symbol, decimals, address(collateralToken), address(debtToken), lltv, transferGuard
+      owner,
+      PositionManagerMetadata({
+        name: name,
+        symbol: symbol,
+        decimals: decimals,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      lltv,
+      transferGuard
     );
 
     PositionManager pm = PositionManager(positionManager);

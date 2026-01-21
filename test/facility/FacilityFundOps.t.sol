@@ -11,6 +11,7 @@ import {Order, Mode} from "src/libs/funds/Order.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {MockFund} from "test/facility/MockFund.sol";
@@ -49,7 +50,14 @@ contract FacilityFundOpsTest is Test {
     share = new MockERC20("Collateral", "COL", 18);
 
     pm = new PositionManager();
-    pm.initialize(address(this), "PM", "PM", 18, address(share), address(asset), 0.8e18, address(0));
+    pm.initialize(
+      address(this),
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", decimals: 18, collateralAsset: address(share), debtAsset: address(asset)
+      }),
+      0.8e18,
+      address(0)
+    );
 
     fund = new MockFund(address(asset), address(share));
 
