@@ -183,11 +183,4 @@ library LibErrors {
   /// @param to The token receiver.
   /// @param amount The token amount.
   error TransferBlocked(address guard, address from, address to, uint256 amount);
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        SNAPSHOTS                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when attempting to commit an already saved balance snapshot.
-  error SnapshotAlreadySaved();
 }

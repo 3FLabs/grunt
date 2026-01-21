@@ -62,11 +62,9 @@ struct Intent {
 /// @dev Struct to capture a token balance snapshot for non-transfer balance changes.
 /// @param token The token address.
 /// @param balance The ERC20 balanceOf(facility) at the time of the snapshot.
-/// @param saved Whether the snapshot has been committed (prevents reuse).
 struct BalanceSnapshot {
   address token;
   uint256 balance;
-  bool saved;
 }
 
 /// @title LibIntent
@@ -311,16 +309,15 @@ library LibIntent {
   /// @return snapshot The balance snapshot struct.
   function takeBalanceSnapshot(address token) internal view returns (BalanceSnapshot memory snapshot) {
     uint256 balance = token.balanceOf(address(this));
-    snapshot = BalanceSnapshot({token: token, balance: balance, saved: false});
+    snapshot = BalanceSnapshot({token: token, balance: balance});
   }
 
   /// @notice Commits a balance snapshot by calculating the difference and updating accounting.
   /// @dev Compares the snapshot balance with the current ERC20 balance and updates internal accounting.
   ///      Emits TokenReceived if balance increased, TokenSent if balance decreased.
-  ///      Reverts if the snapshot has already been saved (prevents reuse).
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
-  /// @param snapshot The snapshot to commit (will be marked as saved).
+  /// @param snapshot The snapshot to commit.
   /// @param counterparty The address to use as from/to in the emitted event.
   function commitBalanceSnapshot(
     Intent storage _self,
@@ -328,8 +325,6 @@ library LibIntent {
     BalanceSnapshot memory snapshot,
     address counterparty
   ) internal {
-    if (snapshot.saved) revert LibErrors.SnapshotAlreadySaved();
-
     uint256 currentBalance = snapshot.token.balanceOf(address(this));
 
     if (currentBalance > snapshot.balance) {
@@ -341,8 +336,6 @@ library LibIntent {
       uint256 amount = snapshot.balance - currentBalance;
       _transferredTokenTo(_self, id, snapshot.token, counterparty, amount);
     }
-
-    snapshot.saved = true;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
