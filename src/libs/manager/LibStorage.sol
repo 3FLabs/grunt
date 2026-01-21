@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibChecks} from "../common/LibChecks.sol";
+import {LibView} from "./LibView.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 
 /// @notice Fee configuration data for the PositionManager.
@@ -88,7 +89,13 @@ library LibStorage {
       // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
       // forge-lint: disable-next-line(unsafe-typecast)
       self.lltv = uint64(lltv_);
-      emit IPositionManager.LLTVSet(lltv_);
+      emit IPositionManagerAdmin.LLTVSet(lltv_);
     }
+  }
+
+  /// @dev Updates the lastTotalAssets snapshot to the current total assets.
+  /// @param self The storage pointer to the PositionManagerStorageData struct.
+  function updateSnapshot(PositionManagerStorageData storage self) internal {
+    self.lastTotalAssets = LibView.totalAssets(self);
   }
 }

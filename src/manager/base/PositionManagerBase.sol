@@ -1,22 +1,39 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
+import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManagerLP.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
 import {BPS, SECONDS_PER_YEAR} from "../../libs/manager/LibConstants.sol";
+import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
+import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
-/// @title PositionManagerFees
+/// @title PositionManagerBase
 /// @author 3F Protocol
-/// @notice Abstract contract handling fee accrual and snapshot management for PositionManager.
-/// @dev Implements management and performance fee calculation and distribution.
-abstract contract PositionManagerFees is ERC20 {
+/// @notice Abstract base contract for PositionManager providing roles, fee accrual, and snapshot management.
+/// @dev Inherits OwnableRoles for role-based access control, ERC20 for share token functionality,
+///      and ReentrancyGuardTransient for reentrancy protection.
+abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTransient {
   using FixedPointMathLib for uint256;
+  using LibStorage for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
   using LibView for uint256;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Role for addresses authorized to mint/burn shares via deposit/withdraw/burn.
+  uint256 internal constant MINTER_ROLE = _ROLE_0;
+
+  /// @notice Role for addresses authorized to set supply/withdrawal queues.
+  uint256 internal constant CURATOR_ROLE = _ROLE_1;
+
+  /// @notice Role for addresses authorized to execute rebalancing operations.
+  uint256 internal constant REBALANCER_ROLE = _ROLE_2;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      FEE ACCRUAL                           */
@@ -64,7 +81,7 @@ abstract contract PositionManagerFees is ERC20 {
     // Mint fee shares
     if (feeShares > 0) {
       _mint(fd.feeRecipient, feeShares);
-      emit IPositionManager.FeesAccrued(fd.feeRecipient, feeShares);
+      emit IPositionManagerLP.FeesAccrued(fd.feeRecipient, feeShares);
     }
 
     // Update snapshot to prevent double-counting performance fees on the same gains
@@ -74,11 +91,5 @@ abstract contract PositionManagerFees is ERC20 {
     _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
 
     return currentTotalAssets;
-  }
-
-  /// @dev Updates the lastTotalAssets snapshot after an operation.
-  function _updateSnapshot() internal {
-    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    _storage.lastTotalAssets = _storage.totalAssets();
   }
 }
