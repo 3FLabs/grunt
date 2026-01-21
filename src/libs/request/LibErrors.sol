@@ -5,8 +5,16 @@ pragma solidity ^0.8.20;
 /// @author 3F Protocol
 /// @notice Error definitions for the Request contracts.
 library LibErrors {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       REPAYMENT                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    OFFER VALIDATION                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when the offer signature verification fails.
   error InvalidSignature();
@@ -20,8 +28,22 @@ library LibErrors {
   /// @notice Thrown when attempting to set a nonce that is not greater than the current nonce.
   error InvalidNonceUpdate();
 
+  /// @notice Thrown when ptAmount is invalid (must be > 0 and <= offer.amount).
+  error InvalidPtAmount();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      AUTHORIZATION                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Thrown when the caller is not authorized as a token contract.
   error UnauthorizedTokenContract();
+
+  /// @notice Thrown when the caller is not the authorized controller.
+  error Unauthorized();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    TOKEN OPERATIONS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();
@@ -29,15 +51,13 @@ library LibErrors {
   /// @notice Thrown when attempting to transfer tokens to the same address.
   error TransferToSelf();
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    VAULT OPERATIONS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Thrown when attempting to withdraw or redeem while withdrawals are locked.
   error CannotWithdraw();
 
   /// @notice Thrown when attempting to directly mint shares via deposit() or mint().
   error CannotMintShares();
-
-  /// @notice Thrown when the caller is not the authorized controller.
-  error Unauthorized();
-
-  /// @notice Thrown when ptAmount is invalid (must be > 0 and <= offer.amount).
-  error InvalidPtAmount();
 }

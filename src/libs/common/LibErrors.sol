@@ -5,6 +5,10 @@ pragma solidity ^0.8.20;
 /// @author 3F Protocol
 /// @notice Common error definitions shared across all modules.
 library LibErrors {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      GENERAL ERRORS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
   /// @notice Thrown when a required address parameter is the zero address.
   error AddressZero();
 
@@ -17,4 +21,18 @@ library LibErrors {
 
   /// @notice Thrown when there is insufficient balance for a token operation.
   error InsufficientBalance();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     PAUSABLE ERRORS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when an operation is attempted while the contract is paused.
+  error Paused();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       LLTV ERRORS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when the provided LLTV is invalid (zero or greater than WAD).
+  error InvalidLltv();
 }

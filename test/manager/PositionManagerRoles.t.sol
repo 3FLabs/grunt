@@ -10,6 +10,7 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
 import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 
 /// @title PositionManagerRolesTest
 /// @notice Tests for PositionManager admin functions and role-based access control
@@ -65,13 +66,13 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
   function test_setLltv_revertOnZero() public {
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidLltv.selector);
+    vm.expectRevert(CommonErrors.InvalidLltv.selector);
     positionManager.setLltv(0);
   }
 
   function test_setLltv_revertOnGreaterThanWad() public {
     vm.prank(owner);
-    vm.expectRevert(LibErrors.InvalidLltv.selector);
+    vm.expectRevert(CommonErrors.InvalidLltv.selector);
     positionManager.setLltv(1e18 + 1);
   }
 

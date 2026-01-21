@@ -11,6 +11,7 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/IPositionManager.sol";
 import {LibErrors} from "../../src/libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../../src/libs/common/LibErrors.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
 import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
@@ -307,7 +308,7 @@ contract TransferGuardReentrancyTest is Test {
 
     // Verify that a NEW rebalance would now be blocked
     vm.prank(rebalancer);
-    vm.expectRevert(LibErrors.Paused.selector);
+    vm.expectRevert(CommonErrors.Paused.selector);
     positionManager.rebalance(data, rebalancer);
   }
 
@@ -324,7 +325,7 @@ contract TransferGuardReentrancyTest is Test {
 
     // Rebalance should fail because guard is paused at the start
     vm.prank(rebalancer);
-    vm.expectRevert(LibErrors.Paused.selector);
+    vm.expectRevert(CommonErrors.Paused.selector);
     positionManager.rebalance(data, rebalancer);
   }
 

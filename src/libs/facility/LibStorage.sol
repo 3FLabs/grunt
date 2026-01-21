@@ -5,6 +5,7 @@ import {Intent, LibIntent, Asset} from "./LibIntent.sol";
 import {IIntentDescriptor} from "../../interfaces/facility/IIntentDescriptor.sol";
 import {STORAGE_SLOT} from "./LibConstants.sol";
 import {LibErrors} from "./LibErrors.sol";
+import {LibErrors as CommonErrors} from "../common/LibErrors.sol";
 import {LibPause} from "../common/LibPause.sol";
 
 /// @notice Storage struct containing all persistent state for the Facility contract.
@@ -147,7 +148,7 @@ library LibStorage {
 
   /// @dev Checks if the facility is paused. Reverts with `Paused` error if paused.
   function checkNotPaused() internal view {
-    if (facilityStorage().pausedUntil.paused()) revert LibErrors.Paused();
+    if (facilityStorage().pausedUntil.paused()) revert CommonErrors.Paused();
   }
 
   /// @dev Checks if a digest has been used and marks it as used. Reverts if already used.

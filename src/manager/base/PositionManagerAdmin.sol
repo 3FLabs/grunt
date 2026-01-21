@@ -5,7 +5,7 @@ import {IPositionManager, SupplyQueueEntry} from "../../interfaces/manager/IPosi
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibErrors} from "../../libs/manager/LibErrors.sol";
-import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE, WAD} from "../../libs/manager/LibConstants.sol";
+import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
@@ -15,6 +15,7 @@ import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 /// @dev Manages borrow modules, supply/withdrawal queues, LLTV, and max rebalance loss.
 abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
+  using LibStorage for PositionManagerStorageData;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -96,13 +97,7 @@ abstract contract PositionManagerAdmin is IPositionManager, OwnableRoles {
   /// @inheritdoc IPositionManager
   /// @dev Reverts with {LibErrors.InvalidLltv} if lltv is zero or greater than WAD.
   function setLltv(uint256 lltv_) external override onlyOwner {
-    // LLTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
-    if (lltv_ == 0 || lltv_ > WAD) revert LibErrors.InvalidLltv();
-
-    // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
-    // forge-lint: disable-next-line(unsafe-typecast)
-    LibStorage.positionManagerStorage().lltv = uint64(lltv_);
-    emit IPositionManager.LLTVSet(lltv_);
+    LibStorage.positionManagerStorage().setLltv(lltv_);
   }
 
   /// @inheritdoc IPositionManager

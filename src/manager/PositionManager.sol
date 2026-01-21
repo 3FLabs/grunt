@@ -12,6 +12,7 @@ import {LibOperations} from "../libs/manager/LibOperations.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibExecutor} from "../libs/manager/LibExecutor.sol";
 import {LibErrors} from "../libs/manager/LibErrors.sol";
+import {LibErrors as CommonErrors} from "../libs/common/LibErrors.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -36,6 +37,7 @@ contract PositionManager is
   using FixedPointMathLib for uint256;
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using LibExecutor for address;
+  using LibStorage for PositionManagerStorageData;
   using LibOperations for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
 
@@ -76,13 +78,10 @@ contract PositionManager is
     _storage.decimals = decimals_;
     _storage.collateralAsset = collateralAsset_;
     _storage.debtAsset = debtAsset_;
-    // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
-    // forge-lint: disable-next-line(unsafe-typecast)
-    _storage.lltv = uint64(lltv_);
+    _storage.setLltv(lltv_);
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
     _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
-    emit IPositionManager.LLTVSet(lltv_);
     if (transferGuard_ != address(0)) {
       _storage.transferGuard = transferGuard_;
       emit IPositionManager.TransferGuardSet(transferGuard_);
@@ -197,7 +196,7 @@ contract PositionManager is
     nonReentrant
     returns (int256 shares)
   {
-    if (collateral == 0 && debt == 0) revert LibErrors.ZeroAmount();
+    if (collateral == 0 && debt == 0) revert CommonErrors.AmountZero();
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
@@ -241,7 +240,7 @@ contract PositionManager is
     nonReentrant
     returns (int256 shares)
   {
-    if (collateral == 0 && debt == 0) revert LibErrors.ZeroAmount();
+    if (collateral == 0 && debt == 0) revert CommonErrors.AmountZero();
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
@@ -276,7 +275,7 @@ contract PositionManager is
     nonReentrant
     returns (uint256 collateral, uint256 debt)
   {
-    if (shares == 0) revert LibErrors.ZeroAmount();
+    if (shares == 0) revert CommonErrors.AmountZero();
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
