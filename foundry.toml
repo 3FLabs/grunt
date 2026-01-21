@@ -7,6 +7,10 @@ libs = ["lib"]
 no_match_coverage = "mock|\\.s\\.sol$|lib/pre-liquidation|PreLiquidationBytecode"
 # Enable auto-detection for multiple Solidity versions
 auto_detect_solc = true
+# Ignore warnings from dependencies:
+# 2424: Natspec memory-safe-assembly special comment deprecated
+# 8429: Virtual modifiers deprecated
+ignored_error_codes = [2424, 8429]
 
 [profile.ci]
 optimizer = true
