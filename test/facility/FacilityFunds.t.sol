@@ -68,11 +68,11 @@ contract FacilityFundsTest is FacilityBaseTest {
     (Order memory order, bytes32 orderId) = facility.getOrder(intentId);
 
     // Should return empty order (no active order has been created)
+    assertEq(order.owner, address(0), "Owner should be zero for empty order");
     assertEq(order.input, 0, "Input should be 0");
     assertEq(order.output, 0, "Output should be 0");
-    // Note: orderId is computed as hash(chainid, fund, order), so it's non-zero even for empty order
-    // The key indicator of no active order is that order.input == 0
-    assertTrue(orderId != bytes32(0), "Order ID is computed from fund + empty order");
+    // When order.owner is address(0), toId returns bytes32(0)
+    assertEq(orderId, bytes32(0), "Order ID should be zero for null order");
   }
 
   function test_getOrder_withActiveOrder() public {

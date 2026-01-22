@@ -61,6 +61,7 @@ library LibOrder {
   /// @param fund The address of the fund (IFund) creating the order.
   /// @return id The unique ID of the order as bytes32.
   function toId(Order memory order, address fund) internal view returns (bytes32 id) {
+    if (order.owner == address(0)) return id;
     assembly ("memory-safe") {
       // load the free memory pointer
       let start := mload(0x40)
