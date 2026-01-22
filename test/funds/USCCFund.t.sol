@@ -282,6 +282,14 @@ contract USCCFundTest is Test {
     fund.cancel(order);
   }
 
+  function test_Cancel_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
+    fund.cancel(order);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          COMMIT                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -360,6 +368,14 @@ contract USCCFundTest is Test {
     fund.commit(order);
   }
 
+  function test_Commit_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
+    fund.commit(order);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          UNLOCK                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -411,6 +427,14 @@ contract USCCFundTest is Test {
 
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
+    fund.unlock(order);
+  }
+
+  function test_Unlock_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
     fund.unlock(order);
   }
 
@@ -476,6 +500,14 @@ contract USCCFundTest is Test {
 
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
+    fund.recover(order);
+  }
+
+  function test_Recover_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
     fund.recover(order);
   }
 
