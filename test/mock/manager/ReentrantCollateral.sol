@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 import {ReentrantMinter} from "./ReentrantMinter.sol";
 
 /// @title ReentrantCollateral
-/// @notice ERC20Mock that calls onTokenReceived on the recipient after transfer
-contract ReentrantCollateral is ERC20Mock {
+/// @notice MockERC20 that calls onTokenReceived on the recipient after transfer
+contract ReentrantCollateral is MockERC20 {
   bool public callbackEnabled;
+
+  constructor() MockERC20("Reentrant Collateral", "RC", 18) {}
 
   function setCallbackEnabled(bool enabled) external {
     callbackEnabled = enabled;

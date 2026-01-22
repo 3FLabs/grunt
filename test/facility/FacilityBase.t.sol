@@ -26,7 +26,7 @@ import {MockFund} from "test/mock/facility/MockFund.sol";
 import {MockRequest} from "test/mock/facility/MockRequest.sol";
 
 // External mocks
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 
@@ -60,8 +60,8 @@ contract FacilityBaseTest is Test {
   MorphoBorrowPosition public borrowPosition;
 
   // Mock tokens
-  ERC20Mock public collateralToken;
-  ERC20Mock public debtToken;
+  MockERC20 public collateralToken;
+  MockERC20 public debtToken;
   OracleMock public oracle;
   IrmMock public irm;
 
@@ -134,10 +134,10 @@ contract FacilityBaseTest is Test {
     user2 = makeAddr("user2");
 
     // Deploy mock tokens
-    collateralToken = new ERC20Mock();
+    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
     vm.label(address(collateralToken), "CollateralToken");
 
-    debtToken = new ERC20Mock();
+    debtToken = new MockERC20("Debt Token", "DEBT", 18);
     vm.label(address(debtToken), "DebtToken");
 
     // Deploy oracle and IRM

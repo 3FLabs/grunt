@@ -13,7 +13,7 @@ import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 import {MaliciousBorrowModule} from "test/mock/guard/MaliciousBorrowModule.sol";
@@ -35,8 +35,8 @@ contract TransferGuardReentrancyTest is Test {
   PositionManager public positionManager;
   TransferGuard public guard;
   MaliciousBorrowModule public maliciousModule;
-  ERC20Mock public debtToken;
-  ERC20Mock public collateralToken;
+  MockERC20 public debtToken;
+  MockERC20 public collateralToken;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST ADDRESSES                      */
@@ -66,8 +66,8 @@ contract TransferGuardReentrancyTest is Test {
     rebalancer = makeAddr("rebalancer");
 
     // Deploy tokens
-    debtToken = new ERC20Mock();
-    collateralToken = new ERC20Mock();
+    debtToken = new MockERC20("Debt Token", "DEBT", 18);
+    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
 
     // Deploy guard
     guard = new TransferGuard();

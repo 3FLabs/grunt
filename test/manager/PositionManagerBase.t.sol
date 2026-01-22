@@ -15,7 +15,7 @@ import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactor
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
@@ -39,8 +39,8 @@ contract PositionManagerBaseTest is Test {
   MorphoBorrowPosition public borrowPosition1;
   MorphoBorrowPosition public borrowPosition2;
   IMorpho public morpho;
-  ERC20Mock public debtToken;
-  ERC20Mock public collateralToken;
+  MockERC20 public debtToken;
+  MockERC20 public collateralToken;
   OracleMock public oracle;
   IrmMock public irm;
 
@@ -97,10 +97,10 @@ contract PositionManagerBaseTest is Test {
     morpho = IMorpho(address(new Morpho(owner)));
 
     // Deploy mock tokens
-    debtToken = new ERC20Mock();
+    debtToken = new MockERC20("Debt Token", "DEBT", 18);
     vm.label(address(debtToken), "DebtToken");
 
-    collateralToken = new ERC20Mock();
+    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
     vm.label(address(collateralToken), "CollateralToken");
 
     // Deploy oracle and IRM mocks

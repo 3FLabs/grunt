@@ -8,7 +8,7 @@ import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title FacilityIntentsTest
 /// @notice Tests for intent creation, update, lock, and resolve operations
@@ -489,7 +489,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_createIntent_revertOnAssetMismatchInTargetPM() public {
     // Deploy a third ERC20 token that doesn't match PM's collateral or debt
-    ERC20Mock wrongToken = new ERC20Mock();
+    MockERC20 wrongToken = new MockERC20("Wrong Token", "WRONG", 18);
 
     IntentProperties memory params = _intentParamsWithTargetPM();
     // The deposit asset should match PM's collateral or debt
