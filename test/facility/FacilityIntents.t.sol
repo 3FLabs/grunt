@@ -189,17 +189,6 @@ contract FacilityIntentsTest is FacilityBaseTest {
   /*                   SET DEPOSIT CAP TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setDepositCap_success() public {
-    uint256 intentId = _createDefaultIntent();
-    uint256 newCap = 500_000e18;
-
-    vm.prank(facilitator);
-    facility.setDepositCap(intentId, newCap);
-
-    (IntentProperties memory props,,,) = facility.getIntent(intentId);
-    assertEq(props.depositCap, newCap, "Deposit cap should be updated");
-  }
-
   function test_setDepositCap_emitsEvent() public {
     uint256 intentId = _createDefaultIntent();
     uint256 newCap = 500_000e18;

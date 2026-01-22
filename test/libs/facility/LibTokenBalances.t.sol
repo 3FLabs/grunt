@@ -29,15 +29,6 @@ contract LibTokenBalancesTest is Test {
     assertEq(harness.length(), 1, "Should have 1 token");
   }
 
-  function test_add_existingToken() public {
-    harness.add(TOKEN_A, 100e18);
-    harness.add(TOKEN_A, 50e18);
-
-    (, uint256 amount) = harness.tryGet(TOKEN_A);
-    assertEq(amount, 150e18, "Amount should be 150e18");
-    assertEq(harness.length(), 1, "Should still have 1 token");
-  }
-
   function test_add_multipleTokens() public {
     harness.add(TOKEN_A, 100e18);
     harness.add(TOKEN_B, 200e18);
@@ -72,31 +63,6 @@ contract LibTokenBalancesTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         SUB TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_sub_partialAmount() public {
-    harness.add(TOKEN_A, 100e18);
-    harness.sub(TOKEN_A, 30e18);
-
-    (, uint256 amount) = harness.tryGet(TOKEN_A);
-    assertEq(amount, 70e18, "Amount should be 70e18");
-    assertEq(harness.length(), 1, "Token should still exist");
-  }
-
-  function test_sub_fullAmount_removesEntry() public {
-    harness.add(TOKEN_A, 100e18);
-    harness.sub(TOKEN_A, 100e18);
-
-    (bool exists,) = harness.tryGet(TOKEN_A);
-    assertFalse(exists, "Token should be removed");
-    assertEq(harness.length(), 0, "Map should be empty");
-  }
-
-  function test_sub_revertOnInsufficientBalance() public {
-    harness.add(TOKEN_A, 50e18);
-
-    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
-    harness.sub(TOKEN_A, 100e18);
-  }
 
   function test_sub_revertOnNonExistentToken() public {
     vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);

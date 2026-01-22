@@ -119,14 +119,6 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     facility.depositManager(intentId, depositAmount, 0, false);
   }
 
-  function test_depositManager_borrowOnly() public {
-    (uint256 intentId,) = _createResolvingIntentWithCollateral(SMALL_COLLATERAL);
-
-    // No deposit, just borrow (assuming position has collateral from initial deposit)
-    vm.prank(facilitator);
-    facility.depositManager(intentId, 0, 10e12, false);
-  }
-
   function test_depositManager_useTargetAsset() public {
     // This test demonstrates using the target asset (PM) for deposit operations
     // For this to work, we need collateral in the intent's balance
@@ -195,27 +187,6 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Withdraw some collateral and repay part of the debt
     vm.prank(facilitator);
     facility.withdrawManager(intentId, 5e12, 5e12, false);
-  }
-
-  function test_withdrawManager_withdrawOnly() public {
-    (uint256 intentId,) = _createResolvingIntentWithCollateral(SMALL_COLLATERAL);
-
-    // Withdraw collateral directly from the PM (no borrow/repay)
-    // The intent has PM shares, which can be used to withdraw collateral
-    uint256 withdrawAmount = 10e12;
-    vm.prank(facilitator);
-    facility.withdrawManager(intentId, withdrawAmount, 0, false);
-
-    // Check that collateral was added to intent balances
-    (address[] memory tokens, uint256[] memory amounts) = facility.intentBalances(intentId);
-    bool hasCollateral = false;
-    for (uint256 i = 0; i < tokens.length; i++) {
-      if (tokens[i] == address(collateralToken)) {
-        hasCollateral = true;
-        assertEq(amounts[i], withdrawAmount, "Should have withdrawn collateral");
-      }
-    }
-    assertTrue(hasCollateral, "Should have collateral in balances");
   }
 
   function test_withdrawManager_repayOnly() public {

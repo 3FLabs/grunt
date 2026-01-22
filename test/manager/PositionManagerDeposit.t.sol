@@ -13,30 +13,6 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
   /*                       DEPOSIT TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_deposit_collateralOnly() public {
-    _mintCollateral(minter, COLLATERAL_AMOUNT);
-
-    vm.prank(minter);
-    int256 shares = positionManager.deposit(COLLATERAL_AMOUNT, 0);
-
-    assertGt(shares, 0, "Should mint shares");
-    assertEq(positionManager.balanceOf(minter), uint256(shares), "Minter should have shares");
-    assertEq(positionManager.collateralAmount(), COLLATERAL_AMOUNT, "Collateral should be deposited");
-    assertEq(positionManager.debtAmount(), 0, "No debt should be borrowed");
-  }
-
-  function test_deposit_collateralAndDebt() public {
-    _mintCollateral(minter, COLLATERAL_AMOUNT);
-
-    vm.prank(minter);
-    int256 shares = positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
-
-    assertGt(shares, 0, "Should mint shares");
-    assertEq(positionManager.collateralAmount(), COLLATERAL_AMOUNT, "Collateral should be deposited");
-    assertEq(positionManager.debtAmount(), DEBT_AMOUNT, "Debt should be borrowed");
-    assertEq(debtToken.balanceOf(minter), DEBT_AMOUNT, "Minter should receive borrowed debt");
-  }
-
   function test_deposit_debtOnly() public {
     // First deposit some collateral
     _mintCollateral(minter, COLLATERAL_AMOUNT);

@@ -32,14 +32,6 @@ contract LibFacilityStorageTest is Test {
     harness.getIntent(0);
   }
 
-  function test_getIntent_revertOnNonExistentId() public {
-    Asset memory depositAsset = Asset({asset: address(token), isPositionManager: false});
-    harness.createIntent(depositAsset, 1, true);
-
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, 2));
-    harness.getIntent(2);
-  }
-
   function testFuzz_getIntent_revertOnInvalidId(uint8 numIntents, uint256 invalidId) public {
     vm.assume(numIntents > 0 && numIntents <= 10);
 
@@ -64,20 +56,6 @@ contract LibFacilityStorageTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    createIntent TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_createIntent_incrementsId() public {
-    Asset memory depositAsset = Asset({asset: address(token), isPositionManager: false});
-
-    assertEq(harness.lastIntentId(), 0);
-
-    uint256 id1 = harness.createIntent(depositAsset, 1, true);
-    assertEq(id1, 1);
-    assertEq(harness.lastIntentId(), 1);
-
-    uint256 id2 = harness.createIntent(depositAsset, 2, false);
-    assertEq(id2, 2);
-    assertEq(harness.lastIntentId(), 2);
-  }
 
   function testFuzz_createIntent_incrementsId(uint8 numIntents) public {
     vm.assume(numIntents > 0 && numIntents <= 50);
@@ -106,13 +84,6 @@ contract LibFacilityStorageTest is Test {
     harness.checkNotPaused(); // Not paused initially
   }
 
-  function test_checkNotPaused_revertWhenPaused() public {
-    harness.setPausedUntil(uint40(block.timestamp + 1 hours));
-
-    vm.expectRevert(LibCommonErrors.Paused.selector);
-    harness.checkNotPaused();
-  }
-
   function test_checkNotPaused_successWhenExpired() public {
     harness.setPausedUntil(uint40(block.timestamp - 1));
 
@@ -130,23 +101,6 @@ contract LibFacilityStorageTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     checkDigest TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_checkDigest_success() public {
-    bytes32 digest = keccak256("test digest");
-
-    assertFalse(harness.isDigestUsed(digest));
-    harness.checkDigest(digest);
-    assertTrue(harness.isDigestUsed(digest));
-  }
-
-  function test_checkDigest_revertOnReuse() public {
-    bytes32 digest = keccak256("test digest");
-
-    harness.checkDigest(digest);
-
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.SwapDigestUsed.selector, digest));
-    harness.checkDigest(digest);
-  }
 
   function testFuzz_checkDigest_success(bytes32 digest) public {
     assertFalse(harness.isDigestUsed(digest));
@@ -181,17 +135,6 @@ contract LibFacilityStorageTest is Test {
     harness.checkFundIntent(fund, intentId);
     harness.checkFundIntent(fund, intentId); // Should not revert
     assertEq(harness.getFundIntent(fund), intentId);
-  }
-
-  function test_checkFundIntent_revertOnDifferentIntentId() public {
-    address fund = makeAddr("fund");
-    uint256 intentId1 = 1;
-    uint256 intentId2 = 2;
-
-    harness.checkFundIntent(fund, intentId1);
-
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.FundAlreadyInUse.selector, fund, intentId1));
-    harness.checkFundIntent(fund, intentId2);
   }
 
   function testFuzz_checkFundIntent_revertOnDifferentIntentId(address fund, uint256 intentId1, uint256 intentId2)

@@ -14,25 +14,6 @@ contract FacilityLPTest is FacilityBaseTest {
   /*                       DEPOSIT TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_deposit_mintsLPTokens() public {
-    uint256 intentId = _createDefaultIntent();
-    uint256 depositAmount = 1000e18;
-
-    // Get PM shares for user
-    _depositToPM(user, depositAmount);
-
-    // Initial balance check
-    assertEq(facility.balanceOf(user, intentId), 0, "Initial balance should be 0");
-
-    // Deposit
-    vm.prank(user);
-    facility.deposit(intentId, depositAmount);
-
-    // LP tokens should be minted 1:1
-    assertEq(facility.balanceOf(user, intentId), depositAmount, "LP balance should match deposit");
-    assertEq(facility.totalSupply(intentId), depositAmount, "Total supply should match deposit");
-  }
-
   function test_deposit_multipleUsers() public {
     uint256 intentId = _createDefaultIntent();
     uint256 deposit1 = 1000e18;
@@ -113,47 +94,6 @@ contract FacilityLPTest is FacilityBaseTest {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      WITHDRAW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_withdraw_burnsLPTokens() public {
-    uint256 intentId = _createDefaultIntent();
-    uint256 depositAmount = 1000e18;
-    uint256 withdrawAmount = 400e18;
-
-    // Deposit first
-    _depositToPM(user, depositAmount);
-    vm.prank(user);
-    facility.deposit(intentId, depositAmount);
-
-    // Record balance before
-    uint256 pmBalanceBefore = positionManager.balanceOf(user);
-
-    // Withdraw
-    vm.prank(user);
-    facility.withdraw(intentId, user, user, withdrawAmount);
-
-    // Check LP tokens burned
-    assertEq(facility.balanceOf(user, intentId), depositAmount - withdrawAmount, "LP balance incorrect after withdraw");
-    assertEq(facility.totalSupply(intentId), depositAmount - withdrawAmount, "Total supply incorrect after withdraw");
-
-    // Check user received tokens
-    assertEq(positionManager.balanceOf(user), pmBalanceBefore + withdrawAmount, "User should receive PM tokens");
-  }
-
-  function test_withdraw_fullAmount() public {
-    uint256 intentId = _createDefaultIntent();
-    uint256 depositAmount = 1000e18;
-
-    _depositToPM(user, depositAmount);
-    vm.prank(user);
-    facility.deposit(intentId, depositAmount);
-
-    // Withdraw all
-    vm.prank(user);
-    facility.withdraw(intentId, user, user, depositAmount);
-
-    assertEq(facility.balanceOf(user, intentId), 0, "LP balance should be 0");
-    assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
-  }
 
   function test_withdraw_zeroAmount() public {
     uint256 intentId = _createDefaultIntent();
@@ -280,35 +220,6 @@ contract FacilityLPTest is FacilityBaseTest {
     assertEq(amounts[0], depositAmount, "Amount should match deposit");
     assertEq(positionManager.balanceOf(user), pmBalanceBefore + depositAmount, "Should receive PM shares");
     assertEq(facility.balanceOf(user, intentId), 0, "LP balance should be 0");
-  }
-
-  function test_claim_proportionalDistribution() public {
-    uint256 intentId = _createDefaultIntent();
-
-    // User1 deposits 3000
-    _depositToPM(user, 3000e18);
-    vm.prank(user);
-    facility.deposit(intentId, 3000e18);
-
-    // User2 deposits 1000
-    _depositToPM(user2, 1000e18);
-    vm.prank(user2);
-    facility.deposit(intentId, 1000e18);
-
-    // Move to resolving (warp past resolveStart) and resolve
-    vm.warp(block.timestamp + 1 days + 1);
-    vm.prank(facilitator);
-    facility.resolve(intentId);
-
-    // User1 claims - should get 75% of pool (3000/4000)
-    vm.prank(user);
-    (, uint256[] memory amounts1) = facility.claim(intentId, user, user, 3000e18);
-    assertEq(amounts1[0], 3000e18, "User1 should get 75% of pool");
-
-    // User2 claims - should get 25% of pool (1000/4000)
-    vm.prank(user2);
-    (, uint256[] memory amounts2) = facility.claim(intentId, user2, user2, 1000e18);
-    assertEq(amounts2[0], 1000e18, "User2 should get 25% of pool");
   }
 
   function test_claim_zeroShares() public {

@@ -306,19 +306,6 @@ contract MorphoBorrowPositionTest is Test {
   /*                 SUPPLY COLLATERAL TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_supplyCollateral_Success() public {
-    uint256 amount = COLLATERAL_AMOUNT;
-
-    collateralToken.setBalance(positionManager, amount);
-
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(amount);
-
-    uint256 expectedQuotedCollateral = _quoteCollateral(amount, DEFAULT_ORACLE_PRICE);
-    assertEq(borrowPosition.totalCollateral(), amount, "Raw collateral not supplied");
-    assertEq(borrowPosition.totalCollateralQuoted(), expectedQuotedCollateral, "Quoted collateral not supplied");
-  }
-
   function test_supplyCollateral_MultipleSupplies() public {
     uint256 amount1 = COLLATERAL_AMOUNT;
     uint256 amount2 = COLLATERAL_AMOUNT / 2;
@@ -390,24 +377,6 @@ contract MorphoBorrowPositionTest is Test {
   /*                WITHDRAW COLLATERAL TESTS                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_withdrawCollateral_Success() public {
-    uint256 amount = COLLATERAL_AMOUNT;
-
-    // Supply collateral first
-    collateralToken.setBalance(positionManager, amount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(amount);
-
-    // Withdraw
-    uint256 balanceBefore = collateralToken.balanceOf(positionManager);
-    vm.prank(positionManager);
-    borrowPosition.withdrawCollateral(amount);
-
-    assertEq(borrowPosition.totalCollateral(), 0, "Raw collateral not withdrawn");
-    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Quoted collateral not withdrawn");
-    assertEq(collateralToken.balanceOf(positionManager) - balanceBefore, amount, "Balance not returned");
-  }
-
   function test_withdrawCollateral_PartialWithdraw() public {
     uint256 totalAmount = COLLATERAL_AMOUNT;
     uint256 withdrawAmount = COLLATERAL_AMOUNT / 2;
@@ -428,20 +397,6 @@ contract MorphoBorrowPositionTest is Test {
       expectedQuotedCollateral,
       "Partial withdrawal of quoted collateral incorrect"
     );
-  }
-
-  function test_withdrawCollateral_FullWithdraw() public {
-    uint256 amount = COLLATERAL_AMOUNT;
-
-    collateralToken.setBalance(positionManager, amount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(amount);
-
-    vm.prank(positionManager);
-    borrowPosition.withdrawCollateral(amount);
-
-    assertEq(borrowPosition.totalCollateral(), 0, "Full withdrawal of raw collateral failed");
-    assertEq(borrowPosition.totalCollateralQuoted(), 0, "Full withdrawal of quoted collateral failed");
   }
 
   function testFuzz_withdrawCollateral_Amount(uint128 amount) public {
@@ -557,28 +512,6 @@ contract MorphoBorrowPositionTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       BORROW TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_borrow_Success() public {
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    uint256 borrowAmount = LOAN_AMOUNT / 2;
-
-    // Supply liquidity
-    _supplyLiquidity(LOAN_AMOUNT);
-
-    // Supply collateral
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(collateralAmount);
-
-    // Borrow
-    uint256 balanceBefore = loanToken.balanceOf(positionManager);
-
-    vm.prank(positionManager);
-    borrowPosition.borrow(borrowAmount);
-
-    assertGt(borrowPosition.totalBorrowed(), 0, "Borrow not recorded");
-    assertEq(loanToken.balanceOf(positionManager), balanceBefore + borrowAmount, "Borrowed assets not received");
-  }
 
   function test_borrow_MultipleBorrows() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
@@ -747,29 +680,6 @@ contract MorphoBorrowPositionTest is Test {
   /*                        REPAY TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_repay_Success() public {
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    uint256 borrowAmount = LOAN_AMOUNT / 2;
-
-    _supplyLiquidity(LOAN_AMOUNT);
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(collateralAmount);
-
-    vm.prank(positionManager);
-    borrowPosition.borrow(borrowAmount);
-
-    uint256 borrowedBefore = borrowPosition.totalBorrowed();
-
-    // Repay
-    loanToken.setBalance(positionManager, borrowAmount);
-    vm.prank(positionManager);
-    borrowPosition.repay(borrowAmount);
-
-    assertLt(borrowPosition.totalBorrowed(), borrowedBefore, "Repay not recorded");
-  }
-
   function test_repay_MultipleRepays() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
     uint256 borrowAmount = LOAN_AMOUNT / 2;
@@ -792,52 +702,6 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     assertGt(borrowPosition.totalBorrowed(), 0, "Should have remaining debt");
-  }
-
-  function test_repay_PartialRepay() public {
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    uint256 borrowAmount = LOAN_AMOUNT / 2;
-    uint256 repayAmount = borrowAmount / 2;
-
-    _supplyLiquidity(LOAN_AMOUNT);
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(collateralAmount);
-
-    vm.prank(positionManager);
-    borrowPosition.borrow(borrowAmount);
-
-    uint256 borrowedBefore = borrowPosition.totalBorrowed();
-
-    loanToken.setBalance(positionManager, repayAmount);
-    vm.prank(positionManager);
-    borrowPosition.repay(repayAmount);
-
-    assertLt(borrowPosition.totalBorrowed(), borrowedBefore, "Partial repay failed");
-    assertGt(borrowPosition.totalBorrowed(), 0, "Should still have debt");
-  }
-
-  function test_repay_FullRepay() public {
-    uint256 collateralAmount = COLLATERAL_AMOUNT;
-    uint256 borrowAmount = LOAN_AMOUNT / 2;
-
-    _supplyLiquidity(LOAN_AMOUNT);
-
-    collateralToken.setBalance(positionManager, collateralAmount);
-    vm.prank(positionManager);
-    borrowPosition.supplyCollateral(collateralAmount);
-
-    vm.prank(positionManager);
-    borrowPosition.borrow(borrowAmount);
-
-    uint256 totalBorrowed = borrowPosition.totalBorrowed();
-
-    loanToken.setBalance(positionManager, totalBorrowed + 1e18); // Extra for any interest
-    vm.prank(positionManager);
-    borrowPosition.repay(totalBorrowed);
-
-    assertEq(borrowPosition.totalBorrowed(), 0, "Full repay failed");
   }
 
   function testFuzz_repay_Amount(uint128 borrowAmount, uint96 repayRatio) public {

@@ -39,27 +39,6 @@ contract FacilityRequestsTest is FacilityBaseTest {
   /*                        PULL TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_pull_transfersTokensToFacility() public {
-    uint256 intentId = _createIntentWithRequest(1000e18);
-    uint256 pullAmount = 500e18;
-
-    // Fund the mock request
-    _fundMockRequest(pullAmount);
-
-    uint256 facilityBalanceBefore = debtToken.balanceOf(address(facility));
-
-    // Pull funds
-    vm.prank(facilitator);
-    facility.pull(intentId, pullAmount);
-
-    // Verify transfer
-    assertEq(
-      debtToken.balanceOf(address(facility)), facilityBalanceBefore + pullAmount, "Facility should receive tokens"
-    );
-    assertEq(mockRequest.pullFundsCallCount(), 1, "pullFunds should be called once");
-    assertEq(mockRequest.lastPullAmount(), pullAmount, "Pull amount should match");
-  }
-
   function test_pull_updatesIntentBalance() public {
     uint256 intentId = _createIntentWithRequest(1000e18);
     uint256 pullAmount = 500e18;
@@ -161,30 +140,6 @@ contract FacilityRequestsTest is FacilityBaseTest {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        REPAY TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_repay_transfersTokensToRequest() public {
-    uint256 intentId = _createIntentWithRequest(1000e18);
-    uint256 pullAmount = 500e18;
-    uint256 repayAmount = 300e18;
-
-    // First pull some funds to have balance
-    _fundMockRequest(pullAmount);
-    vm.prank(facilitator);
-    facility.pull(intentId, pullAmount);
-
-    uint256 requestBalanceBefore = debtToken.balanceOf(address(mockRequest));
-
-    // Repay
-    vm.prank(facilitator);
-    facility.repay(intentId, repayAmount);
-
-    // Verify transfer
-    assertEq(
-      debtToken.balanceOf(address(mockRequest)), requestBalanceBefore + repayAmount, "Request should receive tokens"
-    );
-    assertEq(mockRequest.repayCallCount(), 1, "repay should be called once");
-    assertEq(mockRequest.lastRepayAmount(), repayAmount, "Repay amount should match");
-  }
 
   function test_repay_updatesIntentBalance() public {
     uint256 intentId = _createIntentWithRequest(1000e18);

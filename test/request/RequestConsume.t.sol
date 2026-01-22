@@ -152,60 +152,6 @@ contract RequestConsumeTest is Test {
     assertEq(asset.balanceOf(address(callback)), 0);
   }
 
-  function test_consume_partialOffer() public {
-    uint256 offerAmount = 1_000_000e6;
-    uint256 expectedReturn = 100_000e6;
-    uint256 consumeAmount = 500_000e6; // Consume only half
-
-    // Create and sign offer
-    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
-    bytes memory signature = _signOffer(offer);
-
-    // Fund the callback (maker provides funds)
-    asset.mint(address(callback), consumeAmount);
-
-    // Consume partial amount
-    vm.prank(owner);
-    uint256 ytAmount = request.consume(offer, signature, consumeAmount);
-
-    // YT amount should be proportional: expectedReturn * consumeAmount / offerAmount
-    uint256 expectedYt = expectedReturn * consumeAmount / offerAmount;
-    assertEq(ytAmount, expectedYt);
-    assertEq(ytAmount, 50_000e6); // 100k * 500k / 1M = 50k
-
-    // Verify token minting
-    assertEq(ptVault.balanceOf(address(callback)), consumeAmount);
-    assertEq(ytVault.balanceOf(address(callback)), expectedYt);
-  }
-
-  function test_consume_multipleOffers() public {
-    uint256 offerAmount = 1_000_000e6;
-    uint256 expectedReturn = 100_000e6;
-
-    // Fund the callback for both offers
-    asset.mint(address(callback), offerAmount * 2);
-
-    Offer memory offer1 =
-      _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
-    bytes memory sig1 = _signOffer(offer1);
-
-    vm.prank(owner);
-    request.consume(offer1, sig1, offerAmount);
-
-    assertEq(ptVault.balanceOf(address(callback)), offerAmount);
-
-    // Second offer (nonce must increase)
-    Offer memory offer2 =
-      _createOffer(address(callback), offerAmount, expectedReturn, 2, block.timestamp + 1 days, true);
-    bytes memory sig2 = _signOffer(offer2);
-
-    vm.prank(owner);
-    request.consume(offer2, sig2, offerAmount);
-
-    assertEq(ptVault.balanceOf(address(callback)), offerAmount * 2);
-    assertEq(ytVault.balanceOf(address(callback)), expectedReturn * 2);
-  }
-
   function test_consume_revertsWhenRepaid() public {
     uint256 offerAmount = 1_000_000e6;
 

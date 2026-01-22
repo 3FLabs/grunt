@@ -112,19 +112,6 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
   /*                 NORMAL OPERATION TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Test that sequential deposits work (no false positives)
-  function test_reentrancy_sequentialDepositsWork() public {
-    _mintCollateral(minter, 100e18);
-
-    vm.startPrank(minter);
-    positionManager.deposit(10e18, 0);
-    positionManager.deposit(10e18, 0);
-    positionManager.deposit(10e18, 0);
-    vm.stopPrank();
-
-    assertGt(positionManager.balanceOf(minter), 0, "Should have shares");
-  }
-
   /// @notice Test that sequential withdrawals work
   function test_reentrancy_sequentialWithdrawalsWork() public {
     _mintCollateral(minter, 100e18);

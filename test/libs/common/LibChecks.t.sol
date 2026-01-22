@@ -43,17 +43,6 @@ contract LibChecksTest is Test {
     harness.checkContract(address(this));
   }
 
-  function test_checkContract_revertOnEOA() public {
-    address eoa = makeAddr("eoa");
-    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, eoa));
-    harness.checkContract(eoa);
-  }
-
-  function test_checkContract_revertOnZeroAddress() public {
-    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, address(0)));
-    harness.checkContract(address(0));
-  }
-
   function testFuzz_checkContract_revertOnEOA(address eoa) public {
     vm.assume(eoa.code.length == 0);
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, eoa));
@@ -87,16 +76,6 @@ contract LibChecksTest is Test {
     harness.checkValidLltv(1); // Minimum valid
     harness.checkValidLltv(FixedPointMathLib.WAD / 2); // 50%
     harness.checkValidLltv(FixedPointMathLib.WAD); // Maximum valid (100%)
-  }
-
-  function test_checkValidLltv_revertOnZero() public {
-    vm.expectRevert(LibCommonErrors.InvalidLltv.selector);
-    harness.checkValidLltv(0);
-  }
-
-  function test_checkValidLltv_revertOnGreaterThanWad() public {
-    vm.expectRevert(LibCommonErrors.InvalidLltv.selector);
-    harness.checkValidLltv(FixedPointMathLib.WAD + 1);
   }
 
   function testFuzz_checkValidLltv_success(uint256 lltv) public view {

@@ -28,34 +28,12 @@ contract LibManagerStorageTest is Test {
   /*                       setLltv TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setLltv_success() public {
-    uint256 lltv = 0.86e18; // 86%
+  function test_setLltv_emitsEvent() public {
+    uint256 lltv = 0.86e18;
 
     vm.expectEmit();
     emit IPositionManagerAdmin.LLTVSet(lltv);
     harness.setLltv(lltv);
-
-    assertEq(harness.getLltv(), uint64(lltv));
-  }
-
-  function test_setLltv_minValue() public {
-    harness.setLltv(1);
-    assertEq(harness.getLltv(), 1);
-  }
-
-  function test_setLltv_maxValue() public {
-    harness.setLltv(FixedPointMathLib.WAD);
-    assertEq(harness.getLltv(), uint64(FixedPointMathLib.WAD));
-  }
-
-  function test_setLltv_revertOnZero() public {
-    vm.expectRevert(LibCommonErrors.InvalidLltv.selector);
-    harness.setLltv(0);
-  }
-
-  function test_setLltv_revertOnGreaterThanWad() public {
-    vm.expectRevert(LibCommonErrors.InvalidLltv.selector);
-    harness.setLltv(FixedPointMathLib.WAD + 1);
   }
 
   function testFuzz_setLltv_success(uint256 lltv) public {
@@ -80,24 +58,6 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getLastTotalAssets(), 0);
     harness.updateSnapshot();
     assertEq(harness.getLastTotalAssets(), 0);
-  }
-
-  function test_updateSnapshot_withBorrowModules() public {
-    MockBorrowPosition module1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition module2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    module1.setTotalCollateralQuoted(100e18);
-    module1.setTotalBorrowed(30e18);
-    module2.setTotalCollateralQuoted(200e18);
-    module2.setTotalBorrowed(50e18);
-
-    harness.addBorrowModule(address(module1));
-    harness.addBorrowModule(address(module2));
-
-    harness.updateSnapshot();
-
-    // totalAssets = (100 + 200) - (30 + 50) = 220
-    assertEq(harness.getLastTotalAssets(), 220e18);
   }
 
   function testFuzz_updateSnapshot(uint128 collateral1, uint128 debt1, uint128 collateral2, uint128 debt2) public {

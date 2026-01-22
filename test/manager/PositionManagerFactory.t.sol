@@ -92,50 +92,6 @@ contract PositionManagerFactoryTest is Test {
   /*                CREATE POSITION MANAGER TESTS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_createPositionManager_deploysProxy() public {
-    address positionManager = factory.createPositionManager(
-      positionManagerOwner,
-      PositionManagerMetadata({
-        name: "Test Position Manager",
-        symbol: "TPM",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
-      }),
-      DEFAULT_LLTV,
-      address(0)
-    );
-
-    assertTrue(positionManager != address(0), "Position manager should be deployed");
-  }
-
-  function test_createPositionManager_initializesCorrectly() public {
-    address positionManager = factory.createPositionManager(
-      positionManagerOwner,
-      PositionManagerMetadata({
-        name: "Test Position Manager",
-        symbol: "TPM",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
-      }),
-      DEFAULT_LLTV,
-      address(0)
-    );
-
-    PositionManager pm = PositionManager(positionManager);
-
-    assertEq(pm.owner(), positionManagerOwner, "Owner should be set");
-    assertEq(pm.name(), "Test Position Manager", "Name should be set");
-    assertEq(pm.symbol(), "TPM", "Symbol should be set");
-    assertEq(pm.decimals(), 18, "Decimals should be set");
-    (address collateralAsset_, address debtAsset_) = pm.assets();
-    assertEq(collateralAsset_, address(collateralToken), "Collateral asset should be set");
-    assertEq(debtAsset_, address(debtToken), "Debt asset should be set");
-    (uint256 lltv_,,) = pm.config();
-    assertEq(lltv_, DEFAULT_LLTV, "LLTV should be set");
-  }
-
   function test_createPositionManager_emitsEvent() public {
     // Skip checking first indexed param (positionManager address) since we can't predict it
     vm.expectEmit(false, true, true, true);

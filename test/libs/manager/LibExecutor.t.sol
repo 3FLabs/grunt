@@ -26,16 +26,6 @@ contract LibExecutorTest is Test {
   /*                       supply TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_supply_success() public {
-    collateralToken.mint(address(harness), 100e18);
-
-    harness.supply(address(position), address(collateralToken), 100e18);
-
-    assertEq(position.totalCollateral(), 100e18);
-    assertEq(collateralToken.balanceOf(address(position)), 100e18);
-    assertEq(collateralToken.balanceOf(address(harness)), 0);
-  }
-
   function test_supply_approvesAndResetsApproval() public {
     collateralToken.mint(address(harness), 100e18);
 
@@ -63,20 +53,6 @@ contract LibExecutorTest is Test {
   /*                      withdraw TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_withdraw_success() public {
-    // First supply collateral
-    collateralToken.mint(address(harness), 100e18);
-    harness.supply(address(position), address(collateralToken), 100e18);
-
-    assertEq(position.totalCollateral(), 100e18);
-
-    // Then withdraw
-    harness.withdraw(address(position), 50e18);
-
-    assertEq(position.totalCollateral(), 50e18);
-    assertEq(collateralToken.balanceOf(address(harness)), 50e18);
-  }
-
   function testFuzz_withdraw(uint128 supplyAmount, uint128 withdrawAmount) public {
     vm.assume(supplyAmount > 0);
     vm.assume(withdrawAmount > 0 && withdrawAmount <= supplyAmount);
@@ -94,17 +70,6 @@ contract LibExecutorTest is Test {
   /*                        borrow TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_borrow_success() public {
-    // Fund position with debt tokens
-    debtToken.mint(address(position), 100e18);
-    position.setAvailableLiquidity(100e18);
-
-    harness.borrow(address(position), 50e18);
-
-    assertEq(position.totalBorrowed(), 50e18);
-    assertEq(debtToken.balanceOf(address(harness)), 50e18);
-  }
-
   function testFuzz_borrow(uint128 liquidity, uint128 borrowAmount) public {
     vm.assume(liquidity > 0);
     vm.assume(borrowAmount > 0 && borrowAmount <= liquidity);
@@ -121,22 +86,6 @@ contract LibExecutorTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        repay TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_repay_success() public {
-    // First borrow
-    debtToken.mint(address(position), 100e18);
-    position.setAvailableLiquidity(100e18);
-    harness.borrow(address(position), 100e18);
-
-    assertEq(position.totalBorrowed(), 100e18);
-    assertEq(debtToken.balanceOf(address(harness)), 100e18);
-
-    // Then repay
-    harness.repay(address(position), address(debtToken), 50e18);
-
-    assertEq(position.totalBorrowed(), 50e18);
-    assertEq(debtToken.balanceOf(address(harness)), 50e18);
-  }
 
   function test_repay_approvesAndResetsApproval() public {
     debtToken.mint(address(position), 100e18);

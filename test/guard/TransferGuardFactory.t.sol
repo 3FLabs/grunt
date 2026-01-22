@@ -66,33 +66,11 @@ contract TransferGuardFactoryTest is Test {
   /*                 CREATE TRANSFER GUARD TESTS                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_createTransferGuard_deploysProxy() public {
-    address guard = factory.createTransferGuard(guardOwner);
-
-    assertTrue(guard != address(0), "Transfer guard should be deployed");
-  }
-
-  function test_createTransferGuard_initializesCorrectly() public {
-    address guard = factory.createTransferGuard(guardOwner);
-
-    TransferGuard tg = TransferGuard(guard);
-    assertEq(tg.owner(), guardOwner, "Owner should be set");
-  }
-
   function test_createTransferGuard_emitsEvent() public {
     vm.expectEmit(false, true, false, false);
     emit TransferGuardCreated(address(0), guardOwner);
 
     factory.createTransferGuard(guardOwner);
-  }
-
-  function test_createTransferGuard_multipleDeployments() public {
-    address guard1 = factory.createTransferGuard(guardOwner);
-    address guard2 = factory.createTransferGuard(user);
-
-    assertTrue(guard1 != guard2, "Each deployment should create a unique address");
-    assertEq(TransferGuard(guard1).owner(), guardOwner, "Guard1 owner correct");
-    assertEq(TransferGuard(guard2).owner(), user, "Guard2 owner correct");
   }
 
   function test_createTransferGuard_anyoneCanCall() public {

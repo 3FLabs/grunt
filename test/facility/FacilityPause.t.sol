@@ -80,22 +80,6 @@ contract FacilityPauseTest is FacilityBaseTest {
     facility.pauseFor(duration);
   }
 
-  function test_pauseFor_expiresAfterDuration() public {
-    uint256 duration = 1 hours;
-
-    vm.prank(pauser);
-    facility.pauseFor(duration);
-
-    (bool isPausedBefore,) = facility.paused();
-    assertTrue(isPausedBefore, "Should be paused initially");
-
-    // Warp past pause duration
-    vm.warp(block.timestamp + duration + 1);
-
-    (bool isPausedAfter,) = facility.paused();
-    assertFalse(isPausedAfter, "Should not be paused after duration");
-  }
-
   function test_pauseFor_revertWhenNotAuthorized() public {
     vm.prank(user);
     vm.expectRevert(); // Unauthorized

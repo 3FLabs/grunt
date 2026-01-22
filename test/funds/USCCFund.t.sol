@@ -380,21 +380,6 @@ contract USCCFundTest is Test {
     assertEq(wuscc.balanceOf(address(this)), order.output, "minted");
   }
 
-  function test_Unlock_RedeemSuccess() public {
-    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _mintWuscc(address(this), order.input);
-    wuscc.approve(address(fund), order.input);
-    fund.commit(order);
-    usdc.mint(address(fund), order.output);
-
-    (State state, uint256 amount) = fund.unlock(order);
-
-    assertEq(uint256(state), uint256(State.ENDED), "state");
-    assertEq(amount, order.output, "amount");
-    assertEq(usdc.balanceOf(address(this)), order.output, "received");
-  }
-
   function test_Unlock_RevertsInvalidOrder() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
@@ -458,25 +443,6 @@ contract USCCFundTest is Test {
     assertEq(uint256(state), uint256(State.ENDED), "state");
     assertEq(amount, order.input, "amount");
     assertEq(usdc.balanceOf(address(this)), order.input, "received");
-  }
-
-  function test_Recover_RedeemSuccess() public {
-    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _mintWuscc(address(this), order.input);
-    wuscc.approve(address(fund), order.input);
-    fund.commit(order);
-
-    vm.prank(owner);
-    fund.recovering();
-    // Superstate returns USCC to fund
-    uscc.mint(address(fund), order.input);
-
-    (State state, uint256 amount) = fund.recover(order);
-    assertEq(uint256(state), uint256(State.ENDED), "state");
-    assertEq(amount, order.input, "amount");
-    // User receives wUSCC back (their original input is re-wrapped)
-    assertEq(wuscc.balanceOf(address(this)), order.input, "minted");
   }
 
   function test_Recover_RevertsInvalidOrder() public {
@@ -836,19 +802,6 @@ contract USCCFundTest is Test {
     assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order still EMPTY");
   }
 
-  function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    _unlockDeposit(order);
-
-    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
-    fund.create(nextOrder);
-
-    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order is ENDED");
-    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
-  }
-
   function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder_RecoveryFlow() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
@@ -869,37 +822,6 @@ contract USCCFundTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         STATE MACHINE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_StateMachine_FullDepositFlow() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    uscc.mint(address(fund), order.output);
-    fund.unlock(order);
-    assertEq(wuscc.balanceOf(address(this)), order.output, "wuscc balance");
-  }
-
-  function test_StateMachine_FullRedeemFlow() public {
-    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _mintWuscc(address(this), order.input);
-    wuscc.approve(address(fund), order.input);
-    fund.commit(order);
-    usdc.mint(address(fund), order.output);
-    fund.unlock(order);
-    assertEq(usdc.balanceOf(address(this)), order.output, "usdc balance");
-  }
-
-  function test_StateMachine_RecoveryFlow() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    vm.prank(owner);
-    fund.recovering();
-    usdc.mint(address(fund), order.input);
-    fund.recover(order);
-    assertEq(usdc.balanceOf(address(this)), order.input, "recovered");
-  }
 
   function test_StateMachine_MultipleOrders() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);

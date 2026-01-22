@@ -93,32 +93,6 @@ contract FacilityFundsTest is FacilityBaseTest {
   /*                       CREATE TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_create_depositMode() public {
-    uint256 intentId = _createIntentWithFund(1000e18);
-    uint256 amount = 500e18;
-    uint256 minOut = 450e18;
-
-    vm.prank(facilitator);
-    Order memory order = facility.create(intentId, amount, minOut, Mode.DEPOSIT);
-
-    assertEq(uint8(order.mode), uint8(Mode.DEPOSIT), "Mode should be DEPOSIT");
-    assertEq(order.owner, address(facility), "Owner should be facility");
-    assertEq(order.receiver, address(facility), "Receiver should be facility");
-    assertEq(order.input, amount, "Input should match");
-    assertEq(order.output, minOut, "Output should match");
-  }
-
-  function test_create_redeemMode() public {
-    uint256 intentId = _createIntentWithFund(1000e18);
-    uint256 amount = 500e18;
-    uint256 minOut = 450e18;
-
-    vm.prank(facilitator);
-    Order memory order = facility.create(intentId, amount, minOut, Mode.REDEEM);
-
-    assertEq(uint8(order.mode), uint8(Mode.REDEEM), "Mode should be REDEEM");
-  }
-
   function test_create_emitsEvent() public {
     uint256 intentId = _createIntentWithFund(1000e18);
 

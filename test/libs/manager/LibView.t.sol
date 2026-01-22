@@ -33,31 +33,6 @@ contract LibViewTest is Test {
     assertEq(harness.collateralAmount(), 0);
   }
 
-  function test_collateralAmount_singleModule() public {
-    MockBorrowPosition module = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    module.setTotalCollateral(100e18);
-
-    harness.addBorrowModule(address(module));
-
-    assertEq(harness.collateralAmount(), 100e18);
-  }
-
-  function test_collateralAmount_multipleModules() public {
-    MockBorrowPosition module1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition module2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition module3 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    module1.setTotalCollateral(100e18);
-    module2.setTotalCollateral(200e18);
-    module3.setTotalCollateral(300e18);
-
-    harness.addBorrowModule(address(module1));
-    harness.addBorrowModule(address(module2));
-    harness.addBorrowModule(address(module3));
-
-    assertEq(harness.collateralAmount(), 600e18);
-  }
-
   function testFuzz_collateralAmount(uint128[] calldata amounts) public {
     vm.assume(amounts.length <= 10);
 
@@ -102,19 +77,6 @@ contract LibViewTest is Test {
     assertEq(harness.debtAmount(), 0);
   }
 
-  function test_debtAmount_multipleModules() public {
-    MockBorrowPosition module1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition module2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    module1.setTotalBorrowed(50e18);
-    module2.setTotalBorrowed(75e18);
-
-    harness.addBorrowModule(address(module1));
-    harness.addBorrowModule(address(module2));
-
-    assertEq(harness.debtAmount(), 125e18);
-  }
-
   function testFuzz_debtAmount(uint128[] calldata amounts) public {
     vm.assume(amounts.length <= 10);
 
@@ -138,37 +100,6 @@ contract LibViewTest is Test {
     assertEq(harness.totalAssets(), 0);
   }
 
-  function test_totalAssets_collateralOnly() public {
-    MockBorrowPosition module = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    module.setTotalCollateralQuoted(500e18);
-    module.setTotalBorrowed(0);
-
-    harness.addBorrowModule(address(module));
-
-    assertEq(harness.totalAssets(), 500e18);
-  }
-
-  function test_totalAssets_withDebt() public {
-    MockBorrowPosition module = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    module.setTotalCollateralQuoted(500e18);
-    module.setTotalBorrowed(200e18);
-
-    harness.addBorrowModule(address(module));
-
-    assertEq(harness.totalAssets(), 300e18);
-  }
-
-  function test_totalAssets_zeroFloorSub() public {
-    // When debt > collateral, should return 0 (not revert)
-    MockBorrowPosition module = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    module.setTotalCollateralQuoted(100e18);
-    module.setTotalBorrowed(200e18);
-
-    harness.addBorrowModule(address(module));
-
-    assertEq(harness.totalAssets(), 0);
-  }
-
   function testFuzz_totalAssets(uint128 collateralQuoted, uint128 debt) public {
     MockBorrowPosition module = new MockBorrowPosition(address(collateralToken), address(debtToken));
     module.setTotalCollateralQuoted(collateralQuoted);
@@ -183,33 +114,6 @@ contract LibViewTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   convertToShares TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_convertToShares_initialDeposit() public view {
-    // First deposit with 0 supply and 0 assets
-    uint256 assets = 100e18;
-    uint256 shares = harness.convertToShares(assets, 0, 0);
-
-    // shares = assets * (0 + VIRTUAL_SHARES) / (0 + VIRTUAL_ASSETS)
-    uint256 expected = assets.mulDiv(VIRTUAL_SHARES, VIRTUAL_ASSETS);
-    assertEq(shares, expected);
-  }
-
-  function test_convertToShares_existingSupply() public view {
-    uint256 assets = 100e18;
-    uint256 totalSupply = 1000e18;
-    uint256 totalAssets = 1000e18;
-
-    uint256 shares = harness.convertToShares(assets, totalSupply, totalAssets);
-
-    // With 1:1 ratio (supply == assets), shares should equal assets (adjusted for virtual offset)
-    uint256 expected = assets.mulDiv(totalSupply + VIRTUAL_SHARES, totalAssets + VIRTUAL_ASSETS);
-    assertEq(shares, expected);
-  }
-
-  function test_convertToShares_zeroAssets() public view {
-    uint256 shares = harness.convertToShares(0, 1000e18, 1000e18);
-    assertEq(shares, 0);
-  }
 
   function testFuzz_convertToShares(uint96 assets, uint96 totalSupply, uint96 totalAssets) public view {
     // Using uint96 to avoid mulDiv overflow when assets * (totalSupply + VIRTUAL_SHARES) exceeds uint256

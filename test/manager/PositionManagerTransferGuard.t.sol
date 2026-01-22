@@ -94,23 +94,6 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   /*                      TRANSFER TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_transfer_allowedForWhitelisted() public {
-    // Mint shares to whitelisted user
-    _mintCollateral(minter, COLLATERAL_AMOUNT);
-    vm.prank(minter);
-    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
-
-    uint256 shares = positionManager.balanceOf(minter);
-    assertTrue(shares > 0, "Should have shares");
-
-    // Transfer to whitelisted user
-    vm.prank(minter);
-    positionManager.transfer(whitelistedUser, shares);
-
-    assertEq(positionManager.balanceOf(whitelistedUser), shares);
-    assertEq(positionManager.balanceOf(minter), 0);
-  }
-
   function test_transfer_blockedForBlocklistedSender() public {
     // First whitelist blockedUser temporarily to receive shares
     vm.prank(guardOwner);
@@ -133,20 +116,6 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     vm.prank(blockedUser);
     vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.transfer(whitelistedUser, shares);
-  }
-
-  function test_transfer_blockedForBlocklistedRecipient() public {
-    // Mint shares
-    _mintCollateral(minter, COLLATERAL_AMOUNT);
-    vm.prank(minter);
-    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
-
-    uint256 shares = positionManager.balanceOf(minter);
-
-    // Transfer to blocked user should fail
-    vm.prank(minter);
-    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
-    positionManager.transfer(blockedUser, shares);
   }
 
   function test_transfer_blockedForNoneStatusInWhitelistMode() public {

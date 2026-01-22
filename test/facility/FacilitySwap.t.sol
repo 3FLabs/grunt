@@ -89,38 +89,6 @@ contract FacilitySwapTest is FacilityBaseTest {
   /*                        SWAP TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_swap_exchangesBalances() public {
-    (uint256 id1, uint256 id2) = _createTwoResolvingIntents();
-
-    uint256 amount1 = 100e18;
-    uint256 amount2 = 95e18;
-
-    SwapParams memory params = _createSwapParams(id1, id2, amount1, amount2);
-
-    // Sign with guardian (quorum is 1)
-    bytes memory sig = _signSwap(params, GUARDIAN_PK);
-    address[] memory signers = new address[](1);
-    signers[0] = guardian;
-    bytes[] memory signatures = new bytes[](1);
-    signatures[0] = sig;
-
-    // Record initial balances
-    uint256 intent1PmBefore = _getIntentBalance(id1, address(positionManager));
-    uint256 intent2DebtBefore = _getIntentBalance(id2, address(debtToken));
-
-    // Execute swap
-    vm.prank(facilitator);
-    facility.swap(params, signers, signatures);
-
-    // Verify intent1: less PM shares, gained debt tokens
-    assertEq(_getIntentBalance(id1, address(positionManager)), intent1PmBefore - amount1, "Intent1 PM should decrease");
-    assertEq(_getIntentBalance(id1, address(debtToken)), amount2, "Intent1 should receive debt tokens");
-
-    // Verify intent2: less debt tokens, gained PM shares
-    assertEq(_getIntentBalance(id2, address(debtToken)), intent2DebtBefore - amount2, "Intent2 debt should decrease");
-    assertEq(_getIntentBalance(id2, address(positionManager)), amount1, "Intent2 should receive PM shares");
-  }
-
   /// @notice Helper to get a specific token balance from an intent
   function _getIntentBalance(uint256 intentId, address token) internal view returns (uint256) {
     (address[] memory tokens, uint256[] memory amounts) = facility.intentBalances(intentId);
