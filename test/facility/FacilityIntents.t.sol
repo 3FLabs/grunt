@@ -539,4 +539,129 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidGuardKey.selector, address(pm3)));
     facility.createIntent(params);
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 NON-EXISTENT INTENT TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_getIntent_revertOnIntentIdZero() public {
+    // Create an intent first to ensure ID 0 is always invalid
+    vm.prank(owner);
+    facility.createIntent(_defaultIntentProperties());
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, 0));
+    facility.getIntent(0);
+  }
+
+  function testFuzz_getIntent_revertOnNonExistentIntent(uint8 numIntents, uint256 invalidId) public {
+    // Create numIntents intents
+    vm.startPrank(owner);
+    for (uint256 i = 0; i < numIntents; i++) {
+      facility.createIntent(_defaultIntentProperties());
+    }
+    vm.stopPrank();
+
+    // Bound invalidId to be greater than numIntents (non-existent)
+    invalidId = bound(invalidId, uint256(numIntents) + 1, type(uint256).max);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.getIntent(invalidId);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*          ALL FUNCTIONS REVERT ON NON-EXISTENT INTENT       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_allFunctions_revertOnNonExistentIntent() public {
+    uint256 invalidId = 999;
+
+    // View functions
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.getIntent(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.intentBalances(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.getOrder(invalidId);
+
+    // ERC6909 metadata functions that validate intent existence
+    // Note: name(), symbol(), tokenURI() delegate to descriptor without validation
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.decimals(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.totalSupply(invalidId);
+
+    // LP functions (called as user to have proper permissions)
+    vm.startPrank(user);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.deposit(invalidId, 1000e18);
+
+    // withdraw and claim check balance first (via ERC6909 balanceOf which returns 0),
+    // so they revert with InsufficientBalance before checking intent existence
+    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
+    facility.withdraw(invalidId, user, user, 1000e18);
+
+    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
+    facility.claim(invalidId, user, user, 1000e18);
+
+    vm.stopPrank();
+
+    // Intent management functions (owner only)
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.updateTarget(invalidId, Asset({asset: address(debtToken), isPositionManager: false}), address(0));
+
+    // Facilitator functions
+    vm.startPrank(facilitator);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.setDepositCap(invalidId, 1000e18);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.lock(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.resolve(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.setFund(invalidId, address(mockFund));
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.setRequest(invalidId, address(mockRequest));
+
+    // Position manager functions
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.depositManager(invalidId, 1000e18, 0, false);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.withdrawManager(invalidId, 1000e18, 0, false);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.burnManager(invalidId, 1000e18, false);
+
+    // Fund order functions
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.cancel(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.commit(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.unlock(invalidId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.recover(invalidId);
+
+    // Request functions
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.pull(invalidId, 1000e18);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
+    facility.repay(invalidId, 1000e18);
+
+    vm.stopPrank();
+  }
 }
