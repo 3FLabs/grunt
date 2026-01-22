@@ -28,12 +28,9 @@ contract LibOperationsHarness {
   }
 
   /// @dev Expose processBurn
-  function processBurn(
-    uint256 collateralToWithdraw,
-    uint256 debtToRepay,
-    uint256 totalCollateral,
-    uint256 totalDebt
-  ) external {
+  function processBurn(uint256 collateralToWithdraw, uint256 debtToRepay, uint256 totalCollateral, uint256 totalDebt)
+    external
+  {
     LibStorage.positionManagerStorage().processBurn(collateralToWithdraw, debtToRepay, totalCollateral, totalDebt);
   }
 
