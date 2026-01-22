@@ -41,7 +41,7 @@ import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactor
 
 /// @title FacilityBaseTest
 /// @notice Base test contract with setup and helpers for Facility tests
-abstract contract FacilityBaseTest is Test {
+contract FacilityBaseTest is Test {
   using MarketParamsLib for MarketParams;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -421,4 +421,6 @@ abstract contract FacilityBaseTest is Test {
     (,,, bool resolved) = _getIntent(id);
     return resolved;
   }
+
+  function test_empty() public pure {}
 }

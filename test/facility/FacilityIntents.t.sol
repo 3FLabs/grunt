@@ -336,7 +336,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.setFund(intentId, address(mockFund));
 
-    (,address fund,,) = facility.getIntent(intentId);
+    (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund), "Fund should be set");
   }
 
@@ -476,7 +476,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     // Try to set same request on second intent - should revert
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.RequestAlreadyInUse.selector, address(mockRequest), intentId1));
+    vm.expectRevert(
+      abi.encodeWithSelector(LibFacilityErrors.RequestAlreadyInUse.selector, address(mockRequest), intentId1)
+    );
     facility.setRequest(intentId2, address(mockRequest));
   }
 
@@ -506,7 +508,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
     params.depositAsset = Asset({asset: address(wrongToken), isPositionManager: false});
 
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.AssetMismatch.selector, address(collateralToken), address(wrongToken)));
+    vm.expectRevert(
+      abi.encodeWithSelector(LibFacilityErrors.AssetMismatch.selector, address(collateralToken), address(wrongToken))
+    );
     facility.createIntent(params);
   }
 

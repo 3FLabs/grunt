@@ -87,7 +87,11 @@ contract FacilityLPTest is FacilityBaseTest {
     _depositToPM(user, exceedingAmount);
 
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, DEFAULT_DEPOSIT_CAP, exceedingAmount));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        LibFacilityErrors.DepositCapExceeded.selector, intentId, DEFAULT_DEPOSIT_CAP, exceedingAmount
+      )
+    );
     facility.deposit(intentId, exceedingAmount);
   }
 

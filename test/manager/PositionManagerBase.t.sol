@@ -25,7 +25,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 /// @title PositionManagerBaseTest
 /// @notice Base test contract with setup and helpers for PositionManager tests
-abstract contract PositionManagerBaseTest is Test {
+contract PositionManagerBaseTest is Test {
   using MarketParamsLib for MarketParams;
   using MathLib for uint256;
   using SharesMathLib for uint256;
@@ -260,4 +260,6 @@ abstract contract PositionManagerBaseTest is Test {
     (, address debtAsset_) = positionManager.assets();
     return debtAsset_;
   }
+
+  function test_empty() public pure {}
 }

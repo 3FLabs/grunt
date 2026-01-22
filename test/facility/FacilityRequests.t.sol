@@ -53,7 +53,9 @@ contract FacilityRequestsTest is FacilityBaseTest {
     facility.pull(intentId, pullAmount);
 
     // Verify transfer
-    assertEq(debtToken.balanceOf(address(facility)), facilityBalanceBefore + pullAmount, "Facility should receive tokens");
+    assertEq(
+      debtToken.balanceOf(address(facility)), facilityBalanceBefore + pullAmount, "Facility should receive tokens"
+    );
     assertEq(mockRequest.pullFundsCallCount(), 1, "pullFunds should be called once");
     assertEq(mockRequest.lastPullAmount(), pullAmount, "Pull amount should match");
   }
