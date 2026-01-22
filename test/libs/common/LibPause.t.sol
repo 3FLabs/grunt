@@ -4,13 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
-
-/// @dev Helper contract to test LibPause reverts via external calls
-contract LibPauseWrapper {
-  function pauseFor(uint256 duration) external view returns (uint40) {
-    return LibPause.pauseFor(duration);
-  }
-}
+import {LibPauseWrapper} from "test/mock/libs/LibPauseWrapper.sol";
 
 /// @title LibPauseTest
 /// @notice Unit and fuzz tests for LibPause library

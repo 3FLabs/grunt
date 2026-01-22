@@ -7,8 +7,8 @@ import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactor
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
-import {IPreLiquidationCallback} from "src/interfaces/borrow/IPreliquidationCallback.sol";
 import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockPreLiquidationCallback} from "test/mock/borrow/MockPreLiquidationCallback.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
@@ -2402,22 +2402,5 @@ contract MorphoBorrowPositionTest is Test {
     uint256 theoreticalFree = collateral - theoreticalRequired;
 
     assertLe(freeCollat, theoreticalFree + 1, "Available collateral should be conservatively rounded");
-  }
-}
-
-/// @title MockPreLiquidationCallback
-/// @notice Mock contract to test the pre-liquidation callback flow
-contract MockPreLiquidationCallback is IPreLiquidationCallback {
-  address public loanToken;
-  bool public callbackReceived;
-
-  constructor(address _loanToken) {
-    loanToken = _loanToken;
-  }
-
-  function onPreLiquidate(uint256 repaidAssets, bytes calldata data) external override {
-    callbackReceived = true;
-    // Approve the caller (MorphoBorrowPosition) to pull the loan tokens
-    ERC20Mock(loanToken).approve(msg.sender, repaidAssets);
   }
 }
