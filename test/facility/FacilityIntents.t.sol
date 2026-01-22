@@ -514,6 +514,32 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.createIntent(params);
   }
 
+  function test_createIntent_revertOnInvalidGuardKeyInTargetPM() public {
+    // When target is the only PM, guard key must match the target asset
+    // Deploy a different PM to use as invalid guard key
+    PositionManager pm3 = new PositionManager();
+    pm3.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "Position Manager 3",
+        symbol: "PM3",
+        decimals: 18,
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      8e17,
+      address(transferGuard)
+    );
+
+    IntentProperties memory params = _intentParamsWithTargetPM();
+    // Guard key is pm3 but target asset is positionManager - should revert
+    params.guardKey = address(pm3);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidGuardKey.selector, address(pm3)));
+    facility.createIntent(params);
+  }
+
   function test_createIntent_revertOnInvalidGuardKeyInDualPM() public {
     // Deploy a third position manager to use as invalid guard key
     // (it must be a valid contract that responds to assets())
