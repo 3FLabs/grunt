@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibBorrowErrors} from "../../src/libs/borrow/LibBorrowErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 /// @title PositionManagerWithdrawTest
@@ -73,9 +74,11 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 6000e18); // 60% LTV
 
-    // Try to withdraw collateral without repaying (would exceed LLTV)
+    // Try to withdraw collateral without repaying (would exceed safe LTV)
+    // At 60% LTV with 65% safe LTV, available collateral is ~769e18
+    // Trying to withdraw 5000e18 will fail at the borrow position level
     vm.prank(minter);
-    vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
+    vm.expectRevert(LibBorrowErrors.InsufficientCollateral.selector);
     positionManager.withdraw(5000e18, 0);
   }
 
@@ -147,19 +150,19 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
   /// @notice Test withdrawal where collateral pass skips positions with no available collateral
   function test_withdraw_skipsPositionWithNoAvailableCollateral() public {
     // Setup: deposit to position1 at max LTV (no available collateral)
-    // Position1: high LTV, no available collateral
+    // Position1: high LTV (near 65% safe LTV), no available collateral
     // Position2: lower LTV, has available collateral
     _mintCollateral(minter, COLLATERAL_AMOUNT * 2);
 
-    // First supply queue entry - borrow at near max on position1
+    // First supply queue entry - borrow at near max on position1 (safe LTV is 65%)
     vm.prank(minter);
-    positionManager.deposit(COLLATERAL_AMOUNT, (COLLATERAL_AMOUNT * 69) / 100); // 69% LTV, very close to LLTV of 70%
+    positionManager.deposit(COLLATERAL_AMOUNT, (COLLATERAL_AMOUNT * 64) / 100); // 64% LTV, very close to safe LTV of 65%
 
     // Second deposit to position2 with lower LTV
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, COLLATERAL_AMOUNT / 2); // 50% LTV
 
-    // Try to withdraw collateral - should skip position1 (no available collateral at 70% LLTV)
+    // Try to withdraw collateral - should skip position1 (no available collateral at 65% safe LTV)
     // and withdraw from position2
     vm.prank(minter);
     positionManager.withdraw(1000e18, 0);

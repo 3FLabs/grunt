@@ -72,8 +72,8 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
   }
 
   function test_liquidation_singlePosition_fullLiquidation() public {
-    // Setup: deposit collateral and borrow at high utilization (close to LLTV)
-    uint256 highDebt = (COLLATERAL_AMOUNT * 70) / 100; // 70% LTV
+    // Setup: deposit collateral and borrow at high utilization (close to safe LTV of 65%)
+    uint256 highDebt = (COLLATERAL_AMOUNT * 64) / 100; // 64% LTV (below 65% safe LTV)
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, highDebt);
@@ -82,7 +82,7 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     uint256 debtBefore = positionManager.debtAmount();
 
     // Crash oracle price significantly to allow full liquidation
-    // At 50% price: collateral = 5000 quoted, maxBorrow = 4000, debt = 7000 -> very underwater
+    // At 50% price: collateral = 5000 quoted, maxBorrow = 4000, debt = 6400 -> very underwater
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 50 / 100);
 
     // Setup liquidator
@@ -273,8 +273,8 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
   }
 
   function test_liquidation_withdrawAfterFullLiquidation() public {
-    // Setup: deposit at high LTV
-    uint256 highDebt = (COLLATERAL_AMOUNT * 70) / 100;
+    // Setup: deposit at high LTV (below 65% safe LTV)
+    uint256 highDebt = (COLLATERAL_AMOUNT * 64) / 100;
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, highDebt);

@@ -153,9 +153,9 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
   function testFuzz_deposit(uint256 collateral, uint256 debt) public {
     // Bound collateral to reasonable range
     collateral = bound(collateral, 1e18, 50_000e18);
-    // Debt must be less than 70% of collateral to pass preLLTV checks (72%) with margin
-    // Also cap at available liquidity
-    uint256 maxDebt = (collateral * 70) / 100;
+    // Debt must be less than 65% of collateral to pass safe LTV checks (65%)
+    // Using 64% with margin. Also cap at available liquidity
+    uint256 maxDebt = (collateral * 64) / 100;
     if (maxDebt > 100_000e18) maxDebt = 100_000e18; // First pool has 100k liquidity
     debt = bound(debt, 0, maxDebt);
 
