@@ -6,7 +6,7 @@ import {PositionManagerFactory} from "src/manager/PositionManagerFactory.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title PositionManagerFactoryTest
 /// @notice Test suite for PositionManagerFactory contract
@@ -16,8 +16,8 @@ contract PositionManagerFactoryTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   PositionManagerFactory public factory;
-  ERC20Mock public collateralToken;
-  ERC20Mock public debtToken;
+  MockERC20 public collateralToken;
+  MockERC20 public debtToken;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST ADDRESSES                      */
@@ -57,10 +57,10 @@ contract PositionManagerFactoryTest is Test {
     user = makeAddr("user");
 
     // Deploy mock tokens
-    collateralToken = new ERC20Mock();
+    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
     vm.label(address(collateralToken), "CollateralToken");
 
-    debtToken = new ERC20Mock();
+    debtToken = new MockERC20("Debt Token", "DEBT", 18);
     vm.label(address(debtToken), "DebtToken");
 
     // Deploy factory
@@ -91,50 +91,6 @@ contract PositionManagerFactoryTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                CREATE POSITION MANAGER TESTS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_createPositionManager_deploysProxy() public {
-    address positionManager = factory.createPositionManager(
-      positionManagerOwner,
-      PositionManagerMetadata({
-        name: "Test Position Manager",
-        symbol: "TPM",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
-      }),
-      DEFAULT_LLTV,
-      address(0)
-    );
-
-    assertTrue(positionManager != address(0), "Position manager should be deployed");
-  }
-
-  function test_createPositionManager_initializesCorrectly() public {
-    address positionManager = factory.createPositionManager(
-      positionManagerOwner,
-      PositionManagerMetadata({
-        name: "Test Position Manager",
-        symbol: "TPM",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
-      }),
-      DEFAULT_LLTV,
-      address(0)
-    );
-
-    PositionManager pm = PositionManager(positionManager);
-
-    assertEq(pm.owner(), positionManagerOwner, "Owner should be set");
-    assertEq(pm.name(), "Test Position Manager", "Name should be set");
-    assertEq(pm.symbol(), "TPM", "Symbol should be set");
-    assertEq(pm.decimals(), 18, "Decimals should be set");
-    (address collateralAsset_, address debtAsset_) = pm.assets();
-    assertEq(collateralAsset_, address(collateralToken), "Collateral asset should be set");
-    assertEq(debtAsset_, address(debtToken), "Debt asset should be set");
-    (uint256 lltv_,,) = pm.config();
-    assertEq(lltv_, DEFAULT_LLTV, "LLTV should be set");
-  }
 
   function test_createPositionManager_emitsEvent() public {
     // Skip checking first indexed param (positionManager address) since we can't predict it

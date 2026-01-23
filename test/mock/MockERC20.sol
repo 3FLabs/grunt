@@ -33,5 +33,18 @@ contract MockERC20 is ERC20 {
   function burn(address from, uint256 amount) public {
     _burn(from, amount);
   }
+
+  function setBalance(address account, uint256 amount) public {
+    uint256 currentBalance = balanceOf(account);
+    if (amount > currentBalance) {
+      _mint(account, amount - currentBalance);
+    } else if (amount < currentBalance) {
+      _burn(account, currentBalance - amount);
+    }
+  }
+
+  function offchainRedeem(uint256) external pure {
+    // No-op for tests. USCCFund only checks that this call does not revert.
+  }
 }
 

@@ -81,6 +81,180 @@ flowchart TB
     TG -.-> Facility
 ```
 
+## Roles & Connections
+
+This section provides a consolidated view of all roles across contracts and how they connect in a typical deployment.
+
+### Role Summary by Contract
+
+| Contract | Role | Typical Holder | Permissions |
+|----------|------|----------------|-------------|
+| **Facility** | Owner | Protocol Admin | Create intents, update target asset, set descriptor |
+| | Facilitator | Operations Bot | Create intents, lock, resolve, set caps, set fund/request, all fund/request/PM/swap operations |
+| | Guardian | Signers (EOA) | Sign swap authorizations (multi-sig for quorum) |
+| | Pauser | Emergency Admin | Pause/unpause facility |
+| **Request** | Owner | Protocol Admin | Mark loan as repaid, authorize minting |
+| | Puller | Facility | Pull bridge loan funds, repay funds |
+| | Consumer | Protocol Admin | Consume signed offers |
+| **Fund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
+| | Settler | Operations Bot | Settle fund state after external operations |
+| **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
+| | Minter | Facility | Deposit, withdraw, burn shares |
+| | Curator | Operations Bot | Set supply/withdrawal queues |
+| | Rebalancer | Rebalancer Contract | Execute rebalancing operations |
+| **BorrowPosition** | Owner | PositionManager | All borrow/supply operations |
+| **TransferGuard** | Owner | Protocol Admin | Set token config, grant roles |
+| | Pauser | Emergency Admin | Pause/unpause tokens |
+| | Compliance | Compliance Bot | Set address blocklist/whitelist status |
+
+### Typical Deployment Connections
+
+```mermaid
+flowchart TB
+    subgraph Facility["Facility"]
+        direction TB
+        FO[Owner]
+        FF[Facilitator]
+        FG[Guardian]
+        FP[Pauser]
+    end
+
+    subgraph Users["Users"]
+        LP[LPs]
+    end
+
+    subgraph Request["Request Contract"]
+        RO[Owner: Admin]
+        RPuller[Puller: Facility]
+    end
+
+    subgraph Fund["Fund Contract"]
+        FDep[Depositor: Facility]
+        FSet[Settler: Bot]
+    end
+
+    subgraph PM["Position Manager"]
+        PMO[Owner: Admin]
+        PMM[Minter: Facility]
+    end
+
+    subgraph BP["Borrow Position"]
+        BPO[Owner: PositionManager]
+    end
+
+    %% Owner operations
+    FO -->|createIntent<br/>updateTarget| Facility
+
+    %% Facilitator operations
+    FF -->|lock, resolve<br/>setFund, setRequest<br/>fund/request/PM ops<br/>swap| Facility
+
+    %% Guardian operations
+    FG -->|sign swaps| Facility
+
+    %% Pauser operations
+    FP -->|pause/unpause| Facility
+
+    %% User operations
+    LP -->|deposit<br/>withdraw<br/>claim| Facility
+
+    %% Facility to external contracts
+    Facility -->|pull/repay| RPuller
+    Facility -->|create/commit<br/>unlock/recover| FDep
+    Facility -->|deposit/withdraw<br/>burn| PMM
+
+    %% PM to Borrow Position
+    PMM --> BPO
+```
+
+**Notes:**
+- Multiple Funds/Requests can be attached to a Facility (one per intent)
+- Multiple Intents can share the same PositionManager
+- Each Fund should only serve one intent to avoid conflicts
+
+### State Transitions & Requirements
+
+The Facility enforces strict state transitions for each intent:
+
+```mermaid
+stateDiagram-v2
+    [*] --> DEPOSITING: createIntent()
+    DEPOSITING --> RESOLVING: lock() or<br/>resolveStart reached
+    RESOLVING --> RESOLVED: resolve()
+    RESOLVED --> [*]
+
+    state DEPOSITING {
+        [*] --> dep_active
+        dep_active: Users can deposit/withdraw
+        note right of dep_active
+            Entry: createIntent()
+            Requirement: resolveStart > now
+
+            Allowed Operations:
+            • deposit() [any user]
+            • withdraw() [owner/operator]
+            • setDepositCap() [facilitator]
+            • updateTarget() [owner]
+        end note
+    }
+
+    state RESOLVING {
+        [*] --> res_active
+        res_active: Facilitator executes operations
+        note right of res_active
+            Entry: lock() or resolveStart reached
+
+            Allowed Operations:
+            • setFund() [facilitator]
+            • setRequest() [facilitator]
+            • Fund: create/cancel/commit/unlock/recover
+            • Request: pull/repay
+            • PM: depositManager/withdrawManager/burnManager
+            • swap() [facilitator + guardian sigs]
+            • resolve() [facilitator]
+        end note
+    }
+
+    state RESOLVED {
+        [*] --> resolved_active
+        resolved_active: Users can claim
+        note right of resolved_active
+            Entry: resolve()
+            Requirements:
+            • No active Fund order
+            • Request marked repaid (if set)
+
+            Allowed Operations:
+            • claim() [owner/operator]
+        end note
+    }
+```
+
+### Function Access Control Reference
+
+| Function | Required Role | Required State | Additional Checks |
+|----------|--------------|----------------|-------------------|
+| `createIntent` | Owner/Facilitator | Any | resolveStart > now |
+| `updateTarget` | Owner | DEPOSITING | - |
+| `setDepositCap` | Facilitator | DEPOSITING | - |
+| `lock` | Facilitator | DEPOSITING | - |
+| `setFund` | Facilitator | RESOLVING | No active order |
+| `setRequest` | Facilitator | RESOLVING | Request repaid (if previously set) |
+| `resolve` | Facilitator | RESOLVING | No active order, request repaid |
+| `deposit` | Any | DEPOSITING | Within deposit cap |
+| `withdraw` | Owner/Operator | DEPOSITING | Sufficient balance |
+| `claim` | Owner/Operator | RESOLVED | Sufficient balance |
+| `create` (fund) | Facilitator | RESOLVING | Fund set, no active order |
+| `cancel` (fund) | Facilitator | RESOLVING | Active order exists |
+| `commit` (fund) | Facilitator | RESOLVING | Active order exists |
+| `unlock` (fund) | Facilitator | RESOLVING | Order in unlocking state |
+| `recover` (fund) | Facilitator | RESOLVING | Order in recovering state |
+| `pull` (request) | Facilitator | RESOLVING | Request set |
+| `repay` (request) | Facilitator | RESOLVING | Request set |
+| `depositManager` | Facilitator | RESOLVING | Asset is PositionManager |
+| `withdrawManager` | Facilitator | RESOLVING | Asset is PositionManager |
+| `burnManager` | Facilitator | RESOLVING | Asset is PositionManager |
+| `swap` | Facilitator | RESOLVING | Valid signatures, quorum met |
+
 ## Facility
 
 The `Facility` contract is the central orchestration hub that manages **intents** - configurable funding requests that coordinate deposits, fund operations, and claims.

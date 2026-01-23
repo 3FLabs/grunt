@@ -9,6 +9,7 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {IFacilityLP} from "src/interfaces/facility/base/IFacilityLP.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
+import {LibChecks} from "src/libs/common/LibChecks.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
 /// @title FacilityLP
@@ -33,6 +34,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      Reverts if the deposit would exceed the intent's deposit cap.
   function deposit(uint256 id, uint256 amount) external override nonReentrant {
     LibStorage.checkNotPaused();
+    LibChecks.checkNotZero(amount);
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     // ensure we do not exceed the deposit cap
@@ -50,9 +52,6 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
   function withdraw(uint256 id, address from, address receiver, uint256 amount) external override nonReentrant {
-    // if amount is 0, return early
-    if (amount == 0) return;
-
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, amount);
 
@@ -72,9 +71,6 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     nonReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
-    // if shares is 0, return early with empty arrays
-    if (shares == 0) return (new address[](0), new uint256[](0));
-
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, shares);
 
@@ -107,6 +103,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   /// @param amount The amount to withdraw.
   function _withdrawalLpChecks(uint256 id, address from, uint256 amount) internal {
     LibStorage.checkNotPaused();
+    LibChecks.checkNotZero(amount);
     // check operator if from is not msg.sender
     if (from != msg.sender && !isOperator(from, msg.sender)) revert InsufficientPermission();
     // check if the user has enough balance

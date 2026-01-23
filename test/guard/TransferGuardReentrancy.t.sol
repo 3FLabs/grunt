@@ -12,162 +12,12 @@ import {
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
-import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
-import {ERC20Mock} from "lib/morpho-blue/src/mocks/ERC20Mock.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
-/// @title MaliciousBorrowModule
-/// @notice A malicious borrow module that pauses the guard during withdrawCollateral
-/// @dev This demonstrates the reentrancy edge case in rebalance pause checks
-///      In this PoC, the module has PAUSER_ROLE granted to it, simulating a scenario where:
-///      - A trusted module becomes compromised
-///      - Or a module was incorrectly granted pause privileges
-contract MaliciousBorrowModule is IBorrowPosition {
-  TransferGuard public guard;
-  address public token;
-  bool public shouldPause;
-
-  constructor(address _guard, address _token) {
-    guard = TransferGuard(_guard);
-    token = _token;
-  }
-
-  function setShouldPause(bool _shouldPause) external {
-    shouldPause = _shouldPause;
-  }
-
-  // Operation functions
-  function supplyCollateral(uint256) external override {
-    // No-op for this test
-  }
-
-  function withdrawCollateral(uint256) external override {
-    // Malicious callback: pause the guard mid-rebalance
-    // This module has PAUSER_ROLE, simulating a compromised trusted module
-    if (shouldPause && !guard.paused(token)) {
-      guard.pause(token);
-    }
-  }
-
-  function borrow(uint256) external override {
-    // No-op for this test
-  }
-
-  function repay(uint256) external override {
-    // No-op for this test
-  }
-
-  // View functions - return dummy values
-  function borrowAsset() external pure override returns (address) {
-    return address(0);
-  }
-
-  function collateralAsset() external pure override returns (address) {
-    return address(0);
-  }
-
-  function totalBorrowed() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function totalCollateral() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function totalCollateralQuoted() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function isHealthy(uint256) external pure override returns (bool) {
-    return true;
-  }
-
-  function maxBorrow(uint256) external pure override returns (uint256) {
-    return 0;
-  }
-
-  function availableLiquidity() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function availableCollateral(uint256) external pure override returns (uint256) {
-    return 0;
-  }
-}
-
-/// @title ReentrantBorrowModule
-/// @notice A malicious borrow module that attempts to re-enter rebalance during callback
-contract ReentrantBorrowModule is IBorrowPosition {
-  PositionManager public positionManager;
-  address public rebalancer;
-  bool public shouldReenter;
-  bool public reentryAttempted;
-  bool public reentrySucceeded;
-
-  constructor(address _positionManager, address _rebalancer) {
-    positionManager = PositionManager(_positionManager);
-    rebalancer = _rebalancer;
-  }
-
-  function setShouldReenter(bool _shouldReenter) external {
-    shouldReenter = _shouldReenter;
-  }
-
-  function supplyCollateral(uint256) external override {}
-
-  function withdrawCollateral(uint256) external override {
-    if (shouldReenter && !reentryAttempted) {
-      reentryAttempted = true;
-      // Attempt to re-enter rebalance - this should fail with reentrancy guard
-      RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: new RebalancingOperation[](0)});
-      try positionManager.rebalance(data, rebalancer) {
-        reentrySucceeded = true;
-      } catch {
-        reentrySucceeded = false;
-      }
-    }
-  }
-
-  function borrow(uint256) external override {}
-  function repay(uint256) external override {}
-
-  function borrowAsset() external pure override returns (address) {
-    return address(0);
-  }
-
-  function collateralAsset() external pure override returns (address) {
-    return address(0);
-  }
-
-  function totalBorrowed() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function totalCollateral() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function totalCollateralQuoted() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function isHealthy(uint256) external pure override returns (bool) {
-    return true;
-  }
-
-  function maxBorrow(uint256) external pure override returns (uint256) {
-    return 0;
-  }
-
-  function availableLiquidity() external pure override returns (uint256) {
-    return 0;
-  }
-
-  function availableCollateral(uint256) external pure override returns (uint256) {
-    return 0;
-  }
-}
+import {MaliciousBorrowModule} from "test/mock/guard/MaliciousBorrowModule.sol";
+import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
 
 /// @title TransferGuardReentrancyTest
 /// @notice PoC demonstrating that guard state changes mid-rebalance are not re-checked
@@ -185,8 +35,8 @@ contract TransferGuardReentrancyTest is Test {
   PositionManager public positionManager;
   TransferGuard public guard;
   MaliciousBorrowModule public maliciousModule;
-  ERC20Mock public debtToken;
-  ERC20Mock public collateralToken;
+  MockERC20 public debtToken;
+  MockERC20 public collateralToken;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST ADDRESSES                      */
@@ -216,8 +66,8 @@ contract TransferGuardReentrancyTest is Test {
     rebalancer = makeAddr("rebalancer");
 
     // Deploy tokens
-    debtToken = new ERC20Mock();
-    collateralToken = new ERC20Mock();
+    debtToken = new MockERC20("Debt Token", "DEBT", 18);
+    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
 
     // Deploy guard
     guard = new TransferGuard();

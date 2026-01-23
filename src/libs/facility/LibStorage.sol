@@ -105,20 +105,6 @@ library LibStorage {
     if (!LibIntent.isResolved(_intent)) revert LibFacilityErrors.NotResolved(id);
   }
 
-  /// @dev Returns a reference to the intent struct for the given ID, reverting if the intent does not exist
-  ///      or is in the resolved state.
-  /// @param self The storage pointer to the FacilityStorageData struct.
-  /// @param id The ID of the intent.
-  /// @return _intent A reference to the intent struct.
-  function getUnresolvedIntent(FacilityStorageData storage self, uint256 id)
-    internal
-    view
-    returns (Intent storage _intent)
-  {
-    _intent = getIntent(self, id);
-    if (LibIntent.isResolved(_intent)) revert LibFacilityErrors.AlreadyResolved(id);
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

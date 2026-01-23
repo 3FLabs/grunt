@@ -7,7 +7,7 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
 
 contract WrappedAssetTest is Test {
   error InvalidInitialization();

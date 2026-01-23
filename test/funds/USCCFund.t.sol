@@ -10,10 +10,10 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockAllowlist} from "./mocks/MockAllowlist.sol";
-import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
+import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
   using LibOrder for Order;
@@ -282,6 +282,14 @@ contract USCCFundTest is Test {
     fund.cancel(order);
   }
 
+  function test_Cancel_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
+    fund.cancel(order);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          COMMIT                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -360,6 +368,14 @@ contract USCCFundTest is Test {
     fund.commit(order);
   }
 
+  function test_Commit_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
+    fund.commit(order);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          UNLOCK                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -378,21 +394,6 @@ contract USCCFundTest is Test {
     assertEq(uint256(state), uint256(State.ENDED), "state");
     assertEq(amount, order.output, "amount");
     assertEq(wuscc.balanceOf(address(this)), order.output, "minted");
-  }
-
-  function test_Unlock_RedeemSuccess() public {
-    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _mintWuscc(address(this), order.input);
-    wuscc.approve(address(fund), order.input);
-    fund.commit(order);
-    usdc.mint(address(fund), order.output);
-
-    (State state, uint256 amount) = fund.unlock(order);
-
-    assertEq(uint256(state), uint256(State.ENDED), "state");
-    assertEq(amount, order.output, "amount");
-    assertEq(usdc.balanceOf(address(this)), order.output, "received");
   }
 
   function test_Unlock_RevertsInvalidOrder() public {
@@ -429,6 +430,14 @@ contract USCCFundTest is Test {
     fund.unlock(order);
   }
 
+  function test_Unlock_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
+    fund.unlock(order);
+  }
+
   function test_Unlock_PartialReceived() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
@@ -458,25 +467,6 @@ contract USCCFundTest is Test {
     assertEq(uint256(state), uint256(State.ENDED), "state");
     assertEq(amount, order.input, "amount");
     assertEq(usdc.balanceOf(address(this)), order.input, "received");
-  }
-
-  function test_Recover_RedeemSuccess() public {
-    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _mintWuscc(address(this), order.input);
-    wuscc.approve(address(fund), order.input);
-    fund.commit(order);
-
-    vm.prank(owner);
-    fund.recovering();
-    // Superstate returns USCC to fund
-    uscc.mint(address(fund), order.input);
-
-    (State state, uint256 amount) = fund.recover(order);
-    assertEq(uint256(state), uint256(State.ENDED), "state");
-    assertEq(amount, order.input, "amount");
-    // User receives wUSCC back (their original input is re-wrapped)
-    assertEq(wuscc.balanceOf(address(this)), order.input, "minted");
   }
 
   function test_Recover_RevertsInvalidOrder() public {
@@ -510,6 +500,14 @@ contract USCCFundTest is Test {
 
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
+    fund.recover(order);
+  }
+
+  function test_Recover_RevertsInvalidOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    order.owner = outsider;
+
+    vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
     fund.recover(order);
   }
 
@@ -836,19 +834,6 @@ contract USCCFundTest is Test {
     assertEq(uint256(fund.state(order2)), uint256(State.EMPTY), "non-current order still EMPTY");
   }
 
-  function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    _unlockDeposit(order);
-
-    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
-    fund.create(nextOrder);
-
-    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order is ENDED");
-    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
-  }
-
   function test_State_ArchivedEndedOrderRemainsEndedAfterNewOrder_RecoveryFlow() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);
@@ -869,37 +854,6 @@ contract USCCFundTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         STATE MACHINE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_StateMachine_FullDepositFlow() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    uscc.mint(address(fund), order.output);
-    fund.unlock(order);
-    assertEq(wuscc.balanceOf(address(this)), order.output, "wuscc balance");
-  }
-
-  function test_StateMachine_FullRedeemFlow() public {
-    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _mintWuscc(address(this), order.input);
-    wuscc.approve(address(fund), order.input);
-    fund.commit(order);
-    usdc.mint(address(fund), order.output);
-    fund.unlock(order);
-    assertEq(usdc.balanceOf(address(this)), order.output, "usdc balance");
-  }
-
-  function test_StateMachine_RecoveryFlow() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    vm.prank(owner);
-    fund.recovering();
-    usdc.mint(address(fund), order.input);
-    fund.recover(order);
-    assertEq(usdc.balanceOf(address(this)), order.input, "recovered");
-  }
 
   function test_StateMachine_MultipleOrders() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);

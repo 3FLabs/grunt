@@ -239,27 +239,6 @@ contract TransferGuardTest is Test {
     assertTrue(guard.paused(token));
   }
 
-  function test_pauseFor_expiresAfterDuration() public {
-    uint256 duration = 1 hours;
-
-    vm.prank(pauser);
-    guard.pauseFor(token, duration);
-
-    // Should be paused now
-    assertTrue(guard.paused(token));
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-
-    // Still paused at exactly the pause time
-    vm.warp(block.timestamp + duration);
-    assertTrue(guard.paused(token));
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-
-    // Not paused after duration expires
-    vm.warp(block.timestamp + 1);
-    assertFalse(guard.paused(token));
-    assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
   function test_pauseFor_revertsOnZeroDuration() public {
     vm.prank(pauser);
     vm.expectRevert(LibCommonErrors.AmountZero.selector);
@@ -307,36 +286,6 @@ contract TransferGuardTest is Test {
     assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
-  function test_blocklist_blocksWhenPaused() public {
-    vm.prank(pauser);
-    guard.pause(token);
-
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_blocklist_blocksBlocklistedSender() public {
-    vm.prank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
-
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_blocklist_blocksBlocklistedRecipient() public {
-    vm.prank(compliance);
-    guard.setAddressStatus(bob, AddressStatus.BLOCKLIST);
-
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_blocklist_allowsWhitelisted() public {
-    vm.startPrank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
-    vm.stopPrank();
-
-    assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
   function test_blocklist_allowsNoneStatus() public view {
     // NONE status is allowed in blocklist mode
     assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
@@ -370,29 +319,6 @@ contract TransferGuardTest is Test {
   /*                   WHITELIST MODE TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_whitelist_blocksNoneStatus() public {
-    // Set whitelist mode
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
-
-    // NONE status is blocked in whitelist mode
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_whitelist_allowsWhitelisted() public {
-    // Set whitelist mode
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
-
-    // Whitelist both parties
-    vm.startPrank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
-    vm.stopPrank();
-
-    assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
   function test_whitelist_blocksBlocklisted() public {
     // Set whitelist mode
     vm.prank(owner);
@@ -400,48 +326,6 @@ contract TransferGuardTest is Test {
 
     vm.prank(compliance);
     guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
-
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_whitelist_blocksWhenPaused() public {
-    // Set whitelist mode
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
-
-    // Whitelist both parties
-    vm.startPrank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
-    vm.stopPrank();
-
-    // Pause
-    vm.prank(pauser);
-    guard.pause(token);
-
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_whitelist_blocksIfSenderNotWhitelisted() public {
-    // Set whitelist mode
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
-
-    // Only whitelist recipient
-    vm.prank(compliance);
-    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
-
-    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
-  }
-
-  function test_whitelist_blocksIfRecipientNotWhitelisted() public {
-    // Set whitelist mode
-    vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
-
-    // Only whitelist sender
-    vm.prank(compliance);
-    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
 
     assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
   }

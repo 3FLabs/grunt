@@ -47,7 +47,12 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   /// @inheritdoc IFacilityIntents
   /// @dev Creates a new intent with the given properties. The resolve start must be in the future.
   ///      At least one of deposit or target asset must be a position manager.
-  function createIntent(IntentProperties calldata params) external override onlyOwner returns (uint256 id) {
+  function createIntent(IntentProperties calldata params)
+    external
+    override
+    onlyOwnerOrRoles(FACILITATOR_ROLE)
+    returns (uint256 id)
+  {
     LibStorage.checkNotPaused();
     if (params.resolveStart <= block.timestamp) {
       revert LibFacilityErrors.InvalidResolveStart(params.resolveStart, uint40(block.timestamp));
