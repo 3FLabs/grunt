@@ -10,10 +10,10 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockAllowlist} from "./mocks/MockAllowlist.sol";
-import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
+import {MockERC20} from "../mock/funds/MockERC20.sol";
+import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
   using LibOrder for Order;

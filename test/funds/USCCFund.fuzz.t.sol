@@ -10,10 +10,10 @@ import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
-import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockAllowlist} from "./mocks/MockAllowlist.sol";
-import {MockChainlinkOracle} from "./mocks/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "./mocks/MockSuperstateToken.sol";
+import {MockERC20} from "../mock/funds/MockERC20.sol";
+import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
 import {USCCFundHandler} from "test/mock/funds/USCCFundHandler.sol";
 
 contract USCCFundFuzzTest is Test {
