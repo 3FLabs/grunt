@@ -265,9 +265,7 @@ contract MorphoBorrowPositionTest is Test {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
 
     // Safe LTV equal to liquidation LTV should revert
-    vm.expectRevert(
-      abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, LIQUIDATION_LTV, LIQUIDATION_LTV)
-    );
+    vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, LIQUIDATION_LTV, LIQUIDATION_LTV));
     newPosition.initialize(morpho, marketId, positionManager, LIQUIDATION_LTV, LIQUIDATION_LTV);
   }
 
@@ -276,9 +274,7 @@ contract MorphoBorrowPositionTest is Test {
 
     // Safe LTV greater than liquidation LTV should revert
     uint128 higherSafeLtv = LIQUIDATION_LTV + 1;
-    vm.expectRevert(
-      abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, higherSafeLtv, LIQUIDATION_LTV)
-    );
+    vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, higherSafeLtv, LIQUIDATION_LTV));
     newPosition.initialize(morpho, marketId, positionManager, higherSafeLtv, LIQUIDATION_LTV);
   }
 
@@ -326,9 +322,7 @@ contract MorphoBorrowPositionTest is Test {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
 
     if (safeLtv_ >= liquidationLtv_) {
-      vm.expectRevert(
-        abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, safeLtv_, liquidationLtv_)
-      );
+      vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, safeLtv_, liquidationLtv_));
       newPosition.initialize(morpho, marketId, positionManager, safeLtv_, liquidationLtv_);
     } else if (liquidationLtv_ > DEFAULT_LLTV) {
       vm.expectRevert(abi.encodeWithSelector(LiquidationLtvExceedsMarketLltv.selector, liquidationLtv_, DEFAULT_LLTV));
@@ -2017,7 +2011,9 @@ contract MorphoBorrowPositionTest is Test {
     // Price drops 40%
     oracle.setPrice((DEFAULT_ORACLE_PRICE * 60) / 100);
 
-    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be unhealthy at liquidation LTV after price drop");
+    assertFalse(
+      borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be unhealthy at liquidation LTV after price drop"
+    );
 
     // Owner repays enough to restore health
     uint256 borrowedBefore = borrowPosition.totalBorrowed();
@@ -2028,7 +2024,9 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.repay(repayAmount);
 
     // Position should be healthy again at liquidation LTV
-    assertTrue(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be healthy at liquidation LTV after repayment");
+    assertTrue(
+      borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be healthy at liquidation LTV after repayment"
+    );
 
     // Verify debt decreased
     assertLt(borrowPosition.totalBorrowed(), borrowedBefore, "Debt should be reduced");
