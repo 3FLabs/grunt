@@ -9,7 +9,7 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "../mock/funds/MockERC20.sol";
+import {MockERC20} from "../mock/MockERC20.sol";
 import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
 import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
 import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";

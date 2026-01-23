@@ -6,7 +6,7 @@ import {USCCFund} from "src/funds/USCCFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
 
-import {MockERC20} from "./MockERC20.sol";
+import {MockERC20} from "../MockERC20.sol";
 import {MockSuperstateToken} from "./MockSuperstateToken.sol";
 
 contract USCCFundHandler is Test {

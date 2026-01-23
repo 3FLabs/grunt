@@ -42,5 +42,9 @@ contract MockERC20 is ERC20 {
       _burn(account, currentBalance - amount);
     }
   }
+
+  function offchainRedeem(uint256) external pure {
+    // No-op for tests. USCCFund only checks that this call does not revert.
+  }
 }
 
