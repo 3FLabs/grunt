@@ -40,12 +40,14 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @param morpho The Morpho protocol contract
   /// @param marketId The Morpho market ID for this borrow position
   /// @param marketParams The Morpho market parameters for this borrow position
-  /// @param lltv The custom LLTV for this borrow position (immutable after initialization)
+  /// @param safeLtv The safe LTV threshold that must not be reached upon position mutations (immutable after initialization)
+  /// @param liquidationLtv The liquidation LTV at which the position can be liquidated (immutable after initialization)
   struct BorrowPositionStorage {
     IMorpho morpho;
     Id marketId;
     MarketParams marketParams;
-    uint256 lltv;
+    uint128 safeLtv;
+    uint128 liquidationLtv;
   }
 
   /// @dev Storage slot for the MorphoBorrowPosition contract's main storage struct.
@@ -74,30 +76,44 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @param morpho_ The Morpho Blue protocol contract address.
   /// @param marketId_ The Morpho market ID for this borrow position. Must correspond to an existing market.
   /// @param positionManager_ The address of the position manager (owner) that will control this position.
-  /// @param lltv_ The custom LLTV for this borrow position. Must be > 0, <= WAD, and <= market LLTV.
+  /// @param safeLtv_ The safe LTV threshold that must not be reached upon position mutations. Must be > 0, < liquidationLtv_.
+  /// @param liquidationLtv_ The liquidation LTV at which the position can be liquidated. Must be > safeLtv_, <= WAD, and <= market LLTV.
   /// @dev Reverts with {CommonErrors.AddressZero} if morpho_ is zero address.
   ///      Reverts with {LibBorrowErrors.InvalidMarketId} if marketId_ is zero.
   ///      Reverts with {LibBorrowErrors.MarketNotCreated} if the market doesn't exist in Morpho.
-  ///      Reverts with {LibBorrowErrors.InvalidLltv} if lltv_ is zero or greater than WAD.
-  ///      Reverts with {LibBorrowErrors.CustomLltvExceedsMarketLltv} if lltv_ exceeds the Morpho market LLTV.
-  function initialize(IMorpho morpho_, Id marketId_, address positionManager_, uint256 lltv_) public initializer {
+  ///      Reverts with {LibBorrowErrors.InvalidLltv} if liquidationLtv_ is zero or greater than WAD.
+  ///      Reverts with {LibBorrowErrors.SafeLtvNotLessThanLiquidationLtv} if safeLtv_ >= liquidationLtv_.
+  ///      Reverts with {LibBorrowErrors.LiquidationLtvExceedsMarketLltv} if liquidationLtv_ exceeds the Morpho market LLTV.
+  function initialize(
+    IMorpho morpho_,
+    Id marketId_,
+    address positionManager_,
+    uint128 safeLtv_,
+    uint128 liquidationLtv_
+  ) public initializer {
     address(morpho_).checkNotZero();
     if (Id.unwrap(marketId_) == bytes32(0)) revert LibBorrowErrors.InvalidMarketId(marketId_);
     if (morpho_.market(marketId_).lastUpdate == 0) revert LibBorrowErrors.MarketNotCreated();
-    LibChecks.checkValidLltv(lltv_);
+    LibChecks.checkValidLltv(liquidationLtv_);
+
+    // Validate safeLtv < liquidationLtv
+    if (safeLtv_ >= liquidationLtv_) {
+      revert LibBorrowErrors.SafeLtvNotLessThanLiquidationLtv(safeLtv_, liquidationLtv_);
+    }
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     _storage.morpho = morpho_;
     _storage.marketId = marketId_;
     _storage.marketParams = morpho_.idToMarketParams(marketId_);
 
-    // Validate custom LLTV does not exceed market LLTV
+    // Validate liquidationLtv does not exceed market LLTV
     // This ensures pre-liquidation triggers before Morpho's native liquidation
-    if (lltv_ > _storage.marketParams.lltv) {
-      revert LibBorrowErrors.CustomLltvExceedsMarketLltv(lltv_, _storage.marketParams.lltv);
+    if (liquidationLtv_ > _storage.marketParams.lltv) {
+      revert LibBorrowErrors.LiquidationLtvExceedsMarketLltv(liquidationLtv_, _storage.marketParams.lltv);
     }
 
-    _storage.lltv = lltv_;
+    _storage.safeLtv = safeLtv_;
+    _storage.liquidationLtv = liquidationLtv_;
 
     _initializeOwner(positionManager_);
   }
@@ -133,7 +149,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      Morpho enforces health checks and will revert if the withdrawal would make the position unhealthy.
   ///      If there is an active borrow, the remaining collateral must maintain adequate collateralization.
   ///      Reverts with {CommonErrors.AmountZero} if amount is 0.
-  ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if withdrawal would make position unhealthy.
+  ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if withdrawal would exceed safe LTV.
   function withdrawCollateral(uint256 amount) external override onlyOwner {
     amount.checkNotZero();
 
@@ -144,17 +160,17 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // This will revert if the position would become unhealthy
     _storage.morpho.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
 
-    if (!_isHealthy(_storage.lltv, _marketParams.oracle)) {
+    if (!_isHealthy(_storage.safeLtv, _marketParams.oracle)) {
       revert LibBorrowErrors.InsufficientCollateral();
     }
   }
 
   /// @inheritdoc IBorrowPosition
   /// @dev Borrows assets from Morpho and sends them directly to the owner (msg.sender).
-  ///      Requires sufficient collateral to maintain a healthy position based on the market's LLTV.
+  ///      Requires sufficient collateral to maintain a healthy position based on the safe LTV.
   ///      Morpho enforces health checks and liquidity constraints.
   ///      Reverts with {CommonErrors.AmountZero} if amount is 0.
-  ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if borrowing would exceed LLTV limits.
+  ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if borrowing would exceed safe LTV.
   function borrow(uint256 amount) external override onlyOwner {
     amount.checkNotZero();
 
@@ -165,7 +181,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // This will revert if the position would become unhealthy or insufficient liquidity
     _storage.morpho.borrow(_marketParams, amount, 0, address(this), msg.sender);
 
-    if (!_isHealthy(_storage.lltv, _marketParams.oracle)) {
+    if (!_isHealthy(_storage.safeLtv, _marketParams.oracle)) {
       revert LibBorrowErrors.InsufficientCollateral();
     }
   }
@@ -233,7 +249,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert LibBorrowErrors.InconsistentInput();
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    if (_isHealthy(_storage.lltv, _storage.marketParams.oracle)) revert LibBorrowErrors.PositionHealthy();
+    if (_isHealthy(_storage.liquidationLtv, _storage.marketParams.oracle)) revert LibBorrowErrors.PositionHealthy();
 
     _storage.morpho.accrueInterest(_storage.marketParams);
 
@@ -447,11 +463,14 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     return _borrowPositionStorage().marketId;
   }
 
-  /// @notice Returns the custom LLTV set for this borrow position.
-  /// @dev This LLTV is immutable after initialization and determines when the position
-  ///      can be liquidated. It is typically set lower than the Morpho market LLTV.
-  /// @return The custom LLTV in WAD format (1e18 = 100%).
-  function lltv() external view returns (uint256) {
-    return _borrowPositionStorage().lltv;
+  /// @notice Returns both the safe LTV and liquidation LTV set for this borrow position.
+  /// @dev Both values are immutable after initialization. The safe LTV is the threshold that
+  ///      must not be reached upon position mutations (borrow, withdrawCollateral), while the
+  ///      liquidation LTV determines when the position can be liquidated via preLiquidate.
+  /// @return safeLtv_ The safe LTV in WAD format (1e18 = 100%).
+  /// @return liquidationLtv_ The liquidation LTV in WAD format (1e18 = 100%).
+  function ltvs() external view returns (uint128 safeLtv_, uint128 liquidationLtv_) {
+    BorrowPositionStorage storage _storage = _borrowPositionStorage();
+    return (_storage.safeLtv, _storage.liquidationLtv);
   }
 }

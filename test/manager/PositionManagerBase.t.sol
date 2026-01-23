@@ -69,7 +69,8 @@ contract PositionManagerBaseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV (Morpho market)
-  uint256 constant CUSTOM_LLTV = 0.72e18; // 72% LLTV (custom for borrow positions)
+  uint128 constant BP_SAFE_LTV = 0.65e18; // 65% safe LTV for borrow positions
+  uint128 constant BP_LIQUIDATION_LTV = 0.72e18; // 72% liquidation LTV for borrow positions
   uint256 constant POSITION_MANAGER_LLTV = 0.7e18; // 70% LLTV for available collateral
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36; // 1:1 price
@@ -164,10 +165,14 @@ contract PositionManagerBaseTest is Test {
     // Deploy MorphoBorrowPositionFactory and create positions
     borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
 
-    address bp1 = borrowPositionFactory.createBorrowPosition(morpho, marketId1, address(positionManager), CUSTOM_LLTV);
+    address bp1 = borrowPositionFactory.createBorrowPosition(
+      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
     borrowPosition1 = MorphoBorrowPosition(bp1);
 
-    address bp2 = borrowPositionFactory.createBorrowPosition(morpho, marketId2, address(positionManager), CUSTOM_LLTV);
+    address bp2 = borrowPositionFactory.createBorrowPosition(
+      morpho, marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
     // Setup borrow modules whitelist and grant curator/rebalancer roles

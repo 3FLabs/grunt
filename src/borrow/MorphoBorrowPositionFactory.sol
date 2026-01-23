@@ -41,9 +41,15 @@ contract MorphoBorrowPositionFactory {
   /// @param morpho The Morpho protocol contract address
   /// @param marketId The Morpho market ID for this borrow position
   /// @param positionManager The address of the position manager (owner)
-  /// @param lltv The custom LLTV for this borrow position
+  /// @param safeLtv The safe LTV threshold for position mutations
+  /// @param liquidationLtv The liquidation LTV for this borrow position
   event BorrowPositionCreated(
-    address indexed borrowPosition, address indexed morpho, Id indexed marketId, address positionManager, uint256 lltv
+    address indexed borrowPosition,
+    address indexed morpho,
+    Id indexed marketId,
+    address positionManager,
+    uint128 safeLtv,
+    uint128 liquidationLtv
   );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -73,23 +79,27 @@ contract MorphoBorrowPositionFactory {
   /// @notice Creates a new MorphoBorrowPosition proxy.
   /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
   ///      1. Deploys MorphoBorrowPosition proxy pointing to BORROW_POSITION_BEACON
-  ///      2. Initializes the position with Morpho market and custom LLTV
+  ///      2. Initializes the position with Morpho market and custom LTVs
   ///
   ///      The position manager becomes the owner and has exclusive control over the position.
   ///      Emits a {BorrowPositionCreated} event.
   /// @param morpho The Morpho Blue protocol contract address
   /// @param marketId The Morpho market ID for this borrow position
   /// @param positionManager The address of the position manager (owner) that will control this position
-  /// @param lltv The custom LLTV for this borrow position (must be > 0 and <= WAD)
+  /// @param safeLtv The safe LTV threshold for position mutations (must be > 0 and < liquidationLtv)
+  /// @param liquidationLtv The liquidation LTV for this borrow position (must be > safeLtv, <= WAD, and <= market LLTV)
   /// @return borrowPosition The address of the newly deployed MorphoBorrowPosition proxy
-  function createBorrowPosition(IMorpho morpho, Id marketId, address positionManager, uint256 lltv)
-    external
-    returns (address borrowPosition)
-  {
+  function createBorrowPosition(
+    IMorpho morpho,
+    Id marketId,
+    address positionManager,
+    uint128 safeLtv,
+    uint128 liquidationLtv
+  ) external returns (address borrowPosition) {
     borrowPosition = BORROW_POSITION_BEACON.deployERC1967BeaconProxy();
 
-    MorphoBorrowPosition(borrowPosition).initialize(morpho, marketId, positionManager, lltv);
+    MorphoBorrowPosition(borrowPosition).initialize(morpho, marketId, positionManager, safeLtv, liquidationLtv);
 
-    emit BorrowPositionCreated(borrowPosition, address(morpho), marketId, positionManager, lltv);
+    emit BorrowPositionCreated(borrowPosition, address(morpho), marketId, positionManager, safeLtv, liquidationLtv);
   }
 }

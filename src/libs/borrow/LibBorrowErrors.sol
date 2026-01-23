@@ -33,13 +33,18 @@ library LibBorrowErrors {
   error PositionHealthy();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          LLTV                              */
+  /*                           LTV                              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when the custom LLTV exceeds the Morpho market LLTV.
-  /// @param customLltv The custom LLTV provided.
+  /// @notice Thrown when the liquidation LTV exceeds the Morpho market LLTV.
+  /// @param liquidationLtv The liquidation LTV provided.
   /// @param marketLltv The Morpho market LLTV.
-  error CustomLltvExceedsMarketLltv(uint256 customLltv, uint256 marketLltv);
+  error LiquidationLtvExceedsMarketLltv(uint128 liquidationLtv, uint256 marketLltv);
+
+  /// @notice Thrown when the safe LTV is not strictly less than the liquidation LTV.
+  /// @param safeLtv The safe LTV provided.
+  /// @param liquidationLtv The liquidation LTV provided.
+  error SafeLtvNotLessThanLiquidationLtv(uint128 safeLtv, uint128 liquidationLtv);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INPUT VALIDATION                        */
