@@ -9,6 +9,7 @@ import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {IFacilityLP} from "src/interfaces/facility/base/IFacilityLP.sol";
 import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
+import {LibChecks} from "src/libs/common/LibChecks.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
 /// @title FacilityLP
@@ -72,8 +73,8 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     nonReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
-    // if shares is 0, return early with empty arrays
-    if (shares == 0) return (new address[](0), new uint256[](0));
+    // revert if shares is 0
+    LibChecks.checkNotZero(shares);
 
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, shares);

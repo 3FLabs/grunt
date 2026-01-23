@@ -222,7 +222,7 @@ contract FacilityLPTest is FacilityBaseTest {
     assertEq(facility.balanceOf(user, intentId), 0, "LP balance should be 0");
   }
 
-  function test_claim_zeroShares() public {
+  function test_claim_revertWhenZeroShares() public {
     uint256 depositAmount = 1000e18;
     uint256 intentId = _createIntentWithDeposits(depositAmount);
 
@@ -230,13 +230,10 @@ contract FacilityLPTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.resolve(intentId);
 
-    // Claim 0 shares should return empty arrays
+    // Claim 0 shares should revert
     vm.prank(user);
-    (address[] memory tokens, uint256[] memory amounts) = facility.claim(intentId, user, user, 0);
-
-    assertEq(tokens.length, 0, "Should return empty tokens array");
-    assertEq(amounts.length, 0, "Should return empty amounts array");
-    assertEq(facility.balanceOf(user, intentId), depositAmount, "LP balance should be unchanged");
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    facility.claim(intentId, user, user, 0);
   }
 
   function test_claim_withOperator() public {
