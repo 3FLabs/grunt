@@ -34,6 +34,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      Reverts if the deposit would exceed the intent's deposit cap.
   function deposit(uint256 id, uint256 amount) external override nonReentrant {
     LibStorage.checkNotPaused();
+    LibChecks.checkNotZero(amount);
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     // ensure we do not exceed the deposit cap
@@ -51,9 +52,6 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
   function withdraw(uint256 id, address from, address receiver, uint256 amount) external override nonReentrant {
-    // if amount is 0, return early
-    if (amount == 0) return;
-
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, amount);
 
@@ -73,9 +71,6 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     nonReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
-    // revert if shares is 0
-    LibChecks.checkNotZero(shares);
-
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, shares);
 
@@ -108,6 +103,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   /// @param amount The amount to withdraw.
   function _withdrawalLpChecks(uint256 id, address from, uint256 amount) internal {
     LibStorage.checkNotPaused();
+    LibChecks.checkNotZero(amount);
     // check operator if from is not msg.sender
     if (from != msg.sender && !isOperator(from, msg.sender)) revert InsufficientPermission();
     // check if the user has enough balance

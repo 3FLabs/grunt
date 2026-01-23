@@ -34,6 +34,15 @@ contract FacilityLPTest is FacilityBaseTest {
     assertEq(facility.totalSupply(intentId), deposit1 + deposit2, "Total supply incorrect");
   }
 
+  function test_deposit_revertWhenZeroAmount() public {
+    uint256 intentId = _createDefaultIntent();
+
+    // Deposit 0 should revert
+    vm.prank(user);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    facility.deposit(intentId, 0);
+  }
+
   function test_deposit_revertWhenPaused() public {
     uint256 intentId = _createDefaultIntent();
     _depositToPM(user, DEFAULT_AMOUNT);
@@ -95,7 +104,7 @@ contract FacilityLPTest is FacilityBaseTest {
   /*                      WITHDRAW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_withdraw_zeroAmount() public {
+  function test_withdraw_revertWhenZeroAmount() public {
     uint256 intentId = _createDefaultIntent();
     uint256 depositAmount = 1000e18;
 
@@ -103,11 +112,10 @@ contract FacilityLPTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(intentId, depositAmount);
 
-    // Withdraw 0 should succeed and do nothing
+    // Withdraw 0 should revert
     vm.prank(user);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
     facility.withdraw(intentId, user, user, 0);
-
-    assertEq(facility.balanceOf(user, intentId), depositAmount, "Balance should be unchanged");
   }
 
   function test_withdraw_toReceiver() public {
@@ -331,7 +339,7 @@ contract FacilityLPTest is FacilityBaseTest {
 
   function testFuzz_withdraw_partialAmount(uint256 depositAmount, uint256 withdrawAmount) public {
     depositAmount = bound(depositAmount, 1, DEFAULT_DEPOSIT_CAP);
-    withdrawAmount = bound(withdrawAmount, 0, depositAmount);
+    withdrawAmount = bound(withdrawAmount, 1, depositAmount);
 
     uint256 intentId = _createDefaultIntent();
     _depositToPM(user, depositAmount);
