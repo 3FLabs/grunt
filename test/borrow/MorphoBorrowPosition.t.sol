@@ -254,6 +254,13 @@ contract MorphoBorrowPositionTest is Test {
     newPosition.initialize(morpho, marketId, positionManager, 0, 0);
   }
 
+  function test_initialize_RevertWhen_SafeLtvIsZero() public {
+    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+
+    vm.expectRevert(InvalidLltv.selector);
+    newPosition.initialize(morpho, marketId, positionManager, 0, LIQUIDATION_LTV);
+  }
+
   function test_initialize_RevertWhen_LiquidationLtvExceedsWad() public {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
 
@@ -501,7 +508,7 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.withdrawCollateral(collateralAmount / 2);
   }
 
-  function test_withdrawCollateral_RevertWhen_ViolatesCustomLltvThreshold() public {
+  function test_withdrawCollateral_RevertWhen_ViolatesSafeLtv() public {
     uint256 collateralAmount = COLLATERAL_AMOUNT;
 
     // Supply liquidity to Morpho

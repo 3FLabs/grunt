@@ -10,6 +10,7 @@ import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
 import {LibBorrowErrors} from "../libs/borrow/LibBorrowErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
+import {LibCommonErrors} from "../libs/common/LibCommonErrors.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
 import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 import {UtilsLib} from "lib/morpho-blue/src/libraries/UtilsLib.sol";
@@ -95,6 +96,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     if (Id.unwrap(marketId_) == bytes32(0)) revert LibBorrowErrors.InvalidMarketId(marketId_);
     if (morpho_.market(marketId_).lastUpdate == 0) revert LibBorrowErrors.MarketNotCreated();
     LibChecks.checkValidLltv(liquidationLtv_);
+    if (safeLtv_ == 0) revert LibCommonErrors.InvalidLltv();
 
     // Validate safeLtv < liquidationLtv
     if (safeLtv_ >= liquidationLtv_) {
@@ -146,7 +148,6 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
   /// @inheritdoc IBorrowPosition
   /// @dev Withdraws collateral directly from Morpho to the owner (msg.sender).
-  ///      Morpho enforces health checks and will revert if the withdrawal would make the position unhealthy.
   ///      If there is an active borrow, the remaining collateral must maintain adequate collateralization.
   ///      Reverts with {CommonErrors.AmountZero} if amount is 0.
   ///      Reverts with {LibBorrowErrors.InsufficientCollateral} if withdrawal would exceed safe LTV.
