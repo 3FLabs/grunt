@@ -183,4 +183,9 @@ library LibFacilityErrors {
   /// @param to The token receiver.
   /// @param amount The token amount.
   error TransferBlocked(address guard, address from, address to, uint256 amount);
+
+  /// @notice Thrown when attempting to transfer tokens to address(0).
+  /// @dev ERC6909 credits balances to address(0) on transfer, which would break totalSupply tracking.
+  ///      Use burn() instead to properly remove tokens from circulation.
+  error TransferToZeroAddress();
 }
