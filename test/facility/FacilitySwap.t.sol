@@ -313,6 +313,86 @@ contract FacilitySwapTest is FacilityBaseTest {
     facility.swap(params, signers, signatures);
   }
 
+  /// @notice Tests that same-token swaps with unequal amounts are rejected (value extraction attack)
+  function test_swap_revertWhenSameTokenUnequalAmounts() public {
+    // Create two intents with zero quorum (no signatures needed)
+    IntentProperties memory intentParams = _defaultIntentProperties();
+    intentParams.quorum = 0;
+
+    vm.prank(owner);
+    uint256 id1 = facility.createIntent(intentParams);
+
+    _depositToPM(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(id1, 1000e18);
+
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(intentParams);
+
+    _depositToPM(user2, 10e18);
+    vm.prank(user2);
+    facility.deposit(id2, 10e18);
+
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Attempt same-token swap with unequal amounts (value extraction attack)
+    SwapParams memory params = SwapParams({
+      id1: id1,
+      token1: address(positionManager),
+      id2: id2,
+      token2: address(positionManager), // Same token
+      amount1: 1000e18, // Victim "gives" 1000
+      amount2: 10e18, // Attacker "gives" 10
+      deadline: block.timestamp + 1 hours
+    });
+
+    address[] memory signers = new address[](0);
+    bytes[] memory signatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.SameTokenSwap.selector);
+    facility.swap(params, signers, signatures);
+  }
+
+  /// @notice Tests that same-token swaps with equal amounts are allowed
+  function test_swap_sameTokenEqualAmountsAllowed() public {
+    IntentProperties memory intentParams = _defaultIntentProperties();
+    intentParams.quorum = 0;
+
+    vm.prank(owner);
+    uint256 id1 = facility.createIntent(intentParams);
+
+    _depositToPM(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(id1, 1000e18);
+
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(intentParams);
+
+    _depositToPM(user2, 1000e18);
+    vm.prank(user2);
+    facility.deposit(id2, 1000e18);
+
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Same-token swap with equal amounts (no value extraction)
+    SwapParams memory params = SwapParams({
+      id1: id1,
+      token1: address(positionManager),
+      id2: id2,
+      token2: address(positionManager), // Same token
+      amount1: 100e18,
+      amount2: 100e18, // Equal amounts - should be allowed
+      deadline: block.timestamp + 1 hours
+    });
+
+    address[] memory signers = new address[](0);
+    bytes[] memory signatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    facility.swap(params, signers, signatures);
+  }
+
   function test_swap_revertWhenInvalidSignatureLength() public {
     (uint256 id1, uint256 id2) = _createTwoResolvingIntents();
 
