@@ -480,4 +480,52 @@ contract FacilityLPTest is FacilityBaseTest {
     );
     facility.transfer(user2, intentId, 100e18);
   }
+
+  function test_transfer_revertWhenToZeroAddress() public {
+    uint256 intentId = _createDefaultIntent();
+
+    _depositToPM(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(intentId, 1000e18);
+
+    vm.prank(user);
+    vm.expectRevert(LibFacilityErrors.TransferToZeroAddress.selector);
+    facility.transfer(address(0), intentId, 100e18);
+  }
+
+  function test_transferFrom_succeedsWithApproval() public {
+    uint256 intentId = _createDefaultIntent();
+
+    _depositToPM(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(intentId, 1000e18);
+
+    // User approves user2 to transfer on their behalf
+    vm.prank(user);
+    facility.approve(user2, intentId, 100e18);
+
+    // User2 transfers from user to user3
+    address user3 = makeAddr("user3");
+    vm.prank(user2);
+    facility.transferFrom(user, user3, intentId, 100e18);
+
+    assertEq(facility.balanceOf(user, intentId), 900e18, "User balance incorrect");
+    assertEq(facility.balanceOf(user3, intentId), 100e18, "User3 balance incorrect");
+  }
+
+  function test_transferFrom_revertWhenToZeroAddress() public {
+    uint256 intentId = _createDefaultIntent();
+
+    _depositToPM(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(intentId, 1000e18);
+
+    // User approves user2 to transfer on their behalf
+    vm.prank(user);
+    facility.approve(user2, intentId, 100e18);
+
+    vm.prank(user2);
+    vm.expectRevert(LibFacilityErrors.TransferToZeroAddress.selector);
+    facility.transferFrom(user, address(0), intentId, 100e18);
+  }
 }
