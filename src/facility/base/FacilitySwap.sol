@@ -54,6 +54,8 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
     if (block.timestamp > params.deadline) revert LibFacilityErrors.SwapExpired();
     // ensure the amounts are not zero
     if (params.amount1 == 0 || params.amount2 == 0) revert LibFacilityErrors.InvalidSwapAmount();
+    // prevent same-token swaps
+    if (params.token1 == params.token2) revert LibFacilityErrors.SameTokenSwap();
 
     // get existing intents
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();

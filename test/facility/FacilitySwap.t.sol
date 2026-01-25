@@ -119,7 +119,7 @@ contract FacilitySwapTest is FacilityBaseTest {
   }
 
   function test_swap_withMultipleGuardians() public {
-    // Create intent with quorum of 2
+    // Create intent with quorum of 2 using PM as deposit
     vm.prank(owner);
     uint256 id1 = facility.createIntent(_intentParamsWithDualPM());
 
@@ -128,14 +128,24 @@ contract FacilitySwapTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(id1, 1000e18);
 
-    // Create second intent with quorum of 1
-    uint256 id2 = _createIntentWithDeposits(1000e18);
+    // Create second intent with debt token as deposit asset
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(_intentParamsWithTargetPM());
+
+    // Deposit debt tokens to second intent
+    _mintDebt(user2, 1000e18);
+    vm.startPrank(user2);
+    debtToken.approve(address(facility), 1000e18);
+    facility.deposit(id2, 1000e18);
+    vm.stopPrank();
+
+    vm.warp(block.timestamp + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
       token1: address(positionManager),
       id2: id2,
-      token2: address(positionManager),
+      token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
       deadline: block.timestamp + 1 hours
@@ -163,7 +173,7 @@ contract FacilitySwapTest is FacilityBaseTest {
   }
 
   function test_swap_withZeroQuorum() public {
-    // Create intent with 0 quorum
+    // Create intent with 0 quorum using PM as deposit
     IntentProperties memory intentParams = _defaultIntentProperties();
     intentParams.quorum = 0;
 
@@ -174,13 +184,18 @@ contract FacilitySwapTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(id1, 1000e18);
 
-    // Create second intent with 0 quorum too
-    vm.prank(owner);
-    uint256 id2 = facility.createIntent(intentParams);
+    // Create second intent with 0 quorum using debt token as deposit
+    IntentProperties memory intentParams2 = _intentParamsWithTargetPM();
+    intentParams2.quorum = 0;
 
-    _depositToPM(user2, 1000e18);
-    vm.prank(user2);
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(intentParams2);
+
+    _mintDebt(user2, 1000e18);
+    vm.startPrank(user2);
+    debtToken.approve(address(facility), 1000e18);
     facility.deposit(id2, 1000e18);
+    vm.stopPrank();
 
     vm.warp(block.timestamp + 1 days + 1);
 
@@ -188,7 +203,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       id1: id1,
       token1: address(positionManager),
       id2: id2,
-      token2: address(positionManager),
+      token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
       deadline: block.timestamp + 1 hours
@@ -313,6 +328,47 @@ contract FacilitySwapTest is FacilityBaseTest {
     facility.swap(params, signers, signatures);
   }
 
+  /// @notice Tests that same-token swaps are rejected
+  function test_swap_revertWhenSameToken() public {
+    // Create two intents with zero quorum (no signatures needed)
+    IntentProperties memory intentParams = _defaultIntentProperties();
+    intentParams.quorum = 0;
+
+    vm.prank(owner);
+    uint256 id1 = facility.createIntent(intentParams);
+
+    _depositToPM(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(id1, 1000e18);
+
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(intentParams);
+
+    _depositToPM(user2, 1000e18);
+    vm.prank(user2);
+    facility.deposit(id2, 1000e18);
+
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Attempt same-token swap (should revert regardless of amounts)
+    SwapParams memory params = SwapParams({
+      id1: id1,
+      token1: address(positionManager),
+      id2: id2,
+      token2: address(positionManager), // Same token
+      amount1: 100e18,
+      amount2: 100e18,
+      deadline: block.timestamp + 1 hours
+    });
+
+    address[] memory signers = new address[](0);
+    bytes[] memory signatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.SameTokenSwap.selector);
+    facility.swap(params, signers, signatures);
+  }
+
   function test_swap_revertWhenInvalidSignatureLength() public {
     (uint256 id1, uint256 id2) = _createTwoResolvingIntents();
 
@@ -328,7 +384,7 @@ contract FacilitySwapTest is FacilityBaseTest {
   }
 
   function test_swap_revertWhenInsufficientSignatures() public {
-    // Create intent with quorum of 2
+    // Create intent with quorum of 2 using PM as deposit
     vm.prank(owner);
     uint256 id1 = facility.createIntent(_intentParamsWithDualPM());
 
@@ -336,13 +392,23 @@ contract FacilitySwapTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(id1, 1000e18);
 
-    uint256 id2 = _createIntentWithDeposits(1000e18);
+    // Create second intent with debt token as deposit asset
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(_intentParamsWithTargetPM());
+
+    _mintDebt(user2, 1000e18);
+    vm.startPrank(user2);
+    debtToken.approve(address(facility), 1000e18);
+    facility.deposit(id2, 1000e18);
+    vm.stopPrank();
+
+    vm.warp(block.timestamp + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
       token1: address(positionManager),
       id2: id2,
-      token2: address(positionManager),
+      token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
       deadline: block.timestamp + 1 hours
@@ -360,7 +426,7 @@ contract FacilitySwapTest is FacilityBaseTest {
   }
 
   function test_swap_revertWhenInvalidSignerOrder() public {
-    // Create intent with quorum of 2
+    // Create intent with quorum of 2 using PM as deposit
     vm.prank(owner);
     uint256 id1 = facility.createIntent(_intentParamsWithDualPM());
 
@@ -368,13 +434,23 @@ contract FacilitySwapTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(id1, 1000e18);
 
-    uint256 id2 = _createIntentWithDeposits(1000e18);
+    // Create second intent with debt token as deposit asset
+    vm.prank(owner);
+    uint256 id2 = facility.createIntent(_intentParamsWithTargetPM());
+
+    _mintDebt(user2, 1000e18);
+    vm.startPrank(user2);
+    debtToken.approve(address(facility), 1000e18);
+    facility.deposit(id2, 1000e18);
+    vm.stopPrank();
+
+    vm.warp(block.timestamp + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
       token1: address(positionManager),
       id2: id2,
-      token2: address(positionManager),
+      token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
       deadline: block.timestamp + 1 hours
