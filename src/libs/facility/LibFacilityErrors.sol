@@ -146,7 +146,7 @@ library LibFacilityErrors {
   /// @notice Thrown when swap amounts are zero.
   error InvalidSwapAmount();
 
-  /// @notice Thrown when swap uses the same token on both sides with unequal amounts.
+  /// @notice Thrown when swap uses the same token on both sides.
   error SameTokenSwap();
 
   /// @notice Thrown when a swap digest has already been used.
