@@ -28,6 +28,8 @@ import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol
 
 // Mocks
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {WrappedAsset} from "src/funds/WrappedAsset.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 
@@ -56,7 +58,8 @@ contract FacilityInvariantTest is StdInvariant, Test {
   MorphoBorrowPosition public borrowPosition;
 
   // Mock tokens
-  MockERC20 public collateralToken;
+  MockERC20 public underlyingToken;
+  WrappedAsset public collateralToken;
   MockERC20 public debtToken;
   OracleMock public oracle;
   IrmMock public irm;
@@ -99,6 +102,10 @@ contract FacilityInvariantTest is StdInvariant, Test {
   uint128 constant BP_LIQUIDATION_LTV = 0.72e18;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
 
+  // WrappedAsset roles
+  uint256 constant WA_SENDER_ROLE = 1 << 1;
+  uint256 constant WA_RECEIVER_ROLE = 1 << 2;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -111,8 +118,15 @@ contract FacilityInvariantTest is StdInvariant, Test {
     pauser = makeAddr("pauser");
     minter = makeAddr("minter");
 
-    // ----- 2. Deploy MockERC20 tokens (both 18 decimals) -----
-    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
+    // ----- 2. Deploy tokens (underlying + WrappedAsset proxy + debtToken) -----
+    underlyingToken = new MockERC20("Underlying Token", "UNDL", 18);
+    vm.label(address(underlyingToken), "UnderlyingToken");
+
+    WrappedAsset implementation = new WrappedAsset();
+    address proxy = LibClone.deployERC1967(address(implementation));
+    collateralToken = WrappedAsset(proxy);
+    vm.prank(owner);
+    collateralToken.initialize(owner, address(0), address(underlyingToken), "wCOLL", "Wrapped Collateral", 18);
     vm.label(address(collateralToken), "CollateralToken");
 
     debtToken = new MockERC20("Debt Token", "DEBT", 18);
@@ -176,6 +190,14 @@ contract FacilityInvariantTest is StdInvariant, Test {
     borrowPosition = MorphoBorrowPosition(bp);
     vm.label(address(borrowPosition), "BorrowPosition");
 
+    // ----- 7b. Grant WrappedAsset roles to protocol contracts -----
+    vm.startPrank(owner);
+    collateralToken.grantRoles(address(positionManager), WA_SENDER_ROLE);
+    collateralToken.grantRoles(address(borrowPosition), WA_SENDER_ROLE);
+    collateralToken.grantRoles(address(morpho), WA_SENDER_ROLE);
+    collateralToken.grantRoles(address(facility), WA_RECEIVER_ROLE);
+    vm.stopPrank();
+
     // ----- 8. Add borrow module, set supply/withdrawal queues (needs CURATOR_ROLE) -----
     vm.prank(owner);
     positionManager.addBorrowModule(address(borrowPosition));
@@ -222,9 +244,15 @@ contract FacilityInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     transferGuard.setTokenConfig(address(positionManager), false, false); // blocklist mode, not paused
 
-    // ----- 15. Create handler, initialize, configure target selectors -----
+    // ----- 15. Grant SENDER_ROLE to minter (needs to wrap/transfer collateral for PM deposits) -----
+    vm.prank(owner);
+    collateralToken.grantRoles(minter, WA_SENDER_ROLE);
+
+    // ----- 16. Create handler, initialize, configure target selectors -----
     handler = new FacilityHandler();
-    handler.initialize(facility, positionManager, collateralToken, debtToken, owner, facilitator, minter, guardianPk);
+    handler.initialize(
+      facility, positionManager, collateralToken, underlyingToken, debtToken, owner, facilitator, minter, guardianPk
+    );
     handler.initializeDependencies(oracle, IMorpho(address(morpho)), marketParams);
 
     // Register handler action selectors with the invariant fuzzer

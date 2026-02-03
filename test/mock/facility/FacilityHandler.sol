@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {Facility} from "src/facility/Facility.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
+import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
@@ -25,7 +26,8 @@ contract FacilityHandler is Test {
 
   Facility public facility;
   PositionManager public positionManager;
-  MockERC20 public collateralToken;
+  WrappedAsset public collateralToken;
+  MockERC20 public underlyingToken;
   MockERC20 public debtToken;
 
   // Dependency-graph refs (set via initializeDependencies)
@@ -121,7 +123,8 @@ contract FacilityHandler is Test {
   function initialize(
     Facility facility_,
     PositionManager positionManager_,
-    MockERC20 collateralToken_,
+    WrappedAsset collateralToken_,
+    MockERC20 underlyingToken_,
     MockERC20 debtToken_,
     address owner_,
     address facilitator_,
@@ -134,6 +137,7 @@ contract FacilityHandler is Test {
     facility = facility_;
     positionManager = positionManager_;
     collateralToken = collateralToken_;
+    underlyingToken = underlyingToken_;
     debtToken = debtToken_;
     owner = owner_;
     facilitator = facilitator_;
@@ -655,13 +659,16 @@ contract FacilityHandler is Test {
   }
 
   /// @dev Mints PM shares to a target user via the minter.
-  ///      Flow: mint collateral to minter -> minter deposits to PM -> minter transfers shares to user.
+  ///      Flow: mint underlying → wrap to WrappedAsset → minter deposits to PM → transfer shares to user.
   function _mintPmSharesToUser(address to, uint256 amount) internal {
-    // 1. Mint collateral to minter
-    collateralToken.setBalance(minter, collateralToken.balanceOf(minter) + amount);
+    // 1. Mint underlying and wrap to WrappedAsset
+    underlyingToken.mint(minter, amount);
+
+    vm.startPrank(minter);
+    underlyingToken.approve(address(collateralToken), amount);
+    collateralToken.mint(minter, amount);
 
     // 2. Minter approves PM and deposits collateral to get shares
-    vm.startPrank(minter);
     collateralToken.approve(address(positionManager), amount);
     int256 sharesSigned = positionManager.deposit(amount, 0);
     uint256 shares = uint256(sharesSigned);

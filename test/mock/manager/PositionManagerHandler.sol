@@ -14,6 +14,7 @@ import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
+import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title PositionManagerHandler
@@ -29,7 +30,8 @@ contract PositionManagerHandler is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   PositionManager public positionManager;
-  MockERC20 public collateralToken;
+  WrappedAsset public collateralToken;
+  MockERC20 public underlyingToken;
   MockERC20 public debtToken;
   address public owner;
   IMorpho public morpho;
@@ -58,6 +60,12 @@ contract PositionManagerHandler is Test {
   /// @notice PM-10: Set to true if a Morpho native liquidation occurred during the run.
   bool public morphoLiquidationOccurred;
 
+  /// @notice PM-11a: Set to true if an unauthorized WrappedAsset transfer succeeded.
+  bool public unauthorizedTransferSucceeded;
+
+  /// @notice PM-11b: Set to true if an unauthorized Morpho collateral supply succeeded.
+  bool public unauthorizedCollateralSupplySucceeded;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -66,12 +74,14 @@ contract PositionManagerHandler is Test {
 
   /// @notice One-time setup. Called by the invariant test's setUp().
   /// @param positionManager_ The PositionManager under test.
-  /// @param collateralToken_ The MockERC20 used as collateral.
+  /// @param collateralToken_ The WrappedAsset used as collateral.
+  /// @param underlyingToken_ The MockERC20 underlying the WrappedAsset.
   /// @param debtToken_ The MockERC20 used as debt.
   /// @param owner_ The owner address of the PositionManager (for admin calls).
   function initialize(
     PositionManager positionManager_,
-    MockERC20 collateralToken_,
+    WrappedAsset collateralToken_,
+    MockERC20 underlyingToken_,
     MockERC20 debtToken_,
     address owner_,
     IMorpho morpho_,
@@ -83,6 +93,7 @@ contract PositionManagerHandler is Test {
 
     positionManager = positionManager_;
     collateralToken = collateralToken_;
+    underlyingToken = underlyingToken_;
     debtToken = debtToken_;
     owner = owner_;
     morpho = morpho_;
@@ -113,7 +124,9 @@ contract PositionManagerHandler is Test {
     uint256 maxDebt = (collateral * 64) / 100;
     debt = _bound(debt, 0, maxDebt);
 
-    // Mint tokens to this handler.
+    // Wrap underlying into WrappedAsset: mint underlying → approve → wrap.
+    underlyingToken.mint(address(this), collateral);
+    underlyingToken.approve(address(collateralToken), collateral);
     collateralToken.mint(address(this), collateral);
     collateralToken.approve(address(positionManager), collateral);
 
@@ -410,6 +423,155 @@ contract PositionManagerHandler is Test {
     debtToken.mint(address(this), amount);
     debtToken.approve(address(morpho), amount);
     try morpho.supply(marketParamsArray[idx], amount, 0, address(this), "") {} catch {}
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  WRAPPED ASSET ACTIONS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mints WrappedAsset to the handler (underlying → wrap).
+  /// @param amountSeed Raw fuzz input for the amount to wrap.
+  function act_wrapped_asset_mint(uint256 amountSeed) external {
+    uint256 amount = _bound(amountSeed, 1e18, 50_000e18);
+    underlyingToken.mint(address(this), amount);
+    underlyingToken.approve(address(collateralToken), amount);
+    collateralToken.mint(address(this), amount);
+  }
+
+  /// @notice Burns (unwraps) WrappedAsset held by the handler back to underlying.
+  /// @param amountSeed Raw fuzz input for the amount to unwrap.
+  function act_wrapped_asset_burn(uint256 amountSeed) external {
+    uint256 balance = collateralToken.balanceOf(address(this));
+    if (balance == 0) return;
+    uint256 amount = _bound(amountSeed, 1, balance);
+    collateralToken.burn(address(this), address(this), amount);
+  }
+
+  /// @notice Transfers WrappedAsset from handler (has SENDER_ROLE) to another address.
+  /// @dev Should succeed because the handler has SENDER_ROLE.
+  /// @param toSeed Seed for selecting a destination (owner or positionManager).
+  /// @param amountSeed Raw fuzz input for the amount to transfer.
+  function act_wrapped_asset_transfer(uint256 toSeed, uint256 amountSeed) external {
+    uint256 balance = collateralToken.balanceOf(address(this));
+    if (balance == 0) return;
+    uint256 amount = _bound(amountSeed, 1, balance);
+    address to = toSeed % 2 == 0 ? address(positionManager) : owner;
+    collateralToken.transfer(to, amount);
+  }
+
+  /// @notice Approves an address for WrappedAsset spending.
+  /// @param toSeed Seed for selecting a spender.
+  /// @param amountSeed Raw fuzz input for approval amount.
+  function act_wrapped_asset_approve(uint256 toSeed, uint256 amountSeed) external {
+    address spender = toSeed % 2 == 0 ? address(positionManager) : address(morpho);
+    uint256 amount = _bound(amountSeed, 0, type(uint128).max);
+    collateralToken.approve(spender, amount);
+  }
+
+  /// @notice Attempts a WrappedAsset transfer from an unauthorized external actor.
+  /// @dev Pranks as an address without SENDER_ROLE. The transfer should fail.
+  ///      If it succeeds, sets unauthorizedTransferSucceeded.
+  /// @param amountSeed Raw fuzz input for the amount to transfer.
+  function act_wrapped_asset_unauthorized_transfer(uint256 amountSeed) external {
+    address externalActor = makeAddr("externalActor");
+    uint256 balance = collateralToken.balanceOf(externalActor);
+    if (balance == 0) {
+      // Give the actor some tokens via handler (has SENDER_ROLE): mint underlying → wrap → transfer.
+      uint256 seedAmount = _bound(amountSeed, 1e18, 10_000e18);
+      underlyingToken.mint(address(this), seedAmount);
+      underlyingToken.approve(address(collateralToken), seedAmount);
+      collateralToken.mint(address(this), seedAmount);
+      collateralToken.transfer(externalActor, seedAmount);
+      balance = seedAmount;
+    }
+    uint256 amount = _bound(amountSeed, 1, balance);
+
+    // External actor (no SENDER_ROLE) tries to transfer to another external address (no RECEIVER_ROLE).
+    address receiver = makeAddr("externalReceiver");
+    vm.prank(externalActor);
+    try collateralToken.transfer(receiver, amount) {
+      unauthorizedTransferSucceeded = true;
+    } catch {
+      // Expected: should fail without SENDER_ROLE
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  MORPHO DIRECT OPERATIONS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Withdraws debt-token liquidity from a Morpho market (handler is supplier).
+  /// @dev Reduces available borrow liquidity, which can affect future deposit/borrow outcomes.
+  /// @param amountSeed Raw fuzz input for the withdrawal amount.
+  /// @param marketIdx Seed for selecting which market to withdraw from.
+  function act_morpho_withdraw(uint256 amountSeed, uint256 marketIdx) external {
+    if (marketParamsArray.length == 0) return;
+    uint256 idx = marketIdx % marketParamsArray.length;
+    Id id = marketParamsArray[idx].id();
+
+    // Check handler's supply position in this market.
+    uint256 supplyShares = morpho.position(id, address(this)).supplyShares;
+    if (supplyShares == 0) return;
+
+    uint256 amount = _bound(amountSeed, 1, supplyShares);
+    try morpho.withdraw(marketParamsArray[idx], 0, amount, address(this), address(this)) {} catch {}
+  }
+
+  /// @notice Repays debt on behalf of a borrow position via Morpho.
+  /// @dev Reduces the BP's debt, improving its health.
+  /// @param posIdx Seed for selecting a borrow module.
+  /// @param amountSeed Raw fuzz input for the repayment amount.
+  function act_morpho_repay(uint256 posIdx, uint256 amountSeed) external {
+    address[] memory modules = positionManager.borrowModules();
+    if (modules.length == 0) return;
+
+    uint256 idx = posIdx % modules.length;
+    MorphoBorrowPosition bp = MorphoBorrowPosition(modules[idx]);
+    uint256 borrowed = bp.totalBorrowed();
+    if (borrowed == 0) return;
+
+    uint256 amount = _bound(amountSeed, 1, borrowed);
+    debtToken.mint(address(this), amount);
+    debtToken.approve(address(morpho), amount);
+
+    // Match borrow position to its MarketParams
+    Id bpMarketId = bp.marketId();
+    for (uint256 j = 0; j < marketParamsArray.length; j++) {
+      if (Id.unwrap(marketParamsArray[j].id()) == Id.unwrap(bpMarketId)) {
+        try morpho.repay(marketParamsArray[j], amount, 0, address(bp), "") {} catch {}
+        return;
+      }
+    }
+  }
+
+  /// @notice Attempts to supply WrappedAsset as collateral to Morpho from an unauthorized actor.
+  /// @dev An external actor without SENDER_ROLE tries to supplyCollateral. Morpho calls
+  ///      safeTransferFrom(actor, morpho, amount) on the WrappedAsset which should fail
+  ///      because the actor lacks SENDER_ROLE and Morpho lacks RECEIVER_ROLE.
+  /// @param amountSeed Raw fuzz input for the amount.
+  /// @param marketIdx Seed for selecting which market.
+  function act_morpho_supplyCollateral(uint256 amountSeed, uint256 marketIdx) external {
+    if (marketParamsArray.length == 0) return;
+    uint256 idx = marketIdx % marketParamsArray.length;
+    uint256 amount = _bound(amountSeed, 1e18, 10_000e18);
+
+    address externalActor = makeAddr("morphoExternalActor");
+
+    // Give the actor WrappedAsset via handler (which has SENDER_ROLE).
+    underlyingToken.mint(address(this), amount);
+    underlyingToken.approve(address(collateralToken), amount);
+    collateralToken.mint(address(this), amount);
+    collateralToken.transfer(externalActor, amount);
+
+    // External actor tries to supply collateral to Morpho.
+    vm.startPrank(externalActor);
+    collateralToken.approve(address(morpho), amount);
+    try morpho.supplyCollateral(marketParamsArray[idx], amount, externalActor, "") {
+      unauthorizedCollateralSupplySucceeded = true;
+    } catch {
+      // Expected: transfer from actor to Morpho should fail
+    }
+    vm.stopPrank();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

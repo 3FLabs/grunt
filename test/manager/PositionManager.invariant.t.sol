@@ -12,6 +12,8 @@ import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {WrappedAsset} from "src/funds/WrappedAsset.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
@@ -34,7 +36,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   MorphoBorrowPosition public borrowPosition2;
   IMorpho public morpho;
   MockERC20 public debtToken;
-  MockERC20 public collateralToken;
+  MockERC20 public underlyingToken;
+  WrappedAsset public collateralToken;
   OracleMock public oracle;
   IrmMock public irm;
   PositionManagerHandler public handler;
@@ -70,6 +73,10 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   uint256 constant MAX_MANAGEMENT_FEE = 5000;
   uint256 constant MAX_PERFORMANCE_FEE = 5000;
 
+  /// @dev WrappedAsset roles (from OwnableRoles: _ROLE_1 = 1 << 1, _ROLE_2 = 1 << 2).
+  uint256 constant WA_SENDER_ROLE = 1 << 1;
+  uint256 constant WA_RECEIVER_ROLE = 1 << 2;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -86,7 +93,15 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     debtToken = new MockERC20("Debt Token", "DEBT", 18);
     vm.label(address(debtToken), "DebtToken");
 
-    collateralToken = new MockERC20("Collateral Token", "COLL", 18);
+    underlyingToken = new MockERC20("Underlying Token", "UNDL", 18);
+    vm.label(address(underlyingToken), "UnderlyingToken");
+
+    // Deploy WrappedAsset via ERC1967 proxy.
+    WrappedAsset implementation = new WrappedAsset();
+    address proxy = LibClone.deployERC1967(address(implementation));
+    collateralToken = WrappedAsset(proxy);
+    vm.prank(owner);
+    collateralToken.initialize(owner, address(0), address(underlyingToken), "wCOLL", "Wrapped Collateral", 18);
     vm.label(address(collateralToken), "CollateralToken");
 
     // ---- oracle & IRM ----
@@ -154,11 +169,19 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     );
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
-    // ---- add borrow modules & grant roles ----
+    // ---- add borrow modules & grant PM roles ----
     vm.startPrank(owner);
     positionManager.addBorrowModule(address(borrowPosition1));
     positionManager.addBorrowModule(address(borrowPosition2));
     positionManager.grantRoles(curator, _ROLE_CURATOR);
+    vm.stopPrank();
+
+    // ---- grant WrappedAsset SENDER_ROLE to protocol contracts ----
+    vm.startPrank(owner);
+    collateralToken.grantRoles(address(positionManager), WA_SENDER_ROLE);
+    collateralToken.grantRoles(address(borrowPosition1), WA_SENDER_ROLE);
+    collateralToken.grantRoles(address(borrowPosition2), WA_SENDER_ROLE);
+    collateralToken.grantRoles(address(morpho), WA_SENDER_ROLE);
     vm.stopPrank();
 
     // ---- set supply & withdrawal queues ----
@@ -184,12 +207,14 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     MarketParams[] memory mkts = new MarketParams[](2);
     mkts[0] = marketParams1;
     mkts[1] = marketParams2;
-    handler.initialize(positionManager, collateralToken, debtToken, owner, morpho, mkts, oracle);
+    handler.initialize(positionManager, collateralToken, underlyingToken, debtToken, owner, morpho, mkts, oracle);
 
-    // Grant MINTER_ROLE and REBALANCER_ROLE to the handler.
+    // Grant MINTER_ROLE and REBALANCER_ROLE to the handler on PM.
+    // Grant SENDER_ROLE on WrappedAsset so the handler can wrap/transfer collateral.
     vm.startPrank(owner);
     positionManager.grantRoles(address(handler), _ROLE_MINTER);
     positionManager.grantRoles(address(handler), _ROLE_REBALANCER);
+    collateralToken.grantRoles(address(handler), WA_SENDER_ROLE);
     vm.stopPrank();
 
     // Token approvals from handler to PositionManager (handler mints itself tokens on the fly,
@@ -198,7 +223,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     // ---- configure invariant-test target ----
     targetContract(address(handler));
 
-    bytes4[] memory selectors = new bytes4[](13);
+    bytes4[] memory selectors = new bytes4[](21);
     selectors[0] = PositionManagerHandler.act_deposit.selector;
     selectors[1] = PositionManagerHandler.act_withdraw.selector;
     selectors[2] = PositionManagerHandler.act_burn.selector;
@@ -212,6 +237,16 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     selectors[10] = PositionManagerHandler.act_setLltv.selector;
     selectors[11] = PositionManagerHandler.act_setMaxRebalanceLoss.selector;
     selectors[12] = PositionManagerHandler.act_supplyMorphoLiquidity.selector;
+    // WrappedAsset actions
+    selectors[13] = PositionManagerHandler.act_wrapped_asset_mint.selector;
+    selectors[14] = PositionManagerHandler.act_wrapped_asset_burn.selector;
+    selectors[15] = PositionManagerHandler.act_wrapped_asset_transfer.selector;
+    selectors[16] = PositionManagerHandler.act_wrapped_asset_approve.selector;
+    selectors[17] = PositionManagerHandler.act_wrapped_asset_unauthorized_transfer.selector;
+    // Morpho direct operations
+    selectors[18] = PositionManagerHandler.act_morpho_withdraw.selector;
+    selectors[19] = PositionManagerHandler.act_morpho_repay.selector;
+    selectors[20] = PositionManagerHandler.act_morpho_supplyCollateral.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
 
@@ -407,5 +442,16 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     uint256 debt = positionManager.debtAmount();
     uint256 expected = quoted > debt ? quoted - debt : 0;
     assertEq(positionManager.totalAssets(), expected, "PM-10: totalAssets broken after liquidation");
+  }
+
+  /// @notice PM-11: Unauthorized WrappedAsset operations never succeed.
+  /// @dev Verifies that:
+  ///      a) External actors without SENDER_ROLE cannot transfer WrappedAsset.
+  ///      b) External actors cannot supply WrappedAsset as collateral to Morpho.
+  function invariant_wrappedAssetRestrictions() public view {
+    assertFalse(handler.unauthorizedTransferSucceeded(), "PM-11a: unauthorized WrappedAsset transfer succeeded");
+    assertFalse(
+      handler.unauthorizedCollateralSupplySucceeded(), "PM-11b: unauthorized Morpho collateral supply succeeded"
+    );
   }
 }
