@@ -225,9 +225,10 @@ contract FacilityInvariantTest is StdInvariant, Test {
     // ----- 15. Create handler, initialize, configure target selectors -----
     handler = new FacilityHandler();
     handler.initialize(facility, positionManager, collateralToken, debtToken, owner, facilitator, minter, guardianPk);
+    handler.initializeDependencies(oracle, IMorpho(address(morpho)), marketParams);
 
     // Register handler action selectors with the invariant fuzzer
-    bytes4[] memory selectors = new bytes4[](9);
+    bytes4[] memory selectors = new bytes4[](13);
     selectors[0] = FacilityHandler.act_createIntent.selector;
     selectors[1] = FacilityHandler.act_deposit.selector;
     selectors[2] = FacilityHandler.act_withdraw.selector;
@@ -237,6 +238,10 @@ contract FacilityInvariantTest is StdInvariant, Test {
     selectors[6] = FacilityHandler.act_claim.selector;
     selectors[7] = FacilityHandler.act_transfer.selector;
     selectors[8] = FacilityHandler.act_swap.selector;
+    selectors[9] = FacilityHandler.act_pauseFacility.selector;
+    selectors[10] = FacilityHandler.act_unpauseFacility.selector;
+    selectors[11] = FacilityHandler.act_changeOraclePrice.selector;
+    selectors[12] = FacilityHandler.act_accrueInterest.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -350,5 +355,14 @@ contract FacilityInvariantTest is StdInvariant, Test {
   /// @dev Checked per-action in the handler. This invariant verifies the ghost flag.
   function invariant_swapReplayPrevention() public view {
     assertFalse(handler.swapReplaySucceeded(), "FAC-8: swap digest replay succeeded");
+  }
+
+  /// @notice FAC-10: Pause timestamp consistency.
+  /// @dev When the facility reports paused, pausedUntil must be >= block.timestamp.
+  function invariant_pauseConsistency() public view {
+    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    if (isPaused) {
+      assertGe(uint256(pausedUntil), block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
+    }
   }
 }

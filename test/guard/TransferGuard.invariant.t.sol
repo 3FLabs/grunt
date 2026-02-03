@@ -41,12 +41,15 @@ contract TransferGuardInvariantTest is StdInvariant, Test {
     otherAllowed = makeAddr("other_allowed");
 
     // Register only the handler actions as target selectors.
-    bytes4[] memory selectors = new bytes4[](5);
+    bytes4[] memory selectors = new bytes4[](8);
     selectors[0] = handler.act_setAddressStatus.selector;
     selectors[1] = handler.act_setTokenConfig.selector;
     selectors[2] = handler.act_pauseFor.selector;
     selectors[3] = handler.act_unpause.selector;
     selectors[4] = handler.act_warpTime.selector;
+    selectors[5] = handler.act_permanentPause.selector;
+    selectors[6] = handler.act_setAddressStatusBatch.selector;
+    selectors[7] = handler.act_toggleWhitelistMode.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -170,6 +173,21 @@ contract TransferGuardInvariantTest is StdInvariant, Test {
 
       if (pausedUntil == type(uint40).max) {
         assertTrue(guard.paused(tkns[k]), "TG-5: PERMANENT_PAUSE but not paused");
+      }
+    }
+  }
+
+  /// @notice TG-6: Permanent pause (pausedUntil == type(uint40).max) survives any time warp.
+  /// @dev If a token has pausedUntil == type(uint40).max, guard.paused(token) must always
+  ///      return true regardless of the current block.timestamp. This distinguishes permanent
+  ///      pauses from timed pauses which expire.
+  function invariant_permanentPauseImmune() public view {
+    address[] memory tkns = handler.getTokens();
+
+    for (uint256 i = 0; i < tkns.length; i++) {
+      (uint40 pausedUntil,) = guard.tokenConfig(tkns[i]);
+      if (pausedUntil == type(uint40).max) {
+        assertTrue(guard.paused(tkns[i]), "TG-6: permanent pause not effective");
       }
     }
   }

@@ -9,6 +9,8 @@ import {MockERC20} from "test/mock/MockERC20.sol";
 import {Asset, IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 
 /// @title FacilityHandler
 /// @notice Handler contract for Facility invariant tests.
@@ -25,6 +27,12 @@ contract FacilityHandler is Test {
   PositionManager public positionManager;
   MockERC20 public collateralToken;
   MockERC20 public debtToken;
+
+  // Dependency-graph refs (set via initializeDependencies)
+  OracleMock public oracle;
+  IMorpho public morpho;
+  MarketParams public facilityMarketParams;
+  bool public dependenciesInitialized;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        ADDRESSES                             */
@@ -76,6 +84,9 @@ contract FacilityHandler is Test {
 
   /// @notice FAC-8: Set to true if a swap digest replay succeeds.
   bool public swapReplaySucceeded;
+
+  /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
+  bool public facilityCurrentlyPaused;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                            */
@@ -129,6 +140,18 @@ contract FacilityHandler is Test {
     minter = minter_;
     guardianPk = guardianPk_;
     guardian = vm.addr(guardianPk_);
+  }
+
+  /// @notice Initializes dependency-graph references (oracle, morpho, marketParams).
+  /// @dev Must be called after initialize(). Separated to avoid stack-too-deep.
+  function initializeDependencies(OracleMock oracle_, IMorpho morpho_, MarketParams memory marketParams_) external {
+    require(initialized, "FacilityHandler: not initialized");
+    require(!dependenciesInitialized, "FacilityHandler: dependencies already initialized");
+    dependenciesInitialized = true;
+
+    oracle = oracle_;
+    morpho = morpho_;
+    facilityMarketParams = marketParams_;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -457,6 +480,53 @@ contract FacilityHandler is Test {
     } catch {
       return;
     }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 DEPENDENCY-GRAPH ACTIONS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Pauses the Facility (permanent or timed).
+  /// @dev 50/50 chance of permanent vs timed pause. Uses owner (who has PAUSER_ROLE equiv).
+  /// @param durationSeed Seed for choosing pause type and duration.
+  function act_pauseFacility(uint256 durationSeed) external {
+    bool permanent = durationSeed % 2 == 0;
+    if (permanent) {
+      vm.prank(owner);
+      try facility.pause() {
+        facilityCurrentlyPaused = true;
+      } catch {}
+    } else {
+      uint256 duration = _bound(durationSeed, 1, 30 days);
+      vm.prank(owner);
+      try facility.pauseFor(duration) {
+        facilityCurrentlyPaused = true;
+      } catch {}
+    }
+  }
+
+  /// @notice Unpauses the Facility to allow operations to resume.
+  function act_unpauseFacility() external {
+    vm.prank(owner);
+    try facility.unpause() {
+      facilityCurrentlyPaused = false;
+    } catch {}
+  }
+
+  /// @notice Changes the oracle price, affecting PM share price and intent token values.
+  /// @dev Bounds price to [0.1e36, 10e36]. Stresses FAC-5 solvency under price volatility.
+  /// @param priceSeed Raw fuzz input for the new price.
+  function act_changeOraclePrice(uint256 priceSeed) external {
+    if (!dependenciesInitialized) return;
+    uint256 newPrice = _bound(priceSeed, 0.1e36, 10e36);
+    oracle.setPrice(newPrice);
+  }
+
+  /// @notice Accrues interest on the underlying Morpho market, increasing PM debt.
+  /// @dev Lowers PM share value over time, stressing solvency invariants.
+  function act_accrueInterest() external {
+    if (!dependenciesInitialized) return;
+    morpho.accrueInterest(facilityMarketParams);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

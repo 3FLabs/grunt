@@ -11,7 +11,9 @@ import {
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
-import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
+import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title PositionManagerHandler
@@ -20,6 +22,8 @@ import {MockERC20} from "test/mock/MockERC20.sol";
 ///         and uses early-return (never revert) when preconditions are not met, so the fuzzer
 ///         can freely explore the state space without wasting runs on reverts.
 contract PositionManagerHandler is Test {
+  using MarketParamsLib for MarketParams;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       EXTERNAL REFS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -30,6 +34,7 @@ contract PositionManagerHandler is Test {
   address public owner;
   IMorpho public morpho;
   MarketParams[] public marketParamsArray;
+  OracleMock public oracle;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      GHOST VARIABLES                           */
@@ -46,6 +51,12 @@ contract PositionManagerHandler is Test {
 
   /// @notice PM-5: Set to true if rebalance loss exceeds maxRebalanceLoss.
   bool public rebalanceLossExceeded;
+
+  /// @notice PM-10: Set to true if a pre-liquidation occurred during the run.
+  bool public preLiquidationOccurred;
+
+  /// @notice PM-10: Set to true if a Morpho native liquidation occurred during the run.
+  bool public morphoLiquidationOccurred;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                           */
@@ -64,7 +75,8 @@ contract PositionManagerHandler is Test {
     MockERC20 debtToken_,
     address owner_,
     IMorpho morpho_,
-    MarketParams[] memory marketParams_
+    MarketParams[] memory marketParams_,
+    OracleMock oracle_
   ) external {
     require(!initialized, "already initialized");
     initialized = true;
@@ -74,6 +86,7 @@ contract PositionManagerHandler is Test {
     debtToken = debtToken_;
     owner = owner_;
     morpho = morpho_;
+    oracle = oracle_;
     for (uint256 i = 0; i < marketParams_.length; i++) {
       marketParamsArray.push(marketParams_[i]);
     }
@@ -301,6 +314,143 @@ contract PositionManagerHandler is Test {
     }
       catch {
       // Silently skip on failure.
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 DEPENDENCY-GRAPH ACTIONS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Changes the oracle price, affecting collateral valuation, LTV, and position health.
+  /// @dev Bounds price to [0.1e36, 10e36] (10x drop to 10x increase from 1e36 default).
+  ///      OracleMock.setPrice is permissionless.
+  /// @param priceSeed Raw fuzz input for the new price.
+  function act_setOraclePrice(uint256 priceSeed) external {
+    uint256 newPrice = _bound(priceSeed, 0.1e36, 10e36);
+    oracle.setPrice(newPrice);
+  }
+
+  /// @notice Pre-liquidates an unhealthy borrow position via the protocol's custom mechanism.
+  /// @dev Finds a borrow module that is unhealthy at its liquidationLtv, mints debtToken
+  ///      for repayment, and calls preLiquidate. Sets preLiquidationOccurred on success.
+  /// @param posIdx Seed for selecting among borrow modules.
+  /// @param amountSeed Raw fuzz input for the amount of collateral to seize.
+  function act_preLiquidate(uint256 posIdx, uint256 amountSeed) external {
+    address[] memory modules = positionManager.borrowModules();
+    if (modules.length == 0) return;
+
+    for (uint256 i = 0; i < modules.length; i++) {
+      uint256 idx = (posIdx + i) % modules.length;
+      MorphoBorrowPosition bp = MorphoBorrowPosition(modules[idx]);
+      (, uint128 liquidationLtv) = bp.ltvs();
+
+      if (bp.totalCollateral() == 0 || bp.isHealthy(liquidationLtv)) continue;
+
+      uint256 collateral = bp.totalCollateral();
+      uint256 seizedAssets = _bound(amountSeed, 1, collateral);
+
+      // Over-provision debtToken for repayment
+      uint256 maxDebtNeeded = bp.totalBorrowed() + 1e18;
+      debtToken.mint(address(this), maxDebtNeeded);
+      debtToken.approve(address(bp), maxDebtNeeded);
+      debtToken.approve(address(morpho), maxDebtNeeded);
+
+      try bp.preLiquidate(address(bp), seizedAssets, 0, "") {
+        preLiquidationOccurred = true;
+      } catch {}
+      return;
+    }
+  }
+
+  /// @notice Liquidates a borrow position via Morpho's native liquidation mechanism.
+  /// @dev Finds a borrow module unhealthy at the market LLTV, matches it to the correct
+  ///      MarketParams, and calls morpho.liquidate. Sets morphoLiquidationOccurred on success.
+  /// @param posIdx Seed for selecting among borrow modules.
+  /// @param amountSeed Raw fuzz input for the amount of collateral to seize.
+  function act_morphoLiquidate(uint256 posIdx, uint256 amountSeed) external {
+    _doMorphoLiquidate(posIdx, amountSeed);
+  }
+
+  /// @notice Explicitly accrues interest on all Morpho markets.
+  /// @dev This is an independent action separate from the interest accrual in act_burn.
+  ///      Combined with act_warpTime, this makes debt grow and pushes LTV higher.
+  function act_accrueInterest() external {
+    for (uint256 i = 0; i < marketParamsArray.length; i++) {
+      morpho.accrueInterest(marketParamsArray[i]);
+    }
+  }
+
+  /// @notice Changes the PositionManager's LLTV parameter.
+  /// @dev Bounds to [0.1e18, 0.95e18]. Affects available collateral calculations.
+  /// @param lltvSeed Raw fuzz input for the new LLTV.
+  function act_setLltv(uint256 lltvSeed) external {
+    uint256 newLltv = _bound(lltvSeed, 0.1e18, 0.95e18);
+    vm.prank(owner);
+    try positionManager.setLltv(newLltv) {} catch {}
+  }
+
+  /// @notice Changes the maxRebalanceLoss parameter.
+  /// @dev Bounds to [0, 500] (0% to 5% in basis points).
+  /// @param lossSeed Raw fuzz input for the new maxRebalanceLoss.
+  function act_setMaxRebalanceLoss(uint256 lossSeed) external {
+    uint16 newLoss = uint16(_bound(lossSeed, 0, 500));
+    vm.prank(owner);
+    try positionManager.setMaxRebalanceLoss(newLoss) {} catch {}
+  }
+
+  /// @notice Supplies additional liquidity to a Morpho market (simulates external actor).
+  /// @dev Changes available borrow liquidity which can affect deposit/borrow outcomes.
+  /// @param amountSeed Raw fuzz input for the supply amount.
+  /// @param marketIdx Seed for selecting which market to supply to.
+  function act_supplyMorphoLiquidity(uint256 amountSeed, uint256 marketIdx) external {
+    if (marketParamsArray.length == 0) return;
+    uint256 idx = marketIdx % marketParamsArray.length;
+    uint256 amount = _bound(amountSeed, 1e18, 100_000e18);
+
+    debtToken.mint(address(this), amount);
+    debtToken.approve(address(morpho), amount);
+    try morpho.supply(marketParamsArray[idx], amount, 0, address(this), "") {} catch {}
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      INTERNAL HELPERS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Internal implementation of Morpho native liquidation to manage stack depth.
+  function _doMorphoLiquidate(uint256 posIdx, uint256 amountSeed) internal {
+    address[] memory modules = positionManager.borrowModules();
+    if (modules.length == 0) return;
+
+    for (uint256 i = 0; i < modules.length; i++) {
+      uint256 idx = (posIdx + i) % modules.length;
+      MorphoBorrowPosition bp = MorphoBorrowPosition(modules[idx]);
+
+      if (bp.totalCollateral() == 0 || bp.totalBorrowed() == 0) continue;
+
+      // Match borrow position to its MarketParams
+      Id bpMarketId = bp.marketId();
+      MarketParams memory mp;
+      bool found;
+      for (uint256 j = 0; j < marketParamsArray.length; j++) {
+        if (Id.unwrap(marketParamsArray[j].id()) == Id.unwrap(bpMarketId)) {
+          mp = marketParamsArray[j];
+          found = true;
+          break;
+        }
+      }
+      if (!found) continue;
+
+      uint256 collateral = bp.totalCollateral();
+      uint256 seizedAssets = _bound(amountSeed, 1, collateral);
+
+      uint256 maxDebtNeeded = bp.totalBorrowed() + 1e18;
+      debtToken.mint(address(this), maxDebtNeeded);
+      debtToken.approve(address(morpho), maxDebtNeeded);
+
+      try morpho.liquidate(mp, address(bp), seizedAssets, 0, "") {
+        morphoLiquidationOccurred = true;
+      } catch {}
+      return;
     }
   }
 }

@@ -147,4 +147,60 @@ contract TransferGuardHandler is Test {
       }
     }
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 DEPENDENCY-GRAPH ACTIONS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Permanently pauses a randomly-selected token.
+  /// @dev Unlike act_pauseFor (timed), this sets pausedUntil = type(uint40).max
+  ///      which cannot be recovered by time warping.
+  /// @param tokenSeed Seed used to pick a token from the fixed set.
+  function act_permanentPause(uint256 tokenSeed) external {
+    address token = tokens[tokenSeed % tokens.length];
+
+    vm.prank(owner);
+    guard.pause(token);
+
+    ghostPaused[token] = true;
+  }
+
+  /// @notice Sets address status in batch for multiple accounts.
+  /// @dev Exercises the setAddressStatusBatch code path rather than single-address updates.
+  /// @param statusSeed Seed for status selection.
+  /// @param countSeed Seed for choosing how many accounts to update (2-3).
+  function act_setAddressStatusBatch(uint256 statusSeed, uint256 countSeed) external {
+    AddressStatus status = AddressStatus(statusSeed % 3);
+    uint256 count = _bound(countSeed, 2, 3);
+    if (count > accounts.length) count = accounts.length;
+
+    address[] memory batch = new address[](count);
+    for (uint256 i = 0; i < count; i++) {
+      batch[i] = accounts[(statusSeed + i) % accounts.length];
+    }
+
+    vm.prank(owner);
+    guard.setAddressStatusBatch(batch, status);
+
+    for (uint256 i = 0; i < count; i++) {
+      ghostStatus[batch[i]] = status;
+    }
+  }
+
+  /// @notice Toggles whitelist mode for a randomly-selected token without changing pause state.
+  /// @dev Flips the whitelist flag via setTokenConfig, preserving the current pausedUntil.
+  /// @param tokenSeed Seed used to pick a token from the fixed set.
+  function act_toggleWhitelistMode(uint256 tokenSeed) external {
+    address token = tokens[tokenSeed % tokens.length];
+
+    (uint40 pausedUntil, bool currentWhitelist) = guard.tokenConfig(token);
+
+    // Determine if currently paused for setTokenConfig's bool param
+    bool isPaused = pausedUntil != 0 && (pausedUntil == type(uint40).max || block.timestamp <= pausedUntil);
+
+    vm.prank(owner);
+    guard.setTokenConfig(token, isPaused, !currentWhitelist);
+
+    ghostWhitelist[token] = !currentWhitelist;
+  }
 }

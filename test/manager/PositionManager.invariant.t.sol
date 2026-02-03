@@ -184,7 +184,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     MarketParams[] memory mkts = new MarketParams[](2);
     mkts[0] = marketParams1;
     mkts[1] = marketParams2;
-    handler.initialize(positionManager, collateralToken, debtToken, owner, morpho, mkts);
+    handler.initialize(positionManager, collateralToken, debtToken, owner, morpho, mkts, oracle);
 
     // Grant MINTER_ROLE and REBALANCER_ROLE to the handler.
     vm.startPrank(owner);
@@ -198,13 +198,20 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     // ---- configure invariant-test target ----
     targetContract(address(handler));
 
-    bytes4[] memory selectors = new bytes4[](6);
+    bytes4[] memory selectors = new bytes4[](13);
     selectors[0] = PositionManagerHandler.act_deposit.selector;
     selectors[1] = PositionManagerHandler.act_withdraw.selector;
     selectors[2] = PositionManagerHandler.act_burn.selector;
     selectors[3] = PositionManagerHandler.act_rebalance.selector;
     selectors[4] = PositionManagerHandler.act_warpTime.selector;
     selectors[5] = PositionManagerHandler.act_setFees.selector;
+    selectors[6] = PositionManagerHandler.act_setOraclePrice.selector;
+    selectors[7] = PositionManagerHandler.act_preLiquidate.selector;
+    selectors[8] = PositionManagerHandler.act_morphoLiquidate.selector;
+    selectors[9] = PositionManagerHandler.act_accrueInterest.selector;
+    selectors[10] = PositionManagerHandler.act_setLltv.selector;
+    selectors[11] = PositionManagerHandler.act_setMaxRebalanceLoss.selector;
+    selectors[12] = PositionManagerHandler.act_supplyMorphoLiquidity.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
 
@@ -389,5 +396,16 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
         }
       }
     }
+  }
+
+  /// @notice PM-10: Post-liquidation accounting consistency.
+  /// @dev After any pre-liquidation or Morpho liquidation, the fundamental accounting
+  ///      identity totalAssets = max(0, quotedCollateral - debt) must still hold.
+  function invariant_postLiquidationConsistency() public view {
+    if (!handler.preLiquidationOccurred() && !handler.morphoLiquidationOccurred()) return;
+    uint256 quoted = positionManager.collateralAmountQuoted();
+    uint256 debt = positionManager.debtAmount();
+    uint256 expected = quoted > debt ? quoted - debt : 0;
+    assertEq(positionManager.totalAssets(), expected, "PM-10: totalAssets broken after liquidation");
   }
 }
