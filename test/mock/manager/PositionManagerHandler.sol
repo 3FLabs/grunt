@@ -229,7 +229,10 @@ contract PositionManagerHandler is Test {
       uint256 collAfter = positionManager.collateralAmountQuoted();
       uint256 debtAfter = positionManager.debtAmount();
       if (collBefore > 0 && collAfter > 0) {
-        if (debtAfter * collBefore > debtBefore * collAfter) {
+        // Allow 1-wei rounding per division in the proportional split: the
+        // collateral division error contributes `debtBefore` and the debt
+        // division error contributes `collBefore` in the cross-multiplication.
+        if (debtAfter * collBefore > debtBefore * collAfter + collBefore + debtBefore) {
           burnLtvIncreased = true;
         }
       }
@@ -368,9 +371,8 @@ contract PositionManagerHandler is Test {
       debtToken.approve(address(bp), maxDebtNeeded);
       debtToken.approve(address(morpho), maxDebtNeeded);
 
-      try bp.preLiquidate(address(bp), seizedAssets, 0, "") {
-        preLiquidationOccurred = true;
-      } catch {}
+      bp.preLiquidate(address(bp), seizedAssets, 0, "");
+      preLiquidationOccurred = true;
       return;
     }
   }
@@ -609,9 +611,8 @@ contract PositionManagerHandler is Test {
       debtToken.mint(address(this), maxDebtNeeded);
       debtToken.approve(address(morpho), maxDebtNeeded);
 
-      try morpho.liquidate(mp, address(bp), seizedAssets, 0, "") {
-        morphoLiquidationOccurred = true;
-      } catch {}
+      morpho.liquidate(mp, address(bp), seizedAssets, 0, "");
+      morphoLiquidationOccurred = true;
       return;
     }
   }

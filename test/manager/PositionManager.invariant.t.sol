@@ -388,10 +388,15 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   ///      If totalSupply > 0 but collateralAmount == 0, share holders have worthless tokens,
   ///      which would indicate a critical accounting bug. Note: totalAssets CAN be zero if
   ///      debt exactly matches quoted collateral, but raw collateralAmount must still be > 0.
+  ///      After a full liquidation (all collateral seized), collateral can legitimately be
+  ///      zero while shares remain. Partial liquidations must still satisfy this invariant.
   function invariant_noSharesWithoutAssets() public view {
     uint256 totalSupply = positionManager.totalSupply();
     if (totalSupply > 0) {
-      assertTrue(positionManager.collateralAmount() > 0, "PM-9: shares exist but no collateral backs them");
+      uint256 collateral = positionManager.collateralAmount();
+      // Only tolerate zero collateral if a liquidation actually occurred (full liquidation).
+      if (collateral == 0 && (handler.preLiquidationOccurred() || handler.morphoLiquidationOccurred())) return;
+      assertTrue(collateral > 0, "PM-9: shares exist but no collateral backs them");
     }
   }
 
