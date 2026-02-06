@@ -60,6 +60,9 @@ contract PositionManagerHandler is Test {
   /// @notice PM-10: Set to true if a Morpho native liquidation occurred during the run.
   bool public morphoLiquidationOccurred;
 
+  /// @notice PM-9: Set to true if a liquidation zeroed collateral and collateral has not been restored.
+  bool public fullLiquidationOccurred;
+
   /// @notice PM-11a: Set to true if an unauthorized WrappedAsset transfer succeeded.
   bool public unauthorizedTransferSucceeded;
 
@@ -104,6 +107,30 @@ contract PositionManagerHandler is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 LIQUIDATION TRACKING                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  modifier refreshFullLiquidation() {
+    _refreshFullLiquidationFlag();
+    _;
+    _refreshFullLiquidationFlag();
+  }
+
+  function _refreshFullLiquidationFlag() internal {
+    if (!initialized) return;
+    if (fullLiquidationOccurred && positionManager.collateralAmount() > 0) {
+      fullLiquidationOccurred = false;
+    }
+  }
+
+  function _recordFullLiquidationIfZero() internal {
+    if (!initialized) return;
+    if (positionManager.collateralAmount() == 0) {
+      fullLiquidationOccurred = true;
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      HANDLER ACTIONS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -113,7 +140,7 @@ contract PositionManagerHandler is Test {
   ///      Early-returns if the supply queue is empty.
   /// @param collateral Raw fuzz input for collateral amount.
   /// @param debt Raw fuzz input for debt amount.
-  function act_deposit(uint256 collateral, uint256 debt) external {
+  function act_deposit(uint256 collateral, uint256 debt) external refreshFullLiquidation {
     // Early-return when supply queue is empty (deposit would revert).
     SupplyQueueEntry[] memory sq = positionManager.supplyQueue();
     if (sq.length == 0) return;
@@ -146,7 +173,7 @@ contract PositionManagerHandler is Test {
   ///      Early-returns if there is nothing to withdraw.
   /// @param collateral Raw fuzz input for collateral amount.
   /// @param debt Raw fuzz input for debt amount.
-  function act_withdraw(uint256 collateral, uint256 debt) external {
+  function act_withdraw(uint256 collateral, uint256 debt) external refreshFullLiquidation {
     uint256 totalCollateral = positionManager.collateralAmount();
     uint256 totalDebt = positionManager.debtAmount();
 
@@ -190,7 +217,7 @@ contract PositionManagerHandler is Test {
   /// @dev Bounds shares to [1, handler's balance]. Calculates proportional debt needed,
   ///      mints debt tokens, and calls burn. Early-returns if handler has no shares.
   /// @param shares Raw fuzz input for share amount.
-  function act_burn(uint256 shares) external {
+  function act_burn(uint256 shares) external refreshFullLiquidation {
     uint256 balance = positionManager.balanceOf(address(this));
     if (balance == 0) return;
 
@@ -247,7 +274,7 @@ contract PositionManagerHandler is Test {
   /// @param fromIdx Raw fuzz input for source position index.
   /// @param toIdx Raw fuzz input for destination position index.
   /// @param amount Raw fuzz input for the amount to move.
-  function act_rebalance(uint256 fromIdx, uint256 toIdx, uint256 amount) external {
+  function act_rebalance(uint256 fromIdx, uint256 toIdx, uint256 amount) external refreshFullLiquidation {
     address[] memory modules = positionManager.borrowModules();
     if (modules.length < 2) return;
 
@@ -304,7 +331,7 @@ contract PositionManagerHandler is Test {
   /// @notice Warps block.timestamp forward to allow fee accrual over time.
   /// @dev Bounds seconds to [1, 365 days]. This is crucial for management fee testing.
   /// @param seconds_ Raw fuzz input for seconds to warp.
-  function act_warpTime(uint256 seconds_) external {
+  function act_warpTime(uint256 seconds_) external refreshFullLiquidation {
     seconds_ = _bound(seconds_, 1, 365 days);
     vm.warp(block.timestamp + seconds_);
   }
@@ -314,7 +341,7 @@ contract PositionManagerHandler is Test {
   ///      Sets a fee recipient if one is not already configured.
   /// @param mgmt Raw fuzz input for management fee (basis points).
   /// @param perf Raw fuzz input for performance fee (basis points).
-  function act_setFees(uint256 mgmt, uint256 perf) external {
+  function act_setFees(uint256 mgmt, uint256 perf) external refreshFullLiquidation {
     mgmt = _bound(mgmt, 0, 5000);
     perf = _bound(perf, 0, 5000);
 
@@ -341,7 +368,7 @@ contract PositionManagerHandler is Test {
   /// @dev Bounds price to [0.1e36, 10e36] (10x drop to 10x increase from 1e36 default).
   ///      OracleMock.setPrice is permissionless.
   /// @param priceSeed Raw fuzz input for the new price.
-  function act_setOraclePrice(uint256 priceSeed) external {
+  function act_setOraclePrice(uint256 priceSeed) external refreshFullLiquidation {
     uint256 newPrice = _bound(priceSeed, 0.1e36, 10e36);
     oracle.setPrice(newPrice);
   }
@@ -351,7 +378,7 @@ contract PositionManagerHandler is Test {
   ///      for repayment, and calls preLiquidate. Sets preLiquidationOccurred on success.
   /// @param posIdx Seed for selecting among borrow modules.
   /// @param amountSeed Raw fuzz input for the amount of collateral to seize.
-  function act_preLiquidate(uint256 posIdx, uint256 amountSeed) external {
+  function act_preLiquidate(uint256 posIdx, uint256 amountSeed) external refreshFullLiquidation {
     address[] memory modules = positionManager.borrowModules();
     if (modules.length == 0) return;
 
@@ -373,6 +400,7 @@ contract PositionManagerHandler is Test {
 
       bp.preLiquidate(address(bp), seizedAssets, 0, "");
       preLiquidationOccurred = true;
+      _recordFullLiquidationIfZero();
       return;
     }
   }
@@ -382,14 +410,14 @@ contract PositionManagerHandler is Test {
   ///      MarketParams, and calls morpho.liquidate. Sets morphoLiquidationOccurred on success.
   /// @param posIdx Seed for selecting among borrow modules.
   /// @param amountSeed Raw fuzz input for the amount of collateral to seize.
-  function act_morphoLiquidate(uint256 posIdx, uint256 amountSeed) external {
+  function act_morphoLiquidate(uint256 posIdx, uint256 amountSeed) external refreshFullLiquidation {
     _doMorphoLiquidate(posIdx, amountSeed);
   }
 
   /// @notice Explicitly accrues interest on all Morpho markets.
   /// @dev This is an independent action separate from the interest accrual in act_burn.
   ///      Combined with act_warpTime, this makes debt grow and pushes LTV higher.
-  function act_accrueInterest() external {
+  function act_accrueInterest() external refreshFullLiquidation {
     for (uint256 i = 0; i < marketParamsArray.length; i++) {
       morpho.accrueInterest(marketParamsArray[i]);
     }
@@ -398,7 +426,7 @@ contract PositionManagerHandler is Test {
   /// @notice Changes the PositionManager's LLTV parameter.
   /// @dev Bounds to [0.1e18, 0.95e18]. Affects available collateral calculations.
   /// @param lltvSeed Raw fuzz input for the new LLTV.
-  function act_setLltv(uint256 lltvSeed) external {
+  function act_setLltv(uint256 lltvSeed) external refreshFullLiquidation {
     uint256 newLltv = _bound(lltvSeed, 0.1e18, 0.95e18);
     vm.prank(owner);
     try positionManager.setLltv(newLltv) {} catch {}
@@ -407,7 +435,7 @@ contract PositionManagerHandler is Test {
   /// @notice Changes the maxRebalanceLoss parameter.
   /// @dev Bounds to [0, 500] (0% to 5% in basis points).
   /// @param lossSeed Raw fuzz input for the new maxRebalanceLoss.
-  function act_setMaxRebalanceLoss(uint256 lossSeed) external {
+  function act_setMaxRebalanceLoss(uint256 lossSeed) external refreshFullLiquidation {
     uint16 newLoss = uint16(_bound(lossSeed, 0, 500));
     vm.prank(owner);
     try positionManager.setMaxRebalanceLoss(newLoss) {} catch {}
@@ -417,7 +445,7 @@ contract PositionManagerHandler is Test {
   /// @dev Changes available borrow liquidity which can affect deposit/borrow outcomes.
   /// @param amountSeed Raw fuzz input for the supply amount.
   /// @param marketIdx Seed for selecting which market to supply to.
-  function act_supplyMorphoLiquidity(uint256 amountSeed, uint256 marketIdx) external {
+  function act_supplyMorphoLiquidity(uint256 amountSeed, uint256 marketIdx) external refreshFullLiquidation {
     if (marketParamsArray.length == 0) return;
     uint256 idx = marketIdx % marketParamsArray.length;
     uint256 amount = _bound(amountSeed, 1e18, 100_000e18);
@@ -433,7 +461,7 @@ contract PositionManagerHandler is Test {
 
   /// @notice Mints WrappedAsset to the handler (underlying → wrap).
   /// @param amountSeed Raw fuzz input for the amount to wrap.
-  function act_wrapped_asset_mint(uint256 amountSeed) external {
+  function act_wrapped_asset_mint(uint256 amountSeed) external refreshFullLiquidation {
     uint256 amount = _bound(amountSeed, 1e18, 50_000e18);
     underlyingToken.mint(address(this), amount);
     underlyingToken.approve(address(collateralToken), amount);
@@ -442,7 +470,7 @@ contract PositionManagerHandler is Test {
 
   /// @notice Burns (unwraps) WrappedAsset held by the handler back to underlying.
   /// @param amountSeed Raw fuzz input for the amount to unwrap.
-  function act_wrapped_asset_burn(uint256 amountSeed) external {
+  function act_wrapped_asset_burn(uint256 amountSeed) external refreshFullLiquidation {
     uint256 balance = collateralToken.balanceOf(address(this));
     if (balance == 0) return;
     uint256 amount = _bound(amountSeed, 1, balance);
@@ -453,7 +481,7 @@ contract PositionManagerHandler is Test {
   /// @dev Should succeed because the handler has SENDER_ROLE.
   /// @param toSeed Seed for selecting a destination (owner or positionManager).
   /// @param amountSeed Raw fuzz input for the amount to transfer.
-  function act_wrapped_asset_transfer(uint256 toSeed, uint256 amountSeed) external {
+  function act_wrapped_asset_transfer(uint256 toSeed, uint256 amountSeed) external refreshFullLiquidation {
     uint256 balance = collateralToken.balanceOf(address(this));
     if (balance == 0) return;
     uint256 amount = _bound(amountSeed, 1, balance);
@@ -464,7 +492,7 @@ contract PositionManagerHandler is Test {
   /// @notice Approves an address for WrappedAsset spending.
   /// @param toSeed Seed for selecting a spender.
   /// @param amountSeed Raw fuzz input for approval amount.
-  function act_wrapped_asset_approve(uint256 toSeed, uint256 amountSeed) external {
+  function act_wrapped_asset_approve(uint256 toSeed, uint256 amountSeed) external refreshFullLiquidation {
     address spender = toSeed % 2 == 0 ? address(positionManager) : address(morpho);
     uint256 amount = _bound(amountSeed, 0, type(uint128).max);
     collateralToken.approve(spender, amount);
@@ -474,7 +502,7 @@ contract PositionManagerHandler is Test {
   /// @dev Pranks as an address without SENDER_ROLE. The transfer should fail.
   ///      If it succeeds, sets unauthorizedTransferSucceeded.
   /// @param amountSeed Raw fuzz input for the amount to transfer.
-  function act_wrapped_asset_unauthorized_transfer(uint256 amountSeed) external {
+  function act_wrapped_asset_unauthorized_transfer(uint256 amountSeed) external refreshFullLiquidation {
     address externalActor = makeAddr("externalActor");
     uint256 balance = collateralToken.balanceOf(externalActor);
     if (balance == 0) {
@@ -506,7 +534,7 @@ contract PositionManagerHandler is Test {
   /// @dev Reduces available borrow liquidity, which can affect future deposit/borrow outcomes.
   /// @param amountSeed Raw fuzz input for the withdrawal amount.
   /// @param marketIdx Seed for selecting which market to withdraw from.
-  function act_morpho_withdraw(uint256 amountSeed, uint256 marketIdx) external {
+  function act_morpho_withdraw(uint256 amountSeed, uint256 marketIdx) external refreshFullLiquidation {
     if (marketParamsArray.length == 0) return;
     uint256 idx = marketIdx % marketParamsArray.length;
     Id id = marketParamsArray[idx].id();
@@ -523,7 +551,7 @@ contract PositionManagerHandler is Test {
   /// @dev Reduces the BP's debt, improving its health.
   /// @param posIdx Seed for selecting a borrow module.
   /// @param amountSeed Raw fuzz input for the repayment amount.
-  function act_morpho_repay(uint256 posIdx, uint256 amountSeed) external {
+  function act_morpho_repay(uint256 posIdx, uint256 amountSeed) external refreshFullLiquidation {
     address[] memory modules = positionManager.borrowModules();
     if (modules.length == 0) return;
 
@@ -552,7 +580,7 @@ contract PositionManagerHandler is Test {
   ///      because the actor lacks SENDER_ROLE and Morpho lacks RECEIVER_ROLE.
   /// @param amountSeed Raw fuzz input for the amount.
   /// @param marketIdx Seed for selecting which market.
-  function act_morpho_supplyCollateral(uint256 amountSeed, uint256 marketIdx) external {
+  function act_morpho_supplyCollateral(uint256 amountSeed, uint256 marketIdx) external refreshFullLiquidation {
     if (marketParamsArray.length == 0) return;
     uint256 idx = marketIdx % marketParamsArray.length;
     uint256 amount = _bound(amountSeed, 1e18, 10_000e18);
@@ -613,6 +641,7 @@ contract PositionManagerHandler is Test {
 
       morpho.liquidate(mp, address(bp), seizedAssets, 0, "");
       morphoLiquidationOccurred = true;
+      _recordFullLiquidationIfZero();
       return;
     }
   }
