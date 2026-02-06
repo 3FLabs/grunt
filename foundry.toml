@@ -12,15 +12,26 @@ auto_detect_solc = true
 # 8429: Virtual modifiers deprecated
 ignored_error_codes = [2424, 8429]
 
+# Exclude invariant tests from default test runs (expensive, run separately)
+no_match_test = "^invariant"
+
 [profile.ci]
 optimizer = true
 optimizer_runs = 200
+
+[profile.full]
+# Run all tests including invariant tests: FOUNDRY_PROFILE=full forge test
+no_match_test = "^$"
+
+[invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
 
 [fmt]
 tab_width = 2
 
 [lint]
 ignore = ["test/**/*"]
-
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
