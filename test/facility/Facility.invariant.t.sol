@@ -256,7 +256,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     handler.initializeDependencies(oracle, IMorpho(address(morpho)), marketParams);
 
     // Register handler action selectors with the invariant fuzzer
-    bytes4[] memory selectors = new bytes4[](16);
+    bytes4[] memory selectors = new bytes4[](17);
     selectors[0] = FacilityHandler.act_createIntent.selector;
     selectors[1] = FacilityHandler.act_deposit.selector;
     selectors[2] = FacilityHandler.act_withdraw.selector;
@@ -273,6 +273,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     selectors[13] = FacilityHandler.act_setRequest.selector;
     selectors[14] = FacilityHandler.act_attemptRepayBeforeTimelock.selector;
     selectors[15] = FacilityHandler.act_setTimelock.selector;
+    selectors[16] = FacilityHandler.act_updateDepositCap.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -313,14 +314,12 @@ contract FacilityInvariantTest is StdInvariant, Test {
     }
   }
 
-  /// @notice FAC-4: Deposit cap is never exceeded for any intent.
-  /// @dev Checks that each intent's totalSupply does not exceed its configured depositCap.
+  /// @notice FAC-4: Deposit cap cannot be exceeded by a new deposit.
+  /// @dev The deposit cap is only enforced at deposit time. Reducing the cap below the current
+  ///      totalSupply is allowed, so totalSupply may temporarily exceed depositCap.
+  ///      Checked per-action in the handler. This invariant verifies the ghost flag.
   function invariant_depositCapNotExceeded() public view {
-    uint256[] memory ids = handler.getIntentIds();
-    for (uint256 i = 0; i < ids.length; i++) {
-      (IntentProperties memory props,,,,) = facility.getIntent(ids[i]);
-      assertLe(facility.totalSupply(ids[i]), props.depositCap, "FAC-4: totalSupply exceeds depositCap");
-    }
+    assertFalse(handler.depositExceededCap(), "FAC-4: deposit pushed totalSupply above depositCap");
   }
 
   /// @notice FAC-5: The sum of tracked token amounts across all intents does not exceed the
