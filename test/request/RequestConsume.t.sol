@@ -478,7 +478,7 @@ contract RequestConsumeTest is Test {
     asset.mint(broker2, mintAmount);
     vm.startPrank(broker2);
     asset.approve(address(request), mintAmount);
-    request.mint();
+    request.mint(uint128(mintAmount), uint128(mintYield));
     vm.stopPrank();
 
     // 3. Verify totals
