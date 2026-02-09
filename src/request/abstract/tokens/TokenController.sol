@@ -9,6 +9,7 @@ import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
 import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
 import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../../libs/common/LibCommonErrors.sol";
+import {LibChecks} from "../../../libs/common/LibChecks.sol";
 
 /// @title TokenController
 /// @author 3F Protocol
@@ -20,6 +21,7 @@ abstract contract TokenController is ITokenController {
   using LibTokenController for address;
   using SafeCastLib for uint256;
   using LibAllowance for uint128;
+  using LibChecks for address;
   using FixedPointMathLib for bool;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -66,6 +68,7 @@ abstract contract TokenController is ITokenController {
   /// @return success Always returns true if the transfer succeeds (reverts on failure)
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
+    to.checkNotZero();
     if (from == to) revert LibRequestErrors.TransferToSelf();
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
