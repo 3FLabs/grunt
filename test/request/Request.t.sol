@@ -931,7 +931,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     assertEq(request.lastMintTimestamp(), uint40(block.timestamp));
@@ -952,7 +952,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint();
+    timelockRequest.mint(0, 0);
     vm.stopPrank();
 
     uint40 expectedAvailableAt = uint40(block.timestamp) + delay;
@@ -977,7 +977,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint();
+    timelockRequest.mint(0, 0);
     vm.stopPrank();
 
     // Warp past the timelock
@@ -1021,7 +1021,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint();
+    timelockRequest.mint(0, 0);
     vm.stopPrank();
 
     assertEq(timelockRequest.repaidAvailableAt(), uint40(block.timestamp) + delay);
@@ -1066,7 +1066,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint();
+    timelockRequest.mint(0, 0);
     vm.stopPrank();
 
     uint256 mintTime = block.timestamp;
@@ -1802,4 +1802,3 @@ contract RequestTest is Test {
     deadlineRequest.syncRepaidStatus();
   }
 }
-

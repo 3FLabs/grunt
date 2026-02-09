@@ -157,7 +157,7 @@ contract RequestMintTimelockPoCTest is Test {
     Request(reqAddr).authorizeMinting(address(this), 100e6, 100e6);
     asset.mint(address(this), 100e6);
     asset.approve(reqAddr, 100e6);
-    Request(reqAddr).mint();
+    Request(reqAddr).mint(0, 0);
 
     // setRepaid should revert due to timelock
     vm.prank(owner);
@@ -182,7 +182,7 @@ contract RequestMintTimelockPoCTest is Test {
     Request(reqAddr).authorizeMinting(address(this), 100e6, 9_000_000e6);
     asset.mint(address(this), 100e6);
     asset.approve(reqAddr, 100e6);
-    Request(reqAddr).mint();
+    Request(reqAddr).mint(0, 0);
 
     // setRepaid should revert
     uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;

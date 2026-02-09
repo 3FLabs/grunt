@@ -46,7 +46,7 @@ contract RequestMintSlippagePoCTest is Test {
 
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max), 0);
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
