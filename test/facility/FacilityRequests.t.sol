@@ -22,7 +22,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.setRequest(intentId, address(mockRequest));
 
-    // Warp past the repay timelock so pull/repay are allowed
+    // Warp past the repay timelock so repay is allowed
     vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
   }
 
@@ -310,21 +310,19 @@ contract FacilityRequestsTest is FacilityBaseTest {
   /*                     REPAY TIMELOCK TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_pull_revertWhenTimelockActive() public {
+  function test_pull_succeedsImmediatelyAfterSetRequest() public {
     uint256 intentId = _createIntentWithDeposits(1000e18);
+    uint256 pullAmount = 500e18;
 
-    // Set request (starts the timelock)
+    // Set request (starts the repay timelock, but pull is NOT affected)
     vm.prank(facilitator);
     facility.setRequest(intentId, address(mockRequest));
-    _fundMockRequest(500e18);
+    _fundMockRequest(pullAmount);
 
-    // Try to pull immediately - should revert
-    uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
+    // Pull should succeed immediately — timelock only applies to repay
     vm.prank(facilitator);
-    vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
-    );
-    facility.pull(intentId, 500e18);
+    facility.pull(intentId, pullAmount);
+    assertEq(mockRequest.lastPullAmount(), pullAmount, "Pull should succeed immediately");
   }
 
   function test_repay_revertWhenTimelockActive() public {
@@ -341,23 +339,6 @@ contract FacilityRequestsTest is FacilityBaseTest {
       abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
     );
     facility.repay(intentId, 300e18);
-  }
-
-  function test_pull_succeedsAfterTimelockExpires() public {
-    uint256 intentId = _createIntentWithDeposits(1000e18);
-    uint256 pullAmount = 500e18;
-
-    vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
-    _fundMockRequest(pullAmount);
-
-    // Warp past the timelock
-    vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
-
-    // Pull should now succeed
-    vm.prank(facilitator);
-    facility.pull(intentId, pullAmount);
-    assertEq(mockRequest.lastPullAmount(), pullAmount, "Pull should succeed after timelock");
   }
 
   function test_repay_succeedsAfterTimelockExpires() public {
@@ -438,13 +419,12 @@ contract FacilityRequestsTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.setRequest(intentId, address(newRequest));
 
-    // Try to pull immediately - should revert
+    // Try to repay immediately - should revert (timelock restarted)
     uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
-    _mintDebt(address(newRequest), 100e18);
     vm.prank(facilitator);
     vm.expectRevert(
       abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
     );
-    facility.pull(intentId, 100e18);
+    facility.repay(intentId, 100e18);
   }
 }

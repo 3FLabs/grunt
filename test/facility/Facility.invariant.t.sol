@@ -256,7 +256,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     handler.initializeDependencies(oracle, IMorpho(address(morpho)), marketParams);
 
     // Register handler action selectors with the invariant fuzzer
-    bytes4[] memory selectors = new bytes4[](15);
+    bytes4[] memory selectors = new bytes4[](16);
     selectors[0] = FacilityHandler.act_createIntent.selector;
     selectors[1] = FacilityHandler.act_deposit.selector;
     selectors[2] = FacilityHandler.act_withdraw.selector;
@@ -271,7 +271,8 @@ contract FacilityInvariantTest is StdInvariant, Test {
     selectors[11] = FacilityHandler.act_changeOraclePrice.selector;
     selectors[12] = FacilityHandler.act_accrueInterest.selector;
     selectors[13] = FacilityHandler.act_setRequest.selector;
-    selectors[14] = FacilityHandler.act_attemptPullBeforeTimelock.selector;
+    selectors[14] = FacilityHandler.act_attemptRepayBeforeTimelock.selector;
+    selectors[15] = FacilityHandler.act_setTimelock.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -397,9 +398,9 @@ contract FacilityInvariantTest is StdInvariant, Test {
   }
 
   /// @notice FAC-11: Repay timelock enforcement.
-  /// @dev Verifies that pull/repay never succeeds before the repay timelock expires
-  ///      after a setRequest call. The handler's act_attemptPullBeforeTimelock action
-  ///      tries to pull immediately after setRequest; if it succeeds, the flag is set.
+  /// @dev Verifies that repay never succeeds before the repay timelock expires
+  ///      after a setRequest call. The handler's act_attemptRepayBeforeTimelock action
+  ///      tries to repay immediately after setRequest; if it succeeds, the flag is set.
   function invariant_repayTimelockEnforced() public view {
     assertFalse(handler.timelockBypassed(), "FAC-11: repay timelock was bypassed");
   }

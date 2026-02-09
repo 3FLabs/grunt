@@ -23,8 +23,8 @@ import {MockRequest} from "test/mock/facility/MockRequest.sol";
 ///          6. burnAll(self, self)             → Facilitator extracts all funds via PT/YT burn
 ///
 ///      With the repay timelock fix (Option 4), step 5 reverts because a minimum delay is enforced
-///      between setRequest() and the first pull()/repay() call. This gives guardians and depositors
-///      time to review the request before funds can be moved.
+///      between setRequest() and the first repay() call. This gives guardians and depositors
+///      time to review the request before deposited funds can be sent to it.
 contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
   /// @notice Demonstrates that the attack is blocked by the repay timelock.
   /// @dev The facilitator cannot atomically call setRequest + repay in the same block.
@@ -62,14 +62,6 @@ contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
       abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
     );
     facility.repay(intentId, depositAmount);
-
-    // Also verify pull is blocked
-    _mintDebt(address(maliciousRequest), depositAmount);
-    vm.prank(facilitator);
-    vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
-    );
-    facility.pull(intentId, depositAmount);
 
     // --- Verify the attack was fully prevented ---
     // User deposits are still in the facility (not drained)

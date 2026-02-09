@@ -91,7 +91,7 @@ contract FacilityHandler is Test {
   /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
   bool public facilityCurrentlyPaused;
 
-  /// @notice FAC-11: Set to true if pull/repay succeeds before the repay timelock expires.
+  /// @notice FAC-11: Set to true if repay succeeds before the repay timelock expires.
   bool public timelockBypassed;
 
   /// @notice Mock request used for setRequest actions.
@@ -519,13 +519,16 @@ contract FacilityHandler is Test {
     }
   }
 
-  /// @notice Attempts to pull immediately after setRequest to verify timelock enforcement (FAC-11).
-  /// @dev Sets a request and tries to pull in the same block. If the pull succeeds,
+  /// @notice Attempts to repay immediately after setRequest to verify timelock enforcement (FAC-11).
+  /// @dev Sets a request and tries to repay in the same block. If the repay succeeds,
   ///      timelockBypassed is set to true (indicating invariant violation).
   /// @param intentSeed Seed for selecting an intent.
-  function act_attemptPullBeforeTimelock(uint256 intentSeed) external {
+  function act_attemptRepayBeforeTimelock(uint256 intentSeed) external {
     uint256[] memory resolvingIds = _getIntentsByState(1);
     if (resolvingIds.length == 0) return;
+
+    // Skip when timelock is zero — repay succeeding immediately is expected behaviour
+    if (facility.repayTimelock() == 0) return;
 
     uint256 id = resolvingIds[intentSeed % resolvingIds.length];
 
@@ -539,14 +542,25 @@ contract FacilityHandler is Test {
       return;
     }
 
-    // Try to pull immediately — should fail due to timelock
-    debtToken.setBalance(address(mockRequest), 1e18);
+    // Try to repay immediately — should fail due to timelock
     vm.prank(facilitator);
-    try facility.pull(id, 1e18) {
+    try facility.repay(id, 1e18) {
       // If this succeeds, the timelock was bypassed
       timelockBypassed = true;
     } catch {
-      // Expected: timelock prevents immediate pull
+      // Expected: timelock prevents immediate repay
+    }
+  }
+
+  /// @notice Fuzz-sets the repay timelock via the owner.
+  /// @dev Exercises setRepayTimelock to vary the timelock duration during invariant runs.
+  /// @param timelockSeed Seed for fuzzing the timelock duration.
+  function act_setTimelock(uint256 timelockSeed) external {
+    uint40 newTimelock = uint40(bound(timelockSeed, 0, 7 days));
+    vm.prank(owner);
+    try facility.setRepayTimelock(newTimelock) {}
+    catch {
+      return;
     }
   }
 
