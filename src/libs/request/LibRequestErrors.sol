@@ -63,4 +63,12 @@ library LibRequestErrors {
 
   /// @notice Thrown when attempting to directly mint shares via deposit() or mint().
   error CannotMintShares();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    TIMELOCK OPERATIONS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when setRepaid() is called before the mint-to-repaid delay has elapsed since the last mint/consume.
+  /// @param availableAt Earliest timestamp when setRepaid() is allowed.
+  error MintToRepaidDelayNotElapsed(uint40 availableAt);
 }
