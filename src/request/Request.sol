@@ -6,6 +6,7 @@ import {VaultController} from "./abstract/vault/VaultController.sol";
 import {TokenController} from "./abstract/tokens/TokenController.sol";
 import {LibMintAuth} from "../libs/request/LibMintAuth.sol";
 import {LibRequestErrors} from "../libs/request/LibRequestErrors.sol";
+import {LibChecks} from "../libs/common/LibChecks.sol";
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../interfaces/request/IRequest.sol";
 import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.sol";
@@ -53,6 +54,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
   using LibMintAuth for address;
+  using LibChecks for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -76,6 +78,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param repaid Whether the request has been repaid, enabling withdrawals
   /// @param ptToken The address of the Principal Token contract
   /// @param ytToken The address of the Yield Token contract
+  /// @param lastMintTimestamp Timestamp of the last mint() or consume() call (0 if none). Packed with `ytToken`.
+  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(). Packed with `ytToken`.
   /// @param name The base name for the PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for the PT/YT tokens (prefixed with "PT-" / "YT-")
   struct RequestStorage {
@@ -84,6 +88,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     bool repaid;
     address ptToken;
     address ytToken;
+    uint40 lastMintTimestamp;
+    uint40 mintToRepaidDelay;
     string name;
     string symbol;
   }
@@ -120,6 +126,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param name_ The base name for the tokens (will be prefixed with "PT-" / "YT-")
   /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
   /// @param repaymentDeadline_ The timestamp after which withdrawals are automatically enabled, regardless of repaid status
+  /// @param mintToRepaidDelay_ Minimum delay (seconds) between the last mint/consume and setRepaid()
   function initialize(
     address owner_,
     address puller_,
@@ -129,11 +136,13 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     address ytToken_,
     string memory name_,
     string memory symbol_,
-    uint64 repaymentDeadline_
+    uint64 repaymentDeadline_,
+    uint40 mintToRepaidDelay_
   ) public initializer {
     RequestStorage storage _request = _requestStorage();
     _request.asset = asset_;
     _request.repaymentDeadline = repaymentDeadline_;
+    _request.mintToRepaidDelay = mintToRepaidDelay_;
     _request.ptToken = ptToken_;
     _request.ytToken = ytToken_;
     _request.name = name_;
@@ -215,9 +224,18 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
   ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
   /// @custom:reverts If the request has already been repaid or the deadline has passed
+  /// @custom:reverts If the mint-to-repaid delay has not elapsed since the last mint/consume
   function setRepaid() external onlyOwner {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
-    _requestStorage().repaid = true;
+    RequestStorage storage req = _requestStorage();
+    uint40 _lastMint = req.lastMintTimestamp;
+    if (_lastMint != 0) {
+      uint40 _availableAt = _lastMint + req.mintToRepaidDelay;
+      if (block.timestamp < _availableAt) {
+        revert LibRequestErrors.MintToRepaidDelayNotElapsed(_availableAt);
+      }
+    }
+    req.repaid = true;
     emit Repaid(_asset().balanceOf(address(this)));
   }
 
@@ -229,6 +247,30 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @return repaid Whether the request is now marked as repaid
   function syncRepaidStatus() external returns (bool) {
     return _syncWithdrawalStatus();
+  }
+
+  /// @inheritdoc IRequest
+  function lastMintTimestamp() external view returns (uint40) {
+    return _requestStorage().lastMintTimestamp;
+  }
+
+  /// @inheritdoc IRequest
+  function mintToRepaidDelay() external view returns (uint40) {
+    return _requestStorage().mintToRepaidDelay;
+  }
+
+  /// @inheritdoc IRequest
+  function repaidAvailableAt() external view returns (uint40) {
+    RequestStorage storage req = _requestStorage();
+    if (req.lastMintTimestamp == 0) return 0;
+    return req.lastMintTimestamp + req.mintToRepaidDelay;
+  }
+
+  /// @inheritdoc IRequest
+  function setMintToRepaidDelay(uint40 mintToRepaidDelay_) external onlyOwner {
+    uint256(mintToRepaidDelay_).checkNotZero();
+    _requestStorage().mintToRepaidDelay = mintToRepaidDelay_;
+    emit MintToRepaidDelaySet(mintToRepaidDelay_);
   }
 
   /// @inheritdoc IRequest
@@ -299,6 +341,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
     _mint(msg.sender, ptMintAuth, ytMintAuth);
+    _requestStorage().lastMintTimestamp = uint40(block.timestamp);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -338,6 +381,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     }
     _asset().safeTransferFrom(offer.maker, address(this), ptAmount);
     _mint(offer.maker, ptAmount, ytAmount);
+    _requestStorage().lastMintTimestamp = uint40(block.timestamp);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
