@@ -43,6 +43,11 @@ interface IFacilitySwap {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Executes a swap between intents using signed approvals.
+  /// @dev The EIP-712 digest is computed from `SwapParams` only and does not include the signer
+  ///      address. Smart contract wallet guardians must use implementations that bind their own
+  ///      address into EIP-1271 `isValidSignature` (e.g., Safe >= 1.3.0). Older SC wallets with
+  ///      faulty EIP-1271 fallbacks must not be used as quorum signers. See {FacilitySwap} for
+  ///      full details (ref: ChainSecurity I-9).
   /// @param params Swap configuration and amounts.
   /// @param signers Addresses that signed the swap.
   /// @param signatures Signatures authorizing the swap.
