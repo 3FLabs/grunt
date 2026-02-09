@@ -31,13 +31,14 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     external
     view
     override
-    returns (IntentProperties memory properties, address fund, address request, bool resolved)
+    returns (IntentProperties memory properties, address fund, address request, bool resolved, uint40 requestSetAt)
   {
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
     properties = _intent.properties;
     fund = _intent.fund;
     request = _intent.request;
     resolved = _intent.resolved;
+    requestSetAt = _intent.requestSetAt;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -176,8 +177,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     // abandon the old request if it exists
     _facilityStorage.abandonRequest(_intent.request);
 
-    // update the intent's request
+    // update the intent's request and track when it was set
     _intent.request = newRequest;
+    _intent.requestSetAt = newRequest != address(0) ? uint40(block.timestamp) : 0;
     emit RequestUpdated(id, newRequest);
   }
 }

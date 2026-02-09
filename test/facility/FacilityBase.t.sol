@@ -120,6 +120,9 @@ contract FacilityBaseTest is Test {
   uint256 constant GUARDIAN_PK = 0x1234;
   uint256 constant GUARDIAN2_PK = 0x5678;
 
+  // Repay timelock (1 hour default for tests)
+  uint40 constant DEFAULT_REPAY_TIMELOCK = 1 hours;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -243,7 +246,7 @@ contract FacilityBaseTest is Test {
 
     // Deploy Facility
     facility = new Facility();
-    facility.initialize(owner, facilitator, address(descriptor));
+    facility.initialize(owner, facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
     vm.label(address(facility), "Facility");
 
     // Grant facility and test minter the minter role on position managers
@@ -406,23 +409,23 @@ contract FacilityBaseTest is Test {
   function _getIntent(uint256 id)
     internal
     view
-    returns (IntentProperties memory properties, address fund, address request, bool resolved)
+    returns (IntentProperties memory properties, address fund, address request, bool resolved, uint40 requestSetAt)
   {
     return facility.getIntent(id);
   }
 
   function _isDepositing(uint256 id) internal view returns (bool) {
-    (IntentProperties memory props,,, bool resolved) = _getIntent(id);
+    (IntentProperties memory props,,, bool resolved,) = _getIntent(id);
     return !resolved && props.resolveStart > block.timestamp;
   }
 
   function _isResolving(uint256 id) internal view returns (bool) {
-    (IntentProperties memory props,,, bool resolved) = _getIntent(id);
+    (IntentProperties memory props,,, bool resolved,) = _getIntent(id);
     return props.resolveStart <= block.timestamp && !resolved;
   }
 
   function _isResolved(uint256 id) internal view returns (bool) {
-    (,,, bool resolved) = _getIntent(id);
+    (,,, bool resolved,) = _getIntent(id);
     return resolved;
   }
 
