@@ -193,6 +193,8 @@ stateDiagram-v2
             • deposit() [any user]
             • withdraw() [owner/operator]
             • setDepositCap() [facilitator]
+            • setFund() [facilitator]
+            • setRequest() [facilitator]
             • updateTarget() [owner]
         end note
     }
@@ -237,8 +239,8 @@ stateDiagram-v2
 | `updateTarget` | Owner | DEPOSITING | - |
 | `setDepositCap` | Facilitator | DEPOSITING | - |
 | `lock` | Facilitator | DEPOSITING | - |
-| `setFund` | Facilitator | RESOLVING | No active order |
-| `setRequest` | Facilitator | RESOLVING | Request repaid (if previously set) |
+| `setFund` | Facilitator | Any | No active order |
+| `setRequest` | Facilitator | Any | Request repaid (if previously set) |
 | `resolve` | Facilitator | RESOLVING | No active order, request repaid |
 | `deposit` | Any | DEPOSITING | Within deposit cap |
 | `withdraw` | Owner/Operator | DEPOSITING | Sufficient balance |
