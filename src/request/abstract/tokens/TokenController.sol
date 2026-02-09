@@ -281,8 +281,9 @@ abstract contract TokenController is ITokenController {
   /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   function _approve(address from, address spender, uint256 amount, bool yt) public virtual returns (bool) {
     _checkToken(yt);
-    uint256 ptAmount = yt.ternary(0, amount);
-    uint256 ytAmount = yt.ternary(amount, 0);
+    (uint128 existingPt, uint128 existingYt) = from.allowances(spender);
+    uint256 ptAmount = yt.ternary(uint256(existingPt), amount);
+    uint256 ytAmount = yt.ternary(amount, uint256(existingYt));
     return _setAllowance(from, spender, ptAmount, ytAmount);
   }
 }
