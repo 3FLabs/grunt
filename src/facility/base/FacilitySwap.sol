@@ -42,7 +42,7 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
   ///      older EIP-4337 fallback handlers — may forward `isValidSignature` directly to the
   ///      underlying EOA signer without binding the caller's own address into the check.
   ///
-  ///      This is a known limitation (ref: ChainSecurity I-9). Quorum guardians that use SC wallets
+  ///      This is a known limitation. Quorum guardians that use SC wallets
   ///      MUST use implementations that bind their own address into `isValidSignature` validation
   ///      (e.g., Safe ≥ 1.3.0, which already hashes `msg.sender`). Older or custom SC wallets that
   ///      do NOT do this MUST NOT be used as quorum signers.

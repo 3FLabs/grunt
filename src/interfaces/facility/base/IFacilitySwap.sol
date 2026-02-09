@@ -47,7 +47,7 @@ interface IFacilitySwap {
   ///      address. Smart contract wallet guardians must use implementations that bind their own
   ///      address into EIP-1271 `isValidSignature` (e.g., Safe >= 1.3.0). Older SC wallets with
   ///      faulty EIP-1271 fallbacks must not be used as quorum signers. See {FacilitySwap} for
-  ///      full details (ref: ChainSecurity I-9).
+  ///      full details.
   /// @param params Swap configuration and amounts.
   /// @param signers Addresses that signed the swap.
   /// @param signatures Signatures authorizing the swap.
