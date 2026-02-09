@@ -71,12 +71,12 @@ interface IFacility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Returns the repay timelock duration.
-  /// @return The minimum delay (seconds) between setRequest and first pull/repay.
+  /// @return The minimum delay (seconds) between setRequest and first repay.
   function repayTimelock() external view returns (uint40);
 
-  /// @notice Returns the earliest timestamp at which pull/repay is allowed for an intent.
+  /// @notice Returns the earliest timestamp at which repay is allowed for an intent.
   /// @param id The intent ID.
-  /// @return The timestamp at which pull/repay becomes available (0 if no request is set).
+  /// @return The timestamp at which repay becomes available (0 if no request is set).
   function repayAvailableAt(uint256 id) external view returns (uint40);
 
   /// @notice Sets a new intent descriptor address.

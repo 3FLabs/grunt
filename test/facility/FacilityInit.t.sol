@@ -108,10 +108,10 @@ contract FacilityInitTest is FacilityBaseTest {
     facility.setRepayTimelock(2 hours);
   }
 
-  function test_setRepayTimelock_canSetToZero() public {
+  function test_setRepayTimelock_revertsOnZero() public {
     vm.prank(owner);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
     facility.setRepayTimelock(0);
-    assertEq(facility.repayTimelock(), 0, "Timelock can be set to zero");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

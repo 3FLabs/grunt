@@ -42,6 +42,7 @@ contract Facility is
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
   using LibChecks for address;
+  using LibChecks for uint256;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibPause for uint40;
 
@@ -55,7 +56,7 @@ contract Facility is
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param facilitator_ The address to be granted the FACILITATOR_ROLE.
   /// @param descriptor_ The initial intent descriptor contract.
-  /// @param repayTimelock_ Minimum delay (seconds) between setRequest and first pull/repay.
+  /// @param repayTimelock_ Minimum delay (seconds) between setRequest and first repay.
   function initialize(address owner_, address facilitator_, address descriptor_, uint40 repayTimelock_)
     public
     initializer
@@ -130,6 +131,7 @@ contract Facility is
   /// @dev Internal function to set the repay timelock.
   /// @param repayTimelock_ The new repay timelock duration (seconds).
   function _setRepayTimelock(uint40 repayTimelock_) internal {
+    uint256(repayTimelock_).checkNotZero();
     LibStorage.facilityStorage().repayTimelock = repayTimelock_;
     emit RepayTimelockSet(repayTimelock_);
   }

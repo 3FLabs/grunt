@@ -117,9 +117,9 @@ library LibFacilityErrors {
   /// @param request The request address.
   error RequestNotRepaid(address request);
 
-  /// @notice Thrown when pull/repay is called before the repay timelock expires.
+  /// @notice Thrown when repay is called before the repay timelock expires.
   /// @param id The intent ID.
-  /// @param availableAt Earliest timestamp when pull/repay is allowed.
+  /// @param availableAt Earliest timestamp when repay is allowed.
   error RepayTimelockActive(uint256 id, uint40 availableAt);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
