@@ -45,6 +45,9 @@ library LibRequestErrors {
   /*                    TOKEN OPERATIONS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Thrown when the minter's authorized PT or YT amounts fall below their specified minimums.
+  error SlippageExceeded();
+
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();
 

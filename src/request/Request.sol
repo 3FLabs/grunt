@@ -286,16 +286,19 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @inheritdoc IRequest
   /// @dev The caller must have been previously authorized via `authorizeMinting()`. This function:
   ///      1. Reads the caller's authorized PT/YT amounts from storage
-  ///      2. Transfers PT amount of underlying asset from caller to this contract
-  ///      3. Mints the authorized PT and YT amounts to the caller
-  ///      4. Clears the minting authorization (one-time use)
+  ///      2. Validates that amounts meet the caller's minimum expectations (slippage protection)
+  ///      3. Transfers PT amount of underlying asset from caller to this contract
+  ///      4. Mints the authorized PT and YT amounts to the caller
+  ///      5. Clears the minting authorization (one-time use)
   ///
   ///      The caller must have approved this contract to spend the required asset amount.
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
   /// @custom:reverts If the request has been repaid or the deadline has passed
-  function mint() external {
+  /// @custom:reverts SlippageExceeded if authorized amounts are below the caller's minimums
+  function mint(uint128 minPt, uint128 minYt) external {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
+    if (ptMintAuth < minPt || ytMintAuth < minYt) revert LibRequestErrors.SlippageExceeded();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
     _mint(msg.sender, ptMintAuth, ytMintAuth);
