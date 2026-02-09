@@ -120,6 +120,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 
+    // skip if the fund is already set to the same address
+    if (_intent.fund == newFund) return;
+
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
 
@@ -157,6 +160,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     LibStorage.checkNotPaused();
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
+
+    // skip if the request is already set to the same address
+    if (_intent.request == newRequest) return;
 
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();
