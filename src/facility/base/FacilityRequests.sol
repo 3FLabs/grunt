@@ -81,12 +81,19 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     // check if the facility is paused
     LibStorage.checkNotPaused();
     // getting the intent
-    _intent = LibStorage.facilityStorage().getResolvingIntent(id);
+    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
+    _intent = _facilityStorage.getResolvingIntent(id);
 
     // getting the request address
     request = _intent.request;
     // ensure the request is set
     if (request == address(0)) revert LibFacilityErrors.MissingRequest(id);
+
+    // enforce the repay timelock: pull/repay is blocked until requestSetAt + repayTimelock
+    uint40 _availableAt = _intent.requestSetAt + _facilityStorage.repayTimelock;
+    if (block.timestamp < _availableAt) {
+      revert LibFacilityErrors.RepayTimelockActive(id, _availableAt);
+    }
 
     // getting the request asset
     asset = IRequestInteractions(request).asset();

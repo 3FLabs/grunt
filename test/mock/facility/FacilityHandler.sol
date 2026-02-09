@@ -12,6 +12,7 @@ import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
+import {MockRequest} from "test/mock/facility/MockRequest.sol";
 
 /// @title FacilityHandler
 /// @notice Handler contract for Facility invariant tests.
@@ -90,6 +91,12 @@ contract FacilityHandler is Test {
   /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
   bool public facilityCurrentlyPaused;
 
+  /// @notice FAC-11: Set to true if pull/repay succeeds before the repay timelock expires.
+  bool public timelockBypassed;
+
+  /// @notice Mock request used for setRequest actions.
+  MockRequest public mockRequest;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -144,6 +151,9 @@ contract FacilityHandler is Test {
     minter = minter_;
     guardianPk = guardianPk_;
     guardian = vm.addr(guardianPk_);
+
+    // Deploy mock request for setRequest actions
+    mockRequest = new MockRequest(address(debtToken_));
   }
 
   /// @notice Initializes dependency-graph references (oracle, morpho, marketParams).
@@ -233,7 +243,7 @@ contract FacilityHandler is Test {
 
     uint256 id = depositingIds[intentSeed % depositingIds.length];
 
-    (IntentProperties memory props,,,) = facility.getIntent(id);
+    (IntentProperties memory props,,,,) = facility.getIntent(id);
     uint256 currentSupply = facility.totalSupply(id);
     if (currentSupply >= props.depositCap) return;
 
@@ -336,7 +346,7 @@ contract FacilityHandler is Test {
 
     uint256 id = depositingIds[intentSeed % depositingIds.length];
 
-    (IntentProperties memory props,,,) = facility.getIntent(id);
+    (IntentProperties memory props,,,,) = facility.getIntent(id);
 
     // Warp to just past resolveStart
     if (block.timestamp < props.resolveStart) {
@@ -483,6 +493,60 @@ contract FacilityHandler is Test {
       userDeposits[id][to] += amount;
     } catch {
       return;
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                 REQUEST TIMELOCK ACTIONS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Sets a request on a RESOLVING intent.
+  /// @dev Exercises the setRequest → requestSetAt tracking for FAC-11.
+  /// @param intentSeed Seed for selecting an intent.
+  function act_setRequest(uint256 intentSeed) external {
+    uint256[] memory resolvingIds = _getIntentsByState(1);
+    if (resolvingIds.length == 0) return;
+
+    uint256 id = resolvingIds[intentSeed % resolvingIds.length];
+
+    // Mark any existing request as repaid so replacement is allowed
+    mockRequest.setRepaid(true);
+
+    vm.prank(facilitator);
+    try facility.setRequest(id, address(mockRequest)) {}
+    catch {
+      return;
+    }
+  }
+
+  /// @notice Attempts to pull immediately after setRequest to verify timelock enforcement (FAC-11).
+  /// @dev Sets a request and tries to pull in the same block. If the pull succeeds,
+  ///      timelockBypassed is set to true (indicating invariant violation).
+  /// @param intentSeed Seed for selecting an intent.
+  function act_attemptPullBeforeTimelock(uint256 intentSeed) external {
+    uint256[] memory resolvingIds = _getIntentsByState(1);
+    if (resolvingIds.length == 0) return;
+
+    uint256 id = resolvingIds[intentSeed % resolvingIds.length];
+
+    // Mark existing request as repaid for replacement
+    mockRequest.setRepaid(true);
+
+    // Set a fresh request
+    vm.prank(facilitator);
+    try facility.setRequest(id, address(mockRequest)) {}
+    catch {
+      return;
+    }
+
+    // Try to pull immediately — should fail due to timelock
+    debtToken.setBalance(address(mockRequest), 1e18);
+    vm.prank(facilitator);
+    try facility.pull(id, 1e18) {
+      // If this succeeds, the timelock was bypassed
+      timelockBypassed = true;
+    } catch {
+      // Expected: timelock prevents immediate pull
     }
   }
 

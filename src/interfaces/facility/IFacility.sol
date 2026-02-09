@@ -31,6 +31,10 @@ interface IFacility is
   /// @param descriptor The new descriptor address.
   event DescriptorSet(address descriptor);
 
+  /// @notice Emitted when the repay timelock is updated.
+  /// @param repayTimelock The new repay timelock duration (seconds).
+  event RepayTimelockSet(uint40 repayTimelock);
+
   /// @notice Emitted when a token is sent from an intent.
   /// @param id The intent ID.
   /// @param token The token address.
@@ -66,9 +70,22 @@ interface IFacility is
   /*                        ADMIN                               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Returns the repay timelock duration.
+  /// @return The minimum delay (seconds) between setRequest and first pull/repay.
+  function repayTimelock() external view returns (uint40);
+
+  /// @notice Returns the earliest timestamp at which pull/repay is allowed for an intent.
+  /// @param id The intent ID.
+  /// @return The timestamp at which pull/repay becomes available (0 if no request is set).
+  function repayAvailableAt(uint256 id) external view returns (uint40);
+
   /// @notice Sets a new intent descriptor address.
   /// @param descriptor The new descriptor address.
   function setDescriptor(address descriptor) external;
+
+  /// @notice Sets the repay timelock duration.
+  /// @param repayTimelock_ The new repay timelock (seconds).
+  function setRepayTimelock(uint40 repayTimelock_) external;
 
   /// @notice Pauses the facility indefinitely.
   function pause() external;

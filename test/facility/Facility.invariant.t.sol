@@ -225,7 +225,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
 
     // ----- 11. Deploy Facility, initialize(owner, facilitator, descriptor) -----
     facility = new Facility();
-    facility.initialize(owner, facilitator, address(descriptor));
+    facility.initialize(owner, facilitator, address(descriptor), 1 hours);
     vm.label(address(facility), "Facility");
 
     // ----- 12. Grant PM_MINTER_ROLE to facility and minter on PM -----
@@ -256,7 +256,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     handler.initializeDependencies(oracle, IMorpho(address(morpho)), marketParams);
 
     // Register handler action selectors with the invariant fuzzer
-    bytes4[] memory selectors = new bytes4[](13);
+    bytes4[] memory selectors = new bytes4[](15);
     selectors[0] = FacilityHandler.act_createIntent.selector;
     selectors[1] = FacilityHandler.act_deposit.selector;
     selectors[2] = FacilityHandler.act_withdraw.selector;
@@ -270,6 +270,8 @@ contract FacilityInvariantTest is StdInvariant, Test {
     selectors[10] = FacilityHandler.act_unpauseFacility.selector;
     selectors[11] = FacilityHandler.act_changeOraclePrice.selector;
     selectors[12] = FacilityHandler.act_accrueInterest.selector;
+    selectors[13] = FacilityHandler.act_setRequest.selector;
+    selectors[14] = FacilityHandler.act_attemptPullBeforeTimelock.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -287,7 +289,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     uint256[] memory ids = handler.getIntentIds();
     for (uint256 i = 0; i < ids.length; i++) {
       uint8 trackedState = handler.intentStates(ids[i]);
-      (IntentProperties memory props,,, bool resolved) = facility.getIntent(ids[i]);
+      (IntentProperties memory props,,, bool resolved,) = facility.getIntent(ids[i]);
       if (resolved) {
         assertTrue(trackedState == 2, "FAC-1: state went backwards to resolved without passing through resolving");
       }
@@ -315,7 +317,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
   function invariant_depositCapNotExceeded() public view {
     uint256[] memory ids = handler.getIntentIds();
     for (uint256 i = 0; i < ids.length; i++) {
-      (IntentProperties memory props,,,) = facility.getIntent(ids[i]);
+      (IntentProperties memory props,,,,) = facility.getIntent(ids[i]);
       assertLe(facility.totalSupply(ids[i]), props.depositCap, "FAC-4: totalSupply exceeds depositCap");
     }
   }
@@ -391,6 +393,29 @@ contract FacilityInvariantTest is StdInvariant, Test {
     (bool isPaused, uint40 pausedUntil) = facility.paused();
     if (isPaused) {
       assertGe(uint256(pausedUntil), block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
+    }
+  }
+
+  /// @notice FAC-11: Repay timelock enforcement.
+  /// @dev Verifies that pull/repay never succeeds before the repay timelock expires
+  ///      after a setRequest call. The handler's act_attemptPullBeforeTimelock action
+  ///      tries to pull immediately after setRequest; if it succeeds, the flag is set.
+  function invariant_repayTimelockEnforced() public view {
+    assertFalse(handler.timelockBypassed(), "FAC-11: repay timelock was bypassed");
+  }
+
+  /// @notice FAC-12: Request timestamp tracking consistency.
+  /// @dev For any intent with a non-zero request address, requestSetAt must be non-zero.
+  ///      For any intent with a zero request address, requestSetAt must be zero.
+  function invariant_requestTimestampConsistency() public view {
+    uint256[] memory ids = handler.getIntentIds();
+    for (uint256 i = 0; i < ids.length; i++) {
+      (,, address request,, uint40 requestSetAt) = facility.getIntent(ids[i]);
+      if (request != address(0)) {
+        assertGt(requestSetAt, 0, "FAC-12: request set but requestSetAt is 0");
+      } else {
+        assertEq(requestSetAt, 0, "FAC-12: no request but requestSetAt is non-zero");
+      }
     }
   }
 }
