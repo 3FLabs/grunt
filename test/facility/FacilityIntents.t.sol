@@ -473,7 +473,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.setFund(intentId1, address(mockFund));
 
     // Fund should still be set
-    (, address fund,,) = facility.getIntent(intentId1);
+    (, address fund,,,) = facility.getIntent(intentId1);
     assertEq(fund, address(mockFund), "Fund should still be set");
 
     // Reverse mapping must be preserved — setting same fund on another intent should revert
@@ -516,7 +516,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.setRequest(intentId1, address(mockRequest));
 
     // Request should still be set
-    (,, address request,) = facility.getIntent(intentId1);
+    (,, address request,,) = facility.getIntent(intentId1);
     assertEq(request, address(mockRequest), "Request should still be set");
 
     // Reverse mapping must be preserved — setting same request on another intent should revert
