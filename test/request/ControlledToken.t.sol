@@ -398,6 +398,24 @@ contract ControlledTokenTest is Test {
     ptToken.transfer(owner, 50 ether);
   }
 
+  function test_transferToZeroAddress() public {
+    address owner = address(1);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    ptToken.transfer(address(0), 50 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    ytToken.transfer(address(0), 50 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    tokenController.transferBatch(address(0), 50 ether, 50 ether);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      WORKFLOW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
