@@ -556,6 +556,71 @@ contract USCCFundFuzzTest is Test {
     assertEq(uint256(fund.state(original)), uint256(State.ENDED), "ended");
   }
 
+  function testFuzz_CancelRecovering_ThenUnlock_Deposit(uint96 input, uint96 output, uint96 receivedUscc) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
+
+    Order memory order = _depositOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    usdc.mint(address(this), inputAmount);
+    usdc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate delivers output USCC despite recovering state
+    if (receivedAmount > 0) uscc.mint(address(fund), receivedAmount);
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering();
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+
+    assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function testFuzz_CancelRecovering_ThenUnlock_Redeem(uint96 input, uint96 output, uint96 usdcOut) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 usdcOutAmount = bound(uint256(usdcOut), outputAmount, maxAmount);
+
+    Order memory order = _redeemOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate delivers output USDC despite recovering state
+    if (usdcOutAmount > 0) usdc.mint(address(fund), usdcOutAmount);
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering();
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+
+    assertEq(usdc.balanceOf(address(this)), usdcOutAmount, "usdc received");
+    assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
   function _depositOrder(uint256 input, uint256 output) internal view returns (Order memory) {
     return Order({
       owner: address(this),
