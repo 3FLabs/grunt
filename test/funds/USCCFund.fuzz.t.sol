@@ -711,17 +711,18 @@ contract USCCFundInvariantTest is StdInvariant, Test {
 
     handler.initialize(fund, usdc, uscc, wuscc, recipient);
 
-    bytes4[] memory selectors = new bytes4[](10);
+    bytes4[] memory selectors = new bytes4[](11);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_commit.selector;
     selectors[3] = handler.act_setRecovering.selector;
-    selectors[4] = handler.act_resolve.selector;
-    selectors[5] = handler.act_superstateMintUscc.selector;
-    selectors[6] = handler.act_superstateMintUsdc.selector;
-    selectors[7] = handler.act_unlock.selector;
-    selectors[8] = handler.act_recover.selector;
-    selectors[9] = handler.act_cancel.selector;
+    selectors[4] = handler.act_cancelRecovering.selector;
+    selectors[5] = handler.act_resolve.selector;
+    selectors[6] = handler.act_superstateMintUscc.selector;
+    selectors[7] = handler.act_superstateMintUsdc.selector;
+    selectors[8] = handler.act_unlock.selector;
+    selectors[9] = handler.act_recover.selector;
+    selectors[10] = handler.act_cancel.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));

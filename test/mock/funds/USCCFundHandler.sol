@@ -50,8 +50,6 @@ contract USCCFundHandler is Test {
   }
 
   function act_createDeposit(uint96 input, uint96 output, bytes32 salt) external {
-    if (internalState != State.EMPTY && internalState != State.ENDED) return;
-
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = _bound(uint256(input), 1, maxAmount);
     uint256 outputAmount = _bound(uint256(output), 0, maxAmount);
@@ -73,8 +71,6 @@ contract USCCFundHandler is Test {
   }
 
   function act_cancel(uint96 input, uint96 output, bytes32 salt) external {
-    if (internalState != State.ACCEPTED && internalState != State.PENDING) return;
-
     order = Order({
       owner: address(this),
       receiver: address(this),
@@ -89,8 +85,6 @@ contract USCCFundHandler is Test {
   }
 
   function act_createRedeem(uint96 inputSeed, uint96 output, bytes32 salt) external {
-    if (internalState != State.EMPTY && internalState != State.ENDED) return;
-
     uint256 balance = wuscc.balanceOf(address(this));
     uint256 fundBalance = uscc.balanceOf(address(fund));
     uint256 maxAmount = balance < fundBalance ? balance : fundBalance;
@@ -116,8 +110,6 @@ contract USCCFundHandler is Test {
   }
 
   function act_commit() external {
-    if (internalState != State.ACCEPTED) return;
-
     if (order.mode == Mode.DEPOSIT) {
       usdc.mint(address(this), order.input);
       usdc.approve(address(fund), order.input);
@@ -141,20 +133,16 @@ contract USCCFundHandler is Test {
   }
 
   function act_setRecovering() external {
-    if (internalState != State.PROCESSING) return;
     fund.recovering();
     internalState = State.RECOVERING;
   }
 
   function act_cancelRecovering() external {
-    if (internalState != State.RECOVERING) return;
     fund.cancelRecovering();
     internalState = State.PROCESSING;
   }
 
   function act_resolve(uint96 newInput, uint96 newOutput) external {
-    if (internalState != State.PROCESSING && internalState != State.RECOVERING) return;
-
     uint256 maxAmount = type(uint96).max;
     uint256 resolvedInput = _bound(uint256(newInput), 0, maxAmount);
     uint256 resolvedOutput = _bound(uint256(newOutput), 0, maxAmount);
@@ -174,9 +162,6 @@ contract USCCFundHandler is Test {
   }
 
   function act_unlock() external {
-    if (internalState != State.PROCESSING) return;
-    if (fund.state(order) != State.UNLOCKING) return;
-
     if (order.mode == Mode.DEPOSIT) {
       uint256 beforeBalance = wuscc.balanceOf(address(this));
       uint256 currentUscc = uscc.balanceOf(address(fund));
@@ -203,9 +188,6 @@ contract USCCFundHandler is Test {
   }
 
   function act_recover() external {
-    if (internalState != State.RECOVERING) return;
-    if (fund.state(order) != State.RECOVERING) return;
-
     if (order.mode == Mode.DEPOSIT) {
       uint256 beforeBalance = usdc.balanceOf(address(this));
       uint256 expected = usdc.balanceOf(address(fund));
