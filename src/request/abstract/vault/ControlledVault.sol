@@ -65,9 +65,10 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   }
 
   /// @inheritdoc IERC4626
-  /// @dev Previews how many shares would be received for a given asset amount, though actual deposits are disabled.
-  function previewDeposit(uint256 assets) external view returns (uint256 shares) {
-    shares = convertToShares(assets);
+  /// @dev Always returns 0 since deposit() always reverts. Per ERC-4626, preview functions must
+  ///      reflect the actual outcome of the corresponding operation.
+  function previewDeposit(uint256) external pure returns (uint256) {
+    return 0;
   }
 
   /// @inheritdoc IERC4626
@@ -83,9 +84,10 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   }
 
   /// @inheritdoc IERC4626
-  /// @dev Previews how many assets would be needed to mint a given amount of shares, though actual minting is disabled.
-  function previewMint(uint256 shares) external view returns (uint256 assets) {
-    assets = convertToAssets(shares);
+  /// @dev Always returns 0 since mint() always reverts. Per ERC-4626, preview functions must
+  ///      reflect the actual outcome of the corresponding operation.
+  function previewMint(uint256) external pure returns (uint256) {
+    return 0;
   }
 
   /// @inheritdoc IERC4626

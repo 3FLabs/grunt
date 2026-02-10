@@ -6,6 +6,7 @@ import {IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {AddressStatus} from "src/interfaces/guard/ITransferGuard.sol";
+import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 
 /// @title FacilityLPTest
 /// @notice Tests for Facility LP operations (deposit, withdraw, claim)
@@ -527,5 +528,102 @@ contract FacilityLPTest is FacilityBaseTest {
     vm.prank(user2);
     vm.expectRevert(LibFacilityErrors.TransferToZeroAddress.selector);
     facility.transferFrom(user, address(0), intentId, 100e18);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  CLAIM ZERO-AMOUNT TESTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev EIP-712 typehash for SwapParams
+  bytes32 internal constant SWAP_PARAMS_TYPEHASH = 0x8b4e182587850acdf21dcf7a0f61b2fd7267c2cdf71d4692b57fb97237a29be3;
+
+  function _domainSeparator() internal view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        keccak256("3Facility"),
+        keccak256("1.0.0"),
+        block.chainid,
+        address(facility)
+      )
+    );
+  }
+
+  function _getSwapDigest(SwapParams memory params) internal view returns (bytes32) {
+    bytes32 structHash = keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params));
+    return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
+  }
+
+  function _signSwap(SwapParams memory params, uint256 privateKey) internal view returns (bytes memory) {
+    bytes32 digest = _getSwapDigest(params);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Tests that claim skips zero-amount transfers when mulDiv rounds down to 0
+  function test_claim_skipsZeroAmountTransfer() public {
+    // Create two intents at the same timestamp
+    uint256 intentId1 = _createDefaultIntent();
+    vm.prank(owner);
+    uint256 intentId2 = facility.createIntent(_intentParamsWithTargetPM());
+
+    // Deposit to intent1: user gets 999e18, user2 gets 1e18 (total 1000e18)
+    _depositToPM(user, 999e18);
+    vm.prank(user);
+    facility.deposit(intentId1, 999e18);
+
+    _depositToPM(user2, 1e18);
+    vm.prank(user2);
+    facility.deposit(intentId1, 1e18);
+
+    // Deposit debtToken to intent2 (source for the swap)
+    _mintDebt(user, 1000e18);
+    vm.prank(user);
+    facility.deposit(intentId2, 1000e18);
+
+    // Warp past resolveStart for both intents
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Swap: 1 wei PM from intent1 ↔ 1 wei debtToken from intent2
+    // After swap, intent1 holds: (1000e18 - 1) PM and 1 debtToken
+    SwapParams memory params = SwapParams({
+      id1: intentId1,
+      token1: address(positionManager),
+      id2: intentId2,
+      token2: address(debtToken),
+      amount1: 1,
+      amount2: 1,
+      deadline: block.timestamp + 1 hours
+    });
+
+    address[] memory signers = new address[](1);
+    signers[0] = guardian;
+    bytes[] memory signatures = new bytes[](1);
+    signatures[0] = _signSwap(params, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    facility.swap(params, signers, signatures);
+
+    // Resolve intent1
+    vm.prank(facilitator);
+    facility.resolve(intentId1);
+
+    // User2 claims 1e18 shares (out of 1000e18 total)
+    // debtToken portion = mulDiv(1, 1e18, 1000e18) = 0 → skipped
+    // PM portion = mulDiv(1000e18 - 1, 1e18, 1000e18) > 0 → transferred
+    vm.prank(user2);
+    (address[] memory tokens, uint256[] memory amounts) = facility.claim(intentId1, user2, user2, 1e18);
+
+    // Verify claim returned 2 tokens (PM + debtToken)
+    assertEq(tokens.length, 2, "Should have 2 tokens");
+
+    // Find and verify each token's amount
+    for (uint256 i = 0; i < tokens.length; i++) {
+      if (tokens[i] == address(debtToken)) {
+        assertEq(amounts[i], 0, "Debt token amount should round to 0");
+      } else {
+        assertGt(amounts[i], 0, "PM amount should be non-zero");
+      }
+    }
   }
 }
