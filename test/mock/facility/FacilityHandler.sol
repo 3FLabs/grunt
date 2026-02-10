@@ -88,6 +88,9 @@ contract FacilityHandler is Test {
   /// @notice FAC-8: Set to true if a swap digest replay succeeds.
   bool public swapReplaySucceeded;
 
+  /// @notice FAC-4: Set to true if a deposit results in totalSupply exceeding depositCap.
+  bool public depositExceededCap;
+
   /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
   bool public facilityCurrentlyPaused;
 
@@ -275,6 +278,12 @@ contract FacilityHandler is Test {
       uint256 balAfter = facility.balanceOf(depositor, id);
       if (balAfter - balBefore != amount) {
         depositNotOneToOne = true;
+      }
+
+      // FAC-4: Verify deposit did not push supply above cap
+      (IntentProperties memory propsAfter,,,,) = facility.getIntent(id);
+      if (facility.totalSupply(id) > propsAfter.depositCap) {
+        depositExceededCap = true;
       }
 
       userDeposits[id][depositor] += amount;
@@ -496,7 +505,6 @@ contract FacilityHandler is Test {
     }
   }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 REQUEST TIMELOCK ACTIONS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -559,6 +567,29 @@ contract FacilityHandler is Test {
     uint40 newTimelock = uint40(bound(timelockSeed, 0, 7 days));
     vm.prank(owner);
     try facility.setRepayTimelock(newTimelock) {}
+    catch {
+      return;
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    FACILITATOR ACTIONS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Updates the deposit cap of a DEPOSITING intent.
+  /// @dev Allows setting cap below current totalSupply (which is valid on-chain).
+  ///      This exercises the scenario where totalSupply > depositCap after a cap reduction.
+  /// @param intentSeed Seed for selecting an intent.
+  /// @param capSeed Seed for fuzzing the new deposit cap.
+  function act_updateDepositCap(uint256 intentSeed, uint256 capSeed) external {
+    uint256[] memory depositingIds = _getIntentsByState(0);
+    if (depositingIds.length == 0) return;
+
+    uint256 id = depositingIds[intentSeed % depositingIds.length];
+    uint256 newCap = bound(capSeed, 0, 10_000_000e18);
+
+    vm.prank(facilitator);
+    try facility.setDepositCap(id, newCap) {}
     catch {
       return;
     }
