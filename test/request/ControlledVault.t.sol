@@ -260,6 +260,30 @@ contract ControlledVaultTest is Test {
     assertEq(asset.balanceOf(user), 100 ether);
   }
 
+  function test_withdrawYT_zeroAssetsWhenNoYield() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // totalYAssets = 0 (no yield), totalYtSupply = 100 ether
+    assertEq(ytVault.totalAssets(), 0);
+    assertGt(ytVault.totalSupply(), 0);
+
+    vaultController.setCanWithdraw(true);
+
+    // yt.withdraw(0) must succeed (not revert due to type(uint256).max initial conversion)
+    vm.prank(user);
+    uint256 shares = ytVault.withdraw(0, user, user);
+
+    assertEq(shares, 0);
+    assertEq(ytVault.balanceOf(user), 100 ether);
+    assertEq(asset.balanceOf(user), 0);
+  }
+
   function test_maxWithdraw() public view {
     assertEq(ptVault.maxWithdraw(address(0x1)), 0);
     assertEq(ytVault.maxWithdraw(address(0x1)), 0);

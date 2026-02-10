@@ -265,6 +265,7 @@ abstract contract VaultController is TokenController, IVaultController {
     returns (uint256 shares)
   {
     _checkToken(yt);
+    if (assets == 0) return 0;
     uint256 pAssets = yt.ternary(0, assets);
     uint256 yAssets = yt.ternary(assets, 0);
     (uint256 ptShares, uint256 ytShares) = _withdraw(caller, pAssets, yAssets, receiver, owner);
