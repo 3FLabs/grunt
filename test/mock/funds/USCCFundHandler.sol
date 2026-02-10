@@ -146,6 +146,12 @@ contract USCCFundHandler is Test {
     internalState = State.RECOVERING;
   }
 
+  function act_cancelRecovering() external {
+    if (internalState != State.RECOVERING) return;
+    fund.cancelRecovering();
+    internalState = State.PROCESSING;
+  }
+
   function act_resolve(uint96 newInput, uint96 newOutput) external {
     if (internalState != State.PROCESSING && internalState != State.RECOVERING) return;
 

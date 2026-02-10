@@ -131,6 +131,10 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param orderId The unique identifier of the order being recovered.
   event OrderRecovering(bytes32 indexed orderId);
 
+  /// @notice Emitted when the RECOVERING state is canceled back to PROCESSING.
+  /// @param orderId The unique identifier of the order.
+  event OrderProcessing(bytes32 indexed orderId);
+
   /// @notice Emitted when the oracle address is updated.
   /// @param newOracle The new oracle address.
   /// @param operator The address that updated the oracle.
@@ -383,6 +387,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     _storage.internalState = State.RECOVERING;
 
     emit OrderRecovering(_storage.currentOrderId);
+  }
+
+  /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  ///      Use this if recovering() was called by mistake and Superstate still delivered the output tokens.
+  ///      Once back to PROCESSING, the state() function will check for output tokens normally.
+  function cancelRecovering() external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    UsccFundStorage storage _storage = _usccFundStorage();
+    if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    _storage.internalState = State.PROCESSING;
+
+    emit OrderProcessing(_storage.currentOrderId);
   }
 
   /// @notice Sets the oracle address.
