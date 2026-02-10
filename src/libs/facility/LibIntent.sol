@@ -46,6 +46,7 @@ struct IntentProperties {
 /// @param fund Fund address associated with the intent.
 /// @param request Request contract address associated with the intent.
 /// @param resolved Whether the intent has been resolved and claims are enabled.
+/// @param requestSetAt Timestamp when the current request was linked (0 if no request). Packed with `resolved`.
 /// @param amounts Per-address accounting balances for the intent.
 /// @param order Current fund order associated with the intent.
 /// @param totalSupply Total supply tracked for the intent.
@@ -54,6 +55,7 @@ struct Intent {
   address fund;
   address request;
   bool resolved;
+  uint40 requestSetAt;
   EnumerableMapLib.AddressToUint256Map amounts;
   Order order;
   uint256 totalSupply;
