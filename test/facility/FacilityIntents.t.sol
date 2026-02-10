@@ -457,6 +457,31 @@ contract FacilityIntentsTest is FacilityBaseTest {
     assertEq(newFund, address(0), "Fund should be removed");
   }
 
+  function test_setFund_skipsWhenSameFund() public {
+    uint256 intentId1 = _createResolvingIntent();
+
+    vm.prank(owner);
+    uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Set fund on first intent
+    vm.prank(facilitator);
+    facility.setFund(intentId1, address(mockFund));
+
+    // Call setFund again with the same fund — should be a no-op (early return)
+    vm.prank(facilitator);
+    facility.setFund(intentId1, address(mockFund));
+
+    // Fund should still be set
+    (, address fund,,) = facility.getIntent(intentId1);
+    assertEq(fund, address(mockFund), "Fund should still be set");
+
+    // Reverse mapping must be preserved — setting same fund on another intent should revert
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.FundAlreadyInUse.selector, address(mockFund), intentId1));
+    facility.setFund(intentId2, address(mockFund));
+  }
+
   function test_setFund_revertWhenFundAlreadyInUse() public {
     // Create two intents
     uint256 intentId1 = _createResolvingIntent();
@@ -473,6 +498,33 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.FundAlreadyInUse.selector, address(mockFund), intentId1));
     facility.setFund(intentId2, address(mockFund));
+  }
+
+  function test_setRequest_skipsWhenSameRequest() public {
+    uint256 intentId1 = _createResolvingIntent();
+
+    vm.prank(owner);
+    uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Set request on first intent
+    vm.prank(facilitator);
+    facility.setRequest(intentId1, address(mockRequest));
+
+    // Call setRequest again with the same request — should be a no-op (early return)
+    vm.prank(facilitator);
+    facility.setRequest(intentId1, address(mockRequest));
+
+    // Request should still be set
+    (,, address request,) = facility.getIntent(intentId1);
+    assertEq(request, address(mockRequest), "Request should still be set");
+
+    // Reverse mapping must be preserved — setting same request on another intent should revert
+    vm.prank(facilitator);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibFacilityErrors.RequestAlreadyInUse.selector, address(mockRequest), intentId1)
+    );
+    facility.setRequest(intentId2, address(mockRequest));
   }
 
   function test_setRequest_revertWhenRequestAlreadyInUse() public {
