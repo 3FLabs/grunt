@@ -31,13 +31,14 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     external
     view
     override
-    returns (IntentProperties memory properties, address fund, address request, bool resolved)
+    returns (IntentProperties memory properties, address fund, address request, bool resolved, uint40 requestSetAt)
   {
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
     properties = _intent.properties;
     fund = _intent.fund;
     request = _intent.request;
     resolved = _intent.resolved;
+    requestSetAt = _intent.requestSetAt;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -120,6 +121,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 
+    // skip if the fund is already set to the same address
+    if (_intent.fund == newFund) return;
+
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
 
@@ -158,6 +162,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 
+    // skip if the request is already set to the same address
+    if (_intent.request == newRequest) return;
+
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();
 
@@ -176,8 +183,9 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
     // abandon the old request if it exists
     _facilityStorage.abandonRequest(_intent.request);
 
-    // update the intent's request
+    // update the intent's request and track when it was set
     _intent.request = newRequest;
+    _intent.requestSetAt = newRequest != address(0) ? uint40(block.timestamp) : 0;
     emit RequestUpdated(id, newRequest);
   }
 }

@@ -42,6 +42,7 @@ contract Facility is
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
   using LibChecks for address;
+  using LibChecks for uint256;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibPause for uint40;
 
@@ -55,11 +56,16 @@ contract Facility is
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param facilitator_ The address to be granted the FACILITATOR_ROLE.
   /// @param descriptor_ The initial intent descriptor contract.
-  function initialize(address owner_, address facilitator_, address descriptor_) public initializer {
+  /// @param repayTimelock_ Minimum delay (seconds) between setRequest and first repay.
+  function initialize(address owner_, address facilitator_, address descriptor_, uint40 repayTimelock_)
+    public
+    initializer
+  {
     owner_.checkNotZero();
     _initializeOwner(owner_);
     _setDescriptor(descriptor_);
     _setRoles(facilitator_, FACILITATOR_ROLE);
+    _setRepayTimelock(repayTimelock_);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -70,6 +76,18 @@ contract Facility is
   function paused() external view override returns (bool isPaused, uint40 pausedUntil) {
     pausedUntil = LibStorage.facilityStorage().pausedUntil;
     isPaused = pausedUntil.paused();
+  }
+
+  /// @inheritdoc IFacility
+  function repayTimelock() external view override returns (uint40) {
+    return LibStorage.facilityStorage().repayTimelock;
+  }
+
+  /// @inheritdoc IFacility
+  function repayAvailableAt(uint256 id) external view override returns (uint40) {
+    Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
+    if (_intent.request == address(0)) return 0;
+    return _intent.requestSetAt + LibStorage.facilityStorage().repayTimelock;
   }
 
   /// @inheritdoc IFacility
@@ -103,6 +121,19 @@ contract Facility is
     descriptor_.checkContract();
     LibStorage.facilityStorage().descriptor = IIntentDescriptor(descriptor_);
     emit DescriptorSet(descriptor_);
+  }
+
+  /// @inheritdoc IFacility
+  function setRepayTimelock(uint40 repayTimelock_) external override onlyOwner {
+    _setRepayTimelock(repayTimelock_);
+  }
+
+  /// @dev Internal function to set the repay timelock.
+  /// @param repayTimelock_ The new repay timelock duration (seconds).
+  function _setRepayTimelock(uint40 repayTimelock_) internal {
+    uint256(repayTimelock_).checkNotZero();
+    LibStorage.facilityStorage().repayTimelock = repayTimelock_;
+    emit RepayTimelockSet(repayTimelock_);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

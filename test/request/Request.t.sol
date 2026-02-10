@@ -13,6 +13,7 @@ import {MockRequestInteractionsCallback} from "../mock/request/MockRequestIntera
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
+import {LibCommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 contract RequestTest is Test {
   RequestFactory public factory;
@@ -42,6 +43,7 @@ contract RequestTest is Test {
   event FundsPulled(address indexed puller, uint256 amount);
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
   event RequestCreated(address request, address asset, address ptToken, address ytToken);
+  event MintToRepaidDelaySet(uint40 mintToRepaidDelay);
 
   function setUp() public {
     owner = makeAddr("owner");
@@ -61,7 +63,7 @@ contract RequestTest is Test {
     // Create request via factory with far future deadline (effectively disabled for most tests)
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max), 0);
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -89,7 +91,7 @@ contract RequestTest is Test {
     vm.expectEmit(false, true, false, false);
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
-    factory.createRequest(owner, puller, consumer, address(asset), "New Request", "NEW", uint64(type(uint64).max));
+    factory.createRequest(owner, puller, consumer, address(asset), "New Request", "NEW", uint64(type(uint64).max), 0);
   }
 
   function test_factory_createRequest_initializesCorrectly() public view {
@@ -127,9 +129,9 @@ contract RequestTest is Test {
   function test_factory_isRequest_tracksMultipleRequests() public {
     // Deploy additional requests
     (address req1,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(type(uint64).max), 0);
     (address req2,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(type(uint64).max));
+      factory.createRequest(owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(type(uint64).max), 0);
 
     // All deployed requests should be tracked
     assertEq(factory.isRequest(address(request)), true);
@@ -155,7 +157,8 @@ contract RequestTest is Test {
       address(ytVault),
       "New",
       "NEW",
-      uint64(type(uint64).max)
+      uint64(type(uint64).max),
+      0
     );
   }
 
@@ -245,7 +248,7 @@ contract RequestTest is Test {
     asset.approve(address(request), ptAmount);
 
     // Mint
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Verify balances
@@ -273,7 +276,7 @@ contract RequestTest is Test {
     // Try to mint
     vm.prank(primeBroker);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    request.mint();
+    request.mint(0, 0);
   }
 
   function test_mint_revertsWithNoAuthorization() public {
@@ -287,12 +290,112 @@ contract RequestTest is Test {
     // Should revert because no authorization (ptAmount = 0, so transfer of 0 succeeds but no tokens minted)
     // Actually it will try to transfer 0 and mint 0, which may or may not revert
     // Let's verify the behavior
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // No tokens should be minted
     assertEq(ptVault.balanceOf(primeBroker), 0);
     assertEq(ytVault.balanceOf(primeBroker), 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  MINT SLIPPAGE TESTS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_mint_revertsWhenPtBelowMin() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+
+    asset.mint(primeBroker, ptAmount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), ptAmount);
+
+    // minPt exceeds authorized PT
+    vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
+    request.mint(ptAmount + 1, ytAmount);
+    vm.stopPrank();
+  }
+
+  function test_mint_revertsWhenYtBelowMin() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+
+    asset.mint(primeBroker, ptAmount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), ptAmount);
+
+    // minYt exceeds authorized YT
+    vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
+    request.mint(ptAmount, ytAmount + 1);
+    vm.stopPrank();
+  }
+
+  function test_mint_succeedsWithExactMinimums() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+
+    asset.mint(primeBroker, ptAmount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), ptAmount);
+    request.mint(ptAmount, ytAmount);
+    vm.stopPrank();
+
+    assertEq(ptVault.balanceOf(primeBroker), ptAmount);
+    assertEq(ytVault.balanceOf(primeBroker), ytAmount);
+  }
+
+  function test_mint_succeedsWithLowerMinimums() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+
+    asset.mint(primeBroker, ptAmount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), ptAmount);
+    request.mint(ptAmount / 2, ytAmount / 2);
+    vm.stopPrank();
+
+    assertEq(ptVault.balanceOf(primeBroker), ptAmount);
+    assertEq(ytVault.balanceOf(primeBroker), ytAmount);
+  }
+
+  function testFuzz_mint_slippageProtection(uint128 ptAuth, uint128 ytAuth, uint128 minPt, uint128 minYt) public {
+    vm.assume(ptAuth > 0 && ptAuth < type(uint128).max / 2);
+    vm.assume(ytAuth > 0 && ytAuth < type(uint128).max / 2);
+
+    address primeBroker = makeAddr("primeBroker");
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, ptAuth, ytAuth);
+
+    asset.mint(primeBroker, ptAuth);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), ptAuth);
+
+    if (ptAuth < minPt || ytAuth < minYt) {
+      vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
+      request.mint(minPt, minYt);
+    } else {
+      request.mint(minPt, minYt);
+      assertEq(ptVault.balanceOf(primeBroker), ptAuth);
+      assertEq(ytVault.balanceOf(primeBroker), ytAuth);
+    }
+    vm.stopPrank();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -360,7 +463,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Now pull funds (puller receives funds, no callback)
@@ -387,7 +490,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull partial funds - expect event with puller address and partial amount
@@ -429,7 +532,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -438,7 +541,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max), 0
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -450,7 +553,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds with callback data
@@ -476,7 +579,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Deploy callback contract that will revert
@@ -486,7 +589,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max), 0
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -498,7 +601,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds with callback data - should revert
@@ -519,7 +622,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -528,7 +631,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max), 0
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -540,7 +643,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds with empty data - callback should not be called
@@ -564,7 +667,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -573,7 +676,7 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max), 0
     );
 
     Request callbackRequest = Request(reqAddr);
@@ -585,7 +688,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds with different data types
@@ -623,7 +726,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -653,7 +756,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -682,7 +785,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -718,7 +821,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -767,7 +870,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Now set repaid - should emit with the balance
@@ -798,6 +901,192 @@ contract RequestTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              MINT-TO-REPAID TIMELOCK TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_lastMintTimestamp_initiallyZero() public view {
+    assertEq(request.lastMintTimestamp(), 0);
+  }
+
+  function test_mintToRepaidDelay_initiallyZero() public view {
+    assertEq(request.mintToRepaidDelay(), 0);
+  }
+
+  function test_initialize_setsMintToRepaidDelay() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Timelock", "TL", uint64(type(uint64).max), delay);
+    Request timelockRequest = Request(reqAddr);
+    assertEq(timelockRequest.mintToRepaidDelay(), delay);
+  }
+
+  function test_mint_updatesLastMintTimestamp() public {
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(primeBroker, amount, 100_000e6);
+
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(request), amount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    assertEq(request.lastMintTimestamp(), uint40(block.timestamp));
+  }
+
+  function test_setRepaid_revertsWhenTimelockActive() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Timelock", "TL", uint64(type(uint64).max), delay);
+    Request timelockRequest = Request(reqAddr);
+
+    // Mint to set lastMintTimestamp
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(primeBroker, amount, 100e6);
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(0, 0);
+    vm.stopPrank();
+
+    uint40 expectedAvailableAt = uint40(block.timestamp) + delay;
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
+    timelockRequest.setRepaid();
+  }
+
+  function test_setRepaid_succeedsAfterTimelockExpires() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Timelock", "TL", uint64(type(uint64).max), delay);
+    Request timelockRequest = Request(reqAddr);
+
+    // Mint to set lastMintTimestamp
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(primeBroker, amount, 100e6);
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(0, 0);
+    vm.stopPrank();
+
+    // Warp past the timelock
+    vm.warp(block.timestamp + delay);
+
+    vm.prank(owner);
+    timelockRequest.setRepaid();
+    assertTrue(timelockRequest.canWithdraw());
+  }
+
+  function test_setRepaid_succeedsWithoutMinting() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Timelock", "TL", uint64(type(uint64).max), delay);
+    Request timelockRequest = Request(reqAddr);
+
+    // No minting — lastMintTimestamp is 0, so 0 + delay < block.timestamp for any non-zero block.timestamp
+    // Actually, if block.timestamp >= delay, it would pass. Let's ensure it works at timestamp 1.
+    vm.warp(1);
+    vm.prank(owner);
+    timelockRequest.setRepaid();
+    assertTrue(timelockRequest.canWithdraw());
+  }
+
+  function test_repaidAvailableAt_returnsZeroWithNoMint() public view {
+    assertEq(request.repaidAvailableAt(), 0);
+  }
+
+  function test_repaidAvailableAt_returnsCorrectTimestamp() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Timelock", "TL", uint64(type(uint64).max), delay);
+    Request timelockRequest = Request(reqAddr);
+
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(primeBroker, amount, 100e6);
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(0, 0);
+    vm.stopPrank();
+
+    assertEq(timelockRequest.repaidAvailableAt(), uint40(block.timestamp) + delay);
+  }
+
+  function test_setMintToRepaidDelay_ownerCanSet() public {
+    uint40 newDelay = 12 hours;
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit MintToRepaidDelaySet(newDelay);
+    request.setMintToRepaidDelay(newDelay);
+    assertEq(request.mintToRepaidDelay(), newDelay);
+  }
+
+  function test_setMintToRepaidDelay_revertsOnNonOwner() public {
+    address notOwner = makeAddr("notOwner");
+    vm.prank(notOwner);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
+    request.setMintToRepaidDelay(12 hours);
+  }
+
+  function test_setMintToRepaidDelay_revertsOnZero() public {
+    vm.prank(owner);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    request.setMintToRepaidDelay(0);
+  }
+
+  function testFuzz_setRepaid_respectsTimelock(uint40 delay, uint40 timePassed) public {
+    delay = uint40(bound(delay, 1, 365 days));
+    timePassed = uint40(bound(timePassed, 0, 2 * 365 days));
+
+    vm.prank(owner);
+    (address reqAddr,,) =
+      factory.createRequest(owner, puller, consumer, address(asset), "Fuzz", "FZ", uint64(type(uint64).max), delay);
+    Request timelockRequest = Request(reqAddr);
+
+    // Mint to set lastMintTimestamp
+    address primeBroker = makeAddr("primeBroker");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(primeBroker, amount, 100e6);
+    asset.mint(primeBroker, amount);
+    vm.startPrank(primeBroker);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(0, 0);
+    vm.stopPrank();
+
+    uint256 mintTime = block.timestamp;
+    vm.warp(mintTime + timePassed);
+
+    if (timePassed < delay) {
+      uint40 expectedAvailableAt = uint40(mintTime) + delay;
+      vm.prank(owner);
+      vm.expectRevert(
+        abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt)
+      );
+      timelockRequest.setRepaid();
+    } else {
+      vm.prank(owner);
+      timelockRequest.setRepaid();
+      assertTrue(timelockRequest.canWithdraw());
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   IS REPAID TESTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -819,7 +1108,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 1 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline, 0);
     Request deadlineRequest = Request(reqAddr);
 
     // Initially both isRepaid and canWithdraw should be false
@@ -856,7 +1145,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, principal);
     vm.startPrank(primeBroker);
     asset.approve(address(request), principal);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     assertEq(ptVault.balanceOf(primeBroker), principal);
@@ -908,14 +1197,14 @@ contract RequestTest is Test {
     asset.mint(broker1, 1_000_000e6);
     vm.startPrank(broker1);
     asset.approve(address(request), 1_000_000e6);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Broker 2 mints
     asset.mint(broker2, 500_000e6);
     vm.startPrank(broker2);
     asset.approve(address(request), 500_000e6);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Verify total supplies
@@ -964,7 +1253,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, principal);
     vm.startPrank(primeBroker);
     asset.approve(address(request), principal);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1020,7 +1309,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, ptAmount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), ptAmount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     assertEq(ptVault.balanceOf(primeBroker), ptAmount);
@@ -1040,7 +1329,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, depositAmount);
     vm.startPrank(primeBroker);
     asset.approve(address(request), depositAmount);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     vm.prank(puller);
@@ -1065,7 +1354,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, principal);
     vm.startPrank(primeBroker);
     asset.approve(address(request), principal);
-    request.mint();
+    request.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1120,7 +1409,7 @@ contract RequestTest is Test {
       asset.mint(broker, principal);
       vm.startPrank(broker);
       asset.approve(address(request), principal);
-      request.mint();
+      request.mint(0, 0);
       vm.stopPrank();
     }
 
@@ -1139,14 +1428,14 @@ contract RequestTest is Test {
 
     // Create request with 18 decimals
     (, address pt18, address yt18) = factory.createRequest(
-      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max)
+      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max), 0
     );
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
     (, address pt8, address yt8) = factory.createRequest(
-      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max)
+      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max), 0
     );
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
@@ -1161,7 +1450,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, 1_000_000e6);
     vm.startPrank(primeBroker);
     asset.approve(address(request), 1_000_000e6);
-    request.mint();
+    request.mint(0, 0);
 
     // Try to redeem before repaid
     vm.expectRevert();
@@ -1211,7 +1500,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
     Vault deadlinePtVault = Vault(ptAddr);
@@ -1230,7 +1519,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(0, 0);
     vm.stopPrank();
 
     // Fast forward past the deadline
@@ -1257,7 +1546,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1276,7 +1565,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1290,7 +1579,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1325,7 +1614,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1344,7 +1633,7 @@ contract RequestTest is Test {
     vm.startPrank(primeBroker);
     asset.approve(address(deadlineRequest), amount);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    deadlineRequest.mint();
+    deadlineRequest.mint(0, 0);
     vm.stopPrank();
   }
 
@@ -1352,7 +1641,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1372,7 +1661,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1389,7 +1678,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(0, 0);
     vm.stopPrank();
 
     // Pull funds should work
@@ -1414,7 +1703,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1432,7 +1721,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1447,7 +1736,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1471,7 +1760,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1488,7 +1777,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1502,7 +1791,7 @@ contract RequestTest is Test {
     asset.mint(primeBroker, amount);
     vm.startPrank(primeBroker);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(0, 0);
     vm.stopPrank();
 
     vm.warp(deadline + 1);
@@ -1513,4 +1802,3 @@ contract RequestTest is Test {
     deadlineRequest.syncRepaidStatus();
   }
 }
-
