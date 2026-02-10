@@ -132,6 +132,29 @@ contract ControlledTokenTest is Test {
     assertEq(ytToken.allowance(owner, spender), 200 ether);
   }
 
+  function test_approve_preservesSiblingAllowance() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    // Approve PT for 100 ether
+    vm.prank(owner);
+    ptToken.approve(spender, 100 ether);
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+    assertEq(ytToken.allowance(owner, spender), 0);
+
+    // Approve YT for 200 ether — PT allowance must be preserved
+    vm.prank(owner);
+    ytToken.approve(spender, 200 ether);
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+    assertEq(ytToken.allowance(owner, spender), 200 ether);
+
+    // Update PT allowance — YT allowance must be preserved
+    vm.prank(owner);
+    ptToken.approve(spender, 50 ether);
+    assertEq(ptToken.allowance(owner, spender), 50 ether);
+    assertEq(ytToken.allowance(owner, spender), 200 ether);
+  }
+
   function test_approveMaxAllowance() public {
     address owner = address(1);
     address spender = address(2);
