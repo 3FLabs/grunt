@@ -113,7 +113,7 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     (, address debtAsset) = positionManager.assets();
 
     // Approve PositionManager to pull debt tokens for rebalancing
-    debtAsset.safeApprove(address(positionManager), rebalancingData.debt);
+    debtAsset.safeApproveWithRetry(address(positionManager), rebalancingData.debt);
 
     // Execute rebalance on PositionManager
     // Excess tokens must come back here (address(this)) to repay flash loan
@@ -123,7 +123,7 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     debtAsset.safeApprove(address(positionManager), 0);
 
     // Approve Morpho to pull back the flash loaned amount
-    debtAsset.safeApprove(address(MORPHO), assets);
+    debtAsset.safeApproveWithRetry(address(MORPHO), assets);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
