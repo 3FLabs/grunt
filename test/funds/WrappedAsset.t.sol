@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
-import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
 import {MockERC20} from "../mock/MockERC20.sol";
 
@@ -50,17 +49,7 @@ contract WrappedAssetTest is Test {
   function test_Initialize_OnlyOnce() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
     vm.expectRevert(InvalidInitialization.selector);
-    token.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", UNDERLYING_DECIMALS);
-  }
-
-  function test_Initialize_RevertsInvalidDecimals() public {
-    WrappedAsset implementation = new WrappedAsset();
-    address proxy = LibClone.deployERC1967(address(implementation));
-    WrappedAsset token = WrappedAsset(proxy);
-
-    vm.prank(owner);
-    vm.expectRevert(LibFundsErrors.InvalidDecimals.selector);
-    token.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", UNDERLYING_DECIMALS + 1);
+    token.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC");
   }
 
   function test_Initialize_ThroughProxy() public {
@@ -506,7 +495,7 @@ contract WrappedAssetTest is Test {
     address proxyAddress = LibClone.deployERC1967(address(implementation));
     WrappedAsset proxy = WrappedAsset(proxyAddress);
     vm.prank(owner);
-    proxy.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", UNDERLYING_DECIMALS);
+    proxy.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC");
 
     assertEq(bytes(implementation.name()).length, 0, "impl name");
     assertEq(bytes(implementation.symbol()).length, 0, "impl symbol");
@@ -532,9 +521,9 @@ contract WrappedAssetTest is Test {
     MockERC20 underlyingTwo = new MockERC20("USCC2", "USCC2", 6);
 
     vm.prank(owner);
-    tokenOne.initialize(owner, issuer, address(underlyingOne), "wUSCC1", "Wrapped USCC 1", UNDERLYING_DECIMALS);
+    tokenOne.initialize(owner, issuer, address(underlyingOne), "wUSCC1", "Wrapped USCC 1");
     vm.prank(owner);
-    tokenTwo.initialize(owner, issuer, address(underlyingTwo), "wUSCC2", "Wrapped USCC 2", UNDERLYING_DECIMALS);
+    tokenTwo.initialize(owner, issuer, address(underlyingTwo), "wUSCC2", "Wrapped USCC 2");
 
     assertEq(tokenOne.symbol(), "wUSCC1", "symbol one");
     assertEq(tokenTwo.symbol(), "wUSCC2", "symbol two");
@@ -551,7 +540,7 @@ contract WrappedAssetTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     WrappedAsset token = WrappedAsset(proxy);
     vm.prank(owner);
-    token.initialize(owner, issuer, address(underlying), symbol_, name_, UNDERLYING_DECIMALS);
+    token.initialize(owner, issuer, address(underlying), symbol_, name_);
     return token;
   }
 }
