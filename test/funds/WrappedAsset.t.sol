@@ -4,8 +4,8 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
 import {MockERC20} from "../mock/MockERC20.sol";
 
@@ -15,6 +15,7 @@ contract WrappedAssetTest is Test {
 
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x17335d0a3e97e0293c2bb91805cb7279c336f9ba807e8dbe36cf5097172d3300;
   uint256 private constant EXTRA_ROLE = 1 << 3;
+  uint8 private constant UNDERLYING_DECIMALS = 6;
 
   // WrappedAsset roles (matching internal constants)
   uint256 private constant ISSUER_ROLE = 1 << 0;
@@ -30,7 +31,7 @@ contract WrappedAssetTest is Test {
     owner = makeAddr("owner");
     issuer = makeAddr("issuer");
     user = makeAddr("user");
-    underlying = new MockERC20("USCC", "USCC", 6);
+    underlying = new MockERC20("USCC", "USCC", UNDERLYING_DECIMALS);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -49,7 +50,17 @@ contract WrappedAssetTest is Test {
   function test_Initialize_OnlyOnce() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
     vm.expectRevert(InvalidInitialization.selector);
-    token.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", 18);
+    token.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", UNDERLYING_DECIMALS);
+  }
+
+  function test_Initialize_RevertsInvalidDecimals() public {
+    WrappedAsset implementation = new WrappedAsset();
+    address proxy = LibClone.deployERC1967(address(implementation));
+    WrappedAsset token = WrappedAsset(proxy);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.InvalidDecimals.selector);
+    token.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", UNDERLYING_DECIMALS + 1);
   }
 
   function test_Initialize_ThroughProxy() public {
@@ -366,9 +377,9 @@ contract WrappedAssetTest is Test {
     assertEq(token.symbol(), "wUSCC", "symbol");
   }
 
-  function test_Decimals_Returns18() public {
+  function test_Decimals_ReturnsUnderlyingDecimals() public {
     WrappedAsset token = _deployProxy("wUSCC", "Wrapped USCC");
-    assertEq(token.decimals(), 18, "decimals");
+    assertEq(token.decimals(), UNDERLYING_DECIMALS, "decimals");
   }
 
   function test_Underlying_ReturnsStoredValue() public {
@@ -495,7 +506,7 @@ contract WrappedAssetTest is Test {
     address proxyAddress = LibClone.deployERC1967(address(implementation));
     WrappedAsset proxy = WrappedAsset(proxyAddress);
     vm.prank(owner);
-    proxy.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", 18);
+    proxy.initialize(owner, issuer, address(underlying), "wUSCC", "Wrapped USCC", UNDERLYING_DECIMALS);
 
     assertEq(bytes(implementation.name()).length, 0, "impl name");
     assertEq(bytes(implementation.symbol()).length, 0, "impl symbol");
@@ -521,9 +532,9 @@ contract WrappedAssetTest is Test {
     MockERC20 underlyingTwo = new MockERC20("USCC2", "USCC2", 6);
 
     vm.prank(owner);
-    tokenOne.initialize(owner, issuer, address(underlyingOne), "wUSCC1", "Wrapped USCC 1", 18);
+    tokenOne.initialize(owner, issuer, address(underlyingOne), "wUSCC1", "Wrapped USCC 1", UNDERLYING_DECIMALS);
     vm.prank(owner);
-    tokenTwo.initialize(owner, issuer, address(underlyingTwo), "wUSCC2", "Wrapped USCC 2", 18);
+    tokenTwo.initialize(owner, issuer, address(underlyingTwo), "wUSCC2", "Wrapped USCC 2", UNDERLYING_DECIMALS);
 
     assertEq(tokenOne.symbol(), "wUSCC1", "symbol one");
     assertEq(tokenTwo.symbol(), "wUSCC2", "symbol two");
@@ -540,7 +551,7 @@ contract WrappedAssetTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     WrappedAsset token = WrappedAsset(proxy);
     vm.prank(owner);
-    token.initialize(owner, issuer, address(underlying), symbol_, name_, 18);
+    token.initialize(owner, issuer, address(underlying), symbol_, name_, UNDERLYING_DECIMALS);
     return token;
   }
 }

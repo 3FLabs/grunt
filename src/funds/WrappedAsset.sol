@@ -7,6 +7,7 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
+import {LibFundsErrors} from "../libs/funds/LibFundsErrors.sol";
 
 /// @title WrappedAsset
 /// @author 3F Protocol
@@ -91,6 +92,8 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
     string calldata name_,
     uint8 decimals_
   ) public initializer {
+    if (decimals_ != ERC20(underlying_).decimals()) revert LibFundsErrors.InvalidDecimals();
+
     WrappedAssetStorage storage _storage = _wrappedAssetStorage();
     _storage.symbol = symbol_;
     _storage.name = name_;

@@ -66,6 +66,9 @@ library LibFundsErrors {
   /*                    TOKEN VALIDATION                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Thrown when wrapped asset decimals do not match underlying decimals.
+  error InvalidDecimals();
+
   /// @notice Thrown when there is a decimals mismatch between two tokens.
   /// @param decimalsA The decimals of the first token.
   /// @param decimalsB The decimals of the second token.
