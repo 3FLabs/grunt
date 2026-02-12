@@ -100,19 +100,21 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param recipient The superstate address receiving USDC to mint USCC.
   /// @param currentOrderId The unique identifier of the current order.
-  /// @param currentOrder The current order (struct) being processed. We only handle one at a time.
   /// @param internalState The internal state of the current order.
+  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param oracle The address of Chainlink USCC Oracle.
-  /// @param resolvedOrder The manually resolved order (if any) to override input/output amounts.
+  /// @param resolvedInput The resolved input amount (if hasResolvedAmounts is true).
+  /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Mapping of ended order Ids to boolean (true if ended). To archive ended orders
   ///                    (since we only handle one at a time).
   struct UsccFundStorage {
     address recipient;
     bytes32 currentOrderId;
-    Order currentOrder;
     State internalState;
+    bool hasResolvedAmounts;
     address oracle;
-    Order resolvedOrder;
+    uint256 resolvedInput;
+    uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
 
@@ -181,9 +183,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     // No pending state, always accepted or revert.
     bytes32 _orderId = order.toId(address(this));
     _storage.currentOrderId = _orderId;
-    _storage.currentOrder = order;
     _storage.internalState = State.ACCEPTED;
-    delete _storage.resolvedOrder;
+    _storage.hasResolvedAmounts = false;
+    _storage.resolvedInput = 0;
+    _storage.resolvedOutput = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -205,8 +208,6 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     _storage.currentOrderId = bytes32(0);
-    delete _storage.currentOrder;
-    delete _storage.resolvedOrder;
     _storage.internalState = State.EMPTY;
 
     emit OrderCanceled(_orderId, order.mode, order.owner);
@@ -261,7 +262,6 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     _storage.internalState = State.ENDED;
-    delete _storage.resolvedOrder;
 
     emit OrderRecovered(_currentOrderId, order.mode, _amount, order.receiver);
 
@@ -290,7 +290,6 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     _storage.internalState = State.ENDED;
-    delete _storage.resolvedOrder;
 
     emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
 
@@ -341,10 +340,12 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
       revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     }
 
+    _storage.hasResolvedAmounts = true;
+    _storage.resolvedInput = input;
+    _storage.resolvedOutput = output;
+
     order.input = input;
     order.output = output;
-
-    _storage.resolvedOrder = order;
 
     emit OrderResolved(_storage.currentOrderId, order.toId(address(this)), input, output, msg.sender);
   }
@@ -441,9 +442,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     uint256 _effectiveOutput = order.output;
 
     // If order resolved, use resolved amounts
-    if (_storage.resolvedOrder.owner != address(0)) {
-      _effectiveInput = _storage.resolvedOrder.input;
-      _effectiveOutput = _storage.resolvedOrder.output;
+    if (_storage.hasResolvedAmounts) {
+      _effectiveInput = _storage.resolvedInput;
+      _effectiveOutput = _storage.resolvedOutput;
     }
 
     if (_internalState == State.PROCESSING) {
