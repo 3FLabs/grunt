@@ -36,7 +36,8 @@ interface IRequest is IRequestInteractions {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Marks the request as repaid, enabling withdrawals and redemptions.
-  function setRepaid() external;
+  /// @param minBalance The minimum asset balance the contract must hold; reverts if the balance is below this threshold.
+  function setRepaid(uint256 minBalance) external;
 
   /// @notice Syncs the repaid status after the repayment deadline has passed.
   /// @return repaid Whether the request is now marked as repaid

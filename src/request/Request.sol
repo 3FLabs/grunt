@@ -225,7 +225,8 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
   /// @custom:reverts If the request has already been repaid or the deadline has passed
   /// @custom:reverts If the mint-to-repaid delay has not elapsed since the last mint/consume
-  function setRepaid() external onlyOwner {
+  /// @custom:reverts If the current balance is below the specified minimum
+  function setRepaid(uint256 minBalance) external onlyOwner {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     RequestStorage storage req = _requestStorage();
     uint40 _lastMint = req.lastMintTimestamp;
@@ -235,8 +236,10 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
         revert LibRequestErrors.MintToRepaidDelayNotElapsed(_availableAt);
       }
     }
+    uint256 balance = _asset().balanceOf(address(this));
+    if (balance < minBalance) revert LibRequestErrors.InsufficientBalance(balance, minBalance);
     req.repaid = true;
-    emit Repaid(_asset().balanceOf(address(this)));
+    emit Repaid(balance);
   }
 
   /// @inheritdoc IRequest

@@ -122,14 +122,14 @@ contract RequestMintTimelockPoCTest is Test {
     uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
 
     assertEq(Request(reqAddr).repaidAvailableAt(), expectedAvailableAt, "repaidAvailableAt should match");
 
     // --- Verify: after timelock passes, setRepaid works ---
     vm.warp(block.timestamp + MINT_TIMELOCK);
     vm.prank(owner);
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
     assertTrue(Request(reqAddr).canWithdraw(), "Withdrawals should be enabled after timelock");
   }
 
@@ -141,7 +141,7 @@ contract RequestMintTimelockPoCTest is Test {
     );
 
     vm.prank(owner);
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
     assertTrue(Request(reqAddr).canWithdraw());
   }
 
@@ -162,7 +162,7 @@ contract RequestMintTimelockPoCTest is Test {
     // setRepaid should revert due to timelock
     vm.prank(owner);
     vm.expectRevert();
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
 
     // But warp past deadline — auto-repay via syncRepaidStatus should work
     vm.warp(deadline);
@@ -188,6 +188,6 @@ contract RequestMintTimelockPoCTest is Test {
     uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
   }
 }

@@ -12,6 +12,11 @@ library LibRequestErrors {
   /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
 
+  /// @notice Thrown when `setRepaid()` is called but the contract balance is below the caller-specified minimum.
+  /// @param balance The current asset balance of the contract.
+  /// @param minBalance The minimum balance required by the caller.
+  error InsufficientBalance(uint256 balance, uint256 minBalance);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    OFFER VALIDATION                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
