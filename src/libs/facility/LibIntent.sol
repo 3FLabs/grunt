@@ -28,7 +28,7 @@ struct Asset {
 /// @param targetAsset Target asset or position manager for the intent.
 /// @param depositCap Maximum amount that can be deposited into the intent.
 /// @param guardKey Guard key address associated with intent authorization.
-/// @param resolveStart Earliest timestamp when the intent can be resolved.
+/// @param resolveStart Timestamp at which the deposit phase ends and the resolving phase begins.
 /// @param quorum Quorum threshold required for guard approvals.
 /// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
 struct IntentProperties {
