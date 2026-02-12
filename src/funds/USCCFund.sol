@@ -158,7 +158,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param currentOrder The current order (struct) being processed. We only handle one at a time.
   /// @param internalState The internal state of the current order.
   /// @param oracle The address of Chainlink USCC Oracle.
-  /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
   /// @param resolvedOrder The manually resolved order (if any) to override input/output amounts.
   /// @param endedOrders Mapping of ended order Ids to boolean (true if ended). To archive ended orders
   ///                    (since we only handle one at a time).
@@ -168,7 +167,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     Order currentOrder;
     State internalState;
     address oracle;
-    uint256 cachedBalance;
     Order resolvedOrder;
     mapping(bytes32 => bool) endedOrders;
   }
@@ -248,7 +246,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     _storage.currentOrderId = _orderId;
     _storage.currentOrder = order;
     _storage.internalState = State.ACCEPTED;
-    _storage.cachedBalance = 0;
     delete _storage.resolvedOrder;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
@@ -274,7 +271,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     delete _storage.currentOrder;
     delete _storage.resolvedOrder;
     _storage.internalState = State.EMPTY;
-    _storage.cachedBalance = 0;
 
     emit OrderCanceled(_orderId, order.mode, order.owner);
 
@@ -299,10 +295,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       IWrappedAsset(WUSCC).burn(msg.sender, address(this), order.input);
       ISuperstateToken(USCC).offchainRedeem(order.input);
     }
-
-    // Snapshot balance before receiving minted uscc or recovered uscc
-    // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
-    _storage.cachedBalance = USCC.balanceOf(address(this));
 
     _storage.internalState = State.PROCESSING;
 
@@ -534,7 +526,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        _amount = USCC.balanceOf(address(this)).zeroFloorSub(_storage.cachedBalance);
+        _amount = USCC.balanceOf(address(this));
         return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we received USDC
@@ -551,7 +543,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
         return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we can recover USCC
-        _amount = USCC.balanceOf(address(this)).zeroFloorSub(_storage.cachedBalance);
+        _amount = USCC.balanceOf(address(this));
         return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       }
     }

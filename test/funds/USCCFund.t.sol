@@ -34,7 +34,6 @@ contract USCCFundTest is Test {
     bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
   );
 
-  bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
   uint256 private constant ONE_USDC = 1e6;
 
   // WrappedAsset roles (matching internal constants)
@@ -310,7 +309,6 @@ contract USCCFundTest is Test {
     assertEq(amount, order.input, "amount");
     assertEq(usdc.balanceOf(recipient), order.input, "recipient");
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
-    assertEq(_cachedBalance(), 0, "cached balance");
   }
 
   function test_Commit_RedeemSuccess() public {
@@ -888,13 +886,6 @@ contract USCCFundTest is Test {
   /*                         EDGE CASES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_Edge_CachedBalanceAccuracy() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    assertEq(_cachedBalance(), 0, "cached");
-  }
-
   function test_Edge_OrderIdCollision() public view {
     Order memory orderA = _depositOrder(ONE_USDC, ONE_USDC);
     Order memory orderB = Order({
@@ -1045,12 +1036,6 @@ contract USCCFundTest is Test {
   function _unlockDeposit(Order memory order) internal {
     uscc.mint(address(fund), order.output);
     fund.unlock(order);
-  }
-
-  function _cachedBalance() internal view returns (uint256) {
-    // Storage layout: recipient(+0), currentOrderId(+1), Order(+2..+6, 5 slots),
-    // internalState+oracle(+7 packed), cachedBalance(+8)
-    return uint256(vm.load(address(fund), bytes32(uint256(_MAIN_STORAGE_SLOT) + 8)));
   }
 
   /// @dev Helper to mint wUSCC to a recipient. Wraps USCC into wUSCC.
