@@ -101,7 +101,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     collateralToken = WrappedAsset(proxy);
     vm.prank(owner);
-    collateralToken.initialize(owner, address(0), address(underlyingToken), "wCOLL", "Wrapped Collateral", 18);
+    collateralToken.initialize(owner, address(0), address(underlyingToken), "wCOLL", "Wrapped Collateral");
     vm.label(address(collateralToken), "CollateralToken");
 
     // ---- oracle & IRM ----
