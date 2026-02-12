@@ -267,17 +267,17 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
 
     if (order.mode == Mode.DEPOSIT) {
-      USDC.safeTransfer(msg.sender, _amount);
+      USDC.safeTransfer(order.receiver, _amount);
     } else {
       // Mint wUSCC back to depositor (pulls USCC from this contract)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(order.receiver, _amount);
     }
 
     _storage.internalState = State.ENDED;
     delete _storage.resolvedOrder;
 
-    emit OrderRecovered(_currentOrderId, order.mode, _amount, msg.sender);
+    emit OrderRecovered(_currentOrderId, order.mode, _amount, order.receiver);
 
     return (State.ENDED, _amount);
   }
@@ -297,16 +297,16 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(order.receiver, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
-      USDC.safeTransfer(msg.sender, _amount);
+      USDC.safeTransfer(order.receiver, _amount);
     }
 
     _storage.internalState = State.ENDED;
     delete _storage.resolvedOrder;
 
-    emit OrderUnlocked(_currentOrderId, order.mode, _amount, msg.sender);
+    emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
 
     return (State.ENDED, _amount);
   }
