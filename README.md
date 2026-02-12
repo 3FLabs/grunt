@@ -444,7 +444,7 @@ After funding is complete:
 2. **Callback**: If `data.length > 0`, invokes `onPullFunds(amount, data)` on the puller
 3. **Utilization**: Puller uses funds for intended purpose
 4. **Repayment**: Transfer assets back via `repay(amount)` or direct transfer
-5. **Enable Redemptions**: Owner calls `setRepaid()` or wait for `repaymentDeadline`
+5. **Enable Redemptions**: Owner calls `setRepaid(uint256 minBalance)` or wait for `repaymentDeadline`
 
 **Puller Callback Interface**:
 

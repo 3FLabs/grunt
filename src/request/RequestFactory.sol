@@ -105,7 +105,7 @@ contract RequestFactory {
   /// @param name The base name for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param repaymentDeadline The timestamp after which withdrawals are automatically enabled, regardless of repaid status
-  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid()
+  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(uint256)
   /// @return request The address of the newly deployed Request proxy
   /// @return ptToken The address of the newly deployed PT Token proxy
   /// @return ytToken The address of the newly deployed YT Token proxy

@@ -43,7 +43,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      3. Authorized addresses can mint PT/YT tokens by depositing the underlying asset
 ///      4. Once offers are consumed, the owner pulls funds to a receiver via `pullFunds()`
 ///      5. The borrower repays by transferring the asset back to the contract
-///      6. Once fully repaid, the owner calls `setRepaid()` to enable withdrawals for PT/YT holders
+///      6. Once fully repaid, the owner calls `setRepaid(uint256)` to enable withdrawals for PT/YT holders
 ///
 ///      Offer Consumption Flow:
 ///      1. A maker creates and signs an offer specifying amount and expected return
@@ -79,7 +79,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param ptToken The address of the Principal Token contract
   /// @param ytToken The address of the Yield Token contract
   /// @param lastMintTimestamp Timestamp of the last mint() or consume() call (0 if none). Packed with `ytToken`.
-  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(). Packed with `ytToken`.
+  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(uint256). Packed with `ytToken`.
   /// @param name The base name for the PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for the PT/YT tokens (prefixed with "PT-" / "YT-")
   struct RequestStorage {
@@ -116,7 +116,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @notice Initializes the Request contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier. Sets up the contract owner,
   ///      underlying asset, PT/YT token addresses, and metadata. The contract starts in a non-repaid
-  ///      state where withdrawals are disabled until either setRepaid() is called or the repayment deadline passes.
+  ///      state where withdrawals are disabled until either setRepaid(uint256) is called or the repayment deadline passes.
   /// @param owner_ The address that will own the contract and have admin privileges
   /// @param puller_ The address that will have the puller role
   /// @param consumer_ The address that will have the consumer role (can call consume and authorizeMinting)
@@ -126,7 +126,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @param name_ The base name for the tokens (will be prefixed with "PT-" / "YT-")
   /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
   /// @param repaymentDeadline_ The timestamp after which withdrawals are automatically enabled, regardless of repaid status
-  /// @param mintToRepaidDelay_ Minimum delay (seconds) between the last mint/consume and setRepaid()
+  /// @param mintToRepaidDelay_ Minimum delay (seconds) between the last mint/consume and setRepaid(uint256)
   function initialize(
     address owner_,
     address puller_,
@@ -290,7 +290,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Only callable by the puller role. This function is used after offers are consumed to
   ///      transfer the collected funds to the puller. The puller
   ///      is then expected to repay by transferring assets back to the contract before
-  ///      `setRepaid()` is called to enable PT/YT holder withdrawals.
+  ///      `setRepaid(uint256)` is called to enable PT/YT holder withdrawals.
   ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid or the deadline has passed
   function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
@@ -313,7 +313,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc IRequestInteractions
-  /// @dev Returns true when the request has been marked as repaid via setRepaid() or syncRepaidStatus().
+  /// @dev Returns true when the request has been marked as repaid via setRepaid(uint256) or syncRepaidStatus().
   ///      Call syncRepaidStatus() after the deadline to update the repaid flag.
   function isRepaid() external view returns (bool) {
     return _requestStorage().repaid;

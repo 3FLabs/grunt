@@ -48,11 +48,11 @@ interface IRequest is IRequestInteractions {
   function lastMintTimestamp() external view returns (uint40);
 
   /// @notice Returns the mint-to-repaid delay duration.
-  /// @return The minimum delay (seconds) between the last mint/consume and setRepaid().
+  /// @return The minimum delay (seconds) between the last mint/consume and setRepaid(uint256).
   function mintToRepaidDelay() external view returns (uint40);
 
-  /// @notice Returns the earliest timestamp at which setRepaid() can be called.
-  /// @return The timestamp at which setRepaid() becomes available (0 if no minting has occurred).
+  /// @notice Returns the earliest timestamp at which setRepaid(uint256) can be called.
+  /// @return The timestamp at which setRepaid(uint256) becomes available (0 if no minting has occurred).
   function repaidAvailableAt() external view returns (uint40);
 
   /// @notice Sets the mint-to-repaid delay duration.
