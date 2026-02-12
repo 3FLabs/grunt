@@ -82,7 +82,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @dev Reverts with {CommonErrors.AddressZero} if morpho_ is zero address.
   ///      Reverts with {LibBorrowErrors.InvalidMarketId} if marketId_ is zero.
   ///      Reverts with {LibBorrowErrors.MarketNotCreated} if the market doesn't exist in Morpho.
-  ///      Reverts with {LibBorrowErrors.InvalidLltv} if liquidationLtv_ is zero or greater than WAD.
+  ///      Reverts with {LibCommonErrors.InvalidLtv} if liquidationLtv_ is zero or greater than WAD.
   ///      Reverts with {LibBorrowErrors.SafeLtvNotLessThanLiquidationLtv} if safeLtv_ >= liquidationLtv_.
   ///      Reverts with {LibBorrowErrors.LiquidationLtvExceedsMarketLltv} if liquidationLtv_ exceeds the Morpho market LLTV.
   function initialize(
@@ -95,8 +95,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     address(morpho_).checkNotZero();
     if (Id.unwrap(marketId_) == bytes32(0)) revert LibBorrowErrors.InvalidMarketId(marketId_);
     if (morpho_.market(marketId_).lastUpdate == 0) revert LibBorrowErrors.MarketNotCreated();
-    LibChecks.checkValidLltv(liquidationLtv_);
-    if (safeLtv_ == 0) revert LibCommonErrors.InvalidLltv();
+    LibChecks.checkValidLtv(liquidationLtv_);
+    if (safeLtv_ == 0) revert LibCommonErrors.InvalidLtv();
 
     // Validate safeLtv < liquidationLtv
     if (safeLtv_ >= liquidationLtv_) {
@@ -209,7 +209,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     _morpho.repay(_marketParams, amount, 0, address(this), "");
   }
 
-  /// @notice Pre-liquidates the position when it becomes unhealthy based on the custom LLTV.
+  /// @notice Pre-liquidates the position when it becomes unhealthy based on the custom liquidation LTV.
   /// @dev This function allows anyone to liquidate an unhealthy position. Unlike Morpho's native liquidation,
   ///      this mechanism gives **proportional collateral** to the liquidator without applying a liquidation
   ///      incentive factor (LIF). This means:
@@ -225,7 +225,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      The liquidator's profit is $50 - $40 = $10, which equals (1 - 0.80) × $50 = 20% × $50.
   ///
   ///      This ensures liquidators can always seize their proportional share of collateral, and the liquidation
-  ///      bonus scales with how underwater the position is. At the LLTV threshold, the bonus approaches 1 - LLTV.
+  ///      bonus scales with how underwater the position is. At the liquidation LTV threshold, the bonus approaches 1 - liquidation LTV.
   ///
   ///      The liquidation uses a callback pattern: Morpho calls `onMorphoRepay` which withdraws collateral
   ///      to the liquidator, optionally calls the liquidator's callback, then pulls loan tokens from the liquidator.
@@ -242,7 +242,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @return The amount of collateral seized.
   /// @return The amount of debt assets repaid.
   /// @dev Reverts with {LibBorrowErrors.InconsistentInput} if both seizedAssets and repaidShares are non-zero or both are zero.
-  ///      Reverts with {LibBorrowErrors.PositionHealthy} if the position is healthy based on the custom LLTV.
+  ///      Reverts with {LibBorrowErrors.PositionHealthy} if the position is healthy based on the custom liquidation LTV.
   function preLiquidate(address borrower, uint256 seizedAssets, uint256 repaidShares, bytes calldata data)
     external
     returns (uint256, uint256)
@@ -357,13 +357,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   }
 
   /// @inheritdoc IBorrowPosition
-  function isHealthy(uint256 _lltv) external view override returns (bool) {
+  function isHealthy(uint256 _ltv) external view override returns (bool) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    return _isHealthy(_lltv, _storage.marketParams.oracle);
+    return _isHealthy(_ltv, _storage.marketParams.oracle);
   }
 
   /// @inheritdoc IBorrowPosition
-  function maxBorrow(uint256 _lltv) external view override returns (uint256) {
+  function maxBorrow(uint256 _ltv) external view override returns (uint256) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     Id _marketId = _storage.marketId;
     IMorpho _morpho = _storage.morpho;
@@ -378,10 +378,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     uint256 borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
 
-    // Calculate remaining borrow capacity: (collateralValue * LLTV) - alreadyBorrowed
+    // Calculate remaining borrow capacity: (collateralValue * LTV) - alreadyBorrowed
     // Uses zeroFloorSub to return 0 instead of underflowing if already over-utilized
     // Return remaining capacity or available liquidity, whichever is lower
-    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_lltv).zeroFloorSub(borrowed)
+    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_ltv).zeroFloorSub(borrowed)
       .min(_availableLiquidity);
   }
 
@@ -395,9 +395,9 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   }
 
   /// @inheritdoc IBorrowPosition
-  /// @dev Calculates available collateral as: totalCollateral - (debt * ORACLE_PRICE_SCALE) / (lltv * price)
+  /// @dev Calculates available collateral as: totalCollateral - (debt * ORACLE_PRICE_SCALE) / (ltv * price)
   ///      If no debt, returns all collateral. Returns 0 if position would be unhealthy.
-  function availableCollateral(uint256 _lltv) external view override returns (uint256) {
+  function availableCollateral(uint256 _ltv) external view override returns (uint256) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     IMorpho _morpho = _storage.morpho;
     Id _marketId = _storage.marketId;
@@ -413,25 +413,25 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // Calculate borrowed amount (rounds up to be conservative)
     uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
 
-    // Required collateral = borrowed * ORACLE_PRICE_SCALE / (lltv * price)
+    // Required collateral = borrowed * ORACLE_PRICE_SCALE / (ltv * price)
     // This rounds up to be conservative (more collateral required = less available)
-    uint256 _requiredCollateral = _borrowed.mulDivUp(ORACLE_PRICE_SCALE, _lltv.mulWad(_collateralPrice));
+    uint256 _requiredCollateral = _borrowed.mulDivUp(ORACLE_PRICE_SCALE, _ltv.mulWad(_collateralPrice));
 
     // Return available collateral (0 if required > total)
     if (_requiredCollateral >= uint256(_pos.collateral)) return 0;
     return uint256(_pos.collateral) - _requiredCollateral;
   }
 
-  /// @dev Internal helper to determine if the position is healthy based on provided lltv and oracle.
+  /// @dev Internal helper to determine if the position is healthy based on provided ltv and oracle.
   ///      Health calculation:
   ///      1. If no borrow exists (borrowShares == 0), position is always healthy.
-  ///      2. Otherwise, calculates: maxBorrow = (collateral * oraclePrice / ORACLE_PRICE_SCALE) * lltv
+  ///      2. Otherwise, calculates: maxBorrow = (collateral * oraclePrice / ORACLE_PRICE_SCALE) * ltv
   ///      3. Position is healthy if maxBorrow >= borrowed amount (with interest).
   ///      Uses conservative rounding: borrowed amount rounds up, max borrow rounds down.
-  /// @param _lltv The LLTV to use for the health calculation.
+  /// @param _ltv The LTV to use for the health calculation.
   /// @param oracle The oracle address to fetch the collateral price.
   /// @return True if the position is healthy, false otherwise.
-  function _isHealthy(uint256 _lltv, address oracle) internal view returns (bool) {
+  function _isHealthy(uint256 _ltv, address oracle) internal view returns (bool) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     IMorpho morpho = _storage.morpho;
     Id _marketId = _storage.marketId;
@@ -448,8 +448,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // Calculate borrowed amount (rounds up to be conservative)
     uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
 
-    // Calculate max borrow based on collateral value and provided LLTV
-    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_lltv) >= _borrowed;
+    // Calculate max borrow based on collateral value and provided LTV
+    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_ltv) >= _borrowed;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

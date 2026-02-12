@@ -71,7 +71,7 @@ contract PositionManagerBaseTest is Test {
   uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV (Morpho market)
   uint128 constant BP_SAFE_LTV = 0.65e18; // 65% safe LTV for borrow positions
   uint128 constant BP_LIQUIDATION_LTV = 0.72e18; // 72% liquidation LTV for borrow positions
-  uint256 constant POSITION_MANAGER_LLTV = 0.7e18; // 70% LLTV for available collateral
+  uint256 constant POSITION_MANAGER_LTV = 0.7e18; // 70% LTV for available collateral
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36; // 1:1 price
   uint256 constant COLLATERAL_AMOUNT = 10_000e18;
@@ -154,7 +154,7 @@ contract PositionManagerBaseTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      POSITION_MANAGER_LLTV,
+      POSITION_MANAGER_LTV,
       address(0)
     );
 
@@ -236,9 +236,9 @@ contract PositionManagerBaseTest is Test {
   /*                 CONSOLIDATED VIEW HELPERS                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function _lltv() internal view returns (uint256) {
-    (uint256 lltv_,,) = positionManager.config();
-    return lltv_;
+  function _ltv() internal view returns (uint256) {
+    (uint256 ltv_,,) = positionManager.config();
+    return ltv_;
   }
 
   function _maxRebalanceLoss() internal view returns (uint16) {

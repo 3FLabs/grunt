@@ -12,7 +12,7 @@ struct SupplyQueueEntry {
 /// @title IPositionManagerAdmin
 /// @author 3F Protocol
 /// @notice Interface for administrative functions of the PositionManager contract.
-/// @dev Handles borrow module management, queue configuration, LLTV, fees, and transfer guard settings.
+/// @dev Handles borrow module management, queue configuration, LTV, fees, and transfer guard settings.
 interface IPositionManagerAdmin {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
@@ -26,9 +26,9 @@ interface IPositionManagerAdmin {
   /// @param queue The new withdrawal queue (position addresses)
   event WithdrawalQueueSet(address[] queue);
 
-  /// @notice Emitted when the LLTV is updated.
-  /// @param lltv The new LLTV value
-  event LLTVSet(uint256 lltv);
+  /// @notice Emitted when the LTV is updated.
+  /// @param ltv The new LTV value
+  event LTVSet(uint256 ltv);
 
   /// @notice Emitted when fee data is updated.
   /// @param feeRecipient The address receiving fees
@@ -78,10 +78,10 @@ interface IPositionManagerAdmin {
   /// @param queue Array of position addresses
   function setWithdrawalQueue(address[] calldata queue) external;
 
-  /// @notice Sets the LLTV used for available collateral calculations.
-  /// @dev Only callable by the owner. Should be <= the minimum LLTV of all positions.
-  /// @param lltv_ The new LLTV value (WAD precision, 1e18 = 100%)
-  function setLltv(uint256 lltv_) external;
+  /// @notice Sets the LTV used for available collateral calculations.
+  /// @dev Only callable by the owner. Should be <= the minimum LTV of all positions.
+  /// @param ltv_ The new LTV value (WAD precision, 1e18 = 100%)
+  function setLtv(uint256 ltv_) external;
 
   /// @notice Sets the fee configuration data for this PositionManager.
   /// @dev Before updating the fee configuration, this function must accrue and allocate any pending

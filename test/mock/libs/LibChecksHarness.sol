@@ -17,7 +17,7 @@ contract LibChecksHarness {
     LibChecks.checkNotZero(amount);
   }
 
-  function checkValidLltv(uint256 lltv) external pure {
-    LibChecks.checkValidLltv(lltv);
+  function checkValidLtv(uint256 ltv) external pure {
+    LibChecks.checkValidLtv(ltv);
   }
 }

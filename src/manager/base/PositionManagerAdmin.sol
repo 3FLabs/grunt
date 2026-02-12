@@ -12,7 +12,7 @@ import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 /// @title PositionManagerAdmin
 /// @author 3F Protocol
 /// @notice Abstract contract handling administrative functions for PositionManager.
-/// @dev Manages borrow modules, supply/withdrawal queues, LLTV, and max rebalance loss.
+/// @dev Manages borrow modules, supply/withdrawal queues, LTV, and max rebalance loss.
 abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManagerBase {
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using LibStorage for PositionManagerStorageData;
@@ -88,9 +88,9 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Reverts with {LibManagerErrors.InvalidLltv} if lltv is zero or greater than WAD.
-  function setLltv(uint256 lltv_) external override onlyOwner {
-    LibStorage.positionManagerStorage().setLltv(lltv_);
+  /// @dev Reverts with {LibCommonErrors.InvalidLtv} if ltv is zero or greater than WAD.
+  function setLtv(uint256 ltv_) external override onlyOwner {
+    LibStorage.positionManagerStorage().setLtv(ltv_);
   }
 
   /// @inheritdoc IPositionManagerAdmin

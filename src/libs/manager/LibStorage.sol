@@ -44,8 +44,8 @@ struct PositionManagerMetadata {
 /// @param metadata Token metadata and asset addresses for the position manager.
 /// @param lastTotalAssets Cached total assets value from the last fee accrual, used for
 ///        calculating high water mark and performance fees.
-/// @param lltv Liquidation loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
-///        Positions below this threshold are subject to liquidation.
+/// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
+///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
 /// @param lastFeeAccrualTimestamp Unix timestamp of the last fee accrual, used for
 ///        calculating time-weighted management fees.
 /// @param maxRebalanceLoss Maximum allowed loss during rebalancing operations in basis points
@@ -59,7 +59,7 @@ struct PositionManagerStorageData {
   EnumerableSetLib.AddressSet borrowModules;
   PositionManagerMetadata metadata;
   uint256 lastTotalAssets;
-  uint64 lltv;
+  uint64 ltv;
   uint40 lastFeeAccrualTimestamp;
   uint16 maxRebalanceLoss;
   address transferGuard;
@@ -85,17 +85,17 @@ library LibStorage {
   /*                          SETTERS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Sets the LLTV value after validation.
+  /// @dev Sets the LTV value after validation.
   /// @param self The storage pointer to the PositionManagerStorageData struct.
-  /// @param lltv_ The LLTV value to set (WAD precision).
-  function setLltv(PositionManagerStorageData storage self, uint256 lltv_) internal {
-    // LLTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
-    LibChecks.checkValidLltv(lltv_);
+  /// @param ltv_ The LTV value to set (WAD precision).
+  function setLtv(PositionManagerStorageData storage self, uint256 ltv_) internal {
+    // LTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
+    LibChecks.checkValidLtv(ltv_);
     unchecked {
-      // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
+      // Safe: ltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
       // forge-lint: disable-next-line(unsafe-typecast)
-      self.lltv = uint64(lltv_);
-      emit IPositionManagerAdmin.LLTVSet(lltv_);
+      self.ltv = uint64(ltv_);
+      emit IPositionManagerAdmin.LTVSet(ltv_);
     }
   }
 

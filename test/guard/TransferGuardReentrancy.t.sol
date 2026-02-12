@@ -84,7 +84,7 @@ contract TransferGuardReentrancyTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      0.8e18, // 80% LLTV
+      0.8e18, // 80% LTV
       address(0)
     );
 

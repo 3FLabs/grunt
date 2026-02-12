@@ -31,12 +31,12 @@ library LibChecks {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       LLTV CHECKS                          */
+  /*                        LTV CHECKS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Reverts if the LLTV is invalid (zero or greater than WAD).
-  /// @param lltv The LLTV value to check (WAD precision).
-  function checkValidLltv(uint256 lltv) internal pure {
-    if (lltv == 0 || lltv > FixedPointMathLib.WAD) revert LibCommonErrors.InvalidLltv();
+  /// @dev Reverts if the LTV is invalid (zero or greater than WAD).
+  /// @param ltv The LTV value to check (WAD precision).
+  function checkValidLtv(uint256 ltv) internal pure {
+    if (ltv == 0 || ltv > FixedPointMathLib.WAD) revert LibCommonErrors.InvalidLtv();
   }
 }

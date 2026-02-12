@@ -618,7 +618,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      8e17, // 80% LLTV
+      8e17, // 80% LTV
       address(transferGuard)
     );
 

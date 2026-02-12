@@ -54,9 +54,9 @@ contract LibOperationsHarness {
     ps.metadata.debtAsset = debtAsset;
   }
 
-  /// @dev Set lltv
-  function setLltv(uint64 lltv) external {
-    LibStorage.positionManagerStorage().lltv = lltv;
+  /// @dev Set ltv
+  function setLtv(uint64 ltv) external {
+    LibStorage.positionManagerStorage().ltv = ltv;
   }
 
   /// @dev Add supply queue entry

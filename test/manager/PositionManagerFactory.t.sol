@@ -31,7 +31,7 @@ contract PositionManagerFactoryTest is Test {
   /*                          CONSTANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  uint256 constant DEFAULT_LLTV = 0.7e18; // 70% LLTV
+  uint256 constant DEFAULT_LTV = 0.7e18; // 70% LTV
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                             */
@@ -42,7 +42,7 @@ contract PositionManagerFactoryTest is Test {
     address indexed owner,
     address indexed collateralAsset,
     address debtAsset,
-    uint256 lltv,
+    uint256 ltv,
     address transferGuard
   );
 
@@ -100,7 +100,7 @@ contract PositionManagerFactoryTest is Test {
       positionManagerOwner,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
 
@@ -113,7 +113,7 @@ contract PositionManagerFactoryTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
   }
@@ -128,7 +128,7 @@ contract PositionManagerFactoryTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
 
@@ -163,7 +163,7 @@ contract PositionManagerFactoryTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
 
@@ -203,7 +203,7 @@ contract PositionManagerFactoryTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
 
@@ -216,7 +216,7 @@ contract PositionManagerFactoryTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
 
@@ -245,11 +245,11 @@ contract PositionManagerFactoryTest is Test {
     string memory name,
     string memory symbol,
     uint8 decimals,
-    uint256 lltv,
+    uint256 ltv,
     address transferGuard
   ) public {
     vm.assume(owner != address(0));
-    lltv = bound(lltv, 1, 1e18); // LLTV must be > 0 and <= 100%
+    ltv = bound(ltv, 1, 1e18); // LTV must be > 0 and <= 100%
 
     address positionManager = factory.createPositionManager(
       owner,
@@ -260,7 +260,7 @@ contract PositionManagerFactoryTest is Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      lltv,
+      ltv,
       transferGuard
     );
 
@@ -269,8 +269,8 @@ contract PositionManagerFactoryTest is Test {
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
     assertEq(pm.decimals(), decimals);
-    (uint256 lltv_,, address transferGuard_) = pm.config();
-    assertEq(lltv_, lltv);
+    (uint256 ltv_,, address transferGuard_) = pm.config();
+    assertEq(ltv_, ltv);
     assertEq(transferGuard_, transferGuard);
   }
 }

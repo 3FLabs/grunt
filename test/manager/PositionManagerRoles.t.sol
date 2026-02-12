@@ -50,36 +50,36 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     assertEq(newQueue[0], address(borrowPosition2));
   }
 
-  function test_setLltv_onlyOwner() public {
-    uint256 newLltv = 0.6e18;
+  function test_setLtv_onlyOwner() public {
+    uint256 newLtv = 0.6e18;
 
     vm.prank(user);
     vm.expectRevert();
-    positionManager.setLltv(newLltv);
+    positionManager.setLtv(newLtv);
 
     vm.prank(owner);
-    positionManager.setLltv(newLltv);
+    positionManager.setLtv(newLtv);
 
-    assertEq(_lltv(), newLltv);
+    assertEq(_ltv(), newLtv);
   }
 
-  function test_setLltv_revertOnZero() public {
+  function test_setLtv_revertOnZero() public {
     vm.prank(owner);
-    vm.expectRevert(CommonErrors.InvalidLltv.selector);
-    positionManager.setLltv(0);
+    vm.expectRevert(CommonErrors.InvalidLtv.selector);
+    positionManager.setLtv(0);
   }
 
-  function test_setLltv_revertOnGreaterThanWad() public {
+  function test_setLtv_revertOnGreaterThanWad() public {
     vm.prank(owner);
-    vm.expectRevert(CommonErrors.InvalidLltv.selector);
-    positionManager.setLltv(1e18 + 1);
+    vm.expectRevert(CommonErrors.InvalidLtv.selector);
+    positionManager.setLtv(1e18 + 1);
   }
 
-  function test_setLltv_allowsMaxWad() public {
+  function test_setLtv_allowsMaxWad() public {
     vm.prank(owner);
-    positionManager.setLltv(1e18);
+    positionManager.setLtv(1e18);
 
-    assertEq(_lltv(), 1e18);
+    assertEq(_ltv(), 1e18);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
