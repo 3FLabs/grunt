@@ -384,8 +384,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @param oracle The new oracle address.
   function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
     _setOracle(oracle);
-
-    emit OracleUpdated(oracle, msg.sender);
   }
 
   /// @notice Resolves the current order by setting its input and output amounts.
@@ -556,6 +554,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     _usccFundStorage().oracle = oracle;
+    emit OracleUpdated(oracle, msg.sender);
   }
 
   /// @dev Internal function to check that a token has the expected decimals (6).
