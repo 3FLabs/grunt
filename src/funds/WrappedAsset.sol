@@ -46,12 +46,10 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param symbol The symbol of the wrapped asset token.
   /// @param name The name of the wrapped asset token.
-  /// @param decimals The number of decimals for the token.
   /// @param underlying The address of the underlying asset being wrapped.
   struct WrappedAssetStorage {
     string symbol;
     string name;
-    uint8 decimals;
     address underlying;
   }
 
@@ -82,19 +80,16 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @param underlying_ The address of the underlying asset to wrap.
   /// @param symbol_ The symbol of the wrapped asset token.
   /// @param name_ The name of the wrapped asset token.
-  /// @param decimals_ The number of decimals for the token.
   function initialize(
     address owner_,
     address initialIssuer_,
     address underlying_,
     string calldata symbol_,
-    string calldata name_,
-    uint8 decimals_
+    string calldata name_
   ) public initializer {
     WrappedAssetStorage storage _storage = _wrappedAssetStorage();
     _storage.symbol = symbol_;
     _storage.name = name_;
-    _storage.decimals = decimals_;
     _storage.underlying = underlying_;
 
     _initializeOwner(owner_);
@@ -154,7 +149,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
 
   /// @inheritdoc ERC20
   function decimals() public view override returns (uint8) {
-    return _wrappedAssetStorage().decimals;
+    return ERC20(_wrappedAssetStorage().underlying).decimals();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

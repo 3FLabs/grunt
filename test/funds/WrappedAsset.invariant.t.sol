@@ -39,7 +39,7 @@ contract WrappedAssetInvariantTest is StdInvariant, Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wrappedAsset = WrappedAsset(proxy);
     vm.prank(owner);
-    wrappedAsset.initialize(owner, address(0), address(underlyingToken), "wUNDL", "Wrapped Underlying", 18);
+    wrappedAsset.initialize(owner, address(0), address(underlyingToken), "wUNDL", "Wrapped Underlying");
     vm.label(address(wrappedAsset), "WrappedAsset");
 
     // Deploy and initialize handler

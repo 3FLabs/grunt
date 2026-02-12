@@ -29,12 +29,12 @@ contract USCCFundTest is Test {
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
   event OrderRecovering(bytes32 indexed orderId);
+  event OrderProcessing(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
   event OrderResolved(
     bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
   );
 
-  bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
   uint256 private constant ONE_USDC = 1e6;
 
   // WrappedAsset roles (matching internal constants)
@@ -75,7 +75,7 @@ contract USCCFundTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
@@ -310,7 +310,6 @@ contract USCCFundTest is Test {
     assertEq(amount, order.input, "amount");
     assertEq(usdc.balanceOf(recipient), order.input, "recipient");
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
-    assertEq(_cachedBalance(), 0, "cached balance");
   }
 
   function test_Commit_RedeemSuccess() public {
@@ -550,6 +549,97 @@ contract USCCFundTest is Test {
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
     fund.recovering();
+  }
+
+  function test_CancelRecovering_Success() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering();
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit OrderProcessing(order.toId(address(fund)));
+    fund.cancelRecovering();
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "back to processing");
+  }
+
+  function test_CancelRecovering_RevertsInvalidState() public {
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.EMPTY));
+    fund.cancelRecovering();
+  }
+
+  function test_CancelRecovering_OnlyOperatorOrOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering();
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.cancelRecovering();
+  }
+
+  function test_CancelRecovering_ThenUnlock_Deposit() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate delivers output USCC despite recovering state
+    uscc.mint(address(fund), order.output);
+
+    // State is stuck — RECOVERING branch only checks USDC input, not USCC output
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "stuck in processing");
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering();
+
+    // Now _state() uses PROCESSING branch which checks USCC output
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+    assertEq(wuscc.balanceOf(address(this)), order.output, "wuscc received");
+  }
+
+  function test_CancelRecovering_ThenUnlock_Redeem() public {
+    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate delivers output USDC despite recovering state
+    usdc.mint(address(fund), order.output);
+
+    // State is stuck — RECOVERING branch only checks USCC input, not USDC output
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "stuck in processing");
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering();
+
+    // Now _state() uses PROCESSING branch which checks USDC output
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+    assertEq(usdc.balanceOf(address(this)), order.output, "usdc received");
   }
 
   function test_SetOracle_Success() public {
@@ -888,13 +978,6 @@ contract USCCFundTest is Test {
   /*                         EDGE CASES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_Edge_CachedBalanceAccuracy() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    assertEq(_cachedBalance(), 0, "cached");
-  }
-
   function test_Edge_OrderIdCollision() public view {
     Order memory orderA = _depositOrder(ONE_USDC, ONE_USDC);
     Order memory orderB = Order({
@@ -1045,12 +1128,6 @@ contract USCCFundTest is Test {
   function _unlockDeposit(Order memory order) internal {
     uscc.mint(address(fund), order.output);
     fund.unlock(order);
-  }
-
-  function _cachedBalance() internal view returns (uint256) {
-    // Storage layout: recipient(+0), currentOrderId(+1), Order(+2..+6, 5 slots),
-    // internalState+oracle(+7 packed), cachedBalance(+8)
-    return uint256(vm.load(address(fund), bytes32(uint256(_MAIN_STORAGE_SLOT) + 8)));
   }
 
   /// @dev Helper to mint wUSCC to a recipient. Wraps USCC into wUSCC.

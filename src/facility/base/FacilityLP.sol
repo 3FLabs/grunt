@@ -90,8 +90,10 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
       // get the proportional amount of this token
       uint256 userBalance = _intent.amounts.get(token).mulDiv(shares, supply);
       amounts[i] = userBalance;
-      // transfer the tokens to the receiver
-      _intent.transferTokenTo(id, token, receiver, userBalance);
+      // skip zero-amount transfers (some ERC-20s revert on zero transfers)
+      if (userBalance > 0) {
+        _intent.transferTokenTo(id, token, receiver, userBalance);
+      }
     }
 
     return (tokens, amounts);

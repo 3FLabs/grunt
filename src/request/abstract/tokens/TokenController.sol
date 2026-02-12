@@ -9,6 +9,7 @@ import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
 import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
 import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../../libs/common/LibCommonErrors.sol";
+import {LibChecks} from "../../../libs/common/LibChecks.sol";
 
 /// @title TokenController
 /// @author 3F Protocol
@@ -20,6 +21,7 @@ abstract contract TokenController is ITokenController {
   using LibTokenController for address;
   using SafeCastLib for uint256;
   using LibAllowance for uint128;
+  using LibChecks for address;
   using FixedPointMathLib for bool;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -66,6 +68,7 @@ abstract contract TokenController is ITokenController {
   /// @return success Always returns true if the transfer succeeds (reverts on failure)
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
+    to.checkNotZero();
     if (from == to) revert LibRequestErrors.TransferToSelf();
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
@@ -281,8 +284,9 @@ abstract contract TokenController is ITokenController {
   /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   function _approve(address from, address spender, uint256 amount, bool yt) public virtual returns (bool) {
     _checkToken(yt);
-    uint256 ptAmount = yt.ternary(0, amount);
-    uint256 ytAmount = yt.ternary(amount, 0);
+    (uint128 existingPt, uint128 existingYt) = from.allowances(spender);
+    uint256 ptAmount = yt.ternary(uint256(existingPt), amount);
+    uint256 ytAmount = yt.ternary(amount, uint256(existingYt));
     return _setAllowance(from, spender, ptAmount, ytAmount);
   }
 }

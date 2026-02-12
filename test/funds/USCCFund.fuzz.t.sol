@@ -50,7 +50,7 @@ contract USCCFundFuzzTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
@@ -64,19 +64,13 @@ contract USCCFundFuzzTest is Test {
     wuscc.grantRoles(address(this), WUSCC_SENDER_ROLE);
   }
 
-  function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(
-    uint96 input,
-    uint96 output,
-    uint96 preExistingUscc,
-    uint96 receivedUscc
-  ) public {
+  function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(uint96 input, uint96 output, uint96 receivedUscc)
+    public
+  {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
     uint256 outputAmount = bound(uint256(output), 0, maxAmount);
-    uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
-
-    if (preExistingAmount > 0) uscc.mint(address(fund), preExistingAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
     fund.create(order);
@@ -92,26 +86,17 @@ contract USCCFundFuzzTest is Test {
     fund.unlock(order);
 
     assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
-    // USCC is now held by wUSCC contract after unlock (not fund)
     assertEq(uscc.balanceOf(address(wuscc)), receivedAmount, "uscc in wuscc");
-    assertEq(uscc.balanceOf(address(fund)), preExistingAmount, "fund pre-existing uscc");
+    assertEq(uscc.balanceOf(address(fund)), 0, "fund uscc cleared");
     assertEq(usdc.balanceOf(recipient), inputAmount, "usdc recipient");
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
   }
 
-  function testFuzz_DepositUnlock_RevertsWhenReceivedLtOutput(
-    uint96 input,
-    uint96 output,
-    uint96 preExistingUscc,
-    uint96 receivedUscc
-  ) public {
+  function testFuzz_DepositUnlock_RevertsWhenReceivedLtOutput(uint96 input, uint96 output, uint96 receivedUscc) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
     uint256 outputAmount = bound(uint256(output), 1, maxAmount);
-    uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 receivedAmount = bound(uint256(receivedUscc), 0, outputAmount - 1);
-
-    if (preExistingAmount > 0) uscc.mint(address(fund), preExistingAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
     fund.create(order);
@@ -556,6 +541,71 @@ contract USCCFundFuzzTest is Test {
     assertEq(uint256(fund.state(original)), uint256(State.ENDED), "ended");
   }
 
+  function testFuzz_CancelRecovering_ThenUnlock_Deposit(uint96 input, uint96 output, uint96 receivedUscc) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
+
+    Order memory order = _depositOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    usdc.mint(address(this), inputAmount);
+    usdc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate delivers output USCC despite recovering state
+    if (receivedAmount > 0) uscc.mint(address(fund), receivedAmount);
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering();
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+
+    assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function testFuzz_CancelRecovering_ThenUnlock_Redeem(uint96 input, uint96 output, uint96 usdcOut) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 usdcOutAmount = bound(uint256(usdcOut), outputAmount, maxAmount);
+
+    Order memory order = _redeemOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering();
+
+    // Superstate delivers output USDC despite recovering state
+    if (usdcOutAmount > 0) usdc.mint(address(fund), usdcOutAmount);
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering();
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+
+    assertEq(usdc.balanceOf(address(this)), usdcOutAmount, "usdc received");
+    assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
   function _depositOrder(uint256 input, uint256 output) internal view returns (Order memory) {
     return Order({
       owner: address(this),
@@ -624,7 +674,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     handler = new USCCFundHandler();
 
@@ -646,17 +696,18 @@ contract USCCFundInvariantTest is StdInvariant, Test {
 
     handler.initialize(fund, usdc, uscc, wuscc, recipient);
 
-    bytes4[] memory selectors = new bytes4[](10);
+    bytes4[] memory selectors = new bytes4[](11);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_commit.selector;
     selectors[3] = handler.act_setRecovering.selector;
-    selectors[4] = handler.act_resolve.selector;
-    selectors[5] = handler.act_superstateMintUscc.selector;
-    selectors[6] = handler.act_superstateMintUsdc.selector;
-    selectors[7] = handler.act_unlock.selector;
-    selectors[8] = handler.act_recover.selector;
-    selectors[9] = handler.act_cancel.selector;
+    selectors[4] = handler.act_cancelRecovering.selector;
+    selectors[5] = handler.act_resolve.selector;
+    selectors[6] = handler.act_superstateMintUscc.selector;
+    selectors[7] = handler.act_superstateMintUsdc.selector;
+    selectors[8] = handler.act_unlock.selector;
+    selectors[9] = handler.act_recover.selector;
+    selectors[10] = handler.act_cancel.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -699,15 +750,13 @@ contract USCCFundInvariantTest is StdInvariant, Test {
       return;
     }
 
-    uint256 cachedUsccBalance = handler.cachedUsccBalance();
     uint256 effectiveInput = handler.effectiveInput();
     uint256 effectiveOutput = handler.effectiveOutput();
 
     if (stage == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
         uint256 currentUscc = uscc.balanceOf(address(fund));
-        uint256 delta = currentUscc >= cachedUsccBalance ? currentUscc - cachedUsccBalance : 0;
-        State expected = delta >= effectiveOutput ? State.UNLOCKING : State.PROCESSING;
+        State expected = currentUscc >= effectiveOutput ? State.UNLOCKING : State.PROCESSING;
         assertEq(uint256(actual), uint256(expected), "processing deposit");
       } else {
         uint256 currentUsdc = usdc.balanceOf(address(fund));
@@ -724,8 +773,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
         assertEq(uint256(actual), uint256(expected), "recovering deposit");
       } else {
         uint256 currentUscc = uscc.balanceOf(address(fund));
-        uint256 delta = currentUscc >= cachedUsccBalance ? currentUscc - cachedUsccBalance : 0;
-        State expected = delta >= effectiveInput ? State.RECOVERING : State.PROCESSING;
+        State expected = currentUscc >= effectiveInput ? State.RECOVERING : State.PROCESSING;
         assertEq(uint256(actual), uint256(expected), "recovering redeem");
       }
       return;

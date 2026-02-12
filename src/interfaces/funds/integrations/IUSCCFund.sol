@@ -54,6 +54,10 @@ interface IUSCCFund is IFund {
   /// @param orderId The unique identifier of the order being recovered.
   event OrderRecovering(bytes32 indexed orderId);
 
+  /// @notice Emitted when the RECOVERING state is canceled back to PROCESSING.
+  /// @param orderId The unique identifier of the order.
+  event OrderProcessing(bytes32 indexed orderId);
+
   /// @notice Emitted when the oracle address is updated.
   /// @param newOracle The new oracle address.
   /// @param operator The address that updated the oracle.
@@ -92,6 +96,12 @@ interface IUSCCFund is IFund {
   ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
   ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
   function recovering() external;
+
+  /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  ///      Use this if recovering() was called by mistake and Superstate delivered the output tokens.
+  ///      Once back to PROCESSING, the state() function will check for output tokens normally.
+  function cancelRecovering() external;
 
   /// @notice Sets the oracle address.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
