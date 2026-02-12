@@ -20,7 +20,6 @@ contract USCCFundHandler is Test {
 
   Order public order;
   State public internalState;
-  uint256 public cachedUsccBalance;
   uint256 public expectedRecipientUsdc;
   uint256 public effectiveInput;
   uint256 public effectiveOutput;
@@ -65,7 +64,6 @@ contract USCCFundHandler is Test {
 
     fund.create(order);
     internalState = State.ACCEPTED;
-    cachedUsccBalance = 0;
     effectiveInput = inputAmount;
     effectiveOutput = outputAmount;
   }
@@ -104,7 +102,6 @@ contract USCCFundHandler is Test {
 
     fund.create(order);
     internalState = State.ACCEPTED;
-    cachedUsccBalance = 0;
     effectiveInput = inputAmount;
     effectiveOutput = outputAmount;
   }
@@ -117,7 +114,6 @@ contract USCCFundHandler is Test {
       require(newState == State.PROCESSING, "commit state");
       require(amount == order.input, "commit amount");
       internalState = State.PROCESSING;
-      cachedUsccBalance = uscc.balanceOf(address(fund));
       expectedRecipientUsdc += order.input;
     } else {
       // Only commit redeem orders that are fully backed and owned by this handler.
@@ -128,7 +124,6 @@ contract USCCFundHandler is Test {
       require(newState == State.PROCESSING, "commit state");
       require(amount == order.input, "commit amount");
       internalState = State.PROCESSING;
-      cachedUsccBalance = uscc.balanceOf(address(fund));
     }
   }
 
@@ -164,8 +159,7 @@ contract USCCFundHandler is Test {
   function act_unlock() external {
     if (order.mode == Mode.DEPOSIT) {
       uint256 beforeBalance = wuscc.balanceOf(address(this));
-      uint256 currentUscc = uscc.balanceOf(address(fund));
-      uint256 expected = currentUscc >= cachedUsccBalance ? currentUscc - cachedUsccBalance : 0;
+      uint256 expected = uscc.balanceOf(address(fund));
 
       (State newState, uint256 amount) = fund.unlock(order);
       require(newState == State.ENDED, "unlock state");
@@ -200,8 +194,7 @@ contract USCCFundHandler is Test {
       assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
     } else {
       uint256 beforeBalance = wuscc.balanceOf(address(this));
-      uint256 currentUscc = uscc.balanceOf(address(fund));
-      uint256 expected = currentUscc >= cachedUsccBalance ? currentUscc - cachedUsccBalance : 0;
+      uint256 expected = uscc.balanceOf(address(fund));
 
       (State newState, uint256 amount) = fund.recover(order);
       require(newState == State.ENDED, "recover state");
