@@ -310,6 +310,15 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     emit OrderRecovering(_storage.currentOrderId);
   }
 
+  /// @inheritdoc IUSCCFund
+  function cancelRecovering() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+    UsccFundStorage storage _storage = _usccFundStorage();
+    if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    _storage.internalState = State.PROCESSING;
+
+    emit OrderProcessing(_storage.currentOrderId);
+  }
+
   /// @notice Sets the oracle address.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
