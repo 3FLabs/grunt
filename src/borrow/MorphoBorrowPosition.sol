@@ -5,9 +5,10 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {IMorpho, Id, MarketParams, Position} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
+import {MorphoBalancesLib} from "../libs/borrow/MorphoBalancesLib.sol";
 import {LibBorrowErrors} from "../libs/borrow/LibBorrowErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 import {LibCommonErrors} from "../libs/common/LibCommonErrors.sol";
@@ -30,6 +31,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   using SafeTransferLib for address;
   using LibChecks for address;
   using LibChecks for uint256;
+  using MorphoBalancesLib for IMorpho;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -156,10 +158,15 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     MarketParams memory _marketParams = _storage.marketParams;
+    IMorpho _morpho = _storage.morpho;
+
+    // Accrue interest before reading market data for the health check.
+    // This ensures the debt calculation uses up-to-date totalBorrowAssets.
+    _morpho.accrueInterest(_marketParams);
 
     // Withdraw collateral from Morpho to the owner (Position Manager)
     // This will revert if the position would become unhealthy
-    _storage.morpho.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
+    _morpho.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
 
     if (!_isHealthy(_storage.safeLtv, _marketParams.oracle)) {
       revert LibBorrowErrors.InsufficientCollateral();
@@ -177,10 +184,15 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     MarketParams memory _marketParams = _storage.marketParams;
+    IMorpho _morpho = _storage.morpho;
+
+    // Accrue interest before reading market data for the health check.
+    // This ensures the debt calculation uses up-to-date totalBorrowAssets.
+    _morpho.accrueInterest(_marketParams);
 
     // Borrow from Morpho, sending borrowed assets to the owner (Position Manager)
     // This will revert if the position would become unhealthy or insufficient liquidity
-    _storage.morpho.borrow(_marketParams, amount, 0, address(this), msg.sender);
+    _morpho.borrow(_marketParams, amount, 0, address(this), msg.sender);
 
     if (!_isHealthy(_storage.safeLtv, _marketParams.oracle)) {
       revert LibBorrowErrors.InsufficientCollateral();
@@ -250,9 +262,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert LibBorrowErrors.InconsistentInput();
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    if (_isHealthy(_storage.liquidationLtv, _storage.marketParams.oracle)) revert LibBorrowErrors.PositionHealthy();
 
+    // Accrue interest BEFORE the health check so the debt calculation is up-to-date.
+    // Without this, the _isHealthy check uses stale totalBorrowAssets, which could
+    // understate debt and incorrectly report a healthy position.
     _storage.morpho.accrueInterest(_storage.marketParams);
+
+    if (_isHealthy(_storage.liquidationLtv, _storage.marketParams.oracle)) revert LibBorrowErrors.PositionHealthy();
 
     {
       Position memory position = _storage.morpho.position(_storage.marketId, borrower);
@@ -324,7 +340,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IBorrowPosition
-  /// @dev Converts borrow shares to asset amount using Morpho's SharesMathLib.
+  /// @dev Converts borrow shares to asset amount using SharesMathLib with expected (interest-accrued)
+  ///      market totals from MorphoBalancesLib.
   ///      Uses `toAssetsUp` to round up, which is conservative when calculating debt.
   ///      Accounts for accrued interest since the borrow shares represent a proportion
   ///      of the total market debt that grows over time.
@@ -334,10 +351,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     Id _marketId = _storage.marketId;
 
     Position memory _pos = _morpho.position(_marketId, address(this));
-    Market memory _mkt = _morpho.market(_marketId);
 
-    // Convert borrow shares to assets using market totals
-    return uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+    // Use expected (interest-accrued) market totals to avoid understating debt
+    (,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
+      _morpho.expectedMarketBalances(_storage.marketParams, _marketId);
+
+    // Convert borrow shares to assets using expected market totals
+    return uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
   }
 
   /// @inheritdoc IBorrowPosition
@@ -365,33 +385,33 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @inheritdoc IBorrowPosition
   function maxBorrow(uint256 _ltv) external view override returns (uint256) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    Id _marketId = _storage.marketId;
-    IMorpho _morpho = _storage.morpho;
 
-    // Get available liquidity in the market
-    Market memory _mkt = _morpho.market(_marketId);
-    uint256 _availableLiquidity = _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
+    // Use expected (interest-accrued) market balances to avoid understating debt
+    (uint256 _totalSupplyAssets,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
+      _storage.morpho.expectedMarketBalances(_storage.marketParams, _storage.marketId);
 
-    // Get collateral price from oracle
-    Position memory _pos = _morpho.position(_marketId, address(this));
-    uint256 _collateralPrice = IOracle(_storage.marketParams.oracle).price();
+    Position memory _pos = _storage.morpho.position(_storage.marketId, address(this));
 
-    uint256 borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+    uint256 borrowed = uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
 
     // Calculate remaining borrow capacity: (collateralValue * LTV) - alreadyBorrowed
     // Uses zeroFloorSub to return 0 instead of underflowing if already over-utilized
     // Return remaining capacity or available liquidity, whichever is lower
-    return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_ltv).zeroFloorSub(borrowed)
-      .min(_availableLiquidity);
+    return uint256(_pos.collateral).mulDiv(IOracle(_storage.marketParams.oracle).price(), ORACLE_PRICE_SCALE)
+      .mulWad(_ltv).zeroFloorSub(borrowed).min(_totalSupplyAssets - _totalBorrowAssets);
   }
 
   /// @inheritdoc IBorrowPosition
   function availableLiquidity() external view override returns (uint256) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
 
-    // Get available liquidity in the market
-    Market memory _mkt = _storage.morpho.market(_storage.marketId);
-    return _mkt.totalSupplyAssets - _mkt.totalBorrowAssets;
+    // Use expected (interest-accrued) market balances.
+    // Interest accrual increases both supply and borrow by the same amount,
+    // so liquidity stays unchanged. However, fee shares redirect a portion of supply,
+    // which can subtly affect the calculation. Using expected values is correct.
+    (uint256 _totalSupplyAssets,, uint256 _totalBorrowAssets,) =
+      _storage.morpho.expectedMarketBalances(_storage.marketParams, _storage.marketId);
+    return _totalSupplyAssets - _totalBorrowAssets;
   }
 
   /// @inheritdoc IBorrowPosition
@@ -407,11 +427,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // If no debt, all collateral is available
     if (_pos.borrowShares == 0) return uint256(_pos.collateral);
 
-    Market memory _mkt = _morpho.market(_marketId);
+    // Use expected (interest-accrued) market totals to avoid understating debt
+    (,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
+      _morpho.expectedMarketBalances(_storage.marketParams, _marketId);
     uint256 _collateralPrice = IOracle(_storage.marketParams.oracle).price();
 
     // Calculate borrowed amount (rounds up to be conservative)
-    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
 
     // Required collateral = borrowed * ORACLE_PRICE_SCALE / (ltv * price)
     // This rounds up to be conservative (more collateral required = less available)
@@ -428,6 +450,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      2. Otherwise, calculates: maxBorrow = (collateral * oraclePrice / ORACLE_PRICE_SCALE) * ltv
   ///      3. Position is healthy if maxBorrow >= borrowed amount (with interest).
   ///      Uses conservative rounding: borrowed amount rounds up, max borrow rounds down.
+  ///      Uses expected (interest-accrued) market totals from MorphoBalancesLib.
   /// @param _ltv The LTV to use for the health calculation.
   /// @param oracle The oracle address to fetch the collateral price.
   /// @return True if the position is healthy, false otherwise.
@@ -440,13 +463,15 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // If no borrow, position is always healthy
     if (_pos.borrowShares == 0) return true;
 
-    Market memory _mkt = morpho.market(_marketId);
+    // Use expected (interest-accrued) market totals to avoid understating debt
+    (,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
+      morpho.expectedMarketBalances(_storage.marketParams, _marketId);
 
     // Get collateral price from oracle
     uint256 _collateralPrice = IOracle(oracle).price();
 
     // Calculate borrowed amount (rounds up to be conservative)
-    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_mkt.totalBorrowAssets, _mkt.totalBorrowShares);
+    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
 
     // Calculate max borrow based on collateral value and provided LTV
     return uint256(_pos.collateral).mulDiv(_collateralPrice, ORACLE_PRICE_SCALE).mulWad(_ltv) >= _borrowed;
