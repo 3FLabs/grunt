@@ -145,16 +145,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     owner_.checkNotZero();
     recipient_.checkNotZero();
     depositor_.checkContract();
-    oracle_.checkContract();
 
-    // Ensure oracle has 6 decimals
-    if (AggregatorV3Interface(oracle_).decimals() != _DECIMALS) {
-      revert LibFundsErrors.InvalidOracle(oracle_);
-    }
+    _usccFundStorage().recipient = recipient_;
 
-    UsccFundStorage storage _storage = _usccFundStorage();
-    _storage.recipient = recipient_;
-    _storage.oracle = oracle_;
+    _setOracle(oracle_);
 
     _initializeOwner(owner_);
     _setRoles(depositor_, DEPOSITOR_ROLE);
@@ -325,19 +319,11 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     emit OrderProcessing(_storage.currentOrderId);
   }
 
-  /// @inheritdoc IUSCCFund
-  function setOracle(address oracle) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
-    oracle.checkContract();
-
-    // Ensure oracle decimals match USCC decimals
-    if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
-      revert LibFundsErrors.InvalidOracle(oracle);
-    }
-
-    UsccFundStorage storage _storage = _usccFundStorage();
-    _storage.oracle = oracle;
-
-    emit OracleUpdated(oracle, msg.sender);
+  /// @notice Sets the oracle address.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @param oracle The new oracle address.
+  function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+    _setOracle(oracle);
   }
 
   /// @inheritdoc IUSCCFund
@@ -487,6 +473,20 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
+  }
+
+  /// @dev Internal function to validate and set the oracle address.
+  /// @param oracle The oracle address to set.
+  function _setOracle(address oracle) private {
+    oracle.checkContract();
+
+    // Ensure oracle decimals match USCC decimals
+    if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
+      revert LibFundsErrors.InvalidOracle(oracle);
+    }
+
+    _usccFundStorage().oracle = oracle;
+    emit OracleUpdated(oracle, msg.sender);
   }
 
   /// @dev Internal function to check that a token has the expected decimals (6).
