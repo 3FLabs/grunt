@@ -51,8 +51,12 @@ contract LibManagerStorageHarness {
   }
 
   /// @dev Expose convertToShares (pure function)
-  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets) external pure returns (uint256) {
-    return LibView.convertToShares(assets, _totalSupply, _totalAssets);
+  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets, bool roundUp)
+    external
+    pure
+    returns (uint256)
+  {
+    return LibView.convertToShares(assets, _totalSupply, _totalAssets, roundUp);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
