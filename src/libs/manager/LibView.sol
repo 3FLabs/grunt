@@ -57,11 +57,22 @@ library LibView {
     }
   }
 
-  /// @dev Returns the total assets (quoted collateral minus debt).
+  /// @dev Returns the total assets as the sum of per-position NAVs, treating bad-debt positions as zero.
+  ///      Each position's NAV is computed as collateralQuoted.zeroFloorSub(debt), ensuring positions
+  ///      with bad debt do not reduce the overall NAV.
   /// @param ps The position manager storage data
-  /// @return The total assets value
-  function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256) {
-    return collateralAmountQuoted(ps).zeroFloorSub(debtAmount(ps));
+  /// @return amount The total assets value
+  function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
+    address[] memory modules = ps.borrowModules.values();
+    uint256 modulesLength = modules.length;
+    for (uint256 i = 0; i < modulesLength;) {
+      uint256 collateral = IBorrowPosition(modules[i]).totalCollateralQuoted();
+      uint256 debt = IBorrowPosition(modules[i]).totalBorrowed();
+      amount += collateral.zeroFloorSub(debt);
+      unchecked {
+        ++i;
+      }
+    }
   }
 
   /// @dev Converts assets to shares using virtual offset for inflation attack protection.

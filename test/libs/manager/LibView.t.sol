@@ -111,6 +111,83 @@ contract LibViewTest is Test {
     assertEq(harness.totalAssets(), expected);
   }
 
+  function test_totalAssets_badDebtPositionTreatedAsZero() public {
+    // Position 1: bad debt (debt > collateral)
+    MockBorrowPosition badModule = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    badModule.setTotalCollateralQuoted(100e18);
+    badModule.setTotalBorrowed(200e18);
+
+    // Position 2: healthy (collateral > debt)
+    MockBorrowPosition healthyModule = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    healthyModule.setTotalCollateralQuoted(500e18);
+    healthyModule.setTotalBorrowed(100e18);
+
+    harness.addBorrowModule(address(badModule));
+    harness.addBorrowModule(address(healthyModule));
+
+    // Bad debt position contributes 0 (not -100), healthy contributes 400
+    // Total = 0 + 400 = 400 (not 600 - 300 = 300)
+    assertEq(harness.totalAssets(), 400e18);
+  }
+
+  function test_totalAssets_allPositionsBadDebt() public {
+    MockBorrowPosition module1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    module1.setTotalCollateralQuoted(50e18);
+    module1.setTotalBorrowed(100e18);
+
+    MockBorrowPosition module2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    module2.setTotalCollateralQuoted(30e18);
+    module2.setTotalBorrowed(80e18);
+
+    harness.addBorrowModule(address(module1));
+    harness.addBorrowModule(address(module2));
+
+    // Both positions have bad debt, total should be 0
+    assertEq(harness.totalAssets(), 0);
+  }
+
+  function test_totalAssets_mixedPositionsWithZeroDebt() public {
+    // Position with no debt
+    MockBorrowPosition noDebtModule = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    noDebtModule.setTotalCollateralQuoted(300e18);
+    noDebtModule.setTotalBorrowed(0);
+
+    // Position with bad debt
+    MockBorrowPosition badModule = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    badModule.setTotalCollateralQuoted(10e18);
+    badModule.setTotalBorrowed(50e18);
+
+    // Position with equal collateral and debt
+    MockBorrowPosition evenModule = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    evenModule.setTotalCollateralQuoted(100e18);
+    evenModule.setTotalBorrowed(100e18);
+
+    harness.addBorrowModule(address(noDebtModule));
+    harness.addBorrowModule(address(badModule));
+    harness.addBorrowModule(address(evenModule));
+
+    // 300 + 0 + 0 = 300
+    assertEq(harness.totalAssets(), 300e18);
+  }
+
+  function testFuzz_totalAssets_multiplePositions(uint128 col1, uint128 debt1, uint128 col2, uint128 debt2) public {
+    MockBorrowPosition module1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    module1.setTotalCollateralQuoted(col1);
+    module1.setTotalBorrowed(debt1);
+
+    MockBorrowPosition module2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    module2.setTotalCollateralQuoted(col2);
+    module2.setTotalBorrowed(debt2);
+
+    harness.addBorrowModule(address(module1));
+    harness.addBorrowModule(address(module2));
+
+    // Per-position floor: each position's NAV is max(collateral - debt, 0)
+    uint256 nav1 = col1 > debt1 ? uint256(col1) - uint256(debt1) : 0;
+    uint256 nav2 = col2 > debt2 ? uint256(col2) - uint256(debt2) : 0;
+    assertEq(harness.totalAssets(), nav1 + nav2);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   convertToShares TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
