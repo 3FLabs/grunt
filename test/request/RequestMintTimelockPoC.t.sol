@@ -18,11 +18,11 @@ import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
 ///        1. Legitimate brokers deposit 1,000,000 USDC → 1,000,000 PT + 1,000,000 YT
 ///        2. Borrower uses funds and repays 1,100,000 USDC (100,000 yield)
 ///        3. Colluding facilitator calls consume() with inflated YT (1 USDC → 1 PT + 9,000,000 YT)
-///        4. Facilitator calls setRepaid() atomically
+///        4. Facilitator calls setRepaid(uint256) atomically
 ///        5. Colluding broker extracts 90% of the yield (90,000 USDC) having invested only 1 USDC
 ///
 ///      With the mint-to-repaid timelock fix, step 4 reverts because a minimum delay
-///      is enforced between the last mint/consume and setRepaid().
+///      is enforced between the last mint/consume and setRepaid(uint256).
 contract RequestMintTimelockPoCTest is Test {
   RequestFactory public factory;
   MockERC20 public asset;
@@ -118,18 +118,18 @@ contract RequestMintTimelockPoCTest is Test {
     _consumeOffer(reqAddr, colludingBroker, 1e6, 9_000_000e6, 1);
     assertEq(Vault(ytAddr).balanceOf(colludingBroker.addr), 9_000_000e6, "Attacker has inflated YT");
 
-    // --- Step 4: Facilitator tries to call setRepaid() atomically — BLOCKED ---
+    // --- Step 4: Facilitator tries to call setRepaid(uint256) atomically — BLOCKED ---
     uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
 
     assertEq(Request(reqAddr).repaidAvailableAt(), expectedAvailableAt, "repaidAvailableAt should match");
 
     // --- Verify: after timelock passes, setRepaid works ---
     vm.warp(block.timestamp + MINT_TIMELOCK);
     vm.prank(owner);
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
     assertTrue(Request(reqAddr).canWithdraw(), "Withdrawals should be enabled after timelock");
   }
 
@@ -141,7 +141,7 @@ contract RequestMintTimelockPoCTest is Test {
     );
 
     vm.prank(owner);
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
     assertTrue(Request(reqAddr).canWithdraw());
   }
 
@@ -162,7 +162,7 @@ contract RequestMintTimelockPoCTest is Test {
     // setRepaid should revert due to timelock
     vm.prank(owner);
     vm.expectRevert();
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
 
     // But warp past deadline — auto-repay via syncRepaidStatus should work
     vm.warp(deadline);
@@ -188,6 +188,6 @@ contract RequestMintTimelockPoCTest is Test {
     uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
-    Request(reqAddr).setRepaid();
+    Request(reqAddr).setRepaid(0);
   }
 }
