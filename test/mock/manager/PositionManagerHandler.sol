@@ -290,8 +290,8 @@ contract PositionManagerHandler is Test {
     address toPos = modules[toIdx];
 
     // Determine the max amount of available collateral to move.
-    (uint256 lltv,,) = positionManager.config();
-    uint256 available = IBorrowPosition(fromPos).availableCollateral(lltv);
+    (uint256 ltv,,) = positionManager.config();
+    uint256 available = IBorrowPosition(fromPos).availableCollateral(ltv);
     if (available == 0) return;
 
     amount = _bound(amount, 1, available);
@@ -423,13 +423,13 @@ contract PositionManagerHandler is Test {
     }
   }
 
-  /// @notice Changes the PositionManager's LLTV parameter.
+  /// @notice Changes the PositionManager's LTV parameter.
   /// @dev Bounds to [0.1e18, 0.95e18]. Affects available collateral calculations.
-  /// @param lltvSeed Raw fuzz input for the new LLTV.
-  function act_setLltv(uint256 lltvSeed) external refreshFullLiquidation {
-    uint256 newLltv = _bound(lltvSeed, 0.1e18, 0.95e18);
+  /// @param ltvSeed Raw fuzz input for the new LTV.
+  function act_setLtv(uint256 ltvSeed) external refreshFullLiquidation {
+    uint256 newLtv = _bound(ltvSeed, 0.1e18, 0.95e18);
     vm.prank(owner);
-    try positionManager.setLltv(newLltv) {} catch {}
+    try positionManager.setLtv(newLtv) {} catch {}
   }
 
   /// @notice Changes the maxRebalanceLoss parameter.

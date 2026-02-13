@@ -92,7 +92,7 @@ library LibOperations {
 
         // Then withdraw collateral
         if (remainingCollateral > 0) {
-          uint256 toWithdraw = IBorrowPosition(position).availableCollateral(_storage.lltv).min(remainingCollateral);
+          uint256 toWithdraw = IBorrowPosition(position).availableCollateral(_storage.ltv).min(remainingCollateral);
           if (toWithdraw > 0) {
             position.withdraw(toWithdraw);
             remainingCollateral -= toWithdraw;

@@ -34,7 +34,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
         collateralAsset: address(reentrantCollateral),
         debtAsset: address(debtToken)
       }),
-      POSITION_MANAGER_LLTV,
+      POSITION_MANAGER_LTV,
       address(0)
     );
 
@@ -79,7 +79,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
         collateralAsset: address(collateralToken),
         debtAsset: address(reentrantDebt)
       }),
-      POSITION_MANAGER_LLTV,
+      POSITION_MANAGER_LTV,
       address(0)
     );
 

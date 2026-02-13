@@ -54,7 +54,7 @@ interface IPositionManagerLP {
 
   /// @notice Withdraws collateral and repays debt across the aggregated borrow positions.
   /// @dev Iterates through the withdrawal queue. Repays debt first, then withdraws collateral.
-  ///      - If withdrawing collateral without full debt repayment, checks available collateral based on LLTV
+  ///      - If withdrawing collateral without full debt repayment, checks available collateral based on LTV
   ///      - Reverts with InsufficientAvailableCollateral if attempting to withdraw locked collateral
   ///      - Accrues fees before the operation
   ///      - Burns shares based on the net value change

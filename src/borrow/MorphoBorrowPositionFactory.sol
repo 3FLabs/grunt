@@ -22,7 +22,7 @@ import {IMorpho, Id} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 ///      1. Factory is deployed with an initial beacon owner
 ///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
 ///      3. Users call `createBorrowPosition()` to deploy new MorphoBorrowPosition instances
-///      4. Each position is initialized with its Morpho market and custom LLTV
+///      4. Each position is initialized with its Morpho market and custom LTV
 ///
 ///      Upgrade Flow:
 ///      1. Beacon owner deploys new MorphoBorrowPosition implementation contract

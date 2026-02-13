@@ -41,14 +41,14 @@ contract PositionManagerFactory {
   /// @param owner The address of the position manager owner
   /// @param collateralAsset The collateral asset address
   /// @param debtAsset The debt asset address
-  /// @param lltv The LLTV for available collateral calculation
+  /// @param ltv The LTV for available collateral calculation
   /// @param transferGuard The initial transfer guard address (address(0) if disabled)
   event PositionManagerCreated(
     address indexed positionManager,
     address indexed owner,
     address indexed collateralAsset,
     address debtAsset,
-    uint256 lltv,
+    uint256 ltv,
     address transferGuard
   );
 
@@ -85,21 +85,21 @@ contract PositionManagerFactory {
   ///      Emits a {PositionManagerCreated} event.
   /// @param owner The address that will own the PositionManager
   /// @param metadata The metadata containing name, symbol, decimals, collateral and debt assets
-  /// @param lltv The LLTV for available collateral calculation (WAD precision)
+  /// @param ltv The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard The initial transfer guard address (address(0) to disable)
   /// @return positionManager The address of the newly deployed PositionManager proxy
   function createPositionManager(
     address owner,
     PositionManagerMetadata memory metadata,
-    uint256 lltv,
+    uint256 ltv,
     address transferGuard
   ) external returns (address positionManager) {
     positionManager = POSITION_MANAGER_BEACON.deployERC1967BeaconProxy();
 
-    PositionManager(positionManager).initialize(owner, metadata, lltv, transferGuard);
+    PositionManager(positionManager).initialize(owner, metadata, ltv, transferGuard);
 
     emit PositionManagerCreated(
-      positionManager, owner, metadata.collateralAsset, metadata.debtAsset, lltv, transferGuard
+      positionManager, owner, metadata.collateralAsset, metadata.debtAsset, ltv, transferGuard
     );
   }
 }

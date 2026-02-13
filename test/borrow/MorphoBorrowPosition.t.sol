@@ -74,7 +74,7 @@ contract MorphoBorrowPositionTest is Test {
   error AmountZero();
   error InsufficientCollateral();
   error PositionHealthy();
-  error InvalidLltv();
+  error InvalidLtv();
   error LiquidationLtvExceedsMarketLltv(uint128 liquidationLtv, uint256 marketLltv);
   error SafeLtvNotLessThanLiquidationLtv(uint128 safeLtv, uint128 liquidationLtv);
   error InconsistentInput();
@@ -250,21 +250,21 @@ contract MorphoBorrowPositionTest is Test {
   function test_initialize_RevertWhen_LiquidationLtvIsZero() public {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
 
-    vm.expectRevert(InvalidLltv.selector);
+    vm.expectRevert(InvalidLtv.selector);
     newPosition.initialize(morpho, marketId, positionManager, 0, 0);
   }
 
   function test_initialize_RevertWhen_SafeLtvIsZero() public {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
 
-    vm.expectRevert(InvalidLltv.selector);
+    vm.expectRevert(InvalidLtv.selector);
     newPosition.initialize(morpho, marketId, positionManager, 0, LIQUIDATION_LTV);
   }
 
   function test_initialize_RevertWhen_LiquidationLtvExceedsWad() public {
     MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
 
-    vm.expectRevert(InvalidLltv.selector);
+    vm.expectRevert(InvalidLtv.selector);
     newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, uint128(1e18 + 1));
   }
 

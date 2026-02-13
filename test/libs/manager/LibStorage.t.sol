@@ -25,29 +25,29 @@ contract LibManagerStorageTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       setLltv TESTS                        */
+  /*                        setLtv TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setLltv_emitsEvent() public {
-    uint256 lltv = 0.86e18;
+  function test_setLtv_emitsEvent() public {
+    uint256 ltv = 0.86e18;
 
     vm.expectEmit();
-    emit IPositionManagerAdmin.LLTVSet(lltv);
-    harness.setLltv(lltv);
+    emit IPositionManagerAdmin.LTVSet(ltv);
+    harness.setLtv(ltv);
   }
 
-  function testFuzz_setLltv_success(uint256 lltv) public {
-    lltv = bound(lltv, 1, FixedPointMathLib.WAD);
+  function testFuzz_setLtv_success(uint256 ltv) public {
+    ltv = bound(ltv, 1, FixedPointMathLib.WAD);
 
-    harness.setLltv(lltv);
-    assertEq(harness.getLltv(), uint64(lltv));
+    harness.setLtv(ltv);
+    assertEq(harness.getLtv(), uint64(ltv));
   }
 
-  function testFuzz_setLltv_revertOnInvalid(uint256 lltv) public {
-    vm.assume(lltv == 0 || lltv > FixedPointMathLib.WAD);
+  function testFuzz_setLtv_revertOnInvalid(uint256 ltv) public {
+    vm.assume(ltv == 0 || ltv > FixedPointMathLib.WAD);
 
-    vm.expectRevert(LibCommonErrors.InvalidLltv.selector);
-    harness.setLltv(lltv);
+    vm.expectRevert(LibCommonErrors.InvalidLtv.selector);
+    harness.setLtv(ltv);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -38,16 +38,16 @@ contract PositionManager is
   /// @notice Initializes the PositionManager.
   /// @param owner_ The owner of the contract
   /// @param metadata_ The metadata containing name, symbol, decimals, collateral and debt assets
-  /// @param lltv_ The LLTV for available collateral calculation (WAD precision)
+  /// @param ltv_ The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard_ The initial transfer guard address (address(0) to disable)
-  function initialize(address owner_, PositionManagerMetadata memory metadata_, uint256 lltv_, address transferGuard_)
+  function initialize(address owner_, PositionManagerMetadata memory metadata_, uint256 ltv_, address transferGuard_)
     external
     initializer
   {
     _initializeOwner(owner_);
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     _storage.metadata = metadata_;
-    _storage.setLltv(lltv_);
+    _storage.setLtv(ltv_);
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
     _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
@@ -145,9 +145,9 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function config() public view returns (uint256 lltv, uint16 maxRebalanceLoss, address transferGuard) {
+  function config() public view returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    lltv = _storage.lltv;
+    ltv = _storage.ltv;
     maxRebalanceLoss = _storage.maxRebalanceLoss;
     transferGuard = _storage.transferGuard;
   }

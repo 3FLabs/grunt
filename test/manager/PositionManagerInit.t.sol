@@ -15,7 +15,7 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     assertEq(positionManager.name(), "Position Manager Shares");
     assertEq(positionManager.symbol(), "PMS");
     assertEq(positionManager.decimals(), 18);
-    assertEq(_lltv(), POSITION_MANAGER_LLTV);
+    assertEq(_ltv(), POSITION_MANAGER_LTV);
   }
 
   function test_supplyQueue() public view {

@@ -30,9 +30,9 @@ library LibCommonErrors {
   error Paused();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       LLTV ERRORS                          */
+  /*                        LTV ERRORS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when the provided LLTV is invalid (zero or greater than WAD).
-  error InvalidLltv();
+  /// @notice Thrown when the provided LTV is invalid (zero or greater than WAD).
+  error InvalidLtv();
 }

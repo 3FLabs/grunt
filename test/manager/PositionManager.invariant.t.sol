@@ -65,7 +65,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   uint256 constant DEFAULT_LLTV = 0.8e18;
   uint128 constant BP_SAFE_LTV = 0.65e18;
   uint128 constant BP_LIQUIDATION_LTV = 0.72e18;
-  uint256 constant POSITION_MANAGER_LLTV = 0.7e18;
+  uint256 constant POSITION_MANAGER_LTV = 0.7e18;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
   uint256 constant _ROLE_MINTER = 1 << 0;
   uint256 constant _ROLE_CURATOR = 1 << 1;
@@ -152,7 +152,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      POSITION_MANAGER_LLTV,
+      POSITION_MANAGER_LTV,
       address(0)
     );
 
@@ -234,7 +234,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     selectors[7] = PositionManagerHandler.act_preLiquidate.selector;
     selectors[8] = PositionManagerHandler.act_morphoLiquidate.selector;
     selectors[9] = PositionManagerHandler.act_accrueInterest.selector;
-    selectors[10] = PositionManagerHandler.act_setLltv.selector;
+    selectors[10] = PositionManagerHandler.act_setLtv.selector;
     selectors[11] = PositionManagerHandler.act_setMaxRebalanceLoss.selector;
     selectors[12] = PositionManagerHandler.act_supplyMorphoLiquidity.selector;
     // WrappedAsset actions

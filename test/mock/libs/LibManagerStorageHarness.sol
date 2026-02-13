@@ -16,9 +16,9 @@ contract LibManagerStorageHarness {
   /*                    LibStorage FUNCTIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Expose setLltv
-  function setLltv(uint256 lltv_) external {
-    LibStorage.positionManagerStorage().setLltv(lltv_);
+  /// @dev Expose setLtv
+  function setLtv(uint256 ltv_) external {
+    LibStorage.positionManagerStorage().setLtv(ltv_);
   }
 
   /// @dev Expose updateSnapshot
@@ -59,9 +59,9 @@ contract LibManagerStorageHarness {
   /*                      TEST HELPERS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Get lltv value
-  function getLltv() external view returns (uint64) {
-    return LibStorage.positionManagerStorage().lltv;
+  /// @dev Get ltv value
+  function getLtv() external view returns (uint64) {
+    return LibStorage.positionManagerStorage().ltv;
   }
 
   /// @dev Get lastTotalAssets value
