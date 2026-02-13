@@ -172,7 +172,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     if (totalAssetsAfter > totalAssetsBefore) {
       // Assets increased: mint shares to caller
       uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
-      uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore);
+      uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore, false);
       if (sharesToMint == 0) revert LibManagerErrors.ZeroShares();
       _mint(msg.sender, sharesToMint);
       // Safe: sharesToMint is capped by total supply which fits in uint128
@@ -181,7 +181,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
-      uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore);
+      uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore, true);
       if (sharesToBurn == 0) revert LibManagerErrors.ZeroShares();
       _burn(msg.sender, sharesToBurn);
       // Safe: sharesToBurn is capped by total supply which fits in uint128

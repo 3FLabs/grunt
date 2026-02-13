@@ -68,12 +68,16 @@ library LibView {
   /// @param assets The amount of assets to convert
   /// @param _totalSupply The current total supply of shares
   /// @param _totalAssets The current total assets
+  /// @param roundUp If true, rounds up the result (use when burning shares); if false, rounds down (use when minting)
   /// @return shares The equivalent amount of shares
-  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets)
+  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets, bool roundUp)
     internal
     pure
     returns (uint256 shares)
   {
+    if (roundUp) {
+      return assets.mulDivUp(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
+    }
     return assets.mulDiv(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
   }
 }

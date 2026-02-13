@@ -115,9 +115,9 @@ contract LibViewTest is Test {
   /*                   convertToShares TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_convertToShares(uint96 assets, uint96 totalSupply, uint96 totalAssets) public view {
+  function testFuzz_convertToShares_roundDown(uint96 assets, uint96 totalSupply, uint96 totalAssets) public view {
     // Using uint96 to avoid mulDiv overflow when assets * (totalSupply + VIRTUAL_SHARES) exceeds uint256
-    uint256 shares = harness.convertToShares(assets, totalSupply, totalAssets);
+    uint256 shares = harness.convertToShares(assets, totalSupply, totalAssets, false);
 
     // Verify the formula: shares = assets * (totalSupply + VIRTUAL_SHARES) / (totalAssets + VIRTUAL_ASSETS)
     uint256 expected =
@@ -125,17 +125,49 @@ contract LibViewTest is Test {
     assertEq(shares, expected);
   }
 
+  function testFuzz_convertToShares_roundUp(uint96 assets, uint96 totalSupply, uint96 totalAssets) public view {
+    // Using uint96 to avoid mulDiv overflow when assets * (totalSupply + VIRTUAL_SHARES) exceeds uint256
+    uint256 sharesUp = harness.convertToShares(assets, totalSupply, totalAssets, true);
+
+    // Verify the formula uses mulDivUp: shares = ceil(assets * (totalSupply + VIRTUAL_SHARES) / (totalAssets + VIRTUAL_ASSETS))
+    uint256 expected =
+      uint256(assets).mulDivUp(uint256(totalSupply) + VIRTUAL_SHARES, uint256(totalAssets) + VIRTUAL_ASSETS);
+    assertEq(sharesUp, expected);
+  }
+
+  function testFuzz_convertToShares_roundUpGteRoundDown(uint96 assets, uint96 totalSupply, uint96 totalAssets)
+    public
+    view
+  {
+    uint256 sharesDown = harness.convertToShares(assets, totalSupply, totalAssets, false);
+    uint256 sharesUp = harness.convertToShares(assets, totalSupply, totalAssets, true);
+    assertGe(sharesUp, sharesDown, "roundUp result must be >= roundDown result");
+  }
+
+  function test_convertToShares_roundUpDifference() public view {
+    // Choose values where rounding matters: 7 * (100 + 1e6) / (3 + 1) = 7_000_700 / 4 = 1_750_175
+    // 7 * 1_000_100 = 7_000_700; 7_000_700 / 4 = 1_750_175 exactly, no rounding difference
+    // Use values that do not divide evenly: assets=3, totalSupply=0, totalAssets=2
+    // 3 * (0 + 1e6) / (2 + 1) = 3_000_000 / 3 = 1_000_000 exactly
+    // Try: assets=1, totalSupply=1, totalAssets=2 => 1 * (1 + 1e6) / (2 + 1) = 1_000_001 / 3 = 333_333 (down), 333_334 (up)
+    uint256 sharesDown = harness.convertToShares(1, 1, 2, false);
+    uint256 sharesUp = harness.convertToShares(1, 1, 2, true);
+    assertEq(sharesDown, 333_333, "roundDown should truncate");
+    assertEq(sharesUp, 333_334, "roundUp should ceil");
+    assertEq(sharesUp - sharesDown, 1, "difference should be exactly 1 for non-exact division");
+  }
+
   function test_convertToShares_preventInflationAttack() public view {
     // Test that virtual shares/assets prevent inflation attack
     // Attacker deposits 1 wei, then donates large amount
 
     // First deposit: 1 wei with 0 supply
-    uint256 attackerShares = harness.convertToShares(1, 0, 0);
+    uint256 attackerShares = harness.convertToShares(1, 0, 0, false);
     // attackerShares = 1 * VIRTUAL_SHARES / VIRTUAL_ASSETS = 1
 
     // Attacker donates 1e18 tokens, making totalAssets = 1 + 1e18
     // Victim deposits 1e18
-    uint256 victimShares = harness.convertToShares(1e18, attackerShares, 1 + 1e18);
+    uint256 victimShares = harness.convertToShares(1e18, attackerShares, 1 + 1e18, false);
 
     // Without virtual offset, victim would get 0 shares
     // With virtual offset, victim still gets meaningful shares

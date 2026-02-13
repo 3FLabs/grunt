@@ -327,13 +327,16 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     positionManager.deposit(1, 0);
   }
 
-  /// @notice Test ZeroShares revert when burning results in 0 shares due to donation attack
-  /// @dev Covers line 334: if (sharesToBurn == 0) revert ZeroShares()
+  /// @notice Test that withdrawing 1 wei after donation still burns at least 1 share (roundUp)
+  /// @dev After the roundUp fix for sharesToBurn, a 1-wei withdrawal rounds up to 1 share
+  ///      instead of rounding down to 0. This prevents free (zero-cost) withdrawals.
   function test_withdraw_revertOnZeroSharesAfterDonation() public {
     // Step 1: Initial deposit with debt
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 sharesBefore = positionManager.balanceOf(minter);
 
     // Step 2: Donate massive amount to inflate totalAssets
     uint256 donationAmount = 1e30;
@@ -345,10 +348,14 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     borrowPosition1.supplyCollateral(donationAmount);
     vm.stopPrank();
 
-    // Step 3: Try to withdraw just 1 wei of collateral
-    // The asset change is tiny relative to totalAssets, so shares calculation rounds to 0
+    // Step 3: Withdraw 1 wei of collateral.
+    // With roundUp, sharesToBurn rounds up to 1 instead of 0, so the withdraw succeeds
+    // and the caller pays at least 1 share for the 1-wei withdrawal.
     vm.prank(minter);
-    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
-    positionManager.withdraw(1, 0);
+    int256 sharesDelta = positionManager.withdraw(1, 0);
+
+    // sharesDelta should be -1 (burned 1 share via roundUp)
+    assertEq(sharesDelta, -1, "Should burn exactly 1 share due to roundUp");
+    assertEq(positionManager.balanceOf(minter), sharesBefore - 1, "Should have 1 less share");
   }
 }
