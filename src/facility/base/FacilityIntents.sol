@@ -29,11 +29,13 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
 
   /// @notice EIP-712 typehash for setFund params.
   /// @dev keccak256("SetFundParams(uint256 id,address newFund,uint256 deadline)")
-  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH = 0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
+  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH =
+    0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
 
   /// @notice EIP-712 typehash for setRequest params.
   /// @dev keccak256("SetRequestParams(uint256 id,address newRequest,uint256 deadline)")
-  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH = 0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH =
+    0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */

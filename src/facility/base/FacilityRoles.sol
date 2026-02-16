@@ -21,12 +21,10 @@ abstract contract FacilityRoles is OwnableRoles {
 
   /// @dev Verifies signatures against quorum and guardian-role constraints.
   ///      Signers must be sorted in strictly ascending order and unique.
-  function _checkSignatures(
-    bytes32 digest,
-    address[] calldata signers,
-    bytes[] calldata signatures,
-    uint256 quorum
-  ) internal view {
+  function _checkSignatures(bytes32 digest, address[] calldata signers, bytes[] calldata signatures, uint256 quorum)
+    internal
+    view
+  {
     if (quorum == 0) return;
     if (signers.length != signatures.length) revert LibFacilityErrors.InvalidSignatureLength();
     if (signers.length < quorum) revert LibFacilityErrors.InvalidSignatureCount(quorum, signers.length);

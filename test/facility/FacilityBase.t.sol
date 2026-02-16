@@ -124,10 +124,12 @@ contract FacilityBaseTest is Test {
   uint40 constant DEFAULT_REPAY_TIMELOCK = 1 hours;
 
   /// @notice EIP-712 typehash for setFund params.
-  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH = 0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
+  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH =
+    0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
 
   /// @notice EIP-712 typehash for setRequest params.
-  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH = 0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH =
+    0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -334,14 +336,11 @@ contract FacilityBaseTest is Test {
 
   /// @notice Computes the digest for setFund actions.
   function _getSetFundDigest(uint256 id, address newFund, uint256 deadline) internal view returns (bytes32) {
-    return
-      keccak256(
-        abi.encodePacked(
-          "\x19\x01",
-          _facilityDomainSeparator(),
-          keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline))
-        )
-      );
+    return keccak256(
+      abi.encodePacked(
+        "\x19\x01", _facilityDomainSeparator(), keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline))
+      )
+    );
   }
 
   /// @notice Computes the digest for setRequest actions.
@@ -389,13 +388,9 @@ contract FacilityBaseTest is Test {
   }
 
   /// @notice Calls setFund as facilitator with explicit signature args.
-  function _setFund(
-    uint256 id,
-    address newFund,
-    uint256 deadline,
-    address[] memory signers,
-    bytes[] memory signatures
-  ) internal {
+  function _setFund(uint256 id, address newFund, uint256 deadline, address[] memory signers, bytes[] memory signatures)
+    internal
+  {
     facility.setFund(id, newFund, deadline, signers, signatures);
   }
 

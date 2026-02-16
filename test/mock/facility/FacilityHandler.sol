@@ -109,7 +109,8 @@ contract FacilityHandler is Test {
 
   /// @dev EIP-712 typehash for setRequest params.
   ///      Type string: "SetRequestParams(uint256 id,address newRequest,uint256 deadline)"
-  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH = 0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH =
+    0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INIT FLAG                             */
@@ -180,9 +181,7 @@ contract FacilityHandler is Test {
   function _getSetRequestDigest(uint256 id, address newRequest, uint256 deadline) internal view returns (bytes32) {
     return keccak256(
       abi.encodePacked(
-        "\x19\x01",
-        _domainSeparator(),
-        keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))
+        "\x19\x01", _domainSeparator(), keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))
       )
     );
   }

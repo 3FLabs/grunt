@@ -12,13 +12,13 @@ import {LibPause} from "../common/LibPause.sol";
 /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
 ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
 /// @param intents Mapping from intent ID to Intent struct.
-  /// @param descriptor The intent descriptor contract for generating token metadata.
-  /// @param lastIntentId The most recent intent ID assigned.
-  /// @param usedDigests Mapping of used digests to prevent replay attacks across swaps and intent updates.
-  /// @param fundsIntent Mapping from fund address to intent ID.
-  /// @param requestsIntent Mapping from request address to intent ID.
-  /// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
-  /// @param repayTimelock Minimum delay (seconds) between setRequest and first repay. Packed with `pausedUntil`.
+/// @param descriptor The intent descriptor contract for generating token metadata.
+/// @param lastIntentId The most recent intent ID assigned.
+/// @param usedDigests Mapping of used digests to prevent replay attacks across swaps and intent updates.
+/// @param fundsIntent Mapping from fund address to intent ID.
+/// @param requestsIntent Mapping from request address to intent ID.
+/// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
+/// @param repayTimelock Minimum delay (seconds) between setRequest and first repay. Packed with `pausedUntil`.
 struct FacilityStorageData {
   mapping(uint256 => Intent) intents;
   IIntentDescriptor descriptor;
