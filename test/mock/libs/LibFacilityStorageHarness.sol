@@ -78,7 +78,7 @@ contract LibFacilityStorageHarness {
 
   /// @dev Check if digest is used
   function isDigestUsed(bytes32 digest) external view returns (bool) {
-    return LibStorage.facilityStorage().usedSwapDigests[digest];
+    return LibStorage.facilityStorage().usedDigests[digest];
   }
 
   /// @dev Get fund intent mapping

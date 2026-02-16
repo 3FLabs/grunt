@@ -107,6 +107,10 @@ contract FacilityHandler is Test {
   /// @dev EIP-712 typehash for SwapParams struct.
   bytes32 internal constant SWAP_PARAMS_TYPEHASH = 0x8b4e182587850acdf21dcf7a0f61b2fd7267c2cdf71d4692b57fb97237a29be3;
 
+  /// @dev EIP-712 typehash for setRequest params.
+  ///      Type string: "SetRequestParams(uint256 id,address newRequest,uint256 deadline)"
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH = 0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INIT FLAG                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -157,6 +161,53 @@ contract FacilityHandler is Test {
 
     // Deploy mock request for setRequest actions
     mockRequest = new MockRequest(address(debtToken_));
+  }
+
+  /// @notice Builds the EIP-712 domain separator used by the Facility.
+  function _domainSeparator() internal view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        keccak256("3Facility"),
+        keccak256("1.0.0"),
+        block.chainid,
+        address(facility)
+      )
+    );
+  }
+
+  /// @notice Computes the digest for setRequest approval.
+  function _getSetRequestDigest(uint256 id, address newRequest, uint256 deadline) internal view returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(
+        "\x19\x01",
+        _domainSeparator(),
+        keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))
+      )
+    );
+  }
+
+  /// @notice Signs setRequest data with the provided key.
+  function _signSetRequest(uint256 id, address newRequest, uint256 deadline, uint256 privateKey)
+    internal
+    view
+    returns (bytes memory)
+  {
+    bytes32 digest = _getSetRequestDigest(id, newRequest, deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Sets request through facilitator + guardian signature path.
+  function _setRequest(uint256 id, address newRequest) external {
+    uint256 deadline = block.timestamp + 1 hours;
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signatures[0] = _signSetRequest(id, newRequest, deadline, guardianPk);
+
+    vm.prank(facilitator);
+    facility.setRequest(id, newRequest, deadline, signers, signatures);
   }
 
   /// @notice Initializes dependency-graph references (oracle, morpho, marketParams).
@@ -520,8 +571,7 @@ contract FacilityHandler is Test {
     // Mark any existing request as repaid so replacement is allowed
     mockRequest.setRepaid(true);
 
-    vm.prank(facilitator);
-    try facility.setRequest(id, address(mockRequest)) {}
+    try this._setRequest(id, address(mockRequest)) {}
     catch {
       return;
     }
@@ -544,8 +594,7 @@ contract FacilityHandler is Test {
     mockRequest.setRepaid(true);
 
     // Set a fresh request
-    vm.prank(facilitator);
-    try facility.setRequest(id, address(mockRequest)) {}
+    try this._setRequest(id, address(mockRequest)) {}
     catch {
       return;
     }

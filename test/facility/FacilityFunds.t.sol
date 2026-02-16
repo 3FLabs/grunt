@@ -25,7 +25,7 @@ contract FacilityFundsTest is FacilityBaseTest {
 
     // Set fund for the intent
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
   }
 
   /// @notice Creates an intent with debtToken deposits for testing DEPOSIT mode fund operations
@@ -46,7 +46,7 @@ contract FacilityFundsTest is FacilityBaseTest {
 
     // Set fund for the intent
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
   }
 
   /// @notice Supplies tokens to the mock fund for testing (for unlock/recover output)
@@ -148,7 +148,7 @@ contract FacilityFundsTest is FacilityBaseTest {
 
     // Set fund while still in depositing phase
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
 
     // Still in depositing phase - should revert
     vm.prank(facilitator);

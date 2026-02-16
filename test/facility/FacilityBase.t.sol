@@ -123,6 +123,12 @@ contract FacilityBaseTest is Test {
   // Repay timelock (1 hour default for tests)
   uint40 constant DEFAULT_REPAY_TIMELOCK = 1 hours;
 
+  /// @notice EIP-712 typehash for setFund params.
+  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH = 0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
+
+  /// @notice EIP-712 typehash for setRequest params.
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH = 0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -311,6 +317,108 @@ contract FacilityBaseTest is Test {
   function _mintTokens(address to, uint256 collateralAmount, uint256 debtAmount) internal {
     if (collateralAmount > 0) _mintCollateral(to, collateralAmount);
     if (debtAmount > 0) _mintDebt(to, debtAmount);
+  }
+
+  /// @notice Builds the EIP-712 domain separator used by Facility signatures.
+  function _facilityDomainSeparator() internal view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        keccak256("3Facility"),
+        keccak256("1.0.0"),
+        block.chainid,
+        address(facility)
+      )
+    );
+  }
+
+  /// @notice Computes the digest for setFund actions.
+  function _getSetFundDigest(uint256 id, address newFund, uint256 deadline) internal view returns (bytes32) {
+    return
+      keccak256(
+        abi.encodePacked(
+          "\x19\x01",
+          _facilityDomainSeparator(),
+          keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline))
+        )
+      );
+  }
+
+  /// @notice Computes the digest for setRequest actions.
+  function _getSetRequestDigest(uint256 id, address newRequest, uint256 deadline) internal view returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(
+        "\x19\x01",
+        _facilityDomainSeparator(),
+        keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))
+      )
+    );
+  }
+
+  /// @notice Signs a setFund approval.
+  function _signSetFund(uint256 id, address newFund, uint256 deadline, uint256 privateKey)
+    internal
+    view
+    returns (bytes memory)
+  {
+    bytes32 digest = _getSetFundDigest(id, newFund, deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Signs a setRequest approval.
+  function _signSetRequest(uint256 id, address newRequest, uint256 deadline, uint256 privateKey)
+    internal
+    view
+    returns (bytes memory)
+  {
+    bytes32 digest = _getSetRequestDigest(id, newRequest, deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Calls setFund as facilitator with default guardian signature.
+  function _setFund(uint256 id, address newFund) internal {
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    uint256 deadline = block.timestamp + 1 hours;
+
+    signers[0] = guardian;
+    signatures[0] = _signSetFund(id, newFund, deadline, GUARDIAN_PK);
+    _setFund(id, newFund, deadline, signers, signatures);
+  }
+
+  /// @notice Calls setFund as facilitator with explicit signature args.
+  function _setFund(
+    uint256 id,
+    address newFund,
+    uint256 deadline,
+    address[] memory signers,
+    bytes[] memory signatures
+  ) internal {
+    facility.setFund(id, newFund, deadline, signers, signatures);
+  }
+
+  /// @notice Calls setRequest as facilitator with default guardian signature.
+  function _setRequest(uint256 id, address newRequest) internal {
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    uint256 deadline = block.timestamp + 1 hours;
+
+    signers[0] = guardian;
+    signatures[0] = _signSetRequest(id, newRequest, deadline, GUARDIAN_PK);
+    _setRequest(id, newRequest, deadline, signers, signatures);
+  }
+
+  /// @notice Calls setRequest as facilitator with explicit signature args.
+  function _setRequest(
+    uint256 id,
+    address newRequest,
+    uint256 deadline,
+    address[] memory signers,
+    bytes[] memory signatures
+  ) internal {
+    facility.setRequest(id, newRequest, deadline, signers, signatures);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
