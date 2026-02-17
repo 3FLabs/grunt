@@ -147,9 +147,10 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
 
     if (block.timestamp > deadline) revert LibFacilityErrors.SwapExpired();
 
-    _checkSignatures(
-      _facilityStorage, SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline, signers, signatures, _intent.properties.quorum
-    );
+    {
+      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline)));
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
+    }
 
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
@@ -200,16 +201,10 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
 
     if (block.timestamp > deadline) revert LibFacilityErrors.SwapExpired();
 
-    _checkSignatures(
-      _facilityStorage,
-      SET_REQUEST_PARAMS_TYPEHASH,
-      id,
-      newRequest,
-      deadline,
-      signers,
-      signatures,
-      _intent.properties.quorum
-    );
+    {
+      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline)));
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
+    }
 
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();
@@ -235,19 +230,15 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     emit RequestUpdated(id, newRequest);
   }
 
-  /// @dev Computes and validates the EIP-712 digest, enforces replay protection, then checks guardian signatures.
+  /// @dev Enforces replay protection on a precomputed EIP-712 digest, then checks guardian signatures.
   function _checkSignatures(
     FacilityStorageData storage _facilityStorage,
-    bytes32 typehash,
-    uint256 id,
-    address account,
-    uint256 deadline,
+    bytes32 digest,
     address[] calldata signers,
     bytes[] calldata signatures,
     uint256 quorum
   ) internal {
-    bytes32 _digest = _hashTypedData(keccak256(abi.encode(typehash, id, account, deadline)));
-    _facilityStorage.checkDigest(_digest);
-    super._checkSignatures(_digest, signers, signatures, quorum);
+    _facilityStorage.checkDigest(digest);
+    super._checkSignatures(digest, signers, signatures, quorum);
   }
 }
