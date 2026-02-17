@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Multicallable} from "lib/solady/src/utils/Multicallable.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 import {FacilitySwap} from "./base/FacilitySwap.sol";
@@ -36,7 +35,6 @@ contract Facility is
   FacilityPositionManager,
   FacilityFunds,
   FacilityIntents,
-  Multicallable,
   Initializable
 {
   using LibStorage for FacilityStorageData;
