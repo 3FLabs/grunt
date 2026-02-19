@@ -201,7 +201,9 @@ contract FacilityBaseTest is Test {
         debtAsset: address(debtToken)
       }),
       PM_LTV,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager), "PositionManager");
 
@@ -217,7 +219,9 @@ contract FacilityBaseTest is Test {
         debtAsset: address(debtToken)
       }),
       PM_LTV,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager2), "PositionManager2");
 

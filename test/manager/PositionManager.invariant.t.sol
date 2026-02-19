@@ -153,7 +153,9 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
         debtAsset: address(debtToken)
       }),
       POSITION_MANAGER_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     // ---- deploy MorphoBorrowPositionFactory and create 2 borrow positions ----
@@ -235,7 +237,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     selectors[8] = PositionManagerHandler.act_morphoLiquidate.selector;
     selectors[9] = PositionManagerHandler.act_accrueInterest.selector;
     selectors[10] = PositionManagerHandler.act_setLtv.selector;
-    selectors[11] = PositionManagerHandler.act_setMaxRebalanceLoss.selector;
+    selectors[11] = PositionManagerHandler.act_setRebalanceConfig.selector;
     selectors[12] = PositionManagerHandler.act_supplyMorphoLiquidity.selector;
     // WrappedAsset actions
     selectors[13] = PositionManagerHandler.act_wrapped_asset_mint.selector;

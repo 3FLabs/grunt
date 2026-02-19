@@ -94,15 +94,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external override onlyOwner {
-    LibStorage.positionManagerStorage().maxRebalanceLoss = maxRebalanceLoss_;
-    emit IPositionManagerAdmin.MaxRebalanceLossSet(maxRebalanceLoss_);
-  }
-
-  /// @inheritdoc IPositionManagerAdmin
-  function setRebalanceCooldown(uint40 rebalanceCooldown_) external override onlyOwner {
-    LibStorage.positionManagerStorage().rebalanceCooldown = rebalanceCooldown_;
-    emit IPositionManagerAdmin.RebalanceCooldownSet(rebalanceCooldown_);
+  function setRebalanceConfig(uint16 maxRebalanceLoss_, uint40 rebalanceCooldown_) external override onlyOwner {
+    LibStorage.positionManagerStorage().setRebalanceConfig(maxRebalanceLoss_, rebalanceCooldown_);
   }
 
   /// @inheritdoc IPositionManagerAdmin

@@ -432,13 +432,13 @@ contract PositionManagerHandler is Test {
     try positionManager.setLtv(newLtv) {} catch {}
   }
 
-  /// @notice Changes the maxRebalanceLoss parameter.
+  /// @notice Changes the rebalance config (maxRebalanceLoss only, cooldown stays at 0).
   /// @dev Bounds to [0, 500] (0% to 5% in basis points).
   /// @param lossSeed Raw fuzz input for the new maxRebalanceLoss.
-  function act_setMaxRebalanceLoss(uint256 lossSeed) external refreshFullLiquidation {
+  function act_setRebalanceConfig(uint256 lossSeed) external refreshFullLiquidation {
     uint16 newLoss = uint16(_bound(lossSeed, 0, 500));
     vm.prank(owner);
-    try positionManager.setMaxRebalanceLoss(newLoss) {} catch {}
+    try positionManager.setRebalanceConfig(newLoss, 0) {} catch {}
   }
 
   /// @notice Supplies additional liquidity to a Morpho market (simulates external actor).

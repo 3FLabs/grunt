@@ -40,10 +40,16 @@ contract PositionManager is
   /// @param metadata_ The metadata containing name, symbol, decimals, collateral and debt assets
   /// @param ltv_ The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard_ The initial transfer guard address (address(0) to disable)
-  function initialize(address owner_, PositionManagerMetadata memory metadata_, uint256 ltv_, address transferGuard_)
-    external
-    initializer
-  {
+  /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%)
+  /// @param rebalanceCooldown_ The cooldown period in seconds between rebalance calls (0 = disabled)
+  function initialize(
+    address owner_,
+    PositionManagerMetadata memory metadata_,
+    uint256 ltv_,
+    address transferGuard_,
+    uint16 maxRebalanceLoss_,
+    uint40 rebalanceCooldown_
+  ) external initializer {
     _initializeOwner(owner_);
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     _storage.metadata = metadata_;
@@ -54,6 +60,9 @@ contract PositionManager is
     if (transferGuard_ != address(0)) {
       _storage.transferGuard = transferGuard_;
       emit IPositionManagerAdmin.TransferGuardSet(transferGuard_);
+    }
+    if (maxRebalanceLoss_ > 0 || rebalanceCooldown_ > 0) {
+      _storage.setRebalanceConfig(maxRebalanceLoss_, rebalanceCooldown_);
     }
   }
 
@@ -152,9 +161,9 @@ contract PositionManager is
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     ltv = _storage.ltv;
-    maxRebalanceLoss = _storage.maxRebalanceLoss;
+    maxRebalanceLoss = _storage.rebalanceConfig.maxRebalanceLoss;
     transferGuard = _storage.transferGuard;
-    rebalanceCooldown = _storage.rebalanceCooldown;
+    rebalanceCooldown = _storage.rebalanceConfig.rebalanceCooldown;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

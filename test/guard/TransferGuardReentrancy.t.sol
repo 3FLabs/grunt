@@ -85,7 +85,9 @@ contract TransferGuardReentrancyTest is Test {
         debtAsset: address(debtToken)
       }),
       0.8e18, // 80% LTV
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     // Deploy malicious module

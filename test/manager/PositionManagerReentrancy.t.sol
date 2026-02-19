@@ -35,7 +35,9 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
         debtAsset: address(debtToken)
       }),
       POSITION_MANAGER_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     // Deploy attacker
@@ -80,7 +82,9 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
         debtAsset: address(reentrantDebt)
       }),
       POSITION_MANAGER_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     ReentrantMinter attacker2 = new ReentrantMinter(pm2);

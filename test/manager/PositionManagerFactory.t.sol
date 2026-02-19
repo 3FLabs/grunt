@@ -114,7 +114,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
   }
 
@@ -129,7 +131,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     address pm2 = factory.createPositionManager(
@@ -142,7 +146,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       0.6e18,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     assertTrue(pm1 != pm2, "Each deployment should create a unique address");
@@ -164,7 +170,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     assertTrue(positionManager != address(0), "Anyone should be able to create position manager");
@@ -204,7 +212,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     address pm2 = factory.createPositionManager(
@@ -217,7 +227,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     // Verify both work before upgrade
@@ -261,7 +273,9 @@ contract PositionManagerFactoryTest is Test {
         debtAsset: address(debtToken)
       }),
       ltv,
-      transferGuard
+      transferGuard,
+      0,
+      0
     );
 
     PositionManager pm = PositionManager(positionManager);

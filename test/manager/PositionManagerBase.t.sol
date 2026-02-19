@@ -155,7 +155,9 @@ contract PositionManagerBaseTest is Test {
         debtAsset: address(debtToken)
       }),
       POSITION_MANAGER_LTV,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     // Grant minter role

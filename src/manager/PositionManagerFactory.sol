@@ -87,16 +87,21 @@ contract PositionManagerFactory {
   /// @param metadata The metadata containing name, symbol, decimals, collateral and debt assets
   /// @param ltv The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard The initial transfer guard address (address(0) to disable)
+  /// @param maxRebalanceLoss The max rebalance loss in basis points (e.g., 100 = 1%)
+  /// @param rebalanceCooldown The cooldown period in seconds between rebalance calls (0 = disabled)
   /// @return positionManager The address of the newly deployed PositionManager proxy
   function createPositionManager(
     address owner,
     PositionManagerMetadata memory metadata,
     uint256 ltv,
-    address transferGuard
+    address transferGuard,
+    uint16 maxRebalanceLoss,
+    uint40 rebalanceCooldown
   ) external returns (address positionManager) {
     positionManager = POSITION_MANAGER_BEACON.deployERC1967BeaconProxy();
 
-    PositionManager(positionManager).initialize(owner, metadata, ltv, transferGuard);
+    PositionManager(positionManager)
+      .initialize(owner, metadata, ltv, transferGuard, maxRebalanceLoss, rebalanceCooldown);
 
     emit PositionManagerCreated(
       positionManager, owner, metadata.collateralAsset, metadata.debtAsset, ltv, transferGuard

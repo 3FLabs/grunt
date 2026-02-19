@@ -49,8 +49,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Enforce cooldown between consecutive rebalance calls
-    uint40 cooldown = _storage.rebalanceCooldown;
-    uint40 lastRebalance = _storage.lastRebalanceTimestamp;
+    uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
+    uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
     if (cooldown > 0 && lastRebalance > 0) {
       // Safe: block.timestamp fits in uint40 for ~35,000 years
       // forge-lint: disable-next-line(unsafe-typecast)
@@ -92,7 +92,7 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     // Record rebalance timestamp for cooldown enforcement
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
-    _storage.lastRebalanceTimestamp = uint40(block.timestamp);
+    _storage.rebalanceConfig.lastRebalanceTimestamp = uint40(block.timestamp);
 
     // Update snapshot to post-rebalance state
     uint256 totalAssetsAfter = _storage.totalAssets();
@@ -103,7 +103,7 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
       uint256 loss = totalAssetsBefore - totalAssetsAfter;
       // loss * BPS / totalAssetsBefore > maxRebalanceLoss
       // Rearranged to avoid division: loss * BPS > maxRebalanceLoss * totalAssetsBefore
-      if (loss * BPS > uint256(_storage.maxRebalanceLoss) * totalAssetsBefore) {
+      if (loss * BPS > uint256(_storage.rebalanceConfig.maxRebalanceLoss) * totalAssetsBefore) {
         revert LibManagerErrors.RebalanceLossExceedsMax();
       }
     }
