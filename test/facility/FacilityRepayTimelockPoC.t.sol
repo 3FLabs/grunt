@@ -53,7 +53,7 @@ contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
 
     // Step 4: Facilitator links the malicious request to the intent
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(maliciousRequest));
+    _setRequest(intentId, address(maliciousRequest));
 
     // Step 5: Facilitator tries to drain all funds via repay — THIS MUST REVERT
     uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
@@ -83,7 +83,7 @@ contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
     facility.lock(intentId);
 
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Warp past the timelock
     vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
@@ -111,7 +111,7 @@ contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
 
     uint40 setTime = uint40(block.timestamp);
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // repayAvailableAt should return setTime + timelock
     uint40 expected = setTime + DEFAULT_REPAY_TIMELOCK;
@@ -137,7 +137,7 @@ contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
     facility.lock(intentId);
 
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Warp past timelock — operations now allowed
     vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
@@ -147,7 +147,7 @@ contract FacilityRepayTimelockPoCTest is FacilityBaseTest {
     mockRequest.setRepaid(true); // Mark old request as repaid so replacement is allowed
 
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(maliciousRequest));
+    _setRequest(intentId, address(maliciousRequest));
 
     // Timelock has restarted — repay must revert
     uint40 newAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;

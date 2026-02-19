@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {FacilityRoles} from "./FacilityRoles.sol";
+import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {IFacilityIntents} from "src/interfaces/facility/base/IFacilityIntents.sol";
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
@@ -16,11 +17,25 @@ import {LibChecks} from "src/libs/common/LibChecks.sol";
 /// @author 3F Protocol
 /// @notice Abstract contract implementing intent management operations.
 /// @dev Allows creating intents and updating their configuration.
-abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
+abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
   using LibChecks for address;
   using LibAddress for address;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice EIP-712 typehash for setFund params.
+  /// @dev keccak256("SetFundParams(uint256 id,address newFund,uint256 deadline)")
+  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH =
+    0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
+
+  /// @notice EIP-712 typehash for setRequest params.
+  /// @dev keccak256("SetRequestParams(uint256 id,address newRequest,uint256 deadline)")
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH =
+    0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
@@ -116,13 +131,26 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   ///      The fund's asset and share must match the position manager's assets.
   ///      The intent must not have an active order.
   ///      If the fund is address(0), the fund is removed from the intent.
-  function setFund(uint256 id, address newFund) external override onlyRoles(FACILITATOR_ROLE) {
+  function setFund(
+    uint256 id,
+    address newFund,
+    uint256 deadline,
+    address[] calldata signers,
+    bytes[] calldata signatures
+  ) external override onlyRoles(FACILITATOR_ROLE) {
     LibStorage.checkNotPaused();
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 
     // skip if the fund is already set to the same address
     if (_intent.fund == newFund) return;
+
+    if (block.timestamp > deadline) revert LibFacilityErrors.SwapExpired();
+
+    {
+      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline)));
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
+    }
 
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
@@ -157,13 +185,26 @@ abstract contract FacilityIntents is IFacilityIntents, FacilityRoles {
   ///      The request's asset must match the position manager's debt asset.
   ///      If a previous request exists, it must be repaid.
   ///      If the request is address(0), the request is removed from the intent.
-  function setRequest(uint256 id, address newRequest) external override onlyRoles(FACILITATOR_ROLE) {
+  function setRequest(
+    uint256 id,
+    address newRequest,
+    uint256 deadline,
+    address[] calldata signers,
+    bytes[] calldata signatures
+  ) external override onlyRoles(FACILITATOR_ROLE) {
     LibStorage.checkNotPaused();
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
 
     // skip if the request is already set to the same address
     if (_intent.request == newRequest) return;
+
+    if (block.timestamp > deadline) revert LibFacilityErrors.SwapExpired();
+
+    {
+      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline)));
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
+    }
 
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();

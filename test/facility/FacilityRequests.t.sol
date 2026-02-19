@@ -20,7 +20,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request for the intent
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Warp past the repay timelock so repay is allowed
     vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
@@ -119,7 +119,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request while still in depositing phase
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     _fundMockRequest(500e18);
 
@@ -227,7 +227,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request while still in depositing phase
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Still in depositing phase - should revert
     vm.prank(facilitator);
@@ -316,7 +316,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request (starts the repay timelock, but pull is NOT affected)
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
     _fundMockRequest(pullAmount);
 
     // Pull should succeed immediately — timelock only applies to repay
@@ -330,7 +330,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request (starts the timelock)
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Try to repay immediately - should revert
     uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
@@ -346,7 +346,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
     uint256 pullAmount = 500e18;
 
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
     _fundMockRequest(pullAmount);
 
     // Warp past the timelock
@@ -368,7 +368,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Should return requestSetAt + repayTimelock
     uint40 expected = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
@@ -381,7 +381,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
     // Set request and check requestSetAt is tracked
     uint40 beforeTimestamp = uint40(block.timestamp);
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     (,,,, uint40 requestSetAt) = facility.getIntent(intentId);
     assertEq(requestSetAt, beforeTimestamp, "requestSetAt should equal block.timestamp");
@@ -392,12 +392,12 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
     mockRequest.setRepaid(true);
 
     // Remove request (set to address(0))
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(0));
+    _setRequest(intentId, address(0));
 
     (,,,, uint40 requestSetAt) = facility.getIntent(intentId);
     assertEq(requestSetAt, 0, "requestSetAt should be cleared when request is removed");
@@ -408,7 +408,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set first request
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
     mockRequest.setRepaid(true);
 
     // Warp past timelock
@@ -417,7 +417,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
     // Replace request - timelock restarts
     MockRequest newRequest = new MockRequest(address(debtToken));
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(newRequest));
+    _setRequest(intentId, address(newRequest));
 
     // Try to repay immediately - should revert (timelock restarted)
     uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;

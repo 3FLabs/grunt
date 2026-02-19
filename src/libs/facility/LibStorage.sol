@@ -14,7 +14,7 @@ import {LibPause} from "../common/LibPause.sol";
 /// @param intents Mapping from intent ID to Intent struct.
 /// @param descriptor The intent descriptor contract for generating token metadata.
 /// @param lastIntentId The most recent intent ID assigned.
-/// @param usedSwapDigests Mapping of used swap digests to prevent replay attacks.
+/// @param usedDigests Mapping of used digests to prevent replay attacks across swaps and intent updates.
 /// @param fundsIntent Mapping from fund address to intent ID.
 /// @param requestsIntent Mapping from request address to intent ID.
 /// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
@@ -23,7 +23,7 @@ struct FacilityStorageData {
   mapping(uint256 => Intent) intents;
   IIntentDescriptor descriptor;
   uint256 lastIntentId;
-  mapping(bytes32 => bool) usedSwapDigests;
+  mapping(bytes32 => bool) usedDigests;
   mapping(address => uint256) fundsIntent;
   mapping(address => uint256) requestsIntent;
   uint40 pausedUntil;
@@ -144,8 +144,8 @@ library LibStorage {
   /// @param self The storage pointer to the FacilityStorageData struct.
   /// @param digest The digest to check and mark as used.
   function checkDigest(FacilityStorageData storage self, bytes32 digest) internal {
-    if (self.usedSwapDigests[digest]) revert LibFacilityErrors.SwapDigestUsed(digest);
-    self.usedSwapDigests[digest] = true;
+    if (self.usedDigests[digest]) revert LibFacilityErrors.SwapDigestUsed(digest);
+    self.usedDigests[digest] = true;
   }
 
   /// @dev Checks if a fund is already in use and sets it to the target intent ID if not.

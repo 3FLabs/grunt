@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
-import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
 import {FacilityRoles} from "./FacilityRoles.sol";
@@ -18,7 +17,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 /// @title FacilitySwap
 /// @author 3F Protocol
 /// @notice Abstract contract implementing swap functionality between intents.
-/// @dev Descendant contracts must implement `_checkSigner` to define signer validation logic.
+/// @dev Uses shared guardian-signature quorum validation from `FacilityRoles`.
 abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransient, FacilityRoles {
   using LibIntent for Intent;
   using LibStorage for FacilityStorageData;
@@ -88,8 +87,7 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
 
       // compute the digest and validate the signatures
       bytes32 _digest = _hashTypedData(keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params)));
-      _facilityStorage.checkDigest(_digest);
-      _checkSwapSignatures(_digest, signers, signatures, _quorum);
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _quorum);
     }
 
     // swap between intents (ensures both intents are in resolving state)
@@ -100,40 +98,5 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
 
     // emit the swap event
     emit Swap(params.id1, params.id2, params.token1, params.amount1, params.token2, params.amount2);
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         INTERNALS                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Verifies swap signatures against the required quorum.
-  ///      signers address must be sorted in ascending order and must be unique.
-  /// @param digest The EIP-712 digest to verify against.
-  /// @param signers The addresses of the signers.
-  /// @param signatures The signatures from each signer.
-  /// @param quorum The minimum number of valid signatures required.
-  function _checkSwapSignatures(bytes32 digest, address[] calldata signers, bytes[] calldata signatures, uint256 quorum)
-    internal
-    view
-  {
-    // if there is no quorum, we don't need to check signatures
-    if (quorum == 0) return;
-    // ensure the number of signers and signatures match
-    if (signers.length != signatures.length) revert LibFacilityErrors.InvalidSignatureLength();
-    // ensure the number of signers is at least the quorum
-    if (signers.length < quorum) revert LibFacilityErrors.InvalidSignatureCount(quorum, signers.length);
-
-    address lastSigner;
-    // loop until quorum is reached
-    for (uint256 i = 0; i < quorum; i++) {
-      address signer = signers[i];
-      // ensure the signer is strictly increasing (avoids passing multiple times the same signer)
-      if (signer <= lastSigner) revert LibFacilityErrors.InvalidSignerOrder();
-      if (!hasAnyRole(signer, GUARDIAN_ROLE)) revert LibFacilityErrors.NotGuardian(signer);
-      if (!SignatureCheckerLib.isValidSignatureNowCalldata(signer, digest, signatures[i])) {
-        revert LibFacilityErrors.InvalidSignature(signer);
-      }
-      lastSigner = signer;
-    }
   }
 }
