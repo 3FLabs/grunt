@@ -157,13 +157,20 @@ contract PositionManager is
   function config()
     public
     view
-    returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard, uint40 rebalanceCooldown)
+    returns (
+      uint256 ltv,
+      uint16 maxRebalanceLoss,
+      address transferGuard,
+      uint40 rebalanceCooldown,
+      uint40 lastRebalanceTimestamp
+    )
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     ltv = _storage.ltv;
     maxRebalanceLoss = _storage.rebalanceConfig.maxRebalanceLoss;
     transferGuard = _storage.transferGuard;
     rebalanceCooldown = _storage.rebalanceConfig.rebalanceCooldown;
+    lastRebalanceTimestamp = _storage.rebalanceConfig.lastRebalanceTimestamp;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

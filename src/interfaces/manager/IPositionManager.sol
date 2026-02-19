@@ -81,8 +81,15 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @return maxRebalanceLoss The maximum allowed loss during rebalance in basis points
   /// @return transferGuard The address of the transfer guard contract (address(0) if disabled)
   /// @return rebalanceCooldown The minimum seconds between consecutive rebalance calls (0 = disabled)
+  /// @return lastRebalanceTimestamp The timestamp of the last rebalance call (0 if never rebalanced)
   function config()
     external
     view
-    returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard, uint40 rebalanceCooldown);
+    returns (
+      uint256 ltv,
+      uint16 maxRebalanceLoss,
+      address transferGuard,
+      uint40 rebalanceCooldown,
+      uint40 lastRebalanceTimestamp
+    );
 }

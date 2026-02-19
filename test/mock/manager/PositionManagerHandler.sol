@@ -290,7 +290,7 @@ contract PositionManagerHandler is Test {
     address toPos = modules[toIdx];
 
     // Determine the max amount of available collateral to move.
-    (uint256 ltv,,,) = positionManager.config();
+    (uint256 ltv,,,,) = positionManager.config();
     uint256 available = IBorrowPosition(fromPos).availableCollateral(ltv);
     if (available == 0) return;
 
@@ -317,7 +317,7 @@ contract PositionManagerHandler is Test {
       uint256 totalAssetsAfter = positionManager.totalAssets();
       if (totalAssetsAfter < totalAssetsBefore && totalAssetsBefore > 0) {
         uint256 loss = totalAssetsBefore - totalAssetsAfter;
-        (, uint16 maxLoss,,) = positionManager.config();
+        (, uint16 maxLoss,,,) = positionManager.config();
         // loss * BPS > maxLoss * totalAssetsBefore → loss exceeded
         if (loss * 10_000 > uint256(maxLoss) * totalAssetsBefore) {
           rebalanceLossExceeded = true;
