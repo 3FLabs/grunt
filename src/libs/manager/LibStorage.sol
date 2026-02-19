@@ -52,6 +52,8 @@ struct PositionManagerMetadata {
 ///        (e.g., 100 = 1%). Protects against excessive slippage or manipulation.
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
 ///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
+/// @param lastRebalanceTimestamp Unix timestamp of the last rebalance, used for cooldown enforcement.
+/// @param rebalanceCooldown Minimum seconds between consecutive rebalance calls. Zero disables.
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -63,6 +65,8 @@ struct PositionManagerStorageData {
   uint40 lastFeeAccrualTimestamp;
   uint16 maxRebalanceLoss;
   address transferGuard;
+  uint40 lastRebalanceTimestamp;
+  uint40 rebalanceCooldown;
 }
 
 /// @title LibStorage

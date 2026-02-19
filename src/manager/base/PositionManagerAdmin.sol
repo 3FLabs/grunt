@@ -100,6 +100,12 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
+  function setRebalanceCooldown(uint40 rebalanceCooldown_) external override onlyOwner {
+    LibStorage.positionManagerStorage().rebalanceCooldown = rebalanceCooldown_;
+    emit IPositionManagerAdmin.RebalanceCooldownSet(rebalanceCooldown_);
+  }
+
+  /// @inheritdoc IPositionManagerAdmin
   /// @dev Setting transferGuard_ to address(0) disables transfer restrictions,
   ///      allowing all transfers without validation. This is intentional behavior.
   function setTransferGuard(address transferGuard_) external override onlyOwner {

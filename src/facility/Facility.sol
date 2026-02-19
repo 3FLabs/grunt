@@ -214,7 +214,7 @@ contract Facility is
       revert LibFacilityErrors.IntentTransfersLocked(id);
     }
 
-    (,, address guard) = IPositionManager(_intent.properties.guardKey).config();
+    (,, address guard,) = IPositionManager(_intent.properties.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.properties.guardKey, from, to, amount)) {
         revert LibFacilityErrors.TransferBlocked(guard, from, to, amount);

@@ -145,11 +145,16 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function config() public view returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard) {
+  function config()
+    public
+    view
+    returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard, uint40 rebalanceCooldown)
+  {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     ltv = _storage.ltv;
     maxRebalanceLoss = _storage.maxRebalanceLoss;
     transferGuard = _storage.transferGuard;
+    rebalanceCooldown = _storage.rebalanceCooldown;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

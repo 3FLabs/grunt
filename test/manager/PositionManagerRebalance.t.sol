@@ -526,6 +526,232 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.stopPrank();
   }
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              REBALANCE COOLDOWN TESTS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setRebalanceCooldown() public {
+    uint40 cooldown = 1 hours;
+
+    vm.prank(owner);
+    positionManager.setRebalanceCooldown(cooldown);
+
+    assertEq(_rebalanceCooldown(), cooldown, "Rebalance cooldown should be set");
+  }
+
+  function test_setRebalanceCooldown_emitsEvent() public {
+    uint40 cooldown = 1 hours;
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit IPositionManagerAdmin.RebalanceCooldownSet(cooldown);
+    positionManager.setRebalanceCooldown(cooldown);
+  }
+
+  function test_setRebalanceCooldown_onlyOwner() public {
+    vm.prank(minter);
+    vm.expectRevert();
+    positionManager.setRebalanceCooldown(1 hours);
+  }
+
+  function test_rebalanceCooldown_defaultIsZero() public view {
+    assertEq(_rebalanceCooldown(), 0, "Default rebalance cooldown should be 0");
+  }
+
+  function test_rebalance_revertOnCooldownNotElapsed() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown to 1 hour
+    vm.prank(owner);
+    positionManager.setRebalanceCooldown(1 hours);
+
+    // First rebalance: supply some collateral (should succeed)
+    uint256 additionalCollateral = 1000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Second rebalance immediately: should revert
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+    data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    vm.expectRevert(LibManagerErrors.RebalanceCooldownNotElapsed.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_succeedsAfterCooldownElapsed() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown to 1 hour
+    vm.prank(owner);
+    positionManager.setRebalanceCooldown(1 hours);
+
+    // First rebalance
+    uint256 additionalCollateral = 1000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Advance time past cooldown
+    vm.warp(block.timestamp + 1 hours + 1);
+
+    // Second rebalance should succeed
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+    data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    assertEq(
+      borrowPosition1.totalCollateral(),
+      COLLATERAL_AMOUNT + additionalCollateral * 2,
+      "Both supplies should have gone through"
+    );
+  }
+
+  function test_rebalance_noCooldownByDefault() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Perform two consecutive rebalances with no cooldown set (default 0)
+    uint256 additionalCollateral = 500e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+
+    for (uint256 i = 0; i < 2; i++) {
+      ops[0] = RebalancingOperation({
+        position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+      });
+      RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+      _mintCollateral(rebalancer, additionalCollateral);
+      vm.startPrank(rebalancer);
+      collateralToken.approve(address(positionManager), additionalCollateral);
+      positionManager.rebalance(data, rebalancer);
+      vm.stopPrank();
+    }
+
+    assertEq(
+      borrowPosition1.totalCollateral(),
+      COLLATERAL_AMOUNT + additionalCollateral * 2,
+      "Both supplies should succeed with no cooldown"
+    );
+  }
+
+  function test_rebalance_cooldownDisabledAfterSetting() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown, then disable it
+    vm.startPrank(owner);
+    positionManager.setRebalanceCooldown(1 hours);
+    positionManager.setRebalanceCooldown(0);
+    vm.stopPrank();
+
+    // Perform two consecutive rebalances
+    uint256 additionalCollateral = 500e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+
+    for (uint256 i = 0; i < 2; i++) {
+      ops[0] = RebalancingOperation({
+        position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+      });
+      RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+      _mintCollateral(rebalancer, additionalCollateral);
+      vm.startPrank(rebalancer);
+      collateralToken.approve(address(positionManager), additionalCollateral);
+      positionManager.rebalance(data, rebalancer);
+      vm.stopPrank();
+    }
+
+    assertEq(
+      borrowPosition1.totalCollateral(),
+      COLLATERAL_AMOUNT + additionalCollateral * 2,
+      "Both supplies should succeed after cooldown disabled"
+    );
+  }
+
+  function test_rebalance_revertAtExactCooldownBoundary() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown to 1 hour
+    vm.prank(owner);
+    positionManager.setRebalanceCooldown(1 hours);
+
+    // First rebalance
+    uint256 additionalCollateral = 1000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Advance time to exactly 1 second before cooldown expires
+    vm.warp(block.timestamp + 1 hours - 1);
+
+    // Should still revert
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+    data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    vm.expectRevert(LibManagerErrors.RebalanceCooldownNotElapsed.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
   function test_rebalance_revertMixedAuthorizedAndUnauthorized() public {
     // Create a fake position
     address fakePosition = makeAddr("fakePosition");

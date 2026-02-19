@@ -48,6 +48,17 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
+    // Enforce cooldown between consecutive rebalance calls
+    uint40 cooldown = _storage.rebalanceCooldown;
+    uint40 lastRebalance = _storage.lastRebalanceTimestamp;
+    if (cooldown > 0 && lastRebalance > 0) {
+      // Safe: block.timestamp fits in uint40 for ~35,000 years
+      // forge-lint: disable-next-line(unsafe-typecast)
+      if (uint40(block.timestamp) < lastRebalance + cooldown) {
+        revert LibManagerErrors.RebalanceCooldownNotElapsed();
+      }
+    }
+
     // Check if paused via transfer guard
     address guard = _storage.transferGuard;
     if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
@@ -77,6 +88,11 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
 
     collateralExcess = _collateralAsset.safeTransferAll(receiver);
     debtExcess = _debtAsset.safeTransferAll(receiver);
+
+    // Record rebalance timestamp for cooldown enforcement
+    // Safe: block.timestamp fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _storage.lastRebalanceTimestamp = uint40(block.timestamp);
 
     // Update snapshot to post-rebalance state
     uint256 totalAssetsAfter = _storage.totalAssets();

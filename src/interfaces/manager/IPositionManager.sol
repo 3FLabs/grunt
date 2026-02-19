@@ -80,5 +80,9 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @return ltv The LTV used for available collateral calculations (WAD precision)
   /// @return maxRebalanceLoss The maximum allowed loss during rebalance in basis points
   /// @return transferGuard The address of the transfer guard contract (address(0) if disabled)
-  function config() external view returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard);
+  /// @return rebalanceCooldown The minimum seconds between consecutive rebalance calls (0 = disabled)
+  function config()
+    external
+    view
+    returns (uint256 ltv, uint16 maxRebalanceLoss, address transferGuard, uint40 rebalanceCooldown);
 }

@@ -52,6 +52,10 @@ interface IPositionManagerAdmin {
   /// @param transferGuard The new transfer guard address (address(0) to disable)
   event TransferGuardSet(address indexed transferGuard);
 
+  /// @notice Emitted when the rebalance cooldown is updated.
+  /// @param rebalanceCooldown The new cooldown period in seconds
+  event RebalanceCooldownSet(uint40 rebalanceCooldown);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -101,4 +105,9 @@ interface IPositionManagerAdmin {
   /// @dev Only callable by the owner. Set to address(0) to disable transfer restrictions.
   /// @param transferGuard_ The address of the transfer guard contract
   function setTransferGuard(address transferGuard_) external;
+
+  /// @notice Sets the minimum cooldown period between consecutive rebalance calls.
+  /// @dev Only callable by the owner. Set to 0 to disable the cooldown.
+  /// @param rebalanceCooldown_ The cooldown period in seconds
+  function setRebalanceCooldown(uint40 rebalanceCooldown_) external;
 }

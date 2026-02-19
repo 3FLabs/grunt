@@ -237,13 +237,18 @@ contract PositionManagerBaseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function _ltv() internal view returns (uint256) {
-    (uint256 ltv_,,) = positionManager.config();
+    (uint256 ltv_,,,) = positionManager.config();
     return ltv_;
   }
 
   function _maxRebalanceLoss() internal view returns (uint16) {
-    (, uint16 maxRebalanceLoss_,) = positionManager.config();
+    (, uint16 maxRebalanceLoss_,,) = positionManager.config();
     return maxRebalanceLoss_;
+  }
+
+  function _rebalanceCooldown() internal view returns (uint40) {
+    (,,, uint40 rebalanceCooldown_) = positionManager.config();
+    return rebalanceCooldown_;
   }
 
   function _lastTotalAssets() internal view returns (uint256) {
