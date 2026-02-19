@@ -87,8 +87,7 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
 
       // compute the digest and validate the signatures
       bytes32 _digest = _hashTypedData(keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params)));
-      _facilityStorage.checkDigest(_digest);
-      _checkSignatures(_digest, signers, signatures, _quorum);
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _quorum);
     }
 
     // swap between intents (ensures both intents are in resolving state)

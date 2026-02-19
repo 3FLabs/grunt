@@ -229,16 +229,4 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     _intent.requestSetAt = newRequest != address(0) ? uint40(block.timestamp) : 0;
     emit RequestUpdated(id, newRequest);
   }
-
-  /// @dev Enforces replay protection on a precomputed EIP-712 digest, then checks guardian signatures.
-  function _checkSignatures(
-    FacilityStorageData storage _facilityStorage,
-    bytes32 digest,
-    address[] calldata signers,
-    bytes[] calldata signatures,
-    uint256 quorum
-  ) internal {
-    _facilityStorage.checkDigest(digest);
-    super._checkSignatures(digest, signers, signatures, quorum);
-  }
 }
