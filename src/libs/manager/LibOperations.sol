@@ -109,43 +109,58 @@ library LibOperations {
   }
 
   /// @dev Processes burn by repaying debt and withdrawing collateral proportionally from each position.
-  ///      This maintains the average LTV across all positions.
+  ///      Uses a two-pass approach: first caches per-position values and computes queue-scoped totals,
+  ///      then distributes proportionally using those totals. The last position in the queue absorbs
+  ///      any rounding dust to ensure exact totals.
   /// @param _storage The position manager storage data
   /// @param collateralToWithdraw Total collateral to withdraw
   /// @param debtToRepay Total debt to repay
-  /// @param totalCollateral Total collateral across all positions
-  /// @param totalDebt Total debt across all positions
-  function processBurn(
-    PositionManagerStorageData storage _storage,
-    uint256 collateralToWithdraw,
-    uint256 debtToRepay,
-    uint256 totalCollateral,
-    uint256 totalDebt
-  ) internal {
+  function processBurn(PositionManagerStorageData storage _storage, uint256 collateralToWithdraw, uint256 debtToRepay)
+    internal
+  {
     unchecked {
-      uint256 remainingCollateral = collateralToWithdraw;
-      uint256 remainingDebt = debtToRepay;
-      uint256 queueLength = _storage.withdrawalQueue.length;
+      address[] memory queue = _storage.withdrawalQueue;
+      uint256 queueLength = queue.length;
+
+      // Pass 1: cache per-position values and compute queue-scoped totals
+      uint256[] memory debts = new uint256[](queueLength);
+      uint256[] memory collaterals = new uint256[](queueLength);
+      uint256 queueTotalDebt;
+      uint256 queueTotalCollateral;
 
       for (uint256 i = 0; i < queueLength; i++) {
-        address position = _storage.withdrawalQueue[i];
-        uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
-        uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
+        debts[i] = IBorrowPosition(queue[i]).totalBorrowed();
+        collaterals[i] = IBorrowPosition(queue[i]).totalCollateral();
+        queueTotalDebt += debts[i];
+        queueTotalCollateral += collaterals[i];
+      }
 
-        // Repay proportionally
-        if (remainingDebt > 0 && positionDebt > 0 && totalDebt > 0) {
-          uint256 toRepay = debtToRepay.mulDiv(positionDebt, totalDebt);
+      // Fail early if withdrawal queue cannot cover the requested amounts
+      if (debtToRepay > queueTotalDebt) revert LibManagerErrors.ExcessDebtRepay();
+      if (collateralToWithdraw > queueTotalCollateral) revert LibManagerErrors.InsufficientAvailableCollateral();
+
+      // Pass 2: proportional distribution using queue-scoped totals
+      address debtAsset = _storage.metadata.debtAsset;
+      uint256 remainingCollateral = collateralToWithdraw;
+      uint256 remainingDebt = debtToRepay;
+
+      for (uint256 i = 0; i < queueLength; i++) {
+        // Repay proportionally (last position gets remainder to avoid rounding dust)
+        if (remainingDebt > 0 && debts[i] > 0) {
+          uint256 toRepay = (i == queueLength - 1) ? remainingDebt : debtToRepay.mulDiv(debts[i], queueTotalDebt);
           if (toRepay > 0) {
-            position.repay(_storage.metadata.debtAsset, toRepay);
+            queue[i].repay(debtAsset, toRepay);
             remainingDebt -= toRepay;
           }
         }
 
-        // Withdraw proportionally
-        if (remainingCollateral > 0 && positionCollateral > 0 && totalCollateral > 0) {
-          uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, totalCollateral);
+        // Withdraw proportionally (last position gets remainder to avoid rounding dust)
+        if (remainingCollateral > 0 && collaterals[i] > 0) {
+          uint256 toWithdraw = (i == queueLength - 1)
+            ? remainingCollateral
+            : collateralToWithdraw.mulDiv(collaterals[i], queueTotalCollateral);
           if (toWithdraw > 0) {
-            position.withdraw(toWithdraw);
+            queue[i].withdraw(toWithdraw);
             remainingCollateral -= toWithdraw;
           }
         }

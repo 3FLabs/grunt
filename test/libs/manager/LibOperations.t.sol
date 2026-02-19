@@ -240,7 +240,7 @@ contract LibOperationsTest is Test {
     harness.approveToken(address(debtToken), address(position), 50e18);
 
     // Burn 50% of position
-    harness.processBurn(100e18, 50e18, 200e18, 100e18);
+    harness.processBurn(100e18, 50e18);
 
     assertEq(position.totalBorrowed(), 50e18);
     assertEq(position.totalCollateral(), 100e18);
@@ -269,7 +269,7 @@ contract LibOperationsTest is Test {
     harness.approveToken(address(debtToken), address(position2), 50e18);
 
     // Burn 50% proportionally
-    harness.processBurn(100e18, 50e18, 200e18, 100e18);
+    harness.processBurn(100e18, 50e18);
 
     // Debt repaid proportionally: 60% from position1, 40% from position2
     assertEq(position1.totalBorrowed(), 30e18); // 60 - 50*60/100 = 30
@@ -290,7 +290,7 @@ contract LibOperationsTest is Test {
 
     harness.addWithdrawalQueueEntry(address(position));
 
-    harness.processBurn(50e18, 0, 100e18, 0);
+    harness.processBurn(50e18, 0);
 
     assertEq(position.totalCollateral(), 50e18);
     assertEq(collateralToken.balanceOf(address(harness)), 50e18);
@@ -306,8 +306,32 @@ contract LibOperationsTest is Test {
     debtToken.mint(address(harness), 50e18);
     harness.approveToken(address(debtToken), address(position), 50e18);
 
-    harness.processBurn(0, 50e18, 0, 100e18);
+    harness.processBurn(0, 50e18);
 
     assertEq(position.totalBorrowed(), 50e18);
+  }
+
+  function test_processBurn_revertOnExcessDebtRepay() public {
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setTotalBorrowed(30e18);
+    position.setTotalCollateral(100e18);
+    position.setTotalCollateralQuoted(100e18);
+
+    harness.addWithdrawalQueueEntry(address(position));
+
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    harness.processBurn(50e18, 50e18);
+  }
+
+  function test_processBurn_revertOnInsufficientCollateral() public {
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setTotalBorrowed(100e18);
+    position.setTotalCollateral(30e18);
+    position.setTotalCollateralQuoted(30e18);
+
+    harness.addWithdrawalQueueEntry(address(position));
+
+    vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
+    harness.processBurn(50e18, 50e18);
   }
 }

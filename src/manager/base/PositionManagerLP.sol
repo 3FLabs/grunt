@@ -143,7 +143,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     }
 
     // Process burn through withdrawal queue - withdraws/repays proportionally on each position
-    _storage.processBurn(collateral, debt, _totalCollateral, _totalDebt);
+    _storage.processBurn(collateral, debt);
 
     // Send collateral to caller
     if (collateral > 0) {
