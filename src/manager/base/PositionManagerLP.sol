@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManagerLP.sol";
+import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerBase} from "./PositionManagerBase.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
@@ -77,7 +78,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
   /// @inheritdoc IPositionManagerLP
   /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
-  function withdraw(uint256 collateral, uint256 debt)
+  function withdraw(uint256 collateral, uint256 debt, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
@@ -96,8 +97,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
-    // Process withdrawals through withdrawal queue
-    _storage.processWithdrawal(collateral, debt);
+    // Process withdrawals through withdrawal queue using the specified strategy
+    _storage.processWithdrawal(collateral, debt, strategy);
 
     // Send collateral to caller
     if (collateral > 0) {
@@ -112,7 +113,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
   /// @inheritdoc IPositionManagerLP
   /// @dev Reverts with {LibManagerErrors.ZeroAmount} if shares is zero.
-  function burn(uint256 shares)
+  function burn(uint256 shares, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
@@ -142,8 +143,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
-    // Process burn through withdrawal queue - withdraws/repays proportionally on each position
-    _storage.processBurn(collateral, debt);
+    // Process through withdrawal queue using the specified strategy
+    _storage.processWithdrawal(collateral, debt, strategy);
 
     // Send collateral to caller
     if (collateral > 0) {

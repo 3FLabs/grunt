@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {IPositionManagerAdmin, SupplyQueueEntry} from "./base/IPositionManagerAdmin.sol";
+import {IPositionManagerAdmin, SupplyQueueEntry, WithdrawalStrategy} from "./base/IPositionManagerAdmin.sol";
 import {IPositionManagerRebalancing} from "./base/IPositionManagerRebalancing.sol";
 import {IPositionManagerLP} from "./base/IPositionManagerLP.sol";
 

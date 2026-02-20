@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
-import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {SupplyQueueEntry, WithdrawalStrategy} from "../../interfaces/manager/IPositionManager.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
 import {LibExecutor} from "./LibExecutor.sol";
 import {LibManagerErrors} from "./LibManagerErrors.sol";
@@ -63,13 +63,32 @@ library LibOperations {
     }
   }
 
-  /// @dev Processes withdrawal through the withdrawal queue.
+  /// @dev Processes withdrawal through the withdrawal queue using the specified strategy.
+  /// @param _storage The position manager storage data
+  /// @param collateral The amount of collateral to withdraw
+  /// @param debt The amount of debt to repay
+  /// @param strategy The withdrawal strategy (SEQUENTIAL or PROPORTIONAL)
+  function processWithdrawal(
+    PositionManagerStorageData storage _storage,
+    uint256 collateral,
+    uint256 debt,
+    WithdrawalStrategy strategy
+  ) internal {
+    if (strategy == WithdrawalStrategy.SEQUENTIAL) {
+      _withdrawSequential(_storage, collateral, debt);
+    } else {
+      _withdrawProportional(_storage, collateral, debt);
+    }
+  }
+
+  /// @dev Withdraws sequentially through the withdrawal queue, draining positions one-by-one.
+  ///      For each position: repays as much debt as possible, then withdraws available collateral.
   ///      Reverts with {LibManagerErrors.ExcessDebtRepay} if the requested debt cannot be fully repaid.
   ///      Reverts with {LibManagerErrors.InsufficientAvailableCollateral} if the requested collateral cannot be withdrawn.
   /// @param _storage The position manager storage data
   /// @param collateral The amount of collateral to withdraw
   /// @param debt The amount of debt to repay
-  function processWithdrawal(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) internal {
+  function _withdrawSequential(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) private {
     unchecked {
       uint256 remainingDebt = debt;
       uint256 remainingCollateral = collateral;
@@ -108,16 +127,18 @@ library LibOperations {
     }
   }
 
-  /// @dev Processes burn by repaying debt and withdrawing collateral proportionally from each position.
+  /// @dev Withdraws proportionally across all positions in the withdrawal queue.
   ///      Uses a two-pass approach: first caches per-position values and computes queue-scoped totals,
-  ///      then distributes proportionally using those totals. The last position in the queue absorbs
-  ///      any rounding dust to ensure exact totals.
+  ///      then distributes repayment and withdrawal proportionally based on each position's share of totals.
+  ///      The last position in the queue absorbs any rounding dust to ensure exact totals.
   /// @param _storage The position manager storage data
   /// @param collateralToWithdraw Total collateral to withdraw
   /// @param debtToRepay Total debt to repay
-  function processBurn(PositionManagerStorageData storage _storage, uint256 collateralToWithdraw, uint256 debtToRepay)
-    internal
-  {
+  function _withdrawProportional(
+    PositionManagerStorageData storage _storage,
+    uint256 collateralToWithdraw,
+    uint256 debtToRepay
+  ) private {
     unchecked {
       address[] memory queue = _storage.withdrawalQueue;
       uint256 queueLength = queue.length;

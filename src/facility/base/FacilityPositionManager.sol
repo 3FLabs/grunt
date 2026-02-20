@@ -7,6 +7,7 @@ import {FacilityRoles} from "./FacilityRoles.sol";
 
 import {IFacilityPositionManager} from "src/interfaces/facility/base/IFacilityPositionManager.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibIntent, Intent, Asset, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
@@ -64,12 +65,13 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @inheritdoc IFacilityPositionManager
   /// @dev Withdraws collateral from the position manager and repays debt.
   ///      The intent must be in resolving state and have enough debt to repay.
-  function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount, bool useTarget)
-    external
-    override
-    nonReentrant
-    onlyRoles(FACILITATOR_ROLE)
-  {
+  function withdrawManager(
+    uint256 id,
+    uint256 withdrawAmount,
+    uint256 repayAmount,
+    bool useTarget,
+    WithdrawalStrategy strategy
+  ) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
     // getting the initial parameters
     (
       Intent storage _intent,
@@ -87,7 +89,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     }
 
     // repay the debt and withdraw the collateral
-    IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount);
+    IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount, strategy);
 
     if (repayAmount > 0) {
       // reset approval to 0
@@ -101,7 +103,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @inheritdoc IFacilityPositionManager
   /// @dev Burns position manager shares by sending debt to the position manager and receiving collateral back.
   ///      The intent must be in resolving state and have enough debt to repay.
-  function burnManager(uint256 id, uint256 shares, bool useTarget)
+  function burnManager(uint256 id, uint256 shares, bool useTarget, WithdrawalStrategy strategy)
     external
     override
     nonReentrant
@@ -122,7 +124,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     _debtAsset.safeApproveWithRetry(_positionManager, type(uint256).max);
 
     // burn the shares by sending debt to the position manager and receiving collateral back
-    IPositionManager(_positionManager).burn(shares);
+    IPositionManager(_positionManager).burn(shares, strategy);
 
     // commit snapshots to record the balance changes
     _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);

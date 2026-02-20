@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
 import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
-import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {RebalancingData, RebalancingOperation} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
@@ -217,7 +217,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     debtToken.approve(address(positionManager), type(uint256).max);
 
     vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
-    positionManager.burn(shares);
+    positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL);
     vm.stopPrank();
   }
 

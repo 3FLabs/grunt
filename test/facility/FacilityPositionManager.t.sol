@@ -6,6 +6,7 @@ import {IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {Asset} from "src/libs/facility/LibIntent.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 
 /// @title FacilityPositionManagerTest
 /// @notice Tests for Facility position manager operations (depositManager, withdrawManager, burnManager)
@@ -76,7 +77,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // The PM was funded with SMALL_COLLATERAL, so we can withdraw some of it
     uint256 withdrawAmount = SMALL_COLLATERAL / 4;
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, withdrawAmount, 0, false);
+    facility.withdrawManager(intentId, withdrawAmount, 0, false, WithdrawalStrategy.SEQUENTIAL);
 
     // Now we have collateral in the intent's balance, deposit it back with borrowing
     uint256 depositAmount = withdrawAmount / 2;
@@ -111,7 +112,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // First withdraw to get collateral into intent's balance
     uint256 withdrawAmount = SMALL_COLLATERAL / 4;
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, withdrawAmount, 0, false);
+    facility.withdrawManager(intentId, withdrawAmount, 0, false, WithdrawalStrategy.SEQUENTIAL);
 
     // Deposit without borrowing
     uint256 depositAmount = withdrawAmount / 2;
@@ -186,7 +187,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Now we have debt in the intent balance
     // Withdraw some collateral and repay part of the debt
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, 5e12, 5e12, false);
+    facility.withdrawManager(intentId, 5e12, 5e12, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawManager_repayOnly() public {
@@ -199,7 +200,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     // Repay without withdrawing collateral
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, 0, 10e12, false);
+    facility.withdrawManager(intentId, 0, 10e12, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawManager_revertWhenPaused() public {
@@ -210,7 +211,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(LibCommonErrors.Paused.selector);
-    facility.withdrawManager(intentId, 10e12, 0, false);
+    facility.withdrawManager(intentId, 10e12, 0, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawManager_revertWhenNotFacilitator() public {
@@ -218,7 +219,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     vm.prank(user);
     vm.expectRevert(); // Unauthorized
-    facility.withdrawManager(intentId, 10e12, 0, false);
+    facility.withdrawManager(intentId, 10e12, 0, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawManager_revertWhenNotResolving() public {
@@ -226,7 +227,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.NotResolving.selector, intentId));
-    facility.withdrawManager(intentId, 10e12, 0, false);
+    facility.withdrawManager(intentId, 10e12, 0, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawManager_revertWhenAssetNotPM() public {
@@ -235,7 +236,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Try to use deposit asset (which is debt token, not PM)
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.AssetNotPositionManager.selector, address(debtToken)));
-    facility.withdrawManager(intentId, 10e12, 0, false);
+    facility.withdrawManager(intentId, 10e12, 0, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -263,7 +264,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Burn some shares (note: shares = collateral * 1e6, so use appropriate amount)
     uint256 sharesToBurn = 1e18; // Small amount of shares
     vm.prank(facilitator);
-    facility.burnManager(intentId, sharesToBurn, false);
+    facility.burnManager(intentId, sharesToBurn, false, WithdrawalStrategy.PROPORTIONAL);
 
     // Check shares reduced
     (address[] memory tokensAfter, uint256[] memory amountsAfter) = facility.intentBalances(intentId);
@@ -286,7 +287,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(LibCommonErrors.Paused.selector);
-    facility.burnManager(intentId, 10e18, false);
+    facility.burnManager(intentId, 10e18, false, WithdrawalStrategy.PROPORTIONAL);
   }
 
   function test_burnManager_revertWhenNotFacilitator() public {
@@ -294,7 +295,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     vm.prank(user);
     vm.expectRevert(); // Unauthorized
-    facility.burnManager(intentId, 10e18, false);
+    facility.burnManager(intentId, 10e18, false, WithdrawalStrategy.PROPORTIONAL);
   }
 
   function test_burnManager_revertWhenNotResolving() public {
@@ -302,7 +303,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.NotResolving.selector, intentId));
-    facility.burnManager(intentId, 10e18, false);
+    facility.burnManager(intentId, 10e18, false, WithdrawalStrategy.PROPORTIONAL);
   }
 
   function test_burnManager_revertWhenAssetNotPM() public {
@@ -311,7 +312,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Try to use deposit asset (which is debt token, not PM)
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.AssetNotPositionManager.selector, address(debtToken)));
-    facility.burnManager(intentId, 10e18, false);
+    facility.burnManager(intentId, 10e18, false, WithdrawalStrategy.PROPORTIONAL);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -335,7 +336,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     (uint256 intentId,) = _createResolvingIntentWithCollateral(SMALL_COLLATERAL);
 
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, withdrawAmount, 0, false);
+    facility.withdrawManager(intentId, withdrawAmount, 0, false, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function testFuzz_borrowAndRepay_lifecycle(uint256 borrowAmount, uint256 repayRatio) public {
@@ -352,7 +353,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Repay part of the debt
     uint256 repayAmount = (borrowAmount * repayRatio) / 100;
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, 0, repayAmount, false);
+    facility.withdrawManager(intentId, 0, repayAmount, false, WithdrawalStrategy.SEQUENTIAL);
 
     // Verify intent has balances
     (address[] memory tokens,) = facility.intentBalances(intentId);
@@ -368,7 +369,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
 
     // Withdraw collateral
     vm.prank(facilitator);
-    facility.withdrawManager(intentId, withdrawAmount, 0, false);
+    facility.withdrawManager(intentId, withdrawAmount, 0, false, WithdrawalStrategy.SEQUENTIAL);
 
     // Deposit some of that collateral back
     uint256 depositAmount = (withdrawAmount * depositRatio) / 100;
