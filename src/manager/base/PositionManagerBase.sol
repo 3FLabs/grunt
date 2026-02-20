@@ -61,6 +61,7 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
 
     uint256 feeShares = 0;
     uint256 _totalSupply = totalSupply();
+    uint256 _lastTotalAssets = _storage.lastTotalAssets;
     uint256 managementFeeAssets = 0;
 
     // Management fee: based on time elapsed and total assets
@@ -74,10 +75,8 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     }
 
     // Performance fee: based on net gains (after management fee deduction) since last snapshot
-    if (
-      fd.performanceFee > 0 && currentTotalAssets > _storage.lastTotalAssets + managementFeeAssets && _totalSupply > 0
-    ) {
-      uint256 gains = currentTotalAssets - _storage.lastTotalAssets - managementFeeAssets;
+    if (fd.performanceFee > 0 && currentTotalAssets > _lastTotalAssets + managementFeeAssets && _totalSupply > 0) {
+      uint256 gains = currentTotalAssets - _lastTotalAssets - managementFeeAssets;
       uint256 performanceFeeAssets = gains.mulDiv(fd.performanceFee, BPS);
       if (performanceFeeAssets > 0) {
         feeShares += performanceFeeAssets.convertToShares(_totalSupply, currentTotalAssets, false);
