@@ -351,6 +351,7 @@ contract ControlledTokenTest is Test {
     vm.assume(spender != address(0));
     vm.assume(recipient != address(0));
     vm.assume(owner != spender);
+    vm.assume(owner != recipient);
 
     tokenController.mint(owner, ptMint, ytMint);
 
