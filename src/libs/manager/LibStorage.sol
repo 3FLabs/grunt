@@ -10,7 +10,8 @@ import {STORAGE_SLOT} from "./LibConstants.sol";
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
 /// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%)
-/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%)
+/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on net gains
+///        after management fee deduction
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;

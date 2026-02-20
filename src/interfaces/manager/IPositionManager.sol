@@ -62,7 +62,7 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @notice Returns the fee configuration and accounting state.
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days
-  /// @return performanceFee The performance fee rate in basis points
+  /// @return performanceFee The performance fee rate in basis points (charged on net gains after mgmt fee)
   /// @return lastTotalAssets The last total assets snapshot for performance fee calculation
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
   function feeData()

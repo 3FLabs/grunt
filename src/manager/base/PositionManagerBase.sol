@@ -40,6 +40,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Accrues fees (management + performance) and mints shares to the fee recipient.
+  ///      Management fees are computed first based on time elapsed and total assets.
+  ///      Performance fees are then charged on the net gain: totalAssets - lastTotalAssets - managementFeeAssets.
+  ///      This ensures performance fees are only taken on gains that exceed the management fee cost.
   ///      Returns the current total assets after fee accrual for use in share calculations.
   /// @return currentTotalAssets The total assets after fee accrual
   function _accrueFees() internal returns (uint256 currentTotalAssets) {
@@ -58,20 +61,23 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
 
     uint256 feeShares = 0;
     uint256 _totalSupply = totalSupply();
+    uint256 managementFeeAssets = 0;
 
     // Management fee: based on time elapsed and total assets
     if (fd.managementFee > 0 && _totalSupply > 0) {
       uint256 elapsed = block.timestamp - _storage.lastFeeAccrualTimestamp;
       // Fee = totalAssets * managementFee * elapsed / (BPS * SECONDS_PER_YEAR)
-      uint256 managementFeeAssets = currentTotalAssets.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
+      managementFeeAssets = currentTotalAssets.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
       if (managementFeeAssets > 0) {
         feeShares += managementFeeAssets.convertToShares(_totalSupply, currentTotalAssets, false);
       }
     }
 
-    // Performance fee: based on gains since last snapshot
-    if (fd.performanceFee > 0 && currentTotalAssets > _storage.lastTotalAssets && _totalSupply > 0) {
-      uint256 gains = currentTotalAssets - _storage.lastTotalAssets;
+    // Performance fee: based on net gains (after management fee deduction) since last snapshot
+    if (
+      fd.performanceFee > 0 && currentTotalAssets > _storage.lastTotalAssets + managementFeeAssets && _totalSupply > 0
+    ) {
+      uint256 gains = currentTotalAssets - _storage.lastTotalAssets - managementFeeAssets;
       uint256 performanceFeeAssets = gains.mulDiv(fd.performanceFee, BPS);
       if (performanceFeeAssets > 0) {
         feeShares += performanceFeeAssets.convertToShares(_totalSupply, currentTotalAssets, false);
