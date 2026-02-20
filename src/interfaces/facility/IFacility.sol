@@ -53,10 +53,11 @@ interface IFacility is
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the pause state of the facility.
+  /// @notice Returns the facility configuration: pause state and repay timelock.
   /// @return isPaused True if paused, false otherwise.
   /// @return pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent).
-  function paused() external view returns (bool isPaused, uint40 pausedUntil);
+  /// @return repayTimelock The minimum delay (seconds) between setRequest and first repay.
+  function facilityConfig() external view returns (bool isPaused, uint40 pausedUntil, uint40 repayTimelock);
 
   /// @notice Returns all tokens and their balances held by an intent.
   /// @dev Useful for displaying intent holdings and calculating claim previews.
@@ -67,12 +68,8 @@ interface IFacility is
   function intentBalances(uint256 id) external view returns (address[] memory tokens, uint256[] memory amounts);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        ADMIN                               */
+  /*                          ADMIN                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Returns the repay timelock duration.
-  /// @return The minimum delay (seconds) between setRequest and first repay.
-  function repayTimelock() external view returns (uint40);
 
   /// @notice Returns the earliest timestamp at which repay is allowed for an intent.
   /// @param id The intent ID.

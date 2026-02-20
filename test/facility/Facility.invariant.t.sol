@@ -390,7 +390,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
   /// @notice FAC-10: Pause timestamp consistency.
   /// @dev When the facility reports paused, pausedUntil must be >= block.timestamp.
   function invariant_pauseConsistency() public view {
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     if (isPaused) {
       assertGe(uint256(pausedUntil), block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
     }
