@@ -82,7 +82,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_setFeeData_revertOnExcessiveManagementFee() public {
-    uint24 excessiveManagementFee = 5001; // > 50%
+    uint24 excessiveManagementFee = 201; // > 2%
     uint24 validPerformanceFee = 2000;
 
     vm.prank(owner);
@@ -100,7 +100,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
   }
 
   function test_setFeeData_maxFeesAllowed() public {
-    uint24 maxManagementFee = 5000; // Exactly 50%
+    uint24 maxManagementFee = 200; // Exactly 2%
     uint24 maxPerformanceFee = 5000; // Exactly 50%
 
     vm.prank(owner);
