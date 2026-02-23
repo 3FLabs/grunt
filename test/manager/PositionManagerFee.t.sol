@@ -210,8 +210,8 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
   }
 
   function test_performanceFee_zeroWhenManagementFeeExceedsGain() public {
-    // Setup: high management fee, low performance fee
-    uint24 managementFee = 5000; // 50% per year
+    // Setup: max management fee (2%), low performance fee
+    uint24 managementFee = 200; // 2% per year (MAX_MANAGEMENT_FEE)
     uint24 performanceFee = 2000; // 20%
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, managementFee, performanceFee);
@@ -221,21 +221,14 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    // Small gain (5%) but large management fee (50% over 1 year)
-    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    // Small gain (1%) but management fee (2% over 1 year) exceeds it
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100);
     vm.warp(block.timestamp + 365 days);
 
-    // currentTotalAssets = 10_500e18
-    // gross gain = 500e18
-    // managementFeeAssets = 10_500e18 * 5000 / 10_000 = 5_250e18
-    // net gain = 500 - 5_250 = negative → no performance fee
-
-    // Run performance-fee-only first to get baseline
-    vm.prank(owner);
-    positionManager.setFeeData(feeRecipient, managementFee, 0); // disable perf fee
-    // Reset fee recipient balance
-    vm.prank(owner);
-    positionManager.setFeeData(feeRecipient, managementFee, performanceFee); // re-enable
+    // currentTotalAssets = 10_100e18
+    // gross gain = 100e18
+    // managementFeeAssets = 10_100e18 * 200 / 10_000 = 202e18
+    // net gain = 100 - 202 = negative → no performance fee
 
     // Trigger fee accrual
     _mintCollateral(minter, 1e18);
@@ -245,9 +238,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 feeShares = positionManager.balanceOf(feeRecipient);
 
     // The fee shares should only reflect management fee, no performance fee
-    // since management fee assets (5_250e18) > gross gain (500e18)
-    // Management fee in shares ≈ 5_250 / 10_500 * totalSupply ≈ 50% of supply
-    // This is a large chunk, but the key point is performance fee adds nothing extra
+    // since management fee assets (202e18) > gross gain (100e18)
     assertGt(feeShares, 0, "Should have management fee shares");
   }
 
