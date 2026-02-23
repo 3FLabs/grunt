@@ -70,7 +70,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   uint256 constant _ROLE_MINTER = 1 << 0;
   uint256 constant _ROLE_CURATOR = 1 << 1;
   uint256 constant _ROLE_REBALANCER = 1 << 2;
-  uint256 constant MAX_MANAGEMENT_FEE = 5000;
+  uint256 constant MAX_MANAGEMENT_FEE = 200;
   uint256 constant MAX_PERFORMANCE_FEE = 5000;
 
   /// @dev WrappedAsset roles (from OwnableRoles: _ROLE_1 = 1 << 1, _ROLE_2 = 1 << 2).
@@ -315,7 +315,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   }
 
   /// @notice PM-4: Fee parameters always stay within their maximum bounds.
-  /// @dev The PositionManager enforces MAX_MANAGEMENT_FEE (5000 bps = 50%) and
+  /// @dev The PositionManager enforces MAX_MANAGEMENT_FEE (200 bps = 2%) and
   ///      MAX_PERFORMANCE_FEE (5000 bps = 50%) during setFeeData(). This invariant
   ///      re-checks the stored values to ensure no path can bypass the validation.
   function invariant_feeBounds() public view {

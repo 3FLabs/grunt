@@ -94,6 +94,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     // forge-lint: disable-next-line(unsafe-typecast)
     _storage.rebalanceConfig.lastRebalanceTimestamp = uint40(block.timestamp);
 
+    emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
+
     // Update snapshot to post-rebalance state
     uint256 totalAssetsAfter = _storage.totalAssets();
     _storage.lastTotalAssets = totalAssetsAfter;
