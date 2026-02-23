@@ -41,9 +41,9 @@ uint256 constant SECONDS_PER_YEAR = 365 days;
 /*                        FEE LIMITS                          */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Maximum management fee: 50% per year (5000 basis points).
-/// @custom:value 5,000
-uint256 constant MAX_MANAGEMENT_FEE = 5000;
+/// @dev Maximum management fee: 2% per year (200 basis points).
+/// @custom:value 200
+uint256 constant MAX_MANAGEMENT_FEE = 200;
 
 /// @dev Maximum performance fee: 50% (5000 basis points).
 /// @custom:value 5,000
