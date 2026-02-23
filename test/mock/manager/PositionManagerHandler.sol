@@ -337,12 +337,12 @@ contract PositionManagerHandler is Test {
   }
 
   /// @notice Sets fee parameters on the PositionManager.
-  /// @dev Bounds management and performance fees to [0, 5000] (MAX_MANAGEMENT_FEE / MAX_PERFORMANCE_FEE).
+  /// @dev Bounds management fee to [0, 200] (MAX_MANAGEMENT_FEE = 2%) and performance fee to [0, 5000].
   ///      Sets a fee recipient if one is not already configured.
   /// @param mgmt Raw fuzz input for management fee (basis points).
   /// @param perf Raw fuzz input for performance fee (basis points).
   function act_setFees(uint256 mgmt, uint256 perf) external refreshFullLiquidation {
-    mgmt = _bound(mgmt, 0, 5000);
+    mgmt = _bound(mgmt, 0, 200);
     perf = _bound(perf, 0, 5000);
 
     (address currentRecipient,,,,) = positionManager.feeData();
