@@ -9,6 +9,7 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {IPositionManagerAdmin} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {IPositionManagerRebalancing} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerRebalanceTest
@@ -64,6 +65,68 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     // Check balances moved
     assertApproxEqRel(borrowPosition1.totalCollateral(), collateralToMove, 0.01e18);
     assertApproxEqRel(borrowPosition2.totalCollateral(), collateralToMove, 0.01e18);
+  }
+
+  function test_rebalance_emitsRebalancedEvent() public {
+    // Setup: deposit collateral and borrow in position 1
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Rebalance: move half to position 2
+    uint256 collateralToMove = COLLATERAL_AMOUNT / 2;
+    uint256 debtToMove = DEBT_AMOUNT / 2;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](4);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: debtToMove
+    });
+    ops[1] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToMove
+    });
+    ops[2] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: collateralToMove
+    });
+    ops[3] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: debtToMove
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
+
+    _mintDebt(rebalancer, debtToMove);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), debtToMove);
+
+    vm.expectEmit(true, false, false, true);
+    emit IPositionManagerRebalancing.Rebalanced(rebalancer, 0, debtToMove, 0, debtToMove);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_emitsRebalancedEventWithExcess() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Provide more collateral than needed — only supply half
+    uint256 excessCollateral = 1000e18;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: excessCollateral / 2
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: excessCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, excessCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), excessCollateral);
+
+    vm.expectEmit(true, false, false, true);
+    emit IPositionManagerRebalancing.Rebalanced(rebalancer, excessCollateral, 0, excessCollateral / 2, 0);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
   }
 
   function test_rebalance_accruesFeesAndUpdatesSnapshot() public {

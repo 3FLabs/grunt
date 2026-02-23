@@ -78,6 +78,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     collateralExcess = _collateralAsset.safeTransferAll(receiver);
     debtExcess = _debtAsset.safeTransferAll(receiver);
 
+    emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
+
     // Update snapshot to post-rebalance state
     uint256 totalAssetsAfter = _storage.totalAssets();
     _storage.lastTotalAssets = totalAssetsAfter;

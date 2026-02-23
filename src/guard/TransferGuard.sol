@@ -23,6 +23,8 @@ struct TokenConfig {
 ///      Token config (paused, whitelist mode) is packed into a single slot per token.
 ///      Deployable via beacon proxy pattern for upgradeability.
 ///
+///      **Storage:** Uses ERC-7201 namespaced storage layout for proxy safety.
+///
 ///      **Token modes:**
 ///      Each token can be configured in one of two modes:
 ///      - Blocklist mode (default): All addresses allowed EXCEPT those with BLOCKLIST status
@@ -57,14 +59,27 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   uint256 public constant PAUSER_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          STORAGE                           */
+  /*                    ERC-7201 STORAGE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Status of each address (NONE, WHITELIST, or BLOCKLIST).
-  mapping(address account => AddressStatus status) public addressStatus;
+  /// @custom:storage-location erc7201:transferguard.main
+  struct TransferGuardStorage {
+    /// @notice Status of each address (NONE, WHITELIST, or BLOCKLIST).
+    mapping(address account => AddressStatus status) addressStatus;
+    /// @notice Per-token configuration (paused, whitelist mode) packed in one slot.
+    mapping(address token => TokenConfig config) tokenConfig;
+  }
 
-  /// @notice Per-token configuration (paused, whitelist mode) packed in one slot.
-  mapping(address token => TokenConfig config) public tokenConfig;
+  /// @dev Storage slot for TransferGuard.
+  ///      keccak256(abi.encode(uint256(keccak256("transferguard.main")) - 1)) & ~bytes32(uint256(0xff))
+  bytes32 private constant _STORAGE_SLOT = 0xc6c8482afc451e8caac0099c996ccfb351ca947c4bbb65e7d1fc5f0e82e91c00;
+
+  /// @dev Returns a pointer to the ERC-7201 namespaced storage struct.
+  function _storage() private pure returns (TransferGuardStorage storage $) {
+    assembly ("memory-safe") {
+      $.slot := _STORAGE_SLOT
+    }
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -81,20 +96,37 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*                       VIEW FUNCTIONS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Returns the status of an address.
+  /// @param account The address to query
+  /// @return The address status (NONE, WHITELIST, or BLOCKLIST)
+  function addressStatus(address account) external view returns (AddressStatus) {
+    return _storage().addressStatus[account];
+  }
+
+  /// @notice Returns the per-token configuration.
+  /// @param token The token address to query
+  /// @return pausedUntil The pause-until timestamp
+  /// @return whitelist Whether the token is in whitelist mode
+  function tokenConfig(address token) external view returns (uint40 pausedUntil, bool whitelist) {
+    TokenConfig memory config = _storage().tokenConfig[token];
+    return (config.pausedUntil, config.whitelist);
+  }
+
   /// @inheritdoc ITransferGuard
   function canTransfer(address token, address from, address to, uint256 amount) external view returns (bool) {
-    TokenConfig memory config = tokenConfig[token];
+    TransferGuardStorage storage $ = _storage();
+    TokenConfig memory config = $.tokenConfig[token];
 
     // Check pause status using LibPause
     if (config.pausedUntil.paused()) return false;
 
     // Check sender (skip for mints)
-    if (from != address(0) && !_isAllowed(from, config.whitelist)) {
+    if (from != address(0) && !_isAllowed($, from, config.whitelist)) {
       return false;
     }
 
     // Check recipient (skip for burns)
-    if (to != address(0) && !_isAllowed(to, config.whitelist)) {
+    if (to != address(0) && !_isAllowed($, to, config.whitelist)) {
       return false;
     }
 
@@ -103,14 +135,14 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @inheritdoc ITransferGuard
   function paused(address token) external view returns (bool) {
-    return tokenConfig[token].pausedUntil.paused();
+    return _storage().tokenConfig[token].pausedUntil.paused();
   }
 
   /// @notice Returns whether a token is in whitelist mode.
   /// @param token The token address
   /// @return True if whitelist mode, false if blocklist mode
   function isWhitelistMode(address token) external view returns (bool) {
-    return tokenConfig[token].whitelist;
+    return _storage().tokenConfig[token].whitelist;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -118,11 +150,16 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Checks if an address is allowed based on its status and token mode.
+  /// @param $ The namespaced storage pointer
   /// @param account The address to check
   /// @param whitelistMode Whether the token is in whitelist mode
   /// @return True if allowed, false otherwise
-  function _isAllowed(address account, bool whitelistMode) internal view returns (bool) {
-    AddressStatus status = addressStatus[account];
+  function _isAllowed(TransferGuardStorage storage $, address account, bool whitelistMode)
+    internal
+    view
+    returns (bool)
+  {
+    AddressStatus status = $.addressStatus[account];
 
     // BLOCKLIST is always blocked in both modes
     if (status == AddressStatus.BLOCKLIST) {
@@ -148,7 +185,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param account The address to update
   /// @param status The new status
   function setAddressStatus(address account, AddressStatus status) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
-    addressStatus[account] = status;
+    _storage().addressStatus[account] = status;
     emit AddressStatusSet(account, status);
   }
 
@@ -159,8 +196,9 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     external
     onlyOwnerOrRoles(COMPLIANCE_ROLE)
   {
+    TransferGuardStorage storage $ = _storage();
     for (uint256 i = 0; i < accounts.length; ++i) {
-      addressStatus[accounts[i]] = status;
+      $.addressStatus[accounts[i]] = status;
       emit AddressStatusSet(accounts[i], status);
     }
   }
@@ -172,7 +210,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Pauses all transfers for a token indefinitely.
   /// @param token The token to pause
   function pause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
-    tokenConfig[token].pausedUntil = LibPause.PERMANENT_PAUSE;
+    _storage().tokenConfig[token].pausedUntil = LibPause.PERMANENT_PAUSE;
     emit TokenPausedSet(token, LibPause.PERMANENT_PAUSE);
   }
 
@@ -181,14 +219,14 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param duration The duration to pause for (in seconds)
   function pauseFor(address token, uint256 duration) external onlyOwnerOrRoles(PAUSER_ROLE) {
     uint40 pauseUntil = LibPause.pauseFor(duration);
-    tokenConfig[token].pausedUntil = pauseUntil;
+    _storage().tokenConfig[token].pausedUntil = pauseUntil;
     emit TokenPausedSet(token, pauseUntil);
   }
 
   /// @notice Unpauses transfers for a token.
   /// @param token The token to unpause
   function unpause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
-    tokenConfig[token].pausedUntil = LibPause.NOT_PAUSED;
+    _storage().tokenConfig[token].pausedUntil = LibPause.NOT_PAUSED;
     emit TokenPausedSet(token, LibPause.NOT_PAUSED);
   }
 
@@ -204,7 +242,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     // converting to uint40 is safe because the result is less than 2^40
     // forge-lint: disable-next-line(unsafe-typecast)
     uint40 pausedUntil = uint40(paused_.ternary(LibPause.PERMANENT_PAUSE, LibPause.NOT_PAUSED));
-    tokenConfig[token] = TokenConfig({pausedUntil: pausedUntil, whitelist: whitelist_});
+    _storage().tokenConfig[token] = TokenConfig({pausedUntil: pausedUntil, whitelist: whitelist_});
     emit TokenConfigSet(token, pausedUntil, whitelist_);
   }
 }
