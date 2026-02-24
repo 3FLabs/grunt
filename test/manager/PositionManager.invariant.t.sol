@@ -63,8 +63,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18;
-  uint128 constant BP_SAFE_LTV = 0.65e18;
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18;
+  uint128 constant BP_SAFE_LTV = 0.72e18;
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18;
   uint256 constant POSITION_MANAGER_LTV = 0.7e18;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
   uint256 constant _ROLE_MINTER = 1 << 0;
@@ -373,8 +373,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
 
       if (borrowed == 0) {
         // A position with no debt is always healthy at any LTV.
-        (uint128 safeLtv,) = MorphoBorrowPosition(modules[i]).ltvs();
-        assertTrue(bp.isHealthy(safeLtv), "PM-7: debt-free position reported unhealthy");
+        uint128 bpSafeLtv = MorphoBorrowPosition(modules[i]).safeLtv();
+        assertTrue(bp.isHealthy(bpSafeLtv), "PM-7: debt-free position reported unhealthy");
       }
 
       if (collateral == 0) {
@@ -427,7 +427,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     address[] memory modules = positionManager.borrowModules();
     for (uint256 i = 0; i < modules.length; i++) {
       MorphoBorrowPosition bp = MorphoBorrowPosition(modules[i]);
-      (, uint128 liquidationLtv) = bp.ltvs();
+      uint128 liquidationLtv = bp.liquidationLtv();
 
       // Only test positions that have collateral and are healthy
       if (bp.totalCollateral() > 0 && bp.isHealthy(liquidationLtv)) {

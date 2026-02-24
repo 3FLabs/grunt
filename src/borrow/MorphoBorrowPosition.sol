@@ -489,14 +489,17 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     return _borrowPositionStorage().marketId;
   }
 
-  /// @notice Returns both the safe LTV and liquidation LTV set for this borrow position.
-  /// @dev Both values are immutable after initialization. The safe LTV is the threshold that
-  ///      must not be reached upon position mutations (borrow, withdrawCollateral), while the
-  ///      liquidation LTV determines when the position can be liquidated via preLiquidate.
-  /// @return safeLtv_ The safe LTV in WAD format (1e18 = 100%).
-  /// @return liquidationLtv_ The liquidation LTV in WAD format (1e18 = 100%).
-  function ltvs() external view returns (uint128 safeLtv_, uint128 liquidationLtv_) {
-    BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    return (_storage.safeLtv, _storage.liquidationLtv);
+  /// @inheritdoc IBorrowPosition
+  /// @dev The safe LTV is immutable after initialization and determines the threshold
+  ///      that must not be reached upon position mutations (borrow, withdrawCollateral).
+  function safeLtv() external view override returns (uint128) {
+    return _borrowPositionStorage().safeLtv;
+  }
+
+  /// @notice Returns the liquidation LTV set for this borrow position.
+  /// @dev Immutable after initialization. Determines when the position can be liquidated via preLiquidate.
+  /// @return The liquidation LTV in WAD format (1e18 = 100%).
+  function liquidationLtv() external view returns (uint128) {
+    return _borrowPositionStorage().liquidationLtv;
   }
 }

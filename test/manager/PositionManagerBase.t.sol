@@ -69,8 +69,8 @@ contract PositionManagerBaseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV (Morpho market)
-  uint128 constant BP_SAFE_LTV = 0.65e18; // 65% safe LTV for borrow positions
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18; // 72% liquidation LTV for borrow positions
+  uint128 constant BP_SAFE_LTV = 0.72e18; // 72% safe LTV for borrow positions (must be >= PM LTV)
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18; // 78% liquidation LTV for borrow positions
   uint256 constant POSITION_MANAGER_LTV = 0.7e18; // 70% LTV for available collateral
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36; // 1:1 price

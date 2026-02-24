@@ -98,8 +98,8 @@ contract FacilityInvariantTest is StdInvariant, Test {
   // Morpho / PM constants
   uint256 constant DEFAULT_LLTV = 0.8e18;
   uint256 constant PM_LTV = 0.7e18;
-  uint128 constant BP_SAFE_LTV = 0.65e18;
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18;
+  uint128 constant BP_SAFE_LTV = 0.72e18;
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
 
   // WrappedAsset roles

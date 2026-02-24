@@ -10,6 +10,11 @@ import {
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
+import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
+import {MockBorrowPosition} from "test/mock/borrow/MockBorrowPosition.sol";
+import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title PositionManagerRolesTest
 /// @notice Tests for PositionManager admin functions and role-based access control
@@ -76,8 +81,18 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
   }
 
   function test_setLtv_allowsMaxWad() public {
-    vm.prank(owner);
+    // First remove all borrow modules so no safeLtv constraint
+    // Clear queues first
+    vm.prank(curator);
+    positionManager.setSupplyQueue(new SupplyQueueEntry[](0));
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(new address[](0));
+
+    vm.startPrank(owner);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+    positionManager.removeBorrowModule(address(borrowPosition2));
     positionManager.setLtv(1e18);
+    vm.stopPrank();
 
     assertEq(_ltv(), 1e18);
   }
@@ -87,7 +102,10 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_addBorrowModule_onlyOwner() public {
-    address newModule = makeAddr("newModule");
+    // Create a valid borrow module for the success case
+    address newModule = borrowPositionFactory.createBorrowPosition(
+      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
 
     vm.prank(user);
     vm.expectRevert();
@@ -97,6 +115,95 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.addBorrowModule(newModule);
 
     assertTrue(positionManager.isBorrowModule(newModule));
+  }
+
+  function test_addBorrowModule_revertWhen_CollateralAssetMismatch() public {
+    // Create a module with wrong collateral asset
+    MockERC20 wrongCollateral = new MockERC20("Wrong", "WRG", 18);
+    MorphoBorrowPosition wrongModule = new MorphoBorrowPosition();
+
+    // Create a Morpho market with wrong collateral
+    MarketParams memory wrongParams = MarketParams({
+      loanToken: address(debtToken),
+      collateralToken: address(wrongCollateral),
+      oracle: address(oracle),
+      irm: address(irm),
+      lltv: DEFAULT_LLTV
+    });
+    vm.prank(owner);
+    morpho.createMarket(wrongParams);
+
+    wrongModule.initialize(
+      morpho, MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.CollateralAssetMismatch.selector);
+    positionManager.addBorrowModule(address(wrongModule));
+  }
+
+  function test_addBorrowModule_revertWhen_DebtAssetMismatch() public {
+    // Create a module with wrong debt asset
+    MockERC20 wrongDebt = new MockERC20("Wrong", "WRG", 18);
+    MorphoBorrowPosition wrongModule = new MorphoBorrowPosition();
+
+    // Create a Morpho market with wrong debt
+    MarketParams memory wrongParams = MarketParams({
+      loanToken: address(wrongDebt),
+      collateralToken: address(collateralToken),
+      oracle: address(oracle),
+      irm: address(irm),
+      lltv: DEFAULT_LLTV
+    });
+    vm.prank(owner);
+    morpho.createMarket(wrongParams);
+
+    wrongModule.initialize(
+      morpho, MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.DebtAssetMismatch.selector);
+    positionManager.addBorrowModule(address(wrongModule));
+  }
+
+  function test_addBorrowModule_revertWhen_InvalidOwner() public {
+    // Create a module owned by someone else
+    address wrongOwner = makeAddr("wrongOwner");
+    MorphoBorrowPosition wrongModule = new MorphoBorrowPosition();
+    wrongModule.initialize(morpho, marketId1, wrongOwner, BP_SAFE_LTV, BP_LIQUIDATION_LTV);
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.InvalidModuleOwner.selector);
+    positionManager.addBorrowModule(address(wrongModule));
+  }
+
+  function test_addBorrowModule_revertWhen_SafeLtvTooLow() public {
+    // Create a module with safeLtv < PM LTV
+    uint128 lowSafeLtv = uint128(POSITION_MANAGER_LTV) - 1;
+    uint128 liquidationLtv = uint128(POSITION_MANAGER_LTV) + 0.01e18;
+    MorphoBorrowPosition wrongModule = new MorphoBorrowPosition();
+    wrongModule.initialize(morpho, marketId1, address(positionManager), lowSafeLtv, liquidationLtv);
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
+    positionManager.addBorrowModule(address(wrongModule));
+  }
+
+  function test_setLtv_revertWhen_ExceedsModuleSafeLtv() public {
+    // Current BP_SAFE_LTV = 0.72e18, try to set PM LTV above it
+    uint256 tooHighLtv = uint256(BP_SAFE_LTV) + 1;
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
+    positionManager.setLtv(tooHighLtv);
+  }
+
+  function test_setLtv_succeedsWhenEqualToModuleSafeLtv() public {
+    vm.prank(owner);
+    positionManager.setLtv(uint256(BP_SAFE_LTV));
+
+    assertEq(_ltv(), uint256(BP_SAFE_LTV));
   }
 
   function test_removeBorrowModule_onlyOwner() public {

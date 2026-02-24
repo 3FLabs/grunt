@@ -91,7 +91,9 @@ contract TransferGuardReentrancyTest is Test {
     );
 
     // Deploy malicious module
-    maliciousModule = new MaliciousBorrowModule(address(guard), address(positionManager));
+    maliciousModule = new MaliciousBorrowModule(
+      address(guard), address(positionManager), address(collateralToken), address(debtToken), address(positionManager)
+    );
 
     // Grant PAUSER_ROLE to malicious module (simulating compromised trusted module)
     vm.prank(guardOwner);
@@ -214,7 +216,8 @@ contract TransferGuardReentrancyTest is Test {
   /// @dev A malicious module that tries to re-enter rebalance will fail due to nonReentrant
   function test_reentrancyGuardPreventsReentry() public {
     // Deploy reentrant module
-    ReentrantBorrowModule reentrantModule = new ReentrantBorrowModule(address(positionManager), rebalancer);
+    ReentrantBorrowModule reentrantModule =
+      new ReentrantBorrowModule(address(positionManager), rebalancer, address(collateralToken), address(debtToken));
 
     // Add reentrant module and grant it rebalancer role (to attempt re-entry)
     vm.startPrank(owner);

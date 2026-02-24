@@ -52,6 +52,18 @@ library LibManagerErrors {
   /// @notice Thrown when attempting to remove a module that is still in a queue.
   error ModuleStillInQueue();
 
+  /// @notice Thrown when a borrow module's collateral asset does not match the position manager's.
+  error CollateralAssetMismatch();
+
+  /// @notice Thrown when a borrow module's debt (borrow) asset does not match the position manager's.
+  error DebtAssetMismatch();
+
+  /// @notice Thrown when a borrow module's owner is not the position manager.
+  error InvalidModuleOwner();
+
+  /// @notice Thrown when a borrow module's safe LTV is lower than the position manager's LTV.
+  error ModuleSafeLtvTooLow();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       REBALANCING                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

@@ -385,7 +385,7 @@ contract PositionManagerHandler is Test {
     for (uint256 i = 0; i < modules.length; i++) {
       uint256 idx = (posIdx + i) % modules.length;
       MorphoBorrowPosition bp = MorphoBorrowPosition(modules[idx]);
-      (, uint128 liquidationLtv) = bp.ltvs();
+      uint128 liquidationLtv = bp.liquidationLtv();
 
       if (bp.totalCollateral() == 0 || bp.isHealthy(liquidationLtv)) continue;
 
