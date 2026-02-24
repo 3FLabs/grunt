@@ -23,7 +23,7 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function queries the Centrifuge
 ///        vault to determine state transitions (e.g., PROCESSING → UNLOCKING when claimable).
-///      - Recovery is async: recovering() → cancelOrder() → wait for Centrifuge → recover().
+///      - Recovery is async: cancelRequest() → wait for Centrifuge → recover().
 contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using LibChecks for address;
@@ -53,10 +53,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     address shareToken;
     bytes32 currentOrderId;
     State internalState;
-    bool hasResolvedAmounts;
-    bool cancelSubmitted;
-    uint256 resolvedInput;
-    uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
 
@@ -127,13 +123,19 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       $.endedOrders[$.currentOrderId] = true;
     }
 
+    if (order.mode == Mode.DEPOSIT) {
+      if (order.output > ICentrifugeVault($.vault).convertToShares(order.input)) {
+        revert LibFundsErrors.InvalidOutput();
+      }
+    } else {
+      if (order.output > ICentrifugeVault($.vault).convertToAssets(order.input)) {
+        revert LibFundsErrors.InvalidOutput();
+      }
+    }
+
     bytes32 _orderId = order.toId(address(this));
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
-    $.hasResolvedAmounts = false;
-    $.cancelSubmitted = false;
-    $.resolvedInput = 0;
-    $.resolvedOutput = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -273,31 +275,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc ICentrifugeFund
-  function recovering() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function cancelRequest(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
-    $.internalState = State.RECOVERING;
-
-    emit OrderRecovering($.currentOrderId);
-  }
-
-  /// @inheritdoc ICentrifugeFund
-  function cancelRecovering() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
-    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    if ($.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState($.internalState);
-    if ($.cancelSubmitted) revert LibFundsErrors.InvalidState($.internalState);
-    $.internalState = State.PROCESSING;
-
-    emit OrderProcessing($.currentOrderId);
-  }
-
-  /// @inheritdoc ICentrifugeFund
-  function cancelOrder(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
-    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    if ($.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState($.internalState);
     if (order.toId(address(this)) != $.currentOrderId) {
       revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     }
+
+    $.internalState = State.RECOVERING;
 
     address _vault = $.vault;
 
@@ -307,34 +292,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       ICentrifugeVault(_vault).cancelRedeemRequest(0, address(this));
     }
 
-    $.cancelSubmitted = true;
-
-    emit CancelOrderSubmitted($.currentOrderId);
-  }
-
-  /// @inheritdoc ICentrifugeFund
-  function resolve(Order memory order, uint256 input, uint256 output)
-    external
-    override
-    onlyOwnerOrRoles(OPERATOR_ROLE)
-  {
-    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    State _internalState = $.internalState;
-    if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) {
-      revert LibFundsErrors.InvalidState($.internalState);
-    }
-    if (order.toId(address(this)) != $.currentOrderId) {
-      revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
-    }
-
-    $.hasResolvedAmounts = true;
-    $.resolvedInput = input;
-    $.resolvedOutput = output;
-
-    order.input = input;
-    order.output = output;
-
-    emit OrderResolved($.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+    emit CancelRequestSubmitted($.currentOrderId);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -390,7 +348,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   ///      - Deposit: checks vault.maxMint(this) > 0 → UNLOCKING
   ///      - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
   ///
-  ///      For RECOVERING state (after cancelOrder submitted):
+  ///      For RECOVERING state (after cancelRequest submitted):
   ///      - Deposit: checks vault.claimableCancelDepositRequest(0, this) > 0 → RECOVERING
   ///      - Redeem: checks vault.claimableCancelRedeemRequest(0, this) > 0 → RECOVERING
   ///      - If not yet claimable, falls back to PROCESSING
@@ -411,14 +369,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     State _internalState = $.internalState;
-    uint256 _effectiveInput = order.input;
-    uint256 _effectiveOutput = order.output;
-
-    if ($.hasResolvedAmounts) {
-      _effectiveInput = $.resolvedInput;
-      _effectiveOutput = $.resolvedOutput;
-    }
-
     address _vault = $.vault;
 
     if (_internalState == State.PROCESSING) {
@@ -432,16 +382,18 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     if (_internalState == State.RECOVERING) {
-      bool _hasPendingRecover = _stateHasPendingRecover(order.mode, _vault);
       uint256 _claimable;
+      bool _hasPending;
 
       if (order.mode == Mode.DEPOSIT) {
         _claimable = ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this));
+        _hasPending = _claimable > 0 || ICentrifugeVault(_vault).pendingCancelDepositRequest(0, address(this));
       } else {
         _claimable = ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this));
+        _hasPending = _claimable > 0 || ICentrifugeVault(_vault).pendingCancelRedeemRequest(0, address(this));
       }
 
-      return _hasPendingRecover || _claimable > 0 ? (State.RECOVERING, _claimable) : (State.PROCESSING, 0);
+      return _hasPending ? (State.RECOVERING, _claimable) : (State.PROCESSING, 0);
     }
 
     return (_internalState, 0);

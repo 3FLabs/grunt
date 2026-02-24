@@ -11,6 +11,11 @@ interface ICentrifugeVault {
   /// @notice Returns the share token of the vault.
   function share() external view returns (address);
 
+  /// @notice Converts an asset amount to the equivalent share amount.
+  /// @param assets The number of assets to convert.
+  /// @return The equivalent amount of shares.
+  function convertToShares(uint256 assets) external view returns (uint256);
+
   /// @notice Converts a share amount to the equivalent asset amount.
   /// @param shares The number of shares to convert.
   /// @return The equivalent amount of assets.

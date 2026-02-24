@@ -22,6 +22,9 @@ library LibFundsErrors {
   /// @notice Thrown when trying to create an order while another is still pending.
   error PendingOrder();
 
+  /// @notice Thrown when the order output does not match the vault's current conversion rate.
+  error InvalidOutput();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      AUTHORIZATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
