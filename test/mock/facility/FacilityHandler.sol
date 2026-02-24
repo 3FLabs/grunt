@@ -169,8 +169,8 @@ contract FacilityHandler is Test {
     return keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-        keccak256("3Facility"),
-        keccak256("1.0.0"),
+        keccak256("3F"),
+        keccak256("1"),
         block.chainid,
         address(facility)
       )
@@ -850,8 +850,8 @@ contract FacilityHandler is Test {
     return keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-        keccak256("3Facility"),
-        keccak256("1.0.0"),
+        keccak256("3F"),
+        keccak256("1"),
         block.chainid,
         address(facility)
       )

@@ -283,7 +283,7 @@ contract PositionManagerFactoryTest is Test {
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
     assertEq(pm.decimals(), decimals);
-    (uint256 ltv_,, address transferGuard_,,) = pm.config();
+    (uint256 ltv_, address transferGuard_) = pm.config();
     assertEq(ltv_, ltv);
     assertEq(transferGuard_, transferGuard);
   }

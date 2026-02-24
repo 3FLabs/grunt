@@ -7,7 +7,7 @@ import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerLP} from "./base/PositionManagerLP.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
-import {FeeData, PositionManagerMetadata, PositionManagerStorageData} from "../libs/manager/LibStorage.sol";
+import {FeeData, PositionManagerMetadata, PositionManagerStorageData, RebalanceConfig} from "../libs/manager/LibStorage.sol";
 import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
@@ -154,23 +154,22 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function config()
-    public
-    view
-    returns (
-      uint256 ltv,
-      uint16 maxRebalanceLoss,
-      address transferGuard,
-      uint40 rebalanceCooldown,
-      uint40 lastRebalanceTimestamp
-    )
-  {
+  function config() public view returns (uint256 ltv, address transferGuard) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     ltv = _storage.ltv;
-    maxRebalanceLoss = _storage.rebalanceConfig.maxRebalanceLoss;
     transferGuard = _storage.transferGuard;
-    rebalanceCooldown = _storage.rebalanceConfig.rebalanceCooldown;
-    lastRebalanceTimestamp = _storage.rebalanceConfig.lastRebalanceTimestamp;
+  }
+
+  /// @inheritdoc IPositionManager
+  function rebalanceConfig()
+    public
+    view
+    returns (uint16 maxRebalanceLoss, uint40 rebalanceCooldown, uint40 lastRebalanceTimestamp)
+  {
+    RebalanceConfig storage rc = LibStorage.positionManagerStorage().rebalanceConfig;
+    maxRebalanceLoss = rc.maxRebalanceLoss;
+    rebalanceCooldown = rc.rebalanceCooldown;
+    lastRebalanceTimestamp = rc.lastRebalanceTimestamp;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

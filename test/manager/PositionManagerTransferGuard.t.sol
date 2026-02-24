@@ -72,7 +72,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_setTransferGuard() public view {
-    (,, address guard_,,) = positionManager.config();
+    (, address guard_) = positionManager.config();
     assertEq(guard_, address(guard));
   }
 
@@ -86,7 +86,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setTransferGuard(address(0));
 
-    (,, address guard_,,) = positionManager.config();
+    (, address guard_) = positionManager.config();
     assertEq(guard_, address(0));
   }
 

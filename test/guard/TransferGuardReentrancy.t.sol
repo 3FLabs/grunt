@@ -191,7 +191,7 @@ contract TransferGuardReentrancyTest is Test {
     // which should be tightly controlled
 
     // Verify guard is set
-    (,, address currentGuard,,) = positionManager.config();
+    (, address currentGuard) = positionManager.config();
     assertEq(currentGuard, address(guard), "Guard should be set");
 
     // In a hypothetical attack scenario:
