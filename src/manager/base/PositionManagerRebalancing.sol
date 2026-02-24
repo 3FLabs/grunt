@@ -48,6 +48,20 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
+    // Enforce cooldown between consecutive rebalance calls
+    uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
+    uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
+    if (cooldown > 0 && lastRebalance > 0) {
+      // Safe: block.timestamp fits in uint40 for ~35,000 years
+      // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
+      // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
+      // to avoid uint40 overflow when cooldown is large.
+      // forge-lint: disable-next-line(unsafe-typecast)
+      if (uint40(block.timestamp) - lastRebalance < cooldown) {
+        revert LibManagerErrors.RebalanceCooldownNotElapsed();
+      }
+    }
+
     // Check if paused via transfer guard
     address guard = _storage.transferGuard;
     if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
@@ -78,6 +92,11 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     collateralExcess = _collateralAsset.safeTransferAll(receiver);
     debtExcess = _debtAsset.safeTransferAll(receiver);
 
+    // Record rebalance timestamp for cooldown enforcement
+    // Safe: block.timestamp fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _storage.rebalanceConfig.lastRebalanceTimestamp = uint40(block.timestamp);
+
     emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
 
     // Update snapshot to post-rebalance state
@@ -89,7 +108,7 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
       uint256 loss = totalAssetsBefore - totalAssetsAfter;
       // loss * BPS / totalAssetsBefore > maxRebalanceLoss
       // Rearranged to avoid division: loss * BPS > maxRebalanceLoss * totalAssetsBefore
-      if (loss * BPS > uint256(_storage.maxRebalanceLoss) * totalAssetsBefore) {
+      if (loss * BPS > uint256(_storage.rebalanceConfig.maxRebalanceLoss) * totalAssetsBefore) {
         revert LibManagerErrors.RebalanceLossExceedsMax();
       }
     }

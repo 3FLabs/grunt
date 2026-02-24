@@ -52,9 +52,10 @@ interface IPositionManagerAdmin {
   /// @param module The address of the borrow module removed
   event BorrowModuleRemoved(address indexed module);
 
-  /// @notice Emitted when the max rebalance loss is updated.
+  /// @notice Emitted when the rebalance configuration is updated.
   /// @param maxRebalanceLoss The new max rebalance loss value in basis points
-  event MaxRebalanceLossSet(uint16 maxRebalanceLoss);
+  /// @param rebalanceCooldown The new cooldown period in seconds (0 = disabled)
+  event RebalanceConfigSet(uint16 maxRebalanceLoss, uint40 rebalanceCooldown);
 
   /// @notice Emitted when the transfer guard is updated.
   /// @param transferGuard The new transfer guard address (address(0) to disable)
@@ -101,10 +102,12 @@ interface IPositionManagerAdmin {
   ///        after management fee deduction
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
-  /// @notice Sets the maximum allowed loss during rebalance operations.
-  /// @dev Only callable by the owner. This limits how much totalAssets can decrease during a rebalance.
+  /// @notice Sets the rebalance configuration (max loss and cooldown).
+  /// @dev Only callable by the owner. maxRebalanceLoss limits how much totalAssets can decrease
+  ///      during a rebalance. rebalanceCooldown enforces a minimum time between consecutive calls.
   /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%)
-  function setMaxRebalanceLoss(uint16 maxRebalanceLoss_) external;
+  /// @param rebalanceCooldown_ The cooldown period in seconds (0 = disabled)
+  function setRebalanceConfig(uint16 maxRebalanceLoss_, uint40 rebalanceCooldown_) external;
 
   /// @notice Sets the transfer guard contract.
   /// @dev Only callable by the owner. Set to address(0) to disable transfer restrictions.

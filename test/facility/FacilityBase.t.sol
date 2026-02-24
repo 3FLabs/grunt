@@ -201,7 +201,9 @@ contract FacilityBaseTest is Test {
         debtAsset: address(debtToken)
       }),
       PM_LTV,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager), "PositionManager");
 
@@ -217,7 +219,9 @@ contract FacilityBaseTest is Test {
         debtAsset: address(debtToken)
       }),
       PM_LTV,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager2), "PositionManager2");
 
@@ -326,8 +330,8 @@ contract FacilityBaseTest is Test {
     return keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-        keccak256("3Facility"),
-        keccak256("1.0.0"),
+        keccak256("3F"),
+        keccak256("1"),
         block.chainid,
         address(facility)
       )

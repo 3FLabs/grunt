@@ -814,7 +814,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
         debtAsset: address(debtToken)
       }),
       8e17,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
 
     IntentProperties memory params = _intentParamsWithTargetPM();
@@ -840,7 +842,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
         debtAsset: address(debtToken)
       }),
       8e17, // 80% LTV
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
 
     IntentProperties memory params = _intentParamsWithDualPM();

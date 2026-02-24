@@ -178,7 +178,9 @@ contract FacilityInvariantTest is StdInvariant, Test {
         debtAsset: address(debtToken)
       }),
       PM_LTV,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager), "PositionManager");
 

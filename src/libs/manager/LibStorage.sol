@@ -32,6 +32,17 @@ struct PositionManagerMetadata {
   address debtAsset;
 }
 
+/// @notice Rebalance configuration and state for the PositionManager.
+/// @param maxRebalanceLoss Maximum allowed loss during rebalancing operations in basis points
+///        (e.g., 100 = 1%). Protects against excessive slippage or manipulation.
+/// @param rebalanceCooldown Minimum seconds between consecutive rebalance calls. Zero disables.
+/// @param lastRebalanceTimestamp Unix timestamp of the last rebalance, used for cooldown enforcement.
+struct RebalanceConfig {
+  uint16 maxRebalanceLoss;
+  uint40 rebalanceCooldown;
+  uint40 lastRebalanceTimestamp;
+}
+
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
 /// @dev Uses ERC-7201 namespaced storage pattern at slot `keccak256(abi.encode(uint256(keccak256("positionmanager.main")) - 1)) & ~bytes32(uint256(0xff))`
 ///      for upgradeability. Fields are ordered to minimize storage slots.
@@ -49,10 +60,9 @@ struct PositionManagerMetadata {
 ///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
 /// @param lastFeeAccrualTimestamp Unix timestamp of the last fee accrual, used for
 ///        calculating time-weighted management fees.
-/// @param maxRebalanceLoss Maximum allowed loss during rebalancing operations in basis points
-///        (e.g., 100 = 1%). Protects against excessive slippage or manipulation.
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
 ///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
+/// @param rebalanceConfig Rebalance parameters packed in a single struct (maxRebalanceLoss, cooldown, timestamp).
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -62,8 +72,8 @@ struct PositionManagerStorageData {
   uint256 lastTotalAssets;
   uint64 ltv;
   uint40 lastFeeAccrualTimestamp;
-  uint16 maxRebalanceLoss;
   address transferGuard;
+  RebalanceConfig rebalanceConfig;
 }
 
 /// @title LibStorage
@@ -98,6 +108,21 @@ library LibStorage {
       self.ltv = uint64(ltv_);
       emit IPositionManagerAdmin.LTVSet(ltv_);
     }
+  }
+
+  /// @dev Sets the rebalance configuration (maxRebalanceLoss and cooldown).
+  ///      Does not modify lastRebalanceTimestamp.
+  /// @param self The storage pointer to the PositionManagerStorageData struct.
+  /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%).
+  /// @param rebalanceCooldown_ The cooldown period in seconds (0 = disabled).
+  function setRebalanceConfig(
+    PositionManagerStorageData storage self,
+    uint16 maxRebalanceLoss_,
+    uint40 rebalanceCooldown_
+  ) internal {
+    self.rebalanceConfig.maxRebalanceLoss = maxRebalanceLoss_;
+    self.rebalanceConfig.rebalanceCooldown = rebalanceCooldown_;
+    emit IPositionManagerAdmin.RebalanceConfigSet(maxRebalanceLoss_, rebalanceCooldown_);
   }
 
   /// @dev Updates the lastTotalAssets snapshot to the current total assets.

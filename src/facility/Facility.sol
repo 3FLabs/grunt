@@ -211,7 +211,7 @@ contract Facility is
       revert LibFacilityErrors.IntentTransfersLocked(id);
     }
 
-    (,, address guard) = IPositionManager(_intent.properties.guardKey).config();
+    (, address guard) = IPositionManager(_intent.properties.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.properties.guardKey, from, to, amount)) {
         revert LibFacilityErrors.TransferBlocked(guard, from, to, amount);
@@ -231,8 +231,8 @@ contract Facility is
 
   /// @dev Returns the EIP-712 domain name and version.
   function _domainNameAndVersion() internal pure override returns (string memory name_, string memory version) {
-    name_ = "3Facility";
-    version = "1.0.0";
+    name_ = "3F";
+    version = "1";
   }
 
   /// @dev Returns whether the domain name and version may change.
