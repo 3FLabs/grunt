@@ -219,12 +219,13 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       IWrappedAsset($.wrappedShare).mint(order.receiver, _amount);
     } else {
       // Claim redeemed assets from vault
-      ICentrifugeVault(_vault).withdraw(ICentrifugeVault(_vault).maxWithdraw(address(this)), address(this), address(this));
+      ICentrifugeVault(_vault)
+        .withdraw(ICentrifugeVault(_vault).maxWithdraw(address(this)), address(this), address(this));
       // Transfer assets to receiver
       _amount = IERC20($.asset).balanceOf(address(this));
       $.asset.safeTransfer(order.receiver, _amount);
     }
-  
+
     bool _hasPendingRequest = _stateHasPendingRequest(_vault, order.mode);
     $.internalState = _hasPendingRequest ? State.PROCESSING : State.ENDED;
 
