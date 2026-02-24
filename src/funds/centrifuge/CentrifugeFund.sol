@@ -24,6 +24,8 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 ///        from the state returned by the public state() function. The state() function queries the Centrifuge
 ///        vault to determine state transitions (e.g., PROCESSING → UNLOCKING when claimable).
 ///      - Recovery is async: cancelRequest() → wait for Centrifuge → recover().
+///      - All vault calls use requestId = 0, which is the Centrifuge convention for
+///        "the current request for this controller" (each controller has at most one active request).
 contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using LibChecks for address;
@@ -46,6 +48,13 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @notice Storage struct containing all persistent state for the CentrifugeFund contract.
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility.
+  /// @param vault The Centrifuge ERC-7540 vault address.
+  /// @param wrappedShare The WrappedAsset contract that wraps the vault's share token.
+  /// @param asset The underlying asset of the vault (e.g. USDC).
+  /// @param shareToken The vault's raw share token (unwrapped).
+  /// @param currentOrderId The order ID of the current (or most recent) order.
+  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
+  /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct CentrifugeFundStorage {
     address vault;
     address wrappedShare;
@@ -212,17 +221,19 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     if (order.mode == Mode.DEPOSIT) {
       // Claim deposited share tokens from vault
+      uint256 _before = IERC20($.shareToken).balanceOf(address(this));
       ICentrifugeVault(_vault).mint(ICentrifugeVault(_vault).maxMint(address(this)), address(this), address(this));
       // Wrap share tokens into WrappedAsset and send to receiver
-      _amount = IERC20($.shareToken).balanceOf(address(this));
+      _amount = IERC20($.shareToken).balanceOf(address(this)) - _before;
       $.shareToken.safeApproveWithRetry($.wrappedShare, _amount);
       IWrappedAsset($.wrappedShare).mint(order.receiver, _amount);
     } else {
       // Claim redeemed assets from vault
+      uint256 _before = IERC20($.asset).balanceOf(address(this));
       ICentrifugeVault(_vault)
         .withdraw(ICentrifugeVault(_vault).maxWithdraw(address(this)), address(this), address(this));
       // Transfer assets to receiver
-      _amount = IERC20($.asset).balanceOf(address(this));
+      _amount = IERC20($.asset).balanceOf(address(this)) - _before;
       $.asset.safeTransfer(order.receiver, _amount);
     }
 
@@ -251,14 +262,16 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     if (order.mode == Mode.DEPOSIT) {
       // Claim cancelled deposit (returns assets)
+      uint256 _before = IERC20($.asset).balanceOf(address(this));
       ICentrifugeVault(_vault).claimCancelDepositRequest(0, address(this), address(this));
-      _amount = IERC20($.asset).balanceOf(address(this));
+      _amount = IERC20($.asset).balanceOf(address(this)) - _before;
       $.asset.safeTransfer(order.receiver, _amount);
     } else {
       // Claim cancelled redeem (returns share tokens)
+      uint256 _before = IERC20($.shareToken).balanceOf(address(this));
       ICentrifugeVault(_vault).claimCancelRedeemRequest(0, address(this), address(this));
       // Wrap share tokens and send to receiver
-      _amount = IERC20($.shareToken).balanceOf(address(this));
+      _amount = IERC20($.shareToken).balanceOf(address(this)) - _before;
       $.shareToken.safeApproveWithRetry($.wrappedShare, _amount);
       IWrappedAsset($.wrappedShare).mint(order.receiver, _amount);
     }
@@ -350,9 +363,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   ///      - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
   ///
   ///      For RECOVERING state (after cancelRequest submitted):
-  ///      - Deposit: checks vault.claimableCancelDepositRequest(0, this) > 0 → RECOVERING
-  ///      - Redeem: checks vault.claimableCancelRedeemRequest(0, this) > 0 → RECOVERING
-  ///      - If not yet claimable, falls back to PROCESSING
+  ///      - Deposit: checks vault.claimableCancelDepositRequest(0, this) > 0 → RECOVERING (ready to claim)
+  ///      - Redeem: checks vault.claimableCancelRedeemRequest(0, this) > 0 → RECOVERING (ready to claim)
+  ///      - If not yet claimable (cancel still pending), returns PROCESSING
   ///
   ///      For all other states, returns internalState directly.
   function _state(Order calldata order) internal view returns (State, uint256) {
@@ -383,24 +396,21 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     if (_internalState == State.RECOVERING) {
-      uint256 _claimable;
-      bool _hasPending;
+      uint256 _claimable = order.mode == Mode.DEPOSIT
+        ? ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this))
+        : ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this));
 
-      if (order.mode == Mode.DEPOSIT) {
-        _claimable = ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this));
-        _hasPending = _claimable > 0 || ICentrifugeVault(_vault).pendingCancelDepositRequest(0, address(this));
-      } else {
-        _claimable = ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this));
-        _hasPending = _claimable > 0 || ICentrifugeVault(_vault).pendingCancelRedeemRequest(0, address(this));
-      }
-
-      return _hasPending ? (State.RECOVERING, _claimable) : (State.PROCESSING, 0);
+      return _claimable > 0 ? (State.RECOVERING, _claimable) : (State.PROCESSING, 0);
     }
 
     return (_internalState, 0);
   }
 
-  /// @dev Returns whether the deposit/redeem request is still pending for this controller.
+  /// @dev Returns whether the original deposit/redeem request still has assets pending in the vault.
+  ///      Used by `unlock()` to decide whether the order returns to PROCESSING (partial fill)
+  ///      or transitions to ENDED (fully filled).
+  /// @param _vault The Centrifuge vault address.
+  /// @param _mode  The order mode (DEPOSIT or REDEEM).
   function _stateHasPendingRequest(address _vault, Mode _mode) internal view returns (bool) {
     if (_mode == Mode.DEPOSIT) {
       return ICentrifugeVault(_vault).pendingDepositRequest(0, address(this)) > 0;
@@ -409,7 +419,11 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     return ICentrifugeVault(_vault).pendingRedeemRequest(0, address(this)) > 0;
   }
 
-  /// @dev Returns whether a cancellation request is still pending or claimable.
+  /// @dev Returns whether a cancellation request is still pending or has claimable assets.
+  ///      Used by `recover()` to decide whether the order stays in RECOVERING (partial claim)
+  ///      or transitions to ENDED (fully claimed).
+  /// @param _mode  The order mode (DEPOSIT or REDEEM).
+  /// @param _vault The Centrifuge vault address.
   function _stateHasPendingRecover(Mode _mode, address _vault) internal view returns (bool) {
     if (_mode == Mode.DEPOSIT) {
       return ICentrifugeVault(_vault).pendingCancelDepositRequest(0, address(this))
