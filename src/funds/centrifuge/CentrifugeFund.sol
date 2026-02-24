@@ -132,6 +132,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       $.endedOrders[$.currentOrderId] = true;
     }
 
+    // Slippage guard: reject if expected output exceeds what the current exchange rate would give.
+    // The actual fill may happen later at a different rate, but this catches clearly unreasonable orders.
     if (order.mode == Mode.DEPOSIT) {
       if (order.output > ICentrifugeVault($.vault).convertToShares(order.input)) {
         revert LibFundsErrors.InvalidOutput();
@@ -220,19 +222,15 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     uint256 _amount;
 
     if (order.mode == Mode.DEPOSIT) {
-      // Claim deposited share tokens from vault
       uint256 _before = IERC20($.shareToken).balanceOf(address(this));
       ICentrifugeVault(_vault).mint(ICentrifugeVault(_vault).maxMint(address(this)), address(this), address(this));
-      // Wrap share tokens into WrappedAsset and send to receiver
       _amount = IERC20($.shareToken).balanceOf(address(this)) - _before;
       $.shareToken.safeApproveWithRetry($.wrappedShare, _amount);
       IWrappedAsset($.wrappedShare).mint(order.receiver, _amount);
     } else {
-      // Claim redeemed assets from vault
       uint256 _before = IERC20($.asset).balanceOf(address(this));
       ICentrifugeVault(_vault)
         .withdraw(ICentrifugeVault(_vault).maxWithdraw(address(this)), address(this), address(this));
-      // Transfer assets to receiver
       _amount = IERC20($.asset).balanceOf(address(this)) - _before;
       $.asset.safeTransfer(order.receiver, _amount);
     }
@@ -400,6 +398,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
         ? ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this))
         : ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this));
 
+      // Report PROCESSING while the Centrifuge pool hasn't fulfilled the cancel yet,
+      // so callers don't attempt to claim before there's anything to recover.
       return _claimable > 0 ? (State.RECOVERING, _claimable) : (State.PROCESSING, 0);
     }
 
@@ -422,6 +422,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @dev Returns whether a cancellation request is still pending or has claimable assets.
   ///      Used by `recover()` to decide whether the order stays in RECOVERING (partial claim)
   ///      or transitions to ENDED (fully claimed).
+  ///      Checks both pending (not yet processed by pool) AND claimable (processed but not yet
+  ///      claimed by us), because the pool may partially process a cancellation across epochs.
   /// @param _mode  The order mode (DEPOSIT or REDEEM).
   /// @param _vault The Centrifuge vault address.
   function _stateHasPendingRecover(Mode _mode, address _vault) internal view returns (bool) {
