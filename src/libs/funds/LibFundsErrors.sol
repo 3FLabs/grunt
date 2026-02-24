@@ -39,6 +39,9 @@ library LibFundsErrors {
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
 
+  /// @notice Thrown when the fund is not permissioned to operate with the vault.
+  error NotAllowedToOperateWithVault();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
