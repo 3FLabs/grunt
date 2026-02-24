@@ -260,9 +260,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Both scenarios should produce identical shares: no performance fee was charged
     // because management fee assets (202e18) > gross gain (100e18)
-    assertEq(
-      bothShares, mgmtOnlyShares, "No incremental performance fee should be charged when mgmt fee exceeds gains"
-    );
+    assertEq(bothShares, mgmtOnlyShares, "No incremental performance fee should be charged when mgmt fee exceeds gains");
   }
 
   function test_performanceFee_lessWithManagementFee() public {
