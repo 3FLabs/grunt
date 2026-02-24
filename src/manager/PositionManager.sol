@@ -7,7 +7,12 @@ import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerLP} from "./base/PositionManagerLP.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
-import {FeeData, PositionManagerMetadata, PositionManagerStorageData, RebalanceConfig} from "../libs/manager/LibStorage.sol";
+import {
+  FeeData,
+  PositionManagerMetadata,
+  PositionManagerStorageData,
+  RebalanceConfig
+} from "../libs/manager/LibStorage.sol";
 import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
