@@ -53,8 +53,11 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
     if (cooldown > 0 && lastRebalance > 0) {
       // Safe: block.timestamp fits in uint40 for ~35,000 years
+      // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
+      // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
+      // to avoid uint40 overflow when cooldown is large.
       // forge-lint: disable-next-line(unsafe-typecast)
-      if (uint40(block.timestamp) < lastRebalance + cooldown) {
+      if (uint40(block.timestamp) - lastRebalance < cooldown) {
         revert LibManagerErrors.RebalanceCooldownNotElapsed();
       }
     }
