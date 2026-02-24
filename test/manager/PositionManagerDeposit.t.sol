@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
@@ -182,7 +182,7 @@ contract PositionManagerDepositTest is PositionManagerBaseTest {
 
     if (sharesToBurn > 0) {
       vm.prank(minter);
-      (uint256 collateralReceived,) = positionManager.burn(sharesToBurn);
+      (uint256 collateralReceived,) = positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
       assertApproxEqRel(
         collateralReceived, collateral * burnRatio / 100, 0.01e18, "Collateral received should be proportional"

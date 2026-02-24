@@ -71,14 +71,11 @@ contract Facility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function paused() external view override returns (bool isPaused, uint40 pausedUntil) {
-    pausedUntil = LibStorage.facilityStorage().pausedUntil;
+  function facilityConfig() external view override returns (bool isPaused, uint40 pausedUntil, uint40 repayTimelock_) {
+    FacilityStorageData storage $ = LibStorage.facilityStorage();
+    pausedUntil = $.pausedUntil;
     isPaused = pausedUntil.paused();
-  }
-
-  /// @inheritdoc IFacility
-  function repayTimelock() external view override returns (uint40) {
-    return LibStorage.facilityStorage().repayTimelock;
+    repayTimelock_ = $.repayTimelock;
   }
 
   /// @inheritdoc IFacility

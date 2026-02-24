@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
-import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {SupplyQueueEntry, WithdrawalStrategy} from "../../interfaces/manager/IPositionManager.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
 import {LibExecutor} from "./LibExecutor.sol";
 import {LibManagerErrors} from "./LibManagerErrors.sol";
@@ -63,13 +63,32 @@ library LibOperations {
     }
   }
 
-  /// @dev Processes withdrawal through the withdrawal queue.
+  /// @dev Processes withdrawal through the withdrawal queue using the specified strategy.
+  /// @param _storage The position manager storage data
+  /// @param collateral The amount of collateral to withdraw
+  /// @param debt The amount of debt to repay
+  /// @param strategy The withdrawal strategy (SEQUENTIAL or PROPORTIONAL)
+  function processWithdrawal(
+    PositionManagerStorageData storage _storage,
+    uint256 collateral,
+    uint256 debt,
+    WithdrawalStrategy strategy
+  ) internal {
+    if (strategy == WithdrawalStrategy.SEQUENTIAL) {
+      _withdrawSequential(_storage, collateral, debt);
+    } else {
+      _withdrawProportional(_storage, collateral, debt);
+    }
+  }
+
+  /// @dev Withdraws sequentially through the withdrawal queue, draining positions one-by-one.
+  ///      For each position: repays as much debt as possible, then withdraws available collateral.
   ///      Reverts with {LibManagerErrors.ExcessDebtRepay} if the requested debt cannot be fully repaid.
   ///      Reverts with {LibManagerErrors.InsufficientAvailableCollateral} if the requested collateral cannot be withdrawn.
   /// @param _storage The position manager storage data
   /// @param collateral The amount of collateral to withdraw
   /// @param debt The amount of debt to repay
-  function processWithdrawal(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) internal {
+  function _withdrawSequential(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) private {
     unchecked {
       uint256 remainingDebt = debt;
       uint256 remainingCollateral = collateral;
@@ -108,46 +127,57 @@ library LibOperations {
     }
   }
 
-  /// @dev Processes burn by repaying debt and withdrawing collateral proportionally from each position.
-  ///      This maintains the average LTV across all positions.
+  /// @dev Withdraws proportionally across all positions in the withdrawal queue.
+  ///      Uses a two-pass approach: first builds cumulative debt/collateral arrays,
+  ///      then distributes repayment and withdrawal using a running cumulative algorithm
+  ///      (similar to Bresenham's line algorithm) that guarantees no position is over-repaid and zero dust.
+  ///      Because debtToRepay <= queueTotalDebt, each step's allocation is mathematically bounded by debts[i].
   /// @param _storage The position manager storage data
   /// @param collateralToWithdraw Total collateral to withdraw
   /// @param debtToRepay Total debt to repay
-  /// @param totalCollateral Total collateral across all positions
-  /// @param totalDebt Total debt across all positions
-  function processBurn(
+  function _withdrawProportional(
     PositionManagerStorageData storage _storage,
     uint256 collateralToWithdraw,
-    uint256 debtToRepay,
-    uint256 totalCollateral,
-    uint256 totalDebt
-  ) internal {
+    uint256 debtToRepay
+  ) private {
     unchecked {
-      uint256 remainingCollateral = collateralToWithdraw;
-      uint256 remainingDebt = debtToRepay;
-      uint256 queueLength = _storage.withdrawalQueue.length;
+      address[] memory queue = _storage.withdrawalQueue;
+      uint256 queueLength = queue.length;
+
+      // Pass 1: build cumulative debt and collateral arrays
+      uint256[] memory cumDebts = new uint256[](queueLength);
+      uint256[] memory cumCollaterals = new uint256[](queueLength);
 
       for (uint256 i = 0; i < queueLength; i++) {
-        address position = _storage.withdrawalQueue[i];
-        uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
-        uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
+        cumDebts[i] = (i > 0 ? cumDebts[i - 1] : 0) + IBorrowPosition(queue[i]).totalBorrowed();
+        cumCollaterals[i] = (i > 0 ? cumCollaterals[i - 1] : 0) + IBorrowPosition(queue[i]).totalCollateral();
+      }
 
-        // Repay proportionally
-        if (remainingDebt > 0 && positionDebt > 0 && totalDebt > 0) {
-          uint256 toRepay = debtToRepay.mulDiv(positionDebt, totalDebt);
-          if (toRepay > 0) {
-            position.repay(_storage.metadata.debtAsset, toRepay);
-            remainingDebt -= toRepay;
-          }
+      // Queue totals are the last cumulative values
+      uint256 lastIdx = queueLength - 1;
+      if (debtToRepay > cumDebts[lastIdx]) revert LibManagerErrors.ExcessDebtRepay();
+      if (collateralToWithdraw > cumCollaterals[lastIdx]) revert LibManagerErrors.InsufficientAvailableCollateral();
+
+      // Pass 2: cumulative proportional distribution
+      // Each position's allocation = target_cumulative(i) - target_cumulative(i-1), which is
+      // guaranteed to never exceed the position's actual debt/collateral.
+      address debtAsset = _storage.metadata.debtAsset;
+      uint256 prevRepaid;
+      uint256 prevWithdrawn;
+
+      for (uint256 i = 0; i < queueLength; i++) {
+        if (debtToRepay > 0) {
+          uint256 targetRepaid = cumDebts[i].mulDiv(debtToRepay, cumDebts[lastIdx]);
+          uint256 toRepay = targetRepaid - prevRepaid;
+          if (toRepay > 0) queue[i].repay(debtAsset, toRepay);
+          prevRepaid = targetRepaid;
         }
 
-        // Withdraw proportionally
-        if (remainingCollateral > 0 && positionCollateral > 0 && totalCollateral > 0) {
-          uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, totalCollateral);
-          if (toWithdraw > 0) {
-            position.withdraw(toWithdraw);
-            remainingCollateral -= toWithdraw;
-          }
+        if (collateralToWithdraw > 0) {
+          uint256 targetWithdrawn = cumCollaterals[i].mulDiv(collateralToWithdraw, cumCollaterals[lastIdx]);
+          uint256 toWithdraw = targetWithdrawn - prevWithdrawn;
+          if (toWithdraw > 0) queue[i].withdraw(toWithdraw);
+          prevWithdrawn = targetWithdrawn;
         }
       }
     }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {LibStorage, PositionManagerStorageData} from "src/libs/manager/LibStorage.sol";
 import {LibOperations} from "src/libs/manager/LibOperations.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
-import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {SupplyQueueEntry, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Harness contract to expose internal LibOperations functions for testing
@@ -23,15 +23,8 @@ contract LibOperationsHarness {
   }
 
   /// @dev Expose processWithdrawal
-  function processWithdrawal(uint256 collateral, uint256 debt) external {
-    LibStorage.positionManagerStorage().processWithdrawal(collateral, debt);
-  }
-
-  /// @dev Expose processBurn
-  function processBurn(uint256 collateralToWithdraw, uint256 debtToRepay, uint256 totalCollateral, uint256 totalDebt)
-    external
-  {
-    LibStorage.positionManagerStorage().processBurn(collateralToWithdraw, debtToRepay, totalCollateral, totalDebt);
+  function processWithdrawal(uint256 collateral, uint256 debt, WithdrawalStrategy strategy) external {
+    LibStorage.positionManagerStorage().processWithdrawal(collateral, debt, strategy);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

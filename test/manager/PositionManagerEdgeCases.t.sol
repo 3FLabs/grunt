@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerEdgeCasesTest
@@ -116,7 +116,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Attacker burns all their shares
     _mintDebt(attacker, 1e18); // In case any debt was accrued
     vm.prank(attacker);
-    (uint256 attackerCollateralBack,) = positionManager.burn(attackerSharesBefore);
+    (uint256 attackerCollateralBack,) = positionManager.burn(attackerSharesBefore, WithdrawalStrategy.PROPORTIONAL);
 
     // Attacker should get back approximately what they deposited (1 wei), not the donation
     // Due to virtual offset, attacker's profit is bounded
@@ -178,7 +178,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Immediately burn all shares
     _mintDebt(minter, depositDebt * 2); // Extra for any rounding
     vm.prank(minter);
-    (uint256 collateralBack, uint256 debtToPay) = positionManager.burn(sharesUint);
+    (uint256 collateralBack, uint256 debtToPay) = positionManager.burn(sharesUint, WithdrawalStrategy.PROPORTIONAL);
 
     // Should get back almost all collateral (minus tiny rounding)
     // Allow 0.01% loss for rounding
@@ -251,7 +251,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Now each burns their shares - should get back fair amounts
     for (uint256 i = 0; i < 5; i++) {
       vm.prank(depositors[i]);
-      (uint256 collateralBack,) = positionManager.burn(shares[i]);
+      (uint256 collateralBack,) = positionManager.burn(shares[i], WithdrawalStrategy.PROPORTIONAL);
 
       // Should get back close to what they deposited
       assertApproxEqRel(collateralBack, depositAmount, 0.05e18, "Should get back ~100% of deposit");
@@ -273,7 +273,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     uint256 sharesUint = uint256(shares);
 
     vm.prank(minter);
-    (uint256 collateralBack,) = positionManager.burn(sharesUint);
+    (uint256 collateralBack,) = positionManager.burn(sharesUint, WithdrawalStrategy.PROPORTIONAL);
 
     // Should get back at least 99.99% of deposit (0.01% max loss to rounding)
     assertGe(collateralBack, depositAmount * 9999 / 10000, "Should preserve at least 99.99% of value");
@@ -352,7 +352,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // With roundUp, sharesToBurn rounds up to 1 instead of 0, so the withdraw succeeds
     // and the caller pays at least 1 share for the 1-wei withdrawal.
     vm.prank(minter);
-    int256 sharesDelta = positionManager.withdraw(1, 0);
+    int256 sharesDelta = positionManager.withdraw(1, 0, WithdrawalStrategy.SEQUENTIAL);
 
     // sharesDelta should be -1 (burned 1 share via roundUp)
     assertEq(sharesDelta, -1, "Should burn exactly 1 share due to roundUp");

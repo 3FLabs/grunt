@@ -9,6 +9,7 @@ import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 
 /// @title FacilityIntentsTest
 /// @notice Tests for intent creation, update, lock, and resolve operations
@@ -952,10 +953,10 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.depositManager(invalidId, 1000e18, 0, false);
 
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
-    facility.withdrawManager(invalidId, 1000e18, 0, false);
+    facility.withdrawManager(invalidId, 1000e18, 0, false, WithdrawalStrategy.SEQUENTIAL);
 
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
-    facility.burnManager(invalidId, 1000e18, false);
+    facility.burnManager(invalidId, 1000e18, false, WithdrawalStrategy.PROPORTIONAL);
 
     // Fund order functions
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibBorrowErrors} from "../../src/libs/borrow/LibBorrowErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
@@ -25,7 +25,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     _mintDebt(minter, repayAmount);
 
     vm.prank(minter);
-    int256 sharesDelta = positionManager.withdraw(0, repayAmount);
+    int256 sharesDelta = positionManager.withdraw(0, repayAmount, WithdrawalStrategy.SEQUENTIAL);
 
     // Assets increased (debt repaid), so shares should be minted
     assertGt(sharesDelta, 0, "Should mint shares when repaying debt");
@@ -43,7 +43,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     uint256 withdrawAmount = 1000e18;
 
     vm.prank(minter);
-    int256 sharesDelta = positionManager.withdraw(withdrawAmount, 0);
+    int256 sharesDelta = positionManager.withdraw(withdrawAmount, 0, WithdrawalStrategy.SEQUENTIAL);
 
     // Assets decreased (collateral withdrawn), so shares should be burned
     assertLt(sharesDelta, 0, "Should burn shares when withdrawing collateral");
@@ -62,7 +62,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     _mintDebt(minter, repayAmount);
 
     vm.prank(minter);
-    positionManager.withdraw(withdrawAmount, repayAmount);
+    positionManager.withdraw(withdrawAmount, repayAmount, WithdrawalStrategy.SEQUENTIAL);
 
     assertEq(positionManager.debtAmount(), 0, "All debt should be repaid");
     assertEq(collateralToken.balanceOf(minter), withdrawAmount, "Should receive collateral");
@@ -79,13 +79,13 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     // Trying to withdraw 5000e18 will fail at the borrow position level
     vm.prank(minter);
     vm.expectRevert(LibBorrowErrors.InsufficientCollateral.selector);
-    positionManager.withdraw(5000e18, 0);
+    positionManager.withdraw(5000e18, 0, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdraw_revertOnZeroAmount() public {
     vm.prank(minter);
     vm.expectRevert(CommonErrors.AmountZero.selector);
-    positionManager.withdraw(0, 0);
+    positionManager.withdraw(0, 0, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdraw_emptyWithdrawalQueue() public {
@@ -102,7 +102,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     // Try to withdraw collateral - should revert
     vm.prank(minter);
     vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
-    positionManager.withdraw(1000e18, 0);
+    positionManager.withdraw(1000e18, 0, WithdrawalStrategy.SEQUENTIAL);
   }
 
   /// @notice Test withdrawal repay pass skips positions with no debt (positionDebt == 0 branch)
@@ -141,7 +141,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     _mintDebt(minter, DEBT_AMOUNT / 2);
 
     vm.prank(minter);
-    positionManager.withdraw(0, DEBT_AMOUNT / 2);
+    positionManager.withdraw(0, DEBT_AMOUNT / 2, WithdrawalStrategy.SEQUENTIAL);
 
     // Debt should be repaid from position2
     assertEq(borrowPosition2.totalBorrowed(), DEBT_AMOUNT / 2, "Position2 should have half debt repaid");
@@ -165,7 +165,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     // Try to withdraw collateral - should skip position1 (no available collateral at 65% safe LTV)
     // and withdraw from position2
     vm.prank(minter);
-    positionManager.withdraw(1000e18, 0);
+    positionManager.withdraw(1000e18, 0, WithdrawalStrategy.SEQUENTIAL);
 
     // Should succeed by withdrawing from position2
     assertTrue(positionManager.collateralAmount() < COLLATERAL_AMOUNT * 2, "Some collateral should be withdrawn");
@@ -186,7 +186,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
 
     vm.prank(minter);
     vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
-    positionManager.withdraw(0, excessRepay);
+    positionManager.withdraw(0, excessRepay, WithdrawalStrategy.SEQUENTIAL);
   }
 
   /// @notice Test that contract doesn't end up with debt token balance after withdrawal
@@ -199,7 +199,7 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     // Repay exact debt amount
     _mintDebt(minter, DEBT_AMOUNT);
     vm.prank(minter);
-    positionManager.withdraw(0, DEBT_AMOUNT);
+    positionManager.withdraw(0, DEBT_AMOUNT, WithdrawalStrategy.SEQUENTIAL);
 
     // Contract should have no debt token balance
     assertEq(debtToken.balanceOf(address(positionManager)), 0, "PM should have no debt token balance");

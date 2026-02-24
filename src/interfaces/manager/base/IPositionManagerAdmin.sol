@@ -9,6 +9,14 @@ struct SupplyQueueEntry {
   uint96 maxBorrow;
 }
 
+/// @notice Strategy for processing withdrawals across the withdrawal queue.
+/// @dev SEQUENTIAL: drains positions one-by-one through the queue (repay debt then withdraw collateral per position).
+///      PROPORTIONAL: distributes repayment and withdrawal proportionally across all positions based on their share of totals.
+enum WithdrawalStrategy {
+  SEQUENTIAL,
+  PROPORTIONAL
+}
+
 /// @title IPositionManagerAdmin
 /// @author 3F Protocol
 /// @notice Interface for administrative functions of the PositionManager contract.
