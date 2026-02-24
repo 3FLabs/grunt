@@ -6,7 +6,7 @@ libs = ["lib"]
 # This prevents double counting when using multi-compiler support
 no_match_coverage = "mock|\\.s\\.sol$|lib/pre-liquidation|PreLiquidationBytecode"
 # Lock compiler version to avoid floating pragma
-solc_version = "0.8.33"
+solc_version = "0.8.34"
 auto_detect_solc = false
 # Ignore warnings from dependencies:
 # 2424: Natspec memory-safe-assembly special comment deprecated

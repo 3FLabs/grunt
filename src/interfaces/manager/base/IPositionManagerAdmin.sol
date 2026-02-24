@@ -97,7 +97,8 @@ interface IPositionManagerAdmin {
   ///      all fees that have accrued up to the point of the update. Only callable by the owner.
   /// @param feeRecipient The address that will receive fee payments going forward
   /// @param managementFee The management fee rate in basis points per 365 days (e.g., 200 = 2% per year)
-  /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%)
+  /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on net gains
+  ///        after management fee deduction
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
   /// @notice Sets the maximum allowed loss during rebalance operations.
