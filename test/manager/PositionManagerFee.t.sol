@@ -210,19 +210,41 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
   }
 
   function test_performanceFee_zeroWhenManagementFeeExceedsGain() public {
-    // Setup: max management fee (2%), low performance fee
-    uint24 managementFee = 200; // 2% per year (MAX_MANAGEMENT_FEE)
-    uint24 performanceFee = 2000; // 20%
-    vm.prank(owner);
-    positionManager.setFeeData(feeRecipient, managementFee, performanceFee);
+    // Scenario: 1% gain but 2% management fee over 1 year exceeds it
+    // Expected: performance fee should NOT be charged (net gain is negative)
 
-    // Deposit
+    // --- Snapshot initial state ---
+    uint256 snap = vm.snapshotState();
+
+    // --- Scenario A: management fee only (control baseline) ---
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0);
+
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    // Small gain (1%) but management fee (2% over 1 year) exceeds it
-    oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100); // 1% gain
+    vm.warp(block.timestamp + 365 days);
+
+    _mintCollateral(minter, 1e18);
+    vm.prank(minter);
+    positionManager.deposit(1e18, 0);
+
+    uint256 mgmtOnlyShares = positionManager.balanceOf(feeRecipient);
+    assertGt(mgmtOnlyShares, 0, "Management fee should produce shares");
+
+    // --- Revert and run Scenario B: management + performance fee ---
+    vm.revertToState(snap);
+
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100); // same 1% gain
     vm.warp(block.timestamp + 365 days);
 
     // currentTotalAssets = 10_100e18
@@ -230,33 +252,37 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     // managementFeeAssets = 10_100e18 * 200 / 10_000 = 202e18
     // net gain = 100 - 202 = negative → no performance fee
 
-    // Trigger fee accrual
     _mintCollateral(minter, 1e18);
     vm.prank(minter);
     positionManager.deposit(1e18, 0);
 
-    uint256 feeShares = positionManager.balanceOf(feeRecipient);
+    uint256 bothShares = positionManager.balanceOf(feeRecipient);
 
-    // The fee shares should only reflect management fee, no performance fee
-    // since management fee assets (202e18) > gross gain (100e18)
-    assertGt(feeShares, 0, "Should have management fee shares");
+    // Both scenarios should produce identical shares: no performance fee was charged
+    // because management fee assets (202e18) > gross gain (100e18)
+    assertEq(
+      bothShares, mgmtOnlyShares, "No incremental performance fee should be charged when mgmt fee exceeds gains"
+    );
   }
 
   function test_performanceFee_lessWithManagementFee() public {
-    // Compare performance fees with and without management fee to verify net deduction.
-    // Setup A: performance fee only
-    uint24 performanceFee = 2000; // 20%
+    // Compare performance fee shares across three fee configurations
+    // to prove management fees reduce the performance fee via net-gain deduction.
+
+    // --- Snapshot initial state ---
+    uint256 snap = vm.snapshotState();
+
+    // --- Scenario A: performance fee only (gross gain baseline) ---
     vm.prank(owner);
-    positionManager.setFeeData(feeRecipient, 0, performanceFee);
+    positionManager.setFeeData(feeRecipient, 0, 2000);
 
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    // 20% gain
-    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
+    vm.warp(block.timestamp + 365 days);
 
-    // Trigger fee accrual
     _mintCollateral(minter, 1e18);
     vm.prank(minter);
     positionManager.deposit(1e18, 0);
@@ -264,11 +290,56 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 perfOnlyShares = positionManager.balanceOf(feeRecipient);
     assertGt(perfOnlyShares, 0, "Perf-only: fee recipient should have shares");
 
-    // The net-gain test above already verified that with management fee,
-    // total fee shares are less than gross-based. Here we confirm that
-    // without management fee, performance fee shares are strictly greater
-    // than when management fee is also active (from test_performanceFee_chargedNetOfManagementFee).
-    // This validates managementFeeAssets = 0 means full gross gain is used.
+    // --- Revert and run Scenario B: management + performance fee ---
+    vm.revertToState(snap);
+    snap = vm.snapshotState();
+
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // same 20% gain
+    vm.warp(block.timestamp + 365 days);
+
+    _mintCollateral(minter, 1e18);
+    vm.prank(minter);
+    positionManager.deposit(1e18, 0);
+
+    uint256 bothShares = positionManager.balanceOf(feeRecipient);
+
+    // --- Revert and run Scenario C: management fee only ---
+    vm.revertToState(snap);
+
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // same 20% gain
+    vm.warp(block.timestamp + 365 days);
+
+    _mintCollateral(minter, 1e18);
+    vm.prank(minter);
+    positionManager.deposit(1e18, 0);
+
+    uint256 mgmtOnlyShares = positionManager.balanceOf(feeRecipient);
+
+    // --- Assertions ---
+    // With both fees, total shares > management-only shares (perf fee was charged)
+    assertGt(bothShares, mgmtOnlyShares, "Both fees should produce more shares than mgmt-only");
+
+    // Isolate performance fee contribution:
+    // perfOnlyShares = perf fee on gross gain (no mgmt fee deduction)
+    // bothShares - mgmtOnlyShares ≈ perf fee on net gain (after mgmt fee deduction)
+    uint256 perfSharesWithMgmt = bothShares - mgmtOnlyShares;
+    assertGt(
+      perfOnlyShares, perfSharesWithMgmt, "Performance fee on gross gain should exceed performance fee on net gain"
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
