@@ -385,6 +385,18 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     }
   }
 
+  /// @notice PM-11: All whitelisted borrow modules have safeLtv >= PM LTV.
+  /// @dev This is enforced on-chain by addBorrowModule and setLtv. This invariant
+  ///      cross-validates that the property holds at all times during stateful fuzzing.
+  function invariant_moduleSafeLtvAbovePmLtv() public view {
+    (uint256 pmLtv,) = positionManager.config();
+    address[] memory modules = positionManager.borrowModules();
+    for (uint256 i = 0; i < modules.length; i++) {
+      uint128 moduleSafeLtv = IBorrowPosition(modules[i]).safeLtv();
+      assertGe(uint256(moduleSafeLtv), pmLtv, "PM-11: module safeLtv < PM LTV");
+    }
+  }
+
   /// @notice PM-9: No shares without collateral -- if shares exist, collateral must exist.
   /// @dev This is a fundamental property: share holders own a claim on the collateral.
   ///      If totalSupply > 0 but collateralAmount == 0, share holders have worthless tokens,
