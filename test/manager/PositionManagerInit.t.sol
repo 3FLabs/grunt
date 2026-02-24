@@ -2,7 +2,10 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
+import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title PositionManagerInitTest
 /// @notice Tests for PositionManager initialization and view functions
@@ -97,6 +100,67 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     assertEq(positionManager.debtAmount(), DEBT_AMOUNT);
+  }
+
+  function test_initialize_withRebalanceConfig() public {
+    PositionManager pm = new PositionManager();
+    pm.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "PM with Rebalance",
+        symbol: "PMR",
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      100, // maxRebalanceLoss = 1%
+      300 // rebalanceCooldown = 300s
+    );
+    (uint16 maxLoss, uint40 cooldown,) = pm.rebalanceConfig();
+    assertEq(maxLoss, 100);
+    assertEq(cooldown, 300);
+  }
+
+  function test_virtualShareOffset_18decimals() public view {
+    // Default setup uses 18-decimal debt token → offset = 10^(18-18) = 1
+    // First deposit of 10_000e18 collateral (no debt) should mint ≈ collateral shares
+    // since shares = assets * (0 + 1) / (0 + 1) = assets
+    assertEq(positionManager.decimals(), 18);
+  }
+
+  function test_virtualShareOffset_6decimals() public {
+    MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
+    PositionManager pm = new PositionManager();
+    pm.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "USDC PM", symbol: "uPM", collateralAsset: address(collateralToken), debtAsset: address(usdc)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+    // offset = 10^(18-6) = 1e12. Decimals still 18.
+    assertEq(pm.decimals(), 18);
+  }
+
+  function test_virtualShareOffset_8decimals() public {
+    MockERC20 wbtc = new MockERC20("WBTC", "WBTC", 8);
+    PositionManager pm = new PositionManager();
+    pm.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "WBTC PM", symbol: "bPM", collateralAsset: address(collateralToken), debtAsset: address(wbtc)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+    // offset = 10^(18-8) = 1e10
+    assertEq(pm.decimals(), 18);
   }
 
   function test_collateralAmountQuoted() public {

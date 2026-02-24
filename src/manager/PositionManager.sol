@@ -19,6 +19,7 @@ import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title PositionManager
 /// @author 3F Protocol
@@ -42,7 +43,7 @@ contract PositionManager is
 
   /// @notice Initializes the PositionManager.
   /// @param owner_ The owner of the contract
-  /// @param metadata_ The metadata containing name, symbol, decimals, collateral and debt assets
+  /// @param metadata_ The metadata containing name, symbol, collateral and debt assets
   /// @param ltv_ The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard_ The initial transfer guard address (address(0) to disable)
   /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%)
@@ -59,6 +60,12 @@ contract PositionManager is
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     _storage.metadata = metadata_;
     _storage.setLtv(ltv_);
+    // Compute virtual share offset from debt asset decimals for inflation attack protection.
+    // Uses zeroFloorSub to safely handle tokens with >18 decimals (offset becomes 10^0 = 1).
+    // Safe: max exponent is 18, so 10^18 = 1e18 fits in uint64 (max ~1.8e19)
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _storage.virtualShareOffset =
+      uint64(10 ** FixedPointMathLib.zeroFloorSub(18, ERC20(metadata_.debtAsset).decimals()));
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
     _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
@@ -83,11 +90,6 @@ contract PositionManager is
   /// @inheritdoc ERC20
   function symbol() public view override returns (string memory) {
     return LibStorage.positionManagerStorage().metadata.symbol;
-  }
-
-  /// @inheritdoc ERC20
-  function decimals() public view override returns (uint8) {
-    return LibStorage.positionManagerStorage().metadata.decimals;
   }
 
   /// @inheritdoc IPositionManager
