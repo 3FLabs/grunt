@@ -28,8 +28,9 @@ src/
 │   ├── base/                    # Admin, fees, shares, rebalancing
 │   └── rebalancer/              # Flash-loan based rebalancer
 ├── funds/                       # External asset wrappers
-│   ├── USCCFund.sol             # Superstate USCC integration
-│   ├── USCCFundFactory.sol      # Beacon proxy factory
+│   ├── USCC/
+│   │   ├── USCCFund.sol             # Superstate USCC integration
+│   │   └── USCCFundFactory.sol      # Beacon proxy factory
 │   └── WrappedAsset.sol         # wUSCC wrapper token
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
