@@ -18,7 +18,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.pause();
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, type(uint40).max, "Should be permanent pause");
   }
@@ -27,7 +27,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(pauser);
     facility.pause();
 
-    (bool isPaused,) = facility.paused();
+    (bool isPaused,,) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
   }
 
@@ -54,7 +54,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.pauseFor(duration);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match duration");
   }
@@ -65,7 +65,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(pauser);
     facility.pauseFor(duration);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match");
   }
@@ -99,7 +99,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.unpause();
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     assertFalse(isPaused, "Should not be paused");
     assertEq(pausedUntil, 0, "PausedUntil should be 0");
   }
@@ -111,7 +111,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(pauser);
     facility.unpause();
 
-    (bool isPaused,) = facility.paused();
+    (bool isPaused,,) = facility.facilityConfig();
     assertFalse(isPaused, "Should not be paused");
   }
 
@@ -219,7 +219,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.pauseFor(duration);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match");
   }
@@ -233,7 +233,7 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     vm.warp(block.timestamp + timePassed);
 
-    (bool isPaused,) = facility.paused();
+    (bool isPaused,,) = facility.facilityConfig();
 
     if (timePassed > duration) {
       assertFalse(isPaused, "Should not be paused after duration");
@@ -250,14 +250,14 @@ contract FacilityPauseTest is FacilityBaseTest {
       vm.prank(owner);
       facility.pause();
 
-      (bool isPaused,) = facility.paused();
+      (bool isPaused,,) = facility.facilityConfig();
       assertTrue(isPaused, "Should be paused");
 
       // Unpause
       vm.prank(owner);
       facility.unpause();
 
-      (isPaused,) = facility.paused();
+      (isPaused,,) = facility.facilityConfig();
       assertFalse(isPaused, "Should not be paused");
     }
   }

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {
   RebalancingData,
   RebalancingOperation,
@@ -31,7 +31,8 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     _mintDebt(minter, DEBT_AMOUNT);
 
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     // Should receive approximately half
     assertApproxEqRel(collateralReceived, COLLATERAL_AMOUNT / 2, 0.01e18, "Should receive ~50% collateral");
@@ -51,7 +52,8 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     _mintDebt(minter, DEBT_AMOUNT);
 
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(totalShares);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(totalShares, WithdrawalStrategy.PROPORTIONAL);
 
     assertEq(collateralReceived, COLLATERAL_AMOUNT, "Should receive all collateral");
     assertEq(debtRepaid, DEBT_AMOUNT, "Should repay all debt");
@@ -68,7 +70,8 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     uint256 totalShares = positionManager.balanceOf(minter);
 
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(totalShares);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(totalShares, WithdrawalStrategy.PROPORTIONAL);
 
     assertEq(collateralReceived, COLLATERAL_AMOUNT, "Should receive all collateral");
     assertEq(debtRepaid, 0, "No debt to repay");
@@ -77,7 +80,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
   function test_burn_revertOnZeroShares() public {
     vm.prank(minter);
     vm.expectRevert(CommonErrors.AmountZero.selector);
-    positionManager.burn(0);
+    positionManager.burn(0, WithdrawalStrategy.PROPORTIONAL);
   }
 
   function test_burn_multiPosition_proportional() public {
@@ -122,7 +125,8 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
 
     _mintDebt(minter, DEBT_AMOUNT); // Provide debt for repayment
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     // Should receive proportional amounts from both positions
     assertApproxEqRel(collateralReceived, COLLATERAL_AMOUNT / 2, 0.01e18, "Should receive ~50% of total collateral");
@@ -154,7 +158,8 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     _mintDebt(minter, totalDebt); // Enough to repay
 
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     // Verify burn succeeded
     assertGt(collateralReceived, 0, "Should receive collateral");
@@ -181,7 +186,8 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     _mintDebt(minter, totalDebt);
 
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     assertGt(collateralReceived, 0, "Should receive collateral");
     assertGt(debtRepaid, 0, "Should repay debt");
@@ -237,7 +243,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
 
     _mintDebt(minter, DEBT_AMOUNT);
     vm.prank(minter);
-    positionManager.burn(sharesToBurn);
+    positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     // Test passes if no revert - the capping logic handled the excess
   }
@@ -275,7 +281,7 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     uint256 sharesToBurn = positionManager.balanceOf(minter) / 100;
 
     vm.prank(minter);
-    positionManager.burn(sharesToBurn);
+    positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     // Test passes if no revert - the capping logic handled the excess
   }

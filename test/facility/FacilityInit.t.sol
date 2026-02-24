@@ -23,7 +23,8 @@ contract FacilityInitTest is FacilityBaseTest {
   }
 
   function test_initialize_setsRepayTimelock() public view {
-    assertEq(facility.repayTimelock(), DEFAULT_REPAY_TIMELOCK, "Repay timelock should be set");
+    (,, uint40 _repayTimelock) = facility.facilityConfig();
+    assertEq(_repayTimelock, DEFAULT_REPAY_TIMELOCK, "Repay timelock should be set");
   }
 
   function test_initialize_setsDescriptor() public {
@@ -99,7 +100,8 @@ contract FacilityInitTest is FacilityBaseTest {
     emit IFacility.RepayTimelockSet(newTimelock);
     facility.setRepayTimelock(newTimelock);
 
-    assertEq(facility.repayTimelock(), newTimelock, "Timelock should be updated");
+    (,, uint40 _repayTimelock) = facility.facilityConfig();
+    assertEq(_repayTimelock, newTimelock, "Timelock should be updated");
   }
 
   function test_setRepayTimelock_revertOnNonOwner() public {
@@ -119,7 +121,7 @@ contract FacilityInitTest is FacilityBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_paused_initiallyNotPaused() public view {
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
     assertFalse(isPaused, "Should not be paused initially");
     assertEq(pausedUntil, 0, "PausedUntil should be 0");
   }

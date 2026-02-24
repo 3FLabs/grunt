@@ -585,7 +585,8 @@ contract FacilityHandler is Test {
     if (resolvingIds.length == 0) return;
 
     // Skip when timelock is zero — repay succeeding immediately is expected behaviour
-    if (facility.repayTimelock() == 0) return;
+    (,, uint40 _repayTimelock) = facility.facilityConfig();
+    if (_repayTimelock == 0) return;
 
     uint256 id = resolvingIds[intentSeed % resolvingIds.length];
 

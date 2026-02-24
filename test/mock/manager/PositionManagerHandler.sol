@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
-import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
 import {
   RebalancingData,
   RebalancingOperation,
@@ -205,7 +205,7 @@ contract PositionManagerHandler is Test {
       debtToken.approve(address(positionManager), debt);
     }
 
-    try positionManager.withdraw(collateral, debt) {
+    try positionManager.withdraw(collateral, debt, WithdrawalStrategy.SEQUENTIAL) {
     // Success -- no ghost tracking needed for withdrawals.
     }
       catch {
@@ -249,7 +249,7 @@ contract PositionManagerHandler is Test {
     uint256 collBefore = positionManager.collateralAmountQuoted();
     uint256 debtBefore = positionManager.debtAmount();
 
-    try positionManager.burn(shares) {
+    try positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL) {
       // PM-3: Verify aggregate LTV did not increase after burn.
       // LTV = debt / quotedCollateral. Cross-multiply to avoid division:
       // debtAfter * collBefore > debtBefore * collAfter → LTV increased.

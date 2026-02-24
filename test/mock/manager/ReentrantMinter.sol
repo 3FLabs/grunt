@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManager} from "../../../src/manager/PositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
 /// @title ReentrantMinter
@@ -34,12 +35,12 @@ contract ReentrantMinter {
     return pm.deposit(collateralAmt, debtAmt);
   }
 
-  function withdraw(uint256 collateralAmt, uint256 debtAmt) external returns (int256) {
-    return pm.withdraw(collateralAmt, debtAmt);
+  function withdraw(uint256 collateralAmt, uint256 debtAmt, WithdrawalStrategy strategy) external returns (int256) {
+    return pm.withdraw(collateralAmt, debtAmt, strategy);
   }
 
-  function burn(uint256 shares) external returns (uint256, uint256) {
-    return pm.burn(shares);
+  function burn(uint256 shares, WithdrawalStrategy strategy) external returns (uint256, uint256) {
+    return pm.burn(shares, strategy);
   }
 
   /// @notice Called by ReentrantCollateral during transfer
@@ -58,12 +59,12 @@ contract ReentrantMinter {
         lastRevertReason = reason;
       }
     } else if (attackType == AttackType.WITHDRAW) {
-      try pm.withdraw(1e18, 0) {}
+      try pm.withdraw(1e18, 0, WithdrawalStrategy.SEQUENTIAL) {}
       catch (bytes memory reason) {
         lastRevertReason = reason;
       }
     } else if (attackType == AttackType.BURN) {
-      try pm.burn(1e18) {}
+      try pm.burn(1e18, WithdrawalStrategy.PROPORTIONAL) {}
       catch (bytes memory reason) {
         lastRevertReason = reason;
       }
