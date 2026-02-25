@@ -76,4 +76,7 @@ library LibRequestErrors {
   /// @notice Thrown when setRepaid(uint256) is called before the mint-to-repaid delay has elapsed since the last mint/consume.
   /// @param availableAt Earliest timestamp when setRepaid(uint256) is allowed.
   error MintToRepaidDelayNotElapsed(uint40 availableAt);
+
+  /// @notice Thrown when the repayment deadline is not within the valid range during initialization.
+  error InvalidRepaymentDeadline();
 }

@@ -66,6 +66,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Role for addresses authorized to consume offers and authorize minting via `consume()` and `authorizeMinting()`.
   uint256 internal constant _ROLE_CONSUMER = _ROLE_1;
 
+  /// @dev Maximum offset from the current timestamp for the repayment deadline (90 days).
+  uint256 internal constant _MAX_REPAYMENT_DEADLINE_OFFSET = 90 days;
+
   constructor() {
     _disableInitializers();
   }
@@ -143,6 +146,14 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     uint64 repaymentDeadline_,
     uint40 mintToRepaidDelay_
   ) public initializer {
+    // Validate repayment deadline is within a reasonable range
+    if (
+      repaymentDeadline_ <= block.timestamp + mintToRepaidDelay_
+        || repaymentDeadline_ > block.timestamp + _MAX_REPAYMENT_DEADLINE_OFFSET
+    ) {
+      revert LibRequestErrors.InvalidRepaymentDeadline();
+    }
+
     RequestStorage storage _request = _requestStorage();
     _request.asset = asset_;
     _request.repaymentDeadline = repaymentDeadline_;
