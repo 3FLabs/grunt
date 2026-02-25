@@ -130,7 +130,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     State _internalState = $.internalState;
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
-    if (!ICentrifugeVault($.vault).isPermissioned(address(this))) {
+    address _vault = $.vault;
+    if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
       revert LibFundsErrors.NotAllowedToOperateWithVault();
     }
 
@@ -142,8 +143,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     // Slippage guard: reject if expected output exceeds what the current exchange rate would give,
     // or if it deviates too far below the current rate.
     uint256 _expectedOutput = order.mode == Mode.DEPOSIT
-      ? ICentrifugeVault($.vault).convertToShares(order.input)
-      : ICentrifugeVault($.vault).convertToAssets(order.input);
+      ? ICentrifugeVault(_vault).convertToShares(order.input)
+      : ICentrifugeVault(_vault).convertToAssets(order.input);
 
     if (order.output > _expectedOutput) {
       revert LibFundsErrors.InvalidOutput();
@@ -167,9 +168,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    bytes32 _currentOrderId = $.currentOrderId;
     bytes32 _orderId = order.toId(address(this));
-    if (_orderId != _currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
+    if (_orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
 
     State _internalState = $.internalState;
     if (_internalState != State.ACCEPTED && _internalState != State.PENDING) {
@@ -197,17 +197,19 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     address _vault = $.vault;
     if (order.mode == Mode.DEPOSIT) {
       // Pull asset from depositor, approve vault, request deposit
-      $.asset.safeTransferFrom(msg.sender, address(this), order.input);
-      $.asset.safeApproveWithRetry(_vault, order.input);
+      address _asset = $.asset;
+      _asset.safeTransferFrom(msg.sender, address(this), order.input);
+      _asset.safeApproveWithRetry(_vault, order.input);
       ICentrifugeVault(_vault).requestDeposit(order.input, address(this), address(this));
-      $.asset.safeApproveWithRetry(_vault, 0);
+      _asset.safeApproveWithRetry(_vault, 0);
     } else {
       // Burn WrappedAsset from depositor (unwraps to share tokens held by this contract)
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
       // Approve share tokens to vault and request redeem
-      $.shareToken.safeApproveWithRetry(_vault, order.input);
+      address _shareToken = $.shareToken;
+      _shareToken.safeApproveWithRetry(_vault, order.input);
       ICentrifugeVault(_vault).requestRedeem(order.input, address(this), address(this));
-      $.shareToken.safeApproveWithRetry(_vault, 0);
+      _shareToken.safeApproveWithRetry(_vault, 0);
     }
 
     $.internalState = State.PROCESSING;
@@ -233,25 +235,29 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     uint256 _amount;
 
     if (order.mode == Mode.DEPOSIT) {
-      uint256 _before = IERC20($.shareToken).balanceOf(address(this));
+      address _shareToken = $.shareToken;
+      address _wrappedShare = $.wrappedShare;
+      uint256 _before = IERC20(_shareToken).balanceOf(address(this));
       ICentrifugeVault(_vault).mint(ICentrifugeVault(_vault).maxMint(address(this)), address(this), address(this));
-      _amount = IERC20($.shareToken).balanceOf(address(this)) - _before;
-      $.shareToken.safeApproveWithRetry($.wrappedShare, _amount);
-      IWrappedAsset($.wrappedShare).mint(order.receiver, _amount);
+      _amount = IERC20(_shareToken).balanceOf(address(this)) - _before;
+      _shareToken.safeApproveWithRetry(_wrappedShare, _amount);
+      IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
     } else {
-      uint256 _before = IERC20($.asset).balanceOf(address(this));
+      address _asset = $.asset;
+      uint256 _before = IERC20(_asset).balanceOf(address(this));
       ICentrifugeVault(_vault)
         .withdraw(ICentrifugeVault(_vault).maxWithdraw(address(this)), address(this), address(this));
-      _amount = IERC20($.asset).balanceOf(address(this)) - _before;
-      $.asset.safeTransfer(order.receiver, _amount);
+      _amount = IERC20(_asset).balanceOf(address(this)) - _before;
+      _asset.safeTransfer(order.receiver, _amount);
     }
 
     bool _hasPendingRequest = _stateHasPendingRequest(_vault, order.mode);
-    $.internalState = _hasPendingRequest ? State.PROCESSING : State.ENDED;
+    State _newState = _hasPendingRequest ? State.PROCESSING : State.ENDED;
+    $.internalState = _newState;
 
     emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
 
-    return ($.internalState, _amount);
+    return (_newState, _amount);
   }
 
   /// @inheritdoc IFund
@@ -271,26 +277,30 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     if (order.mode == Mode.DEPOSIT) {
       // Claim cancelled deposit (returns assets)
-      uint256 _before = IERC20($.asset).balanceOf(address(this));
+      address _asset = $.asset;
+      uint256 _before = IERC20(_asset).balanceOf(address(this));
       ICentrifugeVault(_vault).claimCancelDepositRequest(0, address(this), address(this));
-      _amount = IERC20($.asset).balanceOf(address(this)) - _before;
-      $.asset.safeTransfer(order.receiver, _amount);
+      _amount = IERC20(_asset).balanceOf(address(this)) - _before;
+      _asset.safeTransfer(order.receiver, _amount);
     } else {
       // Claim cancelled redeem (returns share tokens)
-      uint256 _before = IERC20($.shareToken).balanceOf(address(this));
+      address _shareToken = $.shareToken;
+      address _wrappedShare = $.wrappedShare;
+      uint256 _before = IERC20(_shareToken).balanceOf(address(this));
       ICentrifugeVault(_vault).claimCancelRedeemRequest(0, address(this), address(this));
       // Wrap share tokens and send to receiver
-      _amount = IERC20($.shareToken).balanceOf(address(this)) - _before;
-      $.shareToken.safeApproveWithRetry($.wrappedShare, _amount);
-      IWrappedAsset($.wrappedShare).mint(order.receiver, _amount);
+      _amount = IERC20(_shareToken).balanceOf(address(this)) - _before;
+      _shareToken.safeApproveWithRetry(_wrappedShare, _amount);
+      IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
     }
 
     bool _hasPendingRecover = _stateHasPendingRecover(order.mode, _vault);
-    $.internalState = _hasPendingRecover ? State.RECOVERING : State.ENDED;
+    State _newState = _hasPendingRecover ? State.RECOVERING : State.ENDED;
+    $.internalState = _newState;
 
     emit OrderRecovered(_currentOrderId, order.mode, _amount, order.receiver);
 
-    return ($.internalState, _amount);
+    return (_newState, _amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -301,21 +311,20 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   function cancelRequest(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
-    if (order.toId(address(this)) != $.currentOrderId) {
+    bytes32 _currentOrderId = $.currentOrderId;
+    if (order.toId(address(this)) != _currentOrderId) {
       revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     }
 
     $.internalState = State.RECOVERING;
 
-    address _vault = $.vault;
-
     if (order.mode == Mode.DEPOSIT) {
-      ICentrifugeVault(_vault).cancelDepositRequest(0, address(this));
+      ICentrifugeVault($.vault).cancelDepositRequest(0, address(this));
     } else {
-      ICentrifugeVault(_vault).cancelRedeemRequest(0, address(this));
+      ICentrifugeVault($.vault).cancelRedeemRequest(0, address(this));
     }
 
-    emit CancelRequestSubmitted($.currentOrderId);
+    emit CancelRequestSubmitted(_currentOrderId);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
