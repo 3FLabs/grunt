@@ -370,6 +370,14 @@ contract CentrifugeFundTest is Test {
     fund.commit(order);
   }
 
+  function test_Commit_RevertsNotPermissioned() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    vault.setPermissioned(address(fund), false);
+    vm.expectRevert(LibFundsErrors.NotAllowedToOperateWithVault.selector);
+    fund.commit(order);
+  }
+
   function test_Commit_OnlyDepositorRole() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);

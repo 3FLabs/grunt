@@ -201,6 +201,10 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     if ($.internalState != State.ACCEPTED) revert LibFundsErrors.InvalidState($.internalState);
 
     address _vault = $.vault;
+    if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
+      revert LibFundsErrors.NotAllowedToOperateWithVault();
+    }
+
     if (order.mode == Mode.DEPOSIT) {
       // Pull asset from depositor, approve vault, request deposit
       address _asset = $.asset;
