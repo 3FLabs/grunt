@@ -85,6 +85,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     USDC = usdc;
     USCC = uscc;
     WUSCC = wuscc;
+
+    _disableInitializers();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -22,6 +22,7 @@ import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
 import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerBaseTest
 /// @notice Base test contract with setup and helpers for PositionManager tests
@@ -29,6 +30,7 @@ contract PositionManagerBaseTest is Test {
   using MarketParamsLib for MarketParams;
   using MathLib for uint256;
   using SharesMathLib for uint256;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
@@ -144,7 +146,7 @@ contract PositionManagerBaseTest is Test {
     marketId2 = marketParams2.id();
 
     // Deploy PositionManager
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({

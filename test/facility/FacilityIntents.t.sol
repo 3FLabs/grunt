@@ -10,10 +10,12 @@ import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title FacilityIntentsTest
 /// @notice Tests for intent creation, update, lock, and resolve operations
 contract FacilityIntentsTest is FacilityBaseTest {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CREATE INTENT TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -803,7 +805,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_createIntent_revertOnInvalidGuardKeyInTargetPM() public {
     // When target is the only PM, guard key must match the target asset
     // Deploy a different PM to use as invalid guard key
-    PositionManager pm3 = new PositionManager();
+    PositionManager pm3 = PositionManager(address(new PositionManager()).clone());
     pm3.initialize(
       owner,
       PositionManagerMetadata({
@@ -831,7 +833,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_createIntent_revertOnInvalidGuardKeyInDualPM() public {
     // Deploy a third position manager to use as invalid guard key
     // (it must be a valid contract that responds to assets())
-    PositionManager pm3 = new PositionManager();
+    PositionManager pm3 = PositionManager(address(new PositionManager()).clone());
     pm3.initialize(
       owner,
       PositionManagerMetadata({

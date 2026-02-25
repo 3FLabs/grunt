@@ -8,10 +8,12 @@ import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {ReentrantMinter} from "../mock/manager/ReentrantMinter.sol";
 import {ReentrantCollateral} from "../mock/manager/ReentrantCollateral.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerReentrancyTest
 /// @notice Tests reentrancy protection for PositionManager
 contract PositionManagerReentrancyTest is PositionManagerBaseTest {
+  using LibClone for address;
   ReentrantMinter public attacker;
   ReentrantCollateral public reentrantCollateral;
   PositionManager public reentrantPm;
@@ -24,7 +26,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     vm.label(address(reentrantCollateral), "ReentrantCollateral");
 
     // Deploy new position manager with reentrant collateral
-    reentrantPm = new PositionManager();
+    reentrantPm = PositionManager(address(new PositionManager()).clone());
     reentrantPm.initialize(
       owner,
       PositionManagerMetadata({
@@ -71,7 +73,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
   function test_reentrancy_depositWithDebtBlocksReentrantDeposit() public {
     // Create a version where debt token is reentrant instead
     ReentrantCollateral reentrantDebt = new ReentrantCollateral();
-    PositionManager pm2 = new PositionManager();
+    PositionManager pm2 = PositionManager(address(new PositionManager()).clone());
     pm2.initialize(
       owner,
       PositionManagerMetadata({
