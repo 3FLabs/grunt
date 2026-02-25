@@ -262,7 +262,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState,) = _state(order);
-    if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState($.internalState);
+    if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_currentState);
 
     address _vault = $.vault;
     uint256 _amount;
