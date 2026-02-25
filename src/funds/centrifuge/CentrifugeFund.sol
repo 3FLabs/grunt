@@ -409,13 +409,11 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     address _vault = $.vault;
 
     if (_internalState == State.PROCESSING) {
-      if (order.mode == Mode.DEPOSIT) {
-        uint256 _claimable = ICentrifugeVault(_vault).maxMint(address(this));
-        return _claimable > 0 ? (State.UNLOCKING, _claimable) : (State.PROCESSING, 0);
-      } else {
-        uint256 _claimable = ICentrifugeVault(_vault).maxWithdraw(address(this));
-        return _claimable > 0 ? (State.UNLOCKING, _claimable) : (State.PROCESSING, 0);
-      }
+      uint256 _claimable = order.mode == Mode.DEPOSIT
+        ? ICentrifugeVault(_vault).maxMint(address(this))
+        : ICentrifugeVault(_vault).maxWithdraw(address(this));
+
+      return _claimable > 0 ? (State.UNLOCKING, _claimable) : (State.PROCESSING, 0);
     }
 
     if (_internalState == State.RECOVERING) {
