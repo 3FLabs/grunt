@@ -198,12 +198,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       $.asset.safeTransferFrom(msg.sender, address(this), order.input);
       $.asset.safeApproveWithRetry(_vault, order.input);
       ICentrifugeVault(_vault).requestDeposit(order.input, address(this), address(this));
+      $.asset.safeApproveWithRetry(_vault, 0);
     } else {
       // Burn WrappedAsset from depositor (unwraps to share tokens held by this contract)
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
       // Approve share tokens to vault and request redeem
       $.shareToken.safeApproveWithRetry(_vault, order.input);
       ICentrifugeVault(_vault).requestRedeem(order.input, address(this), address(this));
+      $.shareToken.safeApproveWithRetry(_vault, 0);
     }
 
     $.internalState = State.PROCESSING;
