@@ -229,9 +229,8 @@ contract CentrifugeFundFuzzTest is Test {
     uint256 outputAmount = bound(uint256(output), 0, maxAmount);
 
     // With 1:1 rate, expectedOutput == inputAmount
-    // Valid range: inputAmount - inputAmount * 100 / 10000 <= output <= inputAmount
+    // Only reverts when output < expectedOutput AND deviation > 1%
     uint256 maxDeviation = inputAmount * 100 / 10000;
-    uint256 minOutput = inputAmount > maxDeviation ? inputAmount - maxDeviation : 0;
 
     Order memory order = Order({
       owner: address(this),
@@ -242,7 +241,7 @@ contract CentrifugeFundFuzzTest is Test {
       salt: keccak256("fuzz-slippage")
     });
 
-    if (outputAmount > inputAmount || (inputAmount - outputAmount > maxDeviation)) {
+    if (outputAmount < inputAmount && (inputAmount - outputAmount > maxDeviation)) {
       vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
     }
 

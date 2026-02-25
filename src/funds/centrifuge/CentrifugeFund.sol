@@ -149,18 +149,15 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       $.endedOrders[$.currentOrderId] = true;
     }
 
-    // Slippage guard: reject if expected output exceeds what the current exchange rate would give,
-    // or if it deviates too far below the current rate.
+    // Slippage guard: reject if expected output deviates too far below the current rate.
     uint256 _expectedOutput = order.mode == Mode.DEPOSIT
       ? ICentrifugeVault(_vault).convertToShares(order.input)
       : ICentrifugeVault(_vault).convertToAssets(order.input);
 
-    if (order.output > _expectedOutput) {
-      revert LibFundsErrors.InvalidOutput();
-    }
-
-    if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
-      revert LibFundsErrors.InvalidOutput();
+    if (order.output < _expectedOutput) {
+      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
+        revert LibFundsErrors.InvalidOutput();
+      }
     }
 
     bytes32 _orderId = order.toId(address(this));

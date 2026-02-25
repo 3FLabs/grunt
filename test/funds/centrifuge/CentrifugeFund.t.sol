@@ -220,11 +220,11 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
   }
 
-  function test_Create_RevertsOutputExceedsExpected() public {
-    // convertToShares(ONE) = ONE (1:1 rate), so output > ONE should revert
+  function test_Create_SucceedsOutputExceedsExpected() public {
+    // convertToShares(ONE) = ONE (1:1 rate), output > ONE is allowed
     Order memory order = _depositOrder(ONE, ONE + 1);
-    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
-    fund.create(order);
+    State s = fund.create(order);
+    assertEq(uint256(s), uint256(State.ACCEPTED), "accepted");
   }
 
   function test_Create_RevertsOutputDeviationTooLarge() public {
