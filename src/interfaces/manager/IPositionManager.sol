@@ -76,6 +76,11 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
       uint256 lastFeeAccrualTimestamp
     );
 
+  /// @notice Returns the virtual share offset used for inflation attack protection.
+  /// @dev Derived from the debt asset decimals: 10^(18 - debtAsset.decimals()), floored at 1.
+  /// @return The virtual share offset value
+  function virtualShareOffset() external view returns (uint256);
+
   /// @notice Returns the configuration parameters.
   /// @return ltv The LTV used for available collateral calculations (WAD precision)
   /// @return transferGuard The address of the transfer guard contract (address(0) if disabled)

@@ -170,11 +170,12 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     uint256 totalAssetsAfter = _storage.totalAssets();
+    uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
     if (totalAssetsAfter > totalAssetsBefore) {
       // Assets increased: mint shares to caller
       uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
-      uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore, false);
+      uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, false);
       if (sharesToMint == 0) revert LibManagerErrors.ZeroShares();
       _mint(msg.sender, sharesToMint);
       // Safe: sharesToMint is capped by total supply which fits in uint128
@@ -183,7 +184,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
-      uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore, true);
+      uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, true);
       if (sharesToBurn == 0) revert LibManagerErrors.ZeroShares();
       _burn(msg.sender, sharesToBurn);
       // Safe: sharesToBurn is capped by total supply which fits in uint128
