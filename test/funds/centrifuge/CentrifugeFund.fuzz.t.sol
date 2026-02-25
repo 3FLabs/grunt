@@ -291,7 +291,9 @@ contract CentrifugeFundFuzzTest is Test {
   }
 
   function _depositOrderWithSalt(uint256 input, uint256 output, bytes32 salt) internal view returns (Order memory) {
-    return Order({owner: address(this), receiver: address(this), input: input, output: output, mode: Mode.DEPOSIT, salt: salt});
+    return Order({
+      owner: address(this), receiver: address(this), input: input, output: output, mode: Mode.DEPOSIT, salt: salt
+    });
   }
 
   function _redeemOrder(uint256 input, uint256 output) internal view returns (Order memory) {

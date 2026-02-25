@@ -970,11 +970,25 @@ contract CentrifugeFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function _depositOrder(uint256 input, uint256 output) internal view returns (Order memory) {
-    return Order({mode: Mode.DEPOSIT, owner: address(this), receiver: address(this), input: input, output: output, salt: keccak256("deposit")});
+    return Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: input,
+      output: output,
+      salt: keccak256("deposit")
+    });
   }
 
   function _redeemOrder(uint256 input, uint256 output) internal view returns (Order memory) {
-    return Order({mode: Mode.REDEEM, owner: address(this), receiver: address(this), input: input, output: output, salt: keccak256("redeem")});
+    return Order({
+      mode: Mode.REDEEM,
+      owner: address(this),
+      receiver: address(this),
+      input: input,
+      output: output,
+      salt: keccak256("redeem")
+    });
   }
 
   function _commitDeposit(Order memory order) internal {

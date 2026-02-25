@@ -154,11 +154,7 @@ contract MockCentrifugeVault is ICentrifugeVault {
     return amount;
   }
 
-  function claimCancelRedeemRequest(uint256, address receiver, address controller)
-    external
-    override
-    returns (uint256)
-  {
+  function claimCancelRedeemRequest(uint256, address receiver, address controller) external override returns (uint256) {
     uint256 amount = _claimableCancelRedeem[controller];
     _claimableCancelRedeem[controller] = 0;
     _share.safeTransfer(receiver, amount);
