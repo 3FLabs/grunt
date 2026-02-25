@@ -109,7 +109,6 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Test Position Manager",
         symbol: "TPM",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -126,7 +125,6 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Position Manager 1",
         symbol: "PM1",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -141,7 +139,6 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Position Manager 2",
         symbol: "PM2",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -165,7 +162,6 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Test Position Manager",
         symbol: "TPM",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -205,11 +201,7 @@ contract PositionManagerFactoryTest is Test {
     address pm1 = factory.createPositionManager(
       positionManagerOwner,
       PositionManagerMetadata({
-        name: "PM1",
-        symbol: "PM1",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: "PM1", symbol: "PM1", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
       address(0),
@@ -220,11 +212,7 @@ contract PositionManagerFactoryTest is Test {
     address pm2 = factory.createPositionManager(
       user,
       PositionManagerMetadata({
-        name: "PM2",
-        symbol: "PM2",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: "PM2", symbol: "PM2", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
       DEFAULT_LTV,
       address(0),
@@ -256,7 +244,6 @@ contract PositionManagerFactoryTest is Test {
     address owner,
     string memory name,
     string memory symbol,
-    uint8 decimals,
     uint256 ltv,
     address transferGuard
   ) public {
@@ -266,11 +253,7 @@ contract PositionManagerFactoryTest is Test {
     address positionManager = factory.createPositionManager(
       owner,
       PositionManagerMetadata({
-        name: name,
-        symbol: symbol,
-        decimals: decimals,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: name, symbol: symbol, collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
       ltv,
       transferGuard,
@@ -282,7 +265,7 @@ contract PositionManagerFactoryTest is Test {
     assertEq(pm.owner(), owner);
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
-    assertEq(pm.decimals(), decimals);
+    assertEq(pm.decimals(), 18);
     (uint256 ltv_, address transferGuard_) = pm.config();
     assertEq(ltv_, ltv);
     assertEq(transferGuard_, transferGuard);

@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
-import {VIRTUAL_SHARES, VIRTUAL_ASSETS} from "./LibConstants.sol";
+import {VIRTUAL_ASSETS} from "./LibConstants.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
@@ -79,16 +79,19 @@ library LibView {
   /// @param assets The amount of assets to convert
   /// @param _totalSupply The current total supply of shares
   /// @param _totalAssets The current total assets
+  /// @param virtualShareOffset_ The virtual shares offset (10^(18 - debtAsset.decimals())), stored per-vault
   /// @param roundUp If true, rounds up the result (use when burning shares); if false, rounds down (use when minting)
   /// @return shares The equivalent amount of shares
-  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets, bool roundUp)
-    internal
-    pure
-    returns (uint256 shares)
-  {
+  function convertToShares(
+    uint256 assets,
+    uint256 _totalSupply,
+    uint256 _totalAssets,
+    uint256 virtualShareOffset_,
+    bool roundUp
+  ) internal pure returns (uint256 shares) {
     if (roundUp) {
-      return assets.mulDivUp(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
+      return assets.mulDivUp(_totalSupply + virtualShareOffset_, _totalAssets + VIRTUAL_ASSETS);
     }
-    return assets.mulDiv(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
+    return assets.mulDiv(_totalSupply + virtualShareOffset_, _totalAssets + VIRTUAL_ASSETS);
   }
 }
