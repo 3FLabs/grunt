@@ -248,6 +248,18 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     positionManager.setRebalanceConfig(100, 0);
   }
 
+  function test_setRebalanceConfig_revertWhenMaxLossExceedsMax() public {
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.MaxRebalanceLossExceedsMax.selector);
+    positionManager.setRebalanceConfig(1001, 0); // 10.01% > 10% cap
+  }
+
+  function test_setRebalanceConfig_allowsExactMax() public {
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(1000, 0); // 10% = cap
+    assertEq(_maxRebalanceLoss(), 1000, "Max rebalance loss should be set to cap");
+  }
+
   function test_rebalance_revertOnExcessiveLoss() public {
     // Setup: deposit collateral
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -389,7 +401,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
   function testFuzz_rebalance_lossThresholdEnforced(uint16 maxLossPercent, uint8 actualLossPercent) public {
     // Bound inputs
-    maxLossPercent = uint16(bound(maxLossPercent, 0, 10000)); // 0-100%
+    maxLossPercent = uint16(bound(maxLossPercent, 0, 1000)); // 0-10% (capped by MAX_REBALANCE_LOSS)
     actualLossPercent = uint8(bound(actualLossPercent, 1, 99)); // 1-99%
 
     // Setup: deposit collateral

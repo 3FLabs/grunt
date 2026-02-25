@@ -49,6 +49,10 @@ uint256 constant MAX_MANAGEMENT_FEE = 200;
 /// @custom:value 5,000
 uint256 constant MAX_PERFORMANCE_FEE = 5000;
 
+/// @dev Maximum rebalance loss: 10% (1000 basis points).
+/// @custom:value 1,000
+uint256 constant MAX_REBALANCE_LOSS = 1000;
+
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                         STORAGE                            */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
