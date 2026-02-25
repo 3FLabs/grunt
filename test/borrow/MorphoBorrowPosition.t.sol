@@ -78,6 +78,7 @@ contract MorphoBorrowPositionTest is Test {
   error LiquidationLtvExceedsMarketLltv(uint128 liquidationLtv, uint256 marketLltv);
   error SafeLtvNotLessThanLiquidationLtv(uint128 safeLtv, uint128 liquidationLtv);
   error InconsistentInput();
+  error InvalidBorrower();
   error NotMorpho();
 
   // Solady Initializable errors
@@ -1719,6 +1720,11 @@ contract MorphoBorrowPositionTest is Test {
     vm.expectRevert(PositionHealthy.selector);
     borrowPosition.preLiquidate(address(borrowPosition), collateralAmount / 2, 0, "");
     vm.stopPrank();
+  }
+
+  function test_preLiquidate_RevertWhen_BorrowerIsNotSelf() public {
+    vm.expectRevert(InvalidBorrower.selector);
+    borrowPosition.preLiquidate(address(0xdead), 1, 0, "");
   }
 
   function test_preLiquidate_RevertWhen_BothAmountsAreZero() public {

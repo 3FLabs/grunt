@@ -32,17 +32,12 @@ contract LibOperationsHarness {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Set metadata
-  function setMetadata(
-    string calldata name,
-    string calldata symbol,
-    uint8 decimals,
-    address collateralAsset,
-    address debtAsset
-  ) external {
+  function setMetadata(string calldata name, string calldata symbol, address collateralAsset, address debtAsset)
+    external
+  {
     PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     ps.metadata.name = name;
     ps.metadata.symbol = symbol;
-    ps.metadata.decimals = decimals;
     ps.metadata.collateralAsset = collateralAsset;
     ps.metadata.debtAsset = debtAsset;
   }
