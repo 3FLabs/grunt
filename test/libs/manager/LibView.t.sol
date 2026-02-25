@@ -5,13 +5,15 @@ import {Test} from "forge-std/Test.sol";
 import {LibManagerStorageHarness} from "test/mock/libs/LibManagerStorageHarness.sol";
 import {MockBorrowPosition} from "test/mock/borrow/MockBorrowPosition.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
-import {VIRTUAL_SHARES, VIRTUAL_ASSETS} from "src/libs/manager/LibConstants.sol";
+import {VIRTUAL_ASSETS} from "src/libs/manager/LibConstants.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibViewTest
 /// @notice Unit tests for manager LibView library
 contract LibViewTest is Test {
   using FixedPointMathLib for uint256;
+
+  uint256 constant VIRTUAL_SHARES = 1; // 10^(18 - 18) for 18-decimal debt token
 
   LibManagerStorageHarness harness;
   MockERC20 collateralToken;
@@ -22,7 +24,7 @@ contract LibViewTest is Test {
     collateralToken = new MockERC20("Collateral", "COL", 18);
     debtToken = new MockERC20("Debt", "DEBT", 18);
 
-    harness.setMetadata("Test PM", "TPM", 18, address(collateralToken), address(debtToken));
+    harness.setMetadata("Test PM", "TPM", address(collateralToken), address(debtToken));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -194,7 +196,7 @@ contract LibViewTest is Test {
 
   function testFuzz_convertToShares_roundDown(uint96 assets, uint96 totalSupply, uint96 totalAssets) public view {
     // Using uint96 to avoid mulDiv overflow when assets * (totalSupply + VIRTUAL_SHARES) exceeds uint256
-    uint256 shares = harness.convertToShares(assets, totalSupply, totalAssets, false);
+    uint256 shares = harness.convertToShares(assets, totalSupply, totalAssets, VIRTUAL_SHARES, false);
 
     // Verify the formula: shares = assets * (totalSupply + VIRTUAL_SHARES) / (totalAssets + VIRTUAL_ASSETS)
     uint256 expected =
@@ -204,7 +206,7 @@ contract LibViewTest is Test {
 
   function testFuzz_convertToShares_roundUp(uint96 assets, uint96 totalSupply, uint96 totalAssets) public view {
     // Using uint96 to avoid mulDiv overflow when assets * (totalSupply + VIRTUAL_SHARES) exceeds uint256
-    uint256 sharesUp = harness.convertToShares(assets, totalSupply, totalAssets, true);
+    uint256 sharesUp = harness.convertToShares(assets, totalSupply, totalAssets, VIRTUAL_SHARES, true);
 
     // Verify the formula uses mulDivUp: shares = ceil(assets * (totalSupply + VIRTUAL_SHARES) / (totalAssets + VIRTUAL_ASSETS))
     uint256 expected =
@@ -216,21 +218,18 @@ contract LibViewTest is Test {
     public
     view
   {
-    uint256 sharesDown = harness.convertToShares(assets, totalSupply, totalAssets, false);
-    uint256 sharesUp = harness.convertToShares(assets, totalSupply, totalAssets, true);
+    uint256 sharesDown = harness.convertToShares(assets, totalSupply, totalAssets, VIRTUAL_SHARES, false);
+    uint256 sharesUp = harness.convertToShares(assets, totalSupply, totalAssets, VIRTUAL_SHARES, true);
     assertGe(sharesUp, sharesDown, "roundUp result must be >= roundDown result");
   }
 
   function test_convertToShares_roundUpDifference() public view {
-    // Choose values where rounding matters: 7 * (100 + 1e6) / (3 + 1) = 7_000_700 / 4 = 1_750_175
-    // 7 * 1_000_100 = 7_000_700; 7_000_700 / 4 = 1_750_175 exactly, no rounding difference
-    // Use values that do not divide evenly: assets=3, totalSupply=0, totalAssets=2
-    // 3 * (0 + 1e6) / (2 + 1) = 3_000_000 / 3 = 1_000_000 exactly
-    // Try: assets=1, totalSupply=1, totalAssets=2 => 1 * (1 + 1e6) / (2 + 1) = 1_000_001 / 3 = 333_333 (down), 333_334 (up)
-    uint256 sharesDown = harness.convertToShares(1, 1, 2, false);
-    uint256 sharesUp = harness.convertToShares(1, 1, 2, true);
-    assertEq(sharesDown, 333_333, "roundDown should truncate");
-    assertEq(sharesUp, 333_334, "roundUp should ceil");
+    // With VIRTUAL_SHARES=1 (18-decimal debt token): assets=1, totalSupply=1, totalAssets=2
+    // 1 * (1 + 1) / (2 + 1) = 2/3 = 0 (down), ceil(2/3) = 1 (up)
+    uint256 sharesDown = harness.convertToShares(1, 1, 2, VIRTUAL_SHARES, false);
+    uint256 sharesUp = harness.convertToShares(1, 1, 2, VIRTUAL_SHARES, true);
+    assertEq(sharesDown, 0, "roundDown should truncate");
+    assertEq(sharesUp, 1, "roundUp should ceil");
     assertEq(sharesUp - sharesDown, 1, "difference should be exactly 1 for non-exact division");
   }
 
@@ -239,12 +238,12 @@ contract LibViewTest is Test {
     // Attacker deposits 1 wei, then donates large amount
 
     // First deposit: 1 wei with 0 supply
-    uint256 attackerShares = harness.convertToShares(1, 0, 0, false);
+    uint256 attackerShares = harness.convertToShares(1, 0, 0, VIRTUAL_SHARES, false);
     // attackerShares = 1 * VIRTUAL_SHARES / VIRTUAL_ASSETS = 1
 
     // Attacker donates 1e18 tokens, making totalAssets = 1 + 1e18
     // Victim deposits 1e18
-    uint256 victimShares = harness.convertToShares(1e18, attackerShares, 1 + 1e18, false);
+    uint256 victimShares = harness.convertToShares(1e18, attackerShares, 1 + 1e18, VIRTUAL_SHARES, false);
 
     // Without virtual offset, victim would get 0 shares
     // With virtual offset, victim still gets meaningful shares
