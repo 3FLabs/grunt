@@ -132,7 +132,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
     order.input.checkNotZero();
-    if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
+    _checkOwner(order);
     if (order.receiver != msg.sender) revert LibFundsErrors.InvalidReceiver();
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
@@ -174,7 +174,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function cancel(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
-    if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
+    _checkOwner(order);
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _orderId = order.toId(address(this));
@@ -196,7 +196,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev No partial commits, always goes to PROCESSING.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
-    if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
+    _checkOwner(order);
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _currentOrderId = $.currentOrderId;
@@ -231,7 +231,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev Supports partial unlocks when requests remain pending.
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
-    if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
+    _checkOwner(order);
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _currentOrderId = $.currentOrderId;
@@ -272,7 +272,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev Supports partial recoveries while cancellation requests are still pending.
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
-    if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
+    _checkOwner(order);
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _currentOrderId = $.currentOrderId;
@@ -465,5 +465,11 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     return ICentrifugeVault(_vault).pendingCancelRedeemRequest(0, address(this))
       || ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this)) > 0;
+  }
+
+  /// @dev Reverts if the order owner is not the caller.
+  /// @param order The given order.
+  function _checkOwner(Order calldata order) internal view {
+    if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
   }
 }
