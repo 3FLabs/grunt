@@ -84,7 +84,7 @@ contract PositionManagerFactory {
   ///      The owner becomes the admin and has exclusive control over the position manager.
   ///      Emits a {PositionManagerCreated} event.
   /// @param owner The address that will own the PositionManager
-  /// @param metadata The metadata containing name, symbol, decimals, collateral and debt assets
+  /// @param metadata The metadata containing name, symbol, collateral and debt assets
   /// @param ltv The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard The initial transfer guard address (address(0) to disable)
   /// @param maxRebalanceLoss The max rebalance loss in basis points (e.g., 100 = 1%)

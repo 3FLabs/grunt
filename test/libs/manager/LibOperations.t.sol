@@ -20,7 +20,7 @@ contract LibOperationsTest is Test {
     collateralToken = new MockERC20("Collateral", "COL", 18);
     debtToken = new MockERC20("Debt", "DEBT", 18);
 
-    harness.setMetadata("Test PM", "TPM", 18, address(collateralToken), address(debtToken));
+    harness.setMetadata("Test PM", "TPM", address(collateralToken), address(debtToken));
     harness.setLtv(0.86e18);
   }
 

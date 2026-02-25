@@ -196,7 +196,6 @@ contract FacilityBaseTest is Test {
       PositionManagerMetadata({
         name: "Position Manager Shares",
         symbol: "PMS",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -214,7 +213,6 @@ contract FacilityBaseTest is Test {
       PositionManagerMetadata({
         name: "Position Manager Shares 2",
         symbol: "PMS2",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),

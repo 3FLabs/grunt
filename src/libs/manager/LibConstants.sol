@@ -12,11 +12,6 @@ pragma solidity ^0.8.20;
 /*                     SHARE CALCULATIONS                      */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Virtual offset for share calculation to prevent inflation attacks.
-///      Using 1e6 as offset (similar to MetaMorpho's approach with decimalsOffset).
-/// @custom:value 1,000,000
-uint256 constant VIRTUAL_SHARES = 1e6;
-
 /// @dev Virtual assets offset for share calculation.
 /// @custom:value 1
 uint256 constant VIRTUAL_ASSETS = 1;
