@@ -59,6 +59,9 @@ library LibManagerErrors {
   /// @notice Thrown when rebalance causes total assets to decrease by more than maxRebalanceLoss.
   error RebalanceLossExceedsMax();
 
+  /// @notice Thrown when maxRebalanceLoss exceeds the allowed upper bound.
+  error MaxRebalanceLossExceedsMax();
+
   /// @notice Thrown when rebalance is called before the cooldown period has elapsed.
   error RebalanceCooldownNotElapsed();
 
