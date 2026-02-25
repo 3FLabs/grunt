@@ -370,6 +370,11 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _orderId = order.toId(address(this));
 
+    // Return EMPTY to indicate this order doesn't exist
+    if (_orderId != $.currentOrderId) {
+      return State.EMPTY;
+    }
+
     // Return ENDED for archived orders
     if ($.endedOrders[_orderId]) {
       return State.ENDED;
@@ -399,11 +404,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   function _state(Order calldata order) internal view returns (State, uint256) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _orderId = order.toId(address(this));
-
-    // Return EMPTY to indicate this order doesn't exist
-    if (_orderId != $.currentOrderId) {
-      return (State.EMPTY, 0);
-    }
 
     State _internalState = $.internalState;
     address _vault = $.vault;
