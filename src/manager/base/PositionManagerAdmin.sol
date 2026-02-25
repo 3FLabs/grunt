@@ -43,7 +43,9 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
       revert LibManagerErrors.ModuleSafeLtvTooLow();
     }
 
-    _storage.borrowModules.add(module);
+    if (!_storage.borrowModules.add(module)) {
+      revert LibManagerErrors.ModuleAlreadyAdded();
+    }
     emit IPositionManagerAdmin.BorrowModuleAdded(module);
   }
 
@@ -114,12 +116,12 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   function setLtv(uint256 ltv_) external override onlyOwner {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
-    // Validate LTV value first (reverts if 0 or > WAD)
+    // Validate LTV range first (reverts if 0 or > WAD); also checked inside setLtv as defense-in-depth
     LibChecks.checkValidLtv(ltv_);
 
     // Check all whitelisted borrow modules have safeLtv >= new PM LTV
     uint256 len = _storage.borrowModules.length();
-    for (uint256 i = 0; i < len;) {
+    for (uint256 i; i < len;) {
       if (IBorrowPosition(_storage.borrowModules.at(i)).safeLtv() < ltv_) {
         revert LibManagerErrors.ModuleSafeLtvTooLow();
       }

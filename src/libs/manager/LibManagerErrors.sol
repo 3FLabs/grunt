@@ -64,6 +64,9 @@ library LibManagerErrors {
   /// @notice Thrown when a borrow module's safe LTV is lower than the position manager's LTV.
   error ModuleSafeLtvTooLow();
 
+  /// @notice Thrown when attempting to add a borrow module that is already whitelisted.
+  error ModuleAlreadyAdded();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       REBALANCING                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

@@ -178,6 +178,15 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.addBorrowModule(address(wrongModule));
   }
 
+  function test_addBorrowModule_revertWhen_ModuleAlreadyAdded() public {
+    // borrowPosition1 is already whitelisted in setUp
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleAlreadyAdded.selector);
+    positionManager.addBorrowModule(address(borrowPosition1));
+  }
+
   function test_addBorrowModule_revertWhen_SafeLtvTooLow() public {
     // Create a module with safeLtv < PM LTV
     uint128 lowSafeLtv = uint128(POSITION_MANAGER_LTV) - 1;
