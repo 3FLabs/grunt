@@ -11,13 +11,12 @@ import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAd
 /// @title FacilityPositionManagerTest
 /// @notice Tests for Facility position manager operations (depositManager, withdrawManager, burnManager)
 contract FacilityPositionManagerTest is FacilityBaseTest {
-  // NOTE: PositionManager uses VIRTUAL_SHARES=1e6 and VIRTUAL_ASSETS=1 for inflation protection.
-  // This means for the first deposit: shares = collateral * 1e6
-  // So to stay within DEFAULT_DEPOSIT_CAP (1e24), max collateral is 1e24 / 1e6 = 1e18
-  // We use small amounts in these tests to avoid hitting the cap.
-  uint256 constant PM_SHARE_MULTIPLIER = 1e6;
-  uint256 constant SMALL_COLLATERAL = 100e12; // Results in 100e18 shares
-  uint256 constant MEDIUM_COLLATERAL = 500e12; // Results in 500e18 shares
+  // NOTE: PositionManager uses a virtual share offset derived from the debt asset decimals
+  // (10^(18 - debtDecimals)) and VIRTUAL_ASSETS=1 for inflation protection.
+  // For 18-decimal debt tokens the offset is 1, so first deposit: shares ≈ collateral.
+  // We use small amounts in these tests to avoid hitting the DEFAULT_DEPOSIT_CAP (1e24).
+  uint256 constant SMALL_COLLATERAL = 100e12;
+  uint256 constant MEDIUM_COLLATERAL = 500e12;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      SETUP HELPERS                         */
@@ -261,8 +260,8 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
       }
     }
 
-    // Burn some shares (note: shares = collateral * 1e6, so use appropriate amount)
-    uint256 sharesToBurn = 1e18; // Small amount of shares
+    // Burn some shares
+    uint256 sharesToBurn = sharesBefore / 10;
     vm.prank(facilitator);
     facility.burnManager(intentId, sharesToBurn, false, WithdrawalStrategy.PROPORTIONAL);
 

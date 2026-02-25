@@ -51,12 +51,14 @@ contract LibManagerStorageHarness {
   }
 
   /// @dev Expose convertToShares (pure function)
-  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets, bool roundUp)
-    external
-    pure
-    returns (uint256)
-  {
-    return LibView.convertToShares(assets, _totalSupply, _totalAssets, roundUp);
+  function convertToShares(
+    uint256 assets,
+    uint256 _totalSupply,
+    uint256 _totalAssets,
+    uint256 virtualShareOffset_,
+    bool roundUp
+  ) external pure returns (uint256) {
+    return LibView.convertToShares(assets, _totalSupply, _totalAssets, virtualShareOffset_, roundUp);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -89,17 +91,12 @@ contract LibManagerStorageHarness {
   }
 
   /// @dev Set metadata
-  function setMetadata(
-    string calldata name,
-    string calldata symbol,
-    uint8 decimals,
-    address collateralAsset,
-    address debtAsset
-  ) external {
+  function setMetadata(string calldata name, string calldata symbol, address collateralAsset, address debtAsset)
+    external
+  {
     PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     ps.metadata.name = name;
     ps.metadata.symbol = symbol;
-    ps.metadata.decimals = decimals;
     ps.metadata.collateralAsset = collateralAsset;
     ps.metadata.debtAsset = debtAsset;
   }

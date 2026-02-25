@@ -30,7 +30,6 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
       PositionManagerMetadata({
         name: "Reentrant PM",
         symbol: "RPM",
-        decimals: 18,
         collateralAsset: address(reentrantCollateral),
         debtAsset: address(debtToken)
       }),
@@ -75,11 +74,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     pm2.initialize(
       owner,
       PositionManagerMetadata({
-        name: "PM2",
-        symbol: "PM2",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(reentrantDebt)
+        name: "PM2", symbol: "PM2", collateralAsset: address(collateralToken), debtAsset: address(reentrantDebt)
       }),
       POSITION_MANAGER_LTV,
       address(0),

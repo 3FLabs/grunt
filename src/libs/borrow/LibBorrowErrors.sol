@@ -53,6 +53,9 @@ library LibBorrowErrors {
   /// @notice Thrown when the input parameters are inconsistent (e.g., both seizedAssets and repaidShares are non-zero).
   error InconsistentInput();
 
+  /// @notice Thrown when preLiquidate is called with a borrower other than the contract itself.
+  error InvalidBorrower();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      AUTHORIZATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
