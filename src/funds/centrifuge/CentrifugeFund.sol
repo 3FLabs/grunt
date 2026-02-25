@@ -86,6 +86,15 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        CONSTRUCTOR                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Disables initializers on the implementation contract to prevent misuse.
+  constructor() {
+    _disableInitializers();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -403,7 +412,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   ///      For all other states, returns internalState directly.
   function _state(Order calldata order) internal view returns (State, uint256) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    bytes32 _orderId = order.toId(address(this));
 
     State _internalState = $.internalState;
     address _vault = $.vault;
