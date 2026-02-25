@@ -70,7 +70,7 @@ interface IPositionManagerAdmin {
   /// @param module The address of the borrow module to add
   function addBorrowModule(address module) external;
 
-  /// @notice Removes a borrow module from the whitelist.
+  /// @notice Removes a borrow module from the whitelist and transfers its ownership to the caller.
   /// @dev Only callable by the owner.
   /// @param module The address of the borrow module to remove
   function removeBorrowModule(address module) external;

@@ -8,6 +8,7 @@ import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 
 /// @title PositionManagerAdmin
 /// @author 3F Protocol
@@ -22,14 +23,22 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerAdmin
+  /// @dev Accrues fees before adding the module to checkpoint totalAssets.
+  ///      Updates lastTotalAssets after adding so the new module's assets are reflected.
   function addBorrowModule(address module) external override onlyOwner {
-    LibStorage.positionManagerStorage().borrowModules.add(module);
+    _accrueFees();
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    _storage.borrowModules.add(module);
+    _storage.updateSnapshot();
     emit IPositionManagerAdmin.BorrowModuleAdded(module);
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
+  /// @dev Accrues fees before removing the module to checkpoint totalAssets.
+  ///      Updates lastTotalAssets after removing so the module's assets are no longer counted.
+  ///      Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
   function removeBorrowModule(address module) external override onlyOwner {
+    _accrueFees();
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Check module is not in supply queue
@@ -51,6 +60,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
     }
 
     _storage.borrowModules.remove(module);
+    _storage.updateSnapshot();
+    Ownable(module).transferOwnership(msg.sender);
     emit IPositionManagerAdmin.BorrowModuleRemoved(module);
   }
 

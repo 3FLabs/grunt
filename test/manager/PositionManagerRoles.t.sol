@@ -87,7 +87,9 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_addBorrowModule_onlyOwner() public {
-    address newModule = makeAddr("newModule");
+    address newModule = borrowPositionFactory.createBorrowPosition(
+      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
 
     vm.prank(user);
     vm.expectRevert();
@@ -124,6 +126,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.removeBorrowModule(address(borrowPosition1));
 
     assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
+    assertEq(borrowPosition1.owner(), owner);
   }
 
   function test_removeBorrowModule_revertIfInSupplyQueue() public {
