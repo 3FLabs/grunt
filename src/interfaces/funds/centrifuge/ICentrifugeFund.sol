@@ -73,7 +73,9 @@ interface ICentrifugeFund is IFund {
 
   /// @notice Transitions to RECOVERING and submits a cancel request to the Centrifuge vault.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Must be in PROCESSING state. Sets internal state to RECOVERING, then calls
+  ///      Must be in PROCESSING state. Reverts with `PendingClaimableAssets` if the vault has
+  ///      claimable partial-fill assets (maxMint for deposits, maxWithdraw for redeems) that must
+  ///      be drained via `unlock()` first. Sets internal state to RECOVERING, then calls
   ///      cancelDepositRequest or cancelRedeemRequest on the vault depending on the order mode.
   /// @param order The order to cancel.
   function cancelRequest(Order calldata order) external;

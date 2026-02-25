@@ -746,6 +746,52 @@ contract CentrifugeFundTest is Test {
     fund.cancelRequest(order);
   }
 
+  function test_CancelRequest_RevertsWithPendingClaimableDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Partial fill: 500 of 1000 shares fulfilled
+    vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.cancelRequest(order);
+  }
+
+  function test_CancelRequest_RevertsWithPendingClaimableRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Partial fill: 500 of 1000 assets fulfilled
+    vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.cancelRequest(order);
+  }
+
+  function test_CancelRequest_SucceedsAfterUnlockDrainsPartialFill() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Partial fill: 500 of 1000 shares fulfilled
+    vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
+
+    // Unlock drains the partial fill, returning to PROCESSING
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "back to processing");
+
+    // Now cancelRequest succeeds
+    vm.prank(owner);
+    fund.cancelRequest(order);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "recovering (hidden)");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                             VIEWS                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

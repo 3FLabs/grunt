@@ -322,12 +322,20 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       revert LibFundsErrors.InvalidOrder(orderId);
     }
 
+    address _vault = $.vault;
+
+    if (order.mode == Mode.DEPOSIT) {
+      if (ICentrifugeVault(_vault).maxMint(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
+    } else {
+      if (ICentrifugeVault(_vault).maxWithdraw(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
+    }
+
     $.internalState = State.RECOVERING;
 
     if (order.mode == Mode.DEPOSIT) {
-      ICentrifugeVault($.vault).cancelDepositRequest(0, address(this));
+      ICentrifugeVault(_vault).cancelDepositRequest(0, address(this));
     } else {
-      ICentrifugeVault($.vault).cancelRedeemRequest(0, address(this));
+      ICentrifugeVault(_vault).cancelRedeemRequest(0, address(this));
     }
 
     emit CancelRequestSubmitted(orderId);
