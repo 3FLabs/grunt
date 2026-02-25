@@ -28,31 +28,32 @@ library LibOperations {
       uint256 remainingDebt = debt;
       uint256 queueLength = _storage.supplyQueue.length;
 
+      uint256 ltv = _storage.ltv;
+
       for (uint256 i = 0; i < queueLength && remainingDebt > 0; i++) {
         SupplyQueueEntry memory entry = _storage.supplyQueue[i];
         address position = entry.position;
 
-        // Calculate how much we can borrow from this position
-        uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
-        uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
+        // Estimate borrow from market liquidity (for proportional collateral distribution)
+        uint256 estimatedBorrow =
+          IBorrowPosition(position).availableLiquidity().min(uint256(entry.maxBorrow)).min(remainingDebt);
 
-        if (toBorrow == 0) {
-          continue;
-        }
+        if (estimatedBorrow == 0) continue;
 
-        // Calculate proportional collateral
-        // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
-        uint256 collateralToSupply = remainingCollateral.mulDiv(toBorrow, remainingDebt);
-
-        // Supply collateral first (if any)
+        // Supply proportional collateral FIRST so maxBorrow(ltv) accounts for it
+        uint256 collateralToSupply = remainingCollateral.mulDiv(estimatedBorrow, remainingDebt);
         if (collateralToSupply > 0) {
           position.supply(_storage.metadata.collateralAsset, collateralToSupply);
           remainingCollateral -= collateralToSupply;
         }
 
-        // Then borrow
-        position.borrow(toBorrow);
-        remainingDebt -= toBorrow;
+        // After collateral is supplied, compute LTV-constrained borrow capacity
+        uint256 toBorrow = IBorrowPosition(position).maxBorrow(ltv).min(uint256(entry.maxBorrow)).min(remainingDebt);
+
+        if (toBorrow > 0) {
+          position.borrow(toBorrow);
+          remainingDebt -= toBorrow;
+        }
       }
 
       // If we couldn't borrow all the requested debt, revert
