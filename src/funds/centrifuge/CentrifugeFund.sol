@@ -13,6 +13,7 @@ import {IWrappedAsset} from "../../interfaces/funds/IWrappedAsset.sol";
 import {Order, State, Mode, LibOrder} from "../../libs/funds/Order.sol";
 import {LibFundsErrors} from "../../libs/funds/LibFundsErrors.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {BPS} from "../../libs/Constants.sol";
 
 /// @title CentrifugeFund
 /// @author 3F Protocol
@@ -41,6 +42,10 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @notice Role for depositor.
   uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+
+  /// @notice Maximum allowed deviation between order output and current rate (in basis points).
+  /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 100; // 1%
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -132,16 +137,18 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       $.endedOrders[$.currentOrderId] = true;
     }
 
-    // Slippage guard: reject if expected output exceeds what the current exchange rate would give.
-    // The actual fill may happen later at a different rate, but this catches clearly unreasonable orders.
-    if (order.mode == Mode.DEPOSIT) {
-      if (order.output > ICentrifugeVault($.vault).convertToShares(order.input)) {
-        revert LibFundsErrors.InvalidOutput();
-      }
-    } else {
-      if (order.output > ICentrifugeVault($.vault).convertToAssets(order.input)) {
-        revert LibFundsErrors.InvalidOutput();
-      }
+    // Slippage guard: reject if expected output exceeds what the current exchange rate would give,
+    // or if it deviates too far below the current rate.
+    uint256 _expectedOutput = order.mode == Mode.DEPOSIT
+      ? ICentrifugeVault($.vault).convertToShares(order.input)
+      : ICentrifugeVault($.vault).convertToAssets(order.input);
+
+    if (order.output > _expectedOutput) {
+      revert LibFundsErrors.InvalidOutput();
+    }
+
+    if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
+      revert LibFundsErrors.InvalidOutput();
     }
 
     bytes32 _orderId = order.toId(address(this));
