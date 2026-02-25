@@ -97,7 +97,7 @@ This section provides a consolidated view of all roles across contracts and how 
 | | Puller | Facility | Pull bridge loan funds, repay funds |
 | | Consumer | Protocol Admin | Consume signed offers |
 | **Fund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
-| | Settler | Operations Bot | Settle fund state after external operations |
+| | Operator | Operations Bot | Settle fund state after external operations |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
@@ -130,7 +130,7 @@ flowchart TB
 
     subgraph Fund["Fund Contract"]
         FDep[Depositor: Facility]
-        FSet[Settler: Bot]
+        FSet[Operator: Bot]
     end
 
     subgraph PM["Position Manager"]
