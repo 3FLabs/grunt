@@ -5,7 +5,8 @@ import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibChecks} from "../common/LibChecks.sol";
 import {LibView} from "./LibView.sol";
-import {STORAGE_SLOT} from "./LibConstants.sol";
+import {STORAGE_SLOT, MAX_REBALANCE_LOSS} from "./LibConstants.sol";
+import {LibManagerErrors} from "./LibManagerErrors.sol";
 
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
@@ -21,13 +22,11 @@ struct FeeData {
 /// @notice Metadata for the PositionManager share token and assets.
 /// @param name The ERC20 name of the position manager share token.
 /// @param symbol The ERC20 symbol of the position manager share token.
-/// @param decimals The number of decimals for the share token (matches the collateral asset).
 /// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
 /// @param debtAsset The address of the debt asset borrowed against positions.
 struct PositionManagerMetadata {
   string name;
   string symbol;
-  uint8 decimals;
   address collateralAsset;
   address debtAsset;
 }
@@ -58,6 +57,12 @@ struct RebalanceConfig {
 ///        calculating high water mark and performance fees.
 /// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
 ///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
+/// @param virtualShareOffset Virtual shares offset for inflation attack protection, derived from debt asset decimals.
+///        Computed as 10^(18 - debtAsset.decimals()), so tokens with fewer decimals get stronger protection.
+///        For 18-decimal tokens the offset is 1 (weakest); for 6-decimal tokens (e.g., USDC) the offset is 1e12.
+///        @notice For debt assets with 18 decimals, the inflation front-running protection is low.
+///        To protect against this attack, vault deployers should make an initial deposit of a non-trivial amount
+///        in the vault, or depositors should check that the share price does not exceed a certain limit.
 /// @param lastFeeAccrualTimestamp Unix timestamp of the last fee accrual, used for
 ///        calculating time-weighted management fees.
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
@@ -71,6 +76,7 @@ struct PositionManagerStorageData {
   PositionManagerMetadata metadata;
   uint256 lastTotalAssets;
   uint64 ltv;
+  uint64 virtualShareOffset;
   uint40 lastFeeAccrualTimestamp;
   address transferGuard;
   RebalanceConfig rebalanceConfig;
@@ -120,6 +126,9 @@ library LibStorage {
     uint16 maxRebalanceLoss_,
     uint40 rebalanceCooldown_
   ) internal {
+    if (maxRebalanceLoss_ > MAX_REBALANCE_LOSS) {
+      revert LibManagerErrors.MaxRebalanceLossExceedsMax();
+    }
     self.rebalanceConfig.maxRebalanceLoss = maxRebalanceLoss_;
     self.rebalanceConfig.rebalanceCooldown = rebalanceCooldown_;
     emit IPositionManagerAdmin.RebalanceConfigSet(maxRebalanceLoss_, rebalanceCooldown_);

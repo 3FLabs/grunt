@@ -12,11 +12,6 @@ pragma solidity ^0.8.20;
 /*                     SHARE CALCULATIONS                      */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Virtual offset for share calculation to prevent inflation attacks.
-///      Using 1e6 as offset (similar to MetaMorpho's approach with decimalsOffset).
-/// @custom:value 1,000,000
-uint256 constant VIRTUAL_SHARES = 1e6;
-
 /// @dev Virtual assets offset for share calculation.
 /// @custom:value 1
 uint256 constant VIRTUAL_ASSETS = 1;
@@ -48,6 +43,10 @@ uint256 constant MAX_MANAGEMENT_FEE = 200;
 /// @dev Maximum performance fee: 50% (5000 basis points).
 /// @custom:value 5,000
 uint256 constant MAX_PERFORMANCE_FEE = 5000;
+
+/// @dev Maximum rebalance loss: 10% (1000 basis points).
+/// @custom:value 1,000
+uint256 constant MAX_REBALANCE_LOSS = 1000;
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                         STORAGE                            */

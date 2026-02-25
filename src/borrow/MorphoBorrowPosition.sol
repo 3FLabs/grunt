@@ -253,12 +253,14 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @param data Arbitrary data to pass to the `onPreLiquidate` callback. Pass empty data if not needed.
   /// @return The amount of collateral seized.
   /// @return The amount of debt assets repaid.
-  /// @dev Reverts with {LibBorrowErrors.InconsistentInput} if both seizedAssets and repaidShares are non-zero or both are zero.
+  /// @dev Reverts with {LibBorrowErrors.InvalidBorrower} if borrower is not address(this).
+  ///      Reverts with {LibBorrowErrors.InconsistentInput} if both seizedAssets and repaidShares are non-zero or both are zero.
   ///      Reverts with {LibBorrowErrors.PositionHealthy} if the position is healthy based on the custom liquidation LTV.
   function preLiquidate(address borrower, uint256 seizedAssets, uint256 repaidShares, bytes calldata data)
     external
     returns (uint256, uint256)
   {
+    if (borrower != address(this)) revert LibBorrowErrors.InvalidBorrower();
     if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert LibBorrowErrors.InconsistentInput();
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();

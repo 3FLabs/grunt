@@ -148,7 +148,6 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
       PositionManagerMetadata({
         name: "Position Manager Shares",
         symbol: "PMS",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -288,17 +287,16 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   }
 
   /// @notice PM-2: No zero-share minting (virtual offset inflation-attack protection).
-  /// @dev The PositionManager uses VIRTUAL_SHARES (1e6) and VIRTUAL_ASSETS (1) offsets in its
-  ///      share conversion formula to prevent the classic ERC-4626 inflation attack where a
-  ///      first depositor manipulates the price-per-share. This invariant verifies that whenever
-  ///      shares exist, the virtual offset guarantees a meaningful share supply.
+  /// @dev The PositionManager uses a virtual share offset (derived from debt asset decimals) and
+  ///      VIRTUAL_ASSETS (1) in its share conversion formula to prevent the classic ERC-4626
+  ///      inflation attack where a first depositor manipulates the price-per-share.
+  ///      For 18-decimal debt tokens the offset is 1, providing minimal protection; vault deployers
+  ///      should make an initial deposit of a non-trivial amount.
   function invariant_noInflationAttack() public view {
     uint256 totalSupply = positionManager.totalSupply();
     uint256 totalAssets = positionManager.totalAssets();
 
     if (totalSupply > 0) {
-      // The virtual offset (VIRTUAL_SHARES=1e6, VIRTUAL_ASSETS=1) ensures that
-      // convertToShares(1) should never return 0 when totalAssets > 0.
       // totalSupply as a uint256 can never be negative; this assertion serves as a
       // smoke-test that the share accounting remains consistent.
       assertTrue(totalSupply >= 0, "PM-2: totalSupply should never be negative (it is uint)");
@@ -307,9 +305,9 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     // Additional check: if there are assets, the share price should be reasonable.
     if (totalAssets > 0 && totalSupply > 0) {
       // shares per asset should be > 0 (no complete dilution).
-      // Using the virtual offset formula: shares = assets * (totalSupply + 1e6) / (totalAssets + 1)
-      // Even for 1 wei of assets this should produce > 0 shares.
-      uint256 sharesFor1 = (1 * (totalSupply + 1e6)) / (totalAssets + 1);
+      // The virtual offset (10^(18 - debtDecimals)) + VIRTUAL_ASSETS=1 provides protection.
+      uint256 offset = positionManager.virtualShareOffset();
+      uint256 sharesFor1 = (1 * (totalSupply + offset)) / (totalAssets + 1);
       assertTrue(sharesFor1 > 0, "PM-2: 1 wei of assets yields 0 shares (inflation attack possible)");
     }
   }

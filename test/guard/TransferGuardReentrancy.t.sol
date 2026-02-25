@@ -78,11 +78,7 @@ contract TransferGuardReentrancyTest is Test {
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
-        name: "Test PM",
-        symbol: "TPM",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: "Test PM", symbol: "TPM", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
       0.8e18, // 80% LTV
       address(0),
