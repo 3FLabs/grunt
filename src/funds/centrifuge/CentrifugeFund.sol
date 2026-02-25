@@ -311,9 +311,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   function cancelRequest(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
-    bytes32 _currentOrderId = $.currentOrderId;
-    if (order.toId(address(this)) != _currentOrderId) {
-      revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
+    bytes32 orderId = order.toId(address(this));
+    if (orderId != $.currentOrderId) {
+      revert LibFundsErrors.InvalidOrder(orderId);
     }
 
     $.internalState = State.RECOVERING;
@@ -324,7 +324,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       ICentrifugeVault($.vault).cancelRedeemRequest(0, address(this));
     }
 
-    emit CancelRequestSubmitted(_currentOrderId);
+    emit CancelRequestSubmitted(orderId);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
