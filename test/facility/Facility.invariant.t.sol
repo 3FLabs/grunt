@@ -42,6 +42,7 @@ import {FacilityHandler} from "test/mock/facility/FacilityHandler.sol";
 ///      core protocol invariants after every fuzzed action sequence.
 contract FacilityInvariantTest is StdInvariant, Test {
   using MarketParamsLib for MarketParams;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                        */
@@ -162,12 +163,12 @@ contract FacilityInvariantTest is StdInvariant, Test {
     marketId = marketParams.id();
 
     // ----- 5. Deploy TransferGuard, initialize -----
-    transferGuard = new TransferGuard();
+    transferGuard = TransferGuard(address(new TransferGuard()).clone());
     transferGuard.initialize(owner);
     vm.label(address(transferGuard), "TransferGuard");
 
     // ----- 6. Deploy PositionManager, initialize with metadata + transfer guard -----
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
@@ -225,7 +226,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     vm.label(address(descriptor), "IntentDescriptor");
 
     // ----- 11. Deploy Facility, initialize(owner, facilitator, descriptor) -----
-    facility = new Facility();
+    facility = Facility(address(new Facility()).clone());
     facility.initialize(owner, facilitator, address(descriptor), 1 hours);
     vm.label(address(facility), "Facility");
 

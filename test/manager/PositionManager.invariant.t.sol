@@ -25,6 +25,7 @@ import {PositionManagerHandler} from "test/mock/manager/PositionManagerHandler.s
 ///         then asserts global invariants after every call sequence.
 contract PositionManagerInvariantTest is StdInvariant, Test {
   using MarketParamsLib for MarketParams;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                          */
@@ -142,7 +143,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     marketId2 = marketParams2.id();
 
     // ---- deploy PositionManager (directly, not via factory) ----
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({

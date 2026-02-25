@@ -66,6 +66,10 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Role for addresses authorized to consume offers and authorize minting via `consume()` and `authorizeMinting()`.
   uint256 internal constant _ROLE_CONSUMER = _ROLE_1;
 
+  constructor() {
+    _disableInitializers();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

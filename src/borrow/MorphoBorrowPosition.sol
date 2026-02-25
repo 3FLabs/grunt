@@ -68,6 +68,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     }
   }
 
+  constructor() {
+    _disableInitializers();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

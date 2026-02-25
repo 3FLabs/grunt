@@ -18,6 +18,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 import {MaliciousBorrowModule} from "test/mock/guard/MaliciousBorrowModule.sol";
 import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardReentrancyTest
 /// @notice PoC demonstrating that guard state changes mid-rebalance are not re-checked
@@ -28,6 +29,7 @@ import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
 ///      3. This is documented behavior since only trusted modules should be added,
 ///         but demonstrates the importance of this trust assumption
 contract TransferGuardReentrancyTest is Test {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -70,11 +72,11 @@ contract TransferGuardReentrancyTest is Test {
     collateralToken = new MockERC20("Collateral Token", "COLL", 18);
 
     // Deploy guard
-    guard = new TransferGuard();
+    guard = TransferGuard(address(new TransferGuard()).clone());
     guard.initialize(guardOwner);
 
     // Deploy position manager
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({

@@ -44,6 +44,10 @@ contract Facility is
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibPause for uint40;
 
+  constructor() {
+    _disableInitializers();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
