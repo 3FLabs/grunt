@@ -83,6 +83,16 @@ interface ICentrifugeVault {
   /// @return shares The amount of shares claimed.
   function claimCancelRedeemRequest(uint256 requestId, address receiver, address controller) external returns (uint256);
 
+  /// @notice Returns the maximum amount of assets that can be deposited for a controller.
+  /// @param controller The address of the controller.
+  /// @return The maximum depositable assets.
+  function maxDeposit(address controller) external view returns (uint256);
+
+  /// @notice Returns the maximum number of shares that can be redeemed for a controller.
+  /// @param controller The address of the controller.
+  /// @return The maximum redeemable shares.
+  function maxRedeem(address controller) external view returns (uint256);
+
   /// @notice Checks whether a controller is currently permissioned on the vault.
   /// @param controller The controller to check.
   /// @return whether the controller is permissioned.

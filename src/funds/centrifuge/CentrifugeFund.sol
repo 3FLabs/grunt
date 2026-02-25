@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
@@ -29,6 +30,7 @@ import {BPS} from "../../libs/Constants.sol";
 ///        "the current request for this controller" (each controller has at most one active request).
 contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
+  using FixedPointMathLib for uint256;
   using LibChecks for address;
   using LibChecks for uint256;
   using LibOrder for Order;
@@ -343,13 +345,15 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function maxDeposit(address) external pure override returns (uint256) {
-    return type(uint256).max;
+  function maxDeposit(address account) external view override returns (uint256) {
+    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
+    return IERC20($.asset).balanceOf(account).min(ICentrifugeVault($.vault).maxDeposit(address(this)));
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return IERC20(_centrifugeFundStorage().wrappedShare).balanceOf(account);
+    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
+    return IERC20($.wrappedShare).balanceOf(account).min(ICentrifugeVault($.vault).maxRedeem(address(this)));
   }
 
   /// @inheritdoc IFund
