@@ -56,6 +56,7 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
   /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
+  ///      Reverts with {LibManagerErrors.DuplicateQueueEntry} if any position appears more than once.
   function setSupplyQueue(SupplyQueueEntry[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
@@ -63,6 +64,12 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
       if (!_storage.borrowModules.contains(queue[i].position)) revert LibManagerErrors.UnauthorizedPosition();
+      for (uint256 j = 0; j < i;) {
+        if (queue[j].position == queue[i].position) revert LibManagerErrors.DuplicateQueueEntry();
+        unchecked {
+          ++j;
+        }
+      }
       _storage.supplyQueue.push(queue[i]);
       unchecked {
         ++i;
@@ -73,12 +80,19 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
   /// @inheritdoc IPositionManagerAdmin
   /// @dev Reverts with {LibManagerErrors.UnauthorizedPosition} if any position in the queue is not whitelisted.
+  ///      Reverts with {LibManagerErrors.DuplicateQueueEntry} if any position appears more than once.
   function setWithdrawalQueue(address[] calldata queue) external override onlyRoles(CURATOR_ROLE) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     uint256 queueLength = queue.length;
     for (uint256 i = 0; i < queueLength;) {
       if (!_storage.borrowModules.contains(queue[i])) revert LibManagerErrors.UnauthorizedPosition();
+      for (uint256 j = 0; j < i;) {
+        if (queue[j] == queue[i]) revert LibManagerErrors.DuplicateQueueEntry();
+        unchecked {
+          ++j;
+        }
+      }
       unchecked {
         ++i;
       }

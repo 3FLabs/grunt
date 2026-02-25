@@ -218,6 +218,26 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.setWithdrawalQueue(queue);
   }
 
+  function test_setSupplyQueue_revertOnDuplicateEntry() public {
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](2);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    queue[1] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 1000e18});
+
+    vm.prank(curator);
+    vm.expectRevert(LibManagerErrors.DuplicateQueueEntry.selector);
+    positionManager.setSupplyQueue(queue);
+  }
+
+  function test_setWithdrawalQueue_revertOnDuplicateEntry() public {
+    address[] memory queue = new address[](2);
+    queue[0] = address(borrowPosition1);
+    queue[1] = address(borrowPosition1);
+
+    vm.prank(curator);
+    vm.expectRevert(LibManagerErrors.DuplicateQueueEntry.selector);
+    positionManager.setWithdrawalQueue(queue);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     CURATOR ROLE TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
