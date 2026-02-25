@@ -811,7 +811,6 @@ contract FacilityIntentsTest is FacilityBaseTest {
       PositionManagerMetadata({
         name: "Position Manager 3",
         symbol: "PM3",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
@@ -839,7 +838,6 @@ contract FacilityIntentsTest is FacilityBaseTest {
       PositionManagerMetadata({
         name: "Position Manager 3",
         symbol: "PM3",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),

@@ -152,7 +152,6 @@ contract PositionManagerBaseTest is Test {
       PositionManagerMetadata({
         name: "Position Manager Shares",
         symbol: "PMS",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
