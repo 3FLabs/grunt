@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManagerLP.sol";
+import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
 import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerBase} from "./PositionManagerBase.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
@@ -188,8 +189,13 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       // Safe: sharesToBurn is capped by total supply which fits in uint128
       // forge-lint: disable-next-line(unsafe-typecast)
       sharesDelta = -int256(sharesToBurn);
+    } else {
+      // Assets unchanged: no mint/burn needed, but check pause since _beforeTokenTransfer won't run
+      address guard = _storage.transferGuard;
+      if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
+        revert CommonErrors.Paused();
+      }
     }
-    // If equal, sharesDelta remains 0
 
     // Update snapshot for performance fees
     _storage.updateSnapshot();

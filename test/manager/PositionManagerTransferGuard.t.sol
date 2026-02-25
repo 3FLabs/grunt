@@ -287,9 +287,65 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     );
   }
 
+  function test_deposit_blockedWhenPaused_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit so borrow positions have collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Pause the position manager
+    vm.prank(guardOwner);
+    guard.pause(address(positionManager));
+
+    // Attempt a deposit where collateral == debt (zero net asset change)
+    // This bypassed the pause before the fix because _settleShares returned 0
+    // and _beforeTokenTransfer was never invoked.
+    uint256 amount = 1000e18;
+    _mintCollateral(minter, amount);
+    _mintDebt(minter, amount);
+
+    vm.prank(minter);
+    vm.expectRevert(CommonErrors.Paused.selector);
+    positionManager.deposit(amount, amount);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  NO GUARD TESTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deposit_allowedWhenNotPaused_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Guard is set but NOT paused — zero-delta deposit should succeed
+    uint256 amount = 1000e18;
+    _mintCollateral(minter, amount);
+    _mintDebt(minter, amount);
+
+    vm.prank(minter);
+    positionManager.deposit(amount, amount);
+  }
+
+  function test_deposit_allowedWhenNoGuard_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Disable guard
+    vm.prank(owner);
+    positionManager.setTransferGuard(address(0));
+
+    // Zero-delta deposit should succeed when no guard is set
+    uint256 amount = 1000e18;
+    _mintCollateral(minter, amount);
+    _mintDebt(minter, amount);
+
+    vm.prank(minter);
+    positionManager.deposit(amount, amount);
+  }
 
   function test_transfer_allowedWithNoGuard() public {
     // Disable guard
