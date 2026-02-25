@@ -76,7 +76,8 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
   function test_setLtv_revertOnGreaterThanWad() public {
     vm.prank(owner);
-    vm.expectRevert(CommonErrors.InvalidLtv.selector);
+    // With borrow modules present, the safeLtv check fires first; without modules, InvalidLtv fires via setLtv
+    vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
     positionManager.setLtv(1e18 + 1);
   }
 

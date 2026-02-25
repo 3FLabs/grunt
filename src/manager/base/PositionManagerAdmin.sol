@@ -7,7 +7,6 @@ import {PositionManagerBase} from "./PositionManagerBase.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
-import {LibChecks} from "../../libs/common/LibChecks.sol";
 import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
@@ -110,14 +109,11 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Reverts with {LibCommonErrors.InvalidLtv} if ltv is zero or greater than WAD.
-  ///      Reverts with {LibManagerErrors.ModuleSafeLtvTooLow} if any whitelisted borrow module
+  /// @dev Reverts with {LibManagerErrors.ModuleSafeLtvTooLow} if any whitelisted borrow module
   ///      has a safe LTV lower than the new PM LTV.
+  ///      Reverts with {LibCommonErrors.InvalidLtv} (via setLtv) if ltv is zero or greater than WAD.
   function setLtv(uint256 ltv_) external override onlyOwner {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-
-    // Validate LTV range first (reverts if 0 or > WAD); also checked inside setLtv as defense-in-depth
-    LibChecks.checkValidLtv(ltv_);
 
     // Check all whitelisted borrow modules have safeLtv >= new PM LTV
     uint256 len = _storage.borrowModules.length();
