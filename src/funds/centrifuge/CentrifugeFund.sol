@@ -345,6 +345,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function state(Order calldata order) public view override returns (State) {
+    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
+    bytes32 _orderId = order.toId(address(this));
+
+    // Return ENDED for archived orders
+    if ($.endedOrders[_orderId]) {
+      return State.ENDED;
+    }
+
     (State _currentState,) = _state(order);
     return _currentState;
   }
@@ -369,11 +377,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   function _state(Order calldata order) internal view returns (State, uint256) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     bytes32 _orderId = order.toId(address(this));
-
-    // Return ENDED for archived orders
-    if ($.endedOrders[_orderId]) {
-      return (State.ENDED, 0);
-    }
 
     // Return EMPTY to indicate this order doesn't exist
     if (_orderId != $.currentOrderId) {
