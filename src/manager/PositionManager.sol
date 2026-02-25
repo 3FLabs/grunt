@@ -161,6 +161,11 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
+  function virtualShareOffset() public view returns (uint256) {
+    return LibStorage.positionManagerStorage().virtualShareOffset;
+  }
+
+  /// @inheritdoc IPositionManager
   function config() public view returns (uint256 ltv, address transferGuard) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     ltv = _storage.ltv;

@@ -306,8 +306,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     if (totalAssets > 0 && totalSupply > 0) {
       // shares per asset should be > 0 (no complete dilution).
       // The virtual offset (10^(18 - debtDecimals)) + VIRTUAL_ASSETS=1 provides protection.
-      // For 18-decimal tokens (offset=1): shares = assets * (totalSupply + 1) / (totalAssets + 1)
-      uint256 sharesFor1 = (1 * (totalSupply + 1)) / (totalAssets + 1);
+      uint256 offset = positionManager.virtualShareOffset();
+      uint256 sharesFor1 = (1 * (totalSupply + offset)) / (totalAssets + 1);
       assertTrue(sharesFor1 > 0, "PM-2: 1 wei of assets yields 0 shares (inflation attack possible)");
     }
   }
