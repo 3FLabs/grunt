@@ -6,6 +6,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {TransferGuard, TokenConfig} from "src/guard/TransferGuard.sol";
 import {AddressStatus} from "src/interfaces/guard/ITransferGuard.sol";
 import {TransferGuardHandler} from "test/mock/guard/TransferGuardHandler.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardInvariantTest
 /// @notice Invariant test suite for the TransferGuard contract.
@@ -14,6 +15,7 @@ import {TransferGuardHandler} from "test/mock/guard/TransferGuardHandler.sol";
 ///      time warps) while the invariant functions verify that the guard's
 ///      canTransfer logic stays consistent with the documented rules.
 contract TransferGuardInvariantTest is StdInvariant, Test {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -32,7 +34,7 @@ contract TransferGuardInvariantTest is StdInvariant, Test {
 
   function setUp() public {
     owner = makeAddr("owner");
-    guard = new TransferGuard();
+    guard = TransferGuard(address(new TransferGuard()).clone());
     guard.initialize(owner);
 
     handler = new TransferGuardHandler();

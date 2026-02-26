@@ -17,6 +17,7 @@ import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
   using LibOrder for Order;
+  using LibClone for address;
 
   error InvalidInitialization();
   error Unauthorized();
@@ -102,23 +103,23 @@ contract USCCFundTest is Test {
   }
 
   function test_Initialize_RevertsInvalidContract() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
     local.initialize(owner, address(0xBEEF), recipient, address(oracle));
 
-    local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     local.initialize(owner, address(this), recipient, address(1));
   }
 
   function test_Initialize_RevertsInvalidOwner() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(CommonErrors.AddressZero.selector);
     local.initialize(address(0), address(this), recipient, address(oracle));
   }
 
   function test_Initialize_RevertsInvalidRecipient() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(CommonErrors.AddressZero.selector);
     local.initialize(owner, address(this), address(0), address(oracle));
   }
@@ -142,7 +143,7 @@ contract USCCFundTest is Test {
   }
 
   function test_Initialize_RevertsInvalidOracleDecimals() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     MockChainlinkOracle badOracle = new MockChainlinkOracle(8);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOracle.selector, address(badOracle)));
     local.initialize(owner, address(this), recipient, address(badOracle));

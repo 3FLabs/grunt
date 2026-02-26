@@ -43,7 +43,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory collateralSnapshot,
       BalanceSnapshot memory debtSnapshot,
       BalanceSnapshot memory sharesSnapshot
-    ) = _intialPmParameters(id, useTarget);
+    ) = _initialPmParameters(id, useTarget);
 
     if (depositAmount > 0) {
       // if we have non null collateral, approve the position manager to pull it
@@ -81,7 +81,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory collateralSnapshot,
       BalanceSnapshot memory debtSnapshot,
       BalanceSnapshot memory sharesSnapshot
-    ) = _intialPmParameters(id, useTarget);
+    ) = _initialPmParameters(id, useTarget);
 
     if (repayAmount > 0) {
       // if we have non null debt, approve the position manager to pull it
@@ -118,7 +118,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory collateralSnapshot,
       BalanceSnapshot memory debtSnapshot,
       BalanceSnapshot memory sharesSnapshot
-    ) = _intialPmParameters(id, useTarget);
+    ) = _initialPmParameters(id, useTarget);
 
     // give infinite approval of the debt asset to the position manager
     _debtAsset.safeApproveWithRetry(_positionManager, type(uint256).max);
@@ -149,7 +149,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @return collateralSnapshot Snapshot of the collateral asset balance before the operation.
   /// @return debtSnapshot Snapshot of the debt asset balance before the operation.
   /// @return sharesSnapshot Snapshot of the shares balance before the operation.
-  function _intialPmParameters(uint256 id, bool useTarget)
+  function _initialPmParameters(uint256 id, bool useTarget)
     private
     view
     returns (

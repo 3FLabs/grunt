@@ -30,6 +30,9 @@ import {MockERC20} from "test/mock/MockERC20.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 
+// Cloning
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+
 // Morpho dependencies
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -43,6 +46,7 @@ import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactor
 /// @notice Base test contract with setup and helpers for Facility tests
 contract FacilityBaseTest is Test {
   using MarketParamsLib for MarketParams;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
@@ -111,8 +115,8 @@ contract FacilityBaseTest is Test {
   // Morpho constants
   uint256 constant DEFAULT_LLTV = 0.8e18;
   uint256 constant PM_LTV = 0.7e18;
-  uint128 constant BP_SAFE_LTV = 0.65e18; // Position LTV for borrow position
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18; // Liquidation LTV for borrow position
+  uint128 constant BP_SAFE_LTV = 0.72e18; // Position LTV for borrow position (must be >= PM LTV)
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18; // Liquidation LTV for borrow position
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
 
@@ -185,12 +189,12 @@ contract FacilityBaseTest is Test {
     marketId = marketParams.id();
 
     // Deploy TransferGuard
-    transferGuard = new TransferGuard();
+    transferGuard = TransferGuard(address(new TransferGuard()).clone());
     transferGuard.initialize(owner);
     vm.label(address(transferGuard), "TransferGuard");
 
     // Deploy PositionManager
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
@@ -207,7 +211,7 @@ contract FacilityBaseTest is Test {
     vm.label(address(positionManager), "PositionManager");
 
     // Deploy second PositionManager (for dual PM tests)
-    positionManager2 = new PositionManager();
+    positionManager2 = PositionManager(address(new PositionManager()).clone());
     positionManager2.initialize(
       owner,
       PositionManagerMetadata({
@@ -255,7 +259,7 @@ contract FacilityBaseTest is Test {
     vm.label(address(descriptor), "IntentDescriptor");
 
     // Deploy Facility
-    facility = new Facility();
+    facility = Facility(address(new Facility()).clone());
     facility.initialize(owner, facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
     vm.label(address(facility), "Facility");
 

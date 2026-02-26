@@ -85,6 +85,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     USDC = usdc;
     USCC = uscc;
     WUSCC = wuscc;
+
+    _disableInitializers();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -251,7 +253,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
-    if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_currentState);
 
     if (order.mode == Mode.DEPOSIT) {
       USDC.safeTransfer(order.receiver, _amount);
@@ -278,7 +280,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
-    if (_currentState != State.UNLOCKING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    if (_currentState != State.UNLOCKING) revert LibFundsErrors.InvalidState(_currentState);
 
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)

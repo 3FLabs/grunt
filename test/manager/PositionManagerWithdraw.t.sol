@@ -74,11 +74,11 @@ contract PositionManagerWithdrawTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 6000e18); // 60% LTV
 
-    // Try to withdraw collateral without repaying (would exceed safe LTV)
-    // At 60% LTV with 65% safe LTV, available collateral is ~769e18
-    // Trying to withdraw 5000e18 will fail at the borrow position level
+    // Try to withdraw collateral without repaying (would exceed PM LTV)
+    // At 60% LTV with PM LTV 70%, available collateral is ~1,428e18
+    // Trying to withdraw 5000e18 exceeds what's available across all positions
     vm.prank(minter);
-    vm.expectRevert(LibBorrowErrors.InsufficientCollateral.selector);
+    vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
     positionManager.withdraw(5000e18, 0, WithdrawalStrategy.SEQUENTIAL);
   }
 

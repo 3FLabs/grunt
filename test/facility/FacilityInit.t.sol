@@ -6,10 +6,12 @@ import {Facility} from "src/facility/Facility.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {IFacility} from "src/interfaces/facility/IFacility.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title FacilityInitTest
 /// @notice Tests for Facility initialization and basic view functions
 contract FacilityInitTest is FacilityBaseTest {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INITIALIZATION TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -35,19 +37,19 @@ contract FacilityInitTest is FacilityBaseTest {
   }
 
   function test_initialize_revertOnZeroOwner() public {
-    Facility newFacility = new Facility();
+    Facility newFacility = Facility(address(new Facility()).clone());
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
     newFacility.initialize(address(0), facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
   }
 
   function test_initialize_revertOnZeroDescriptor() public {
-    Facility newFacility = new Facility();
+    Facility newFacility = Facility(address(new Facility()).clone());
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, address(0)));
     newFacility.initialize(owner, facilitator, address(0), DEFAULT_REPAY_TIMELOCK);
   }
 
   function test_initialize_revertOnEOADescriptor() public {
-    Facility newFacility = new Facility();
+    Facility newFacility = Facility(address(new Facility()).clone());
     address notContract = makeAddr("notContract");
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, notContract));
     newFacility.initialize(owner, facilitator, notContract, DEFAULT_REPAY_TIMELOCK);
@@ -194,14 +196,14 @@ contract FacilityInitTest is FacilityBaseTest {
   function testFuzz_initialize_withDifferentOwners(address newOwner) public {
     vm.assume(newOwner != address(0));
 
-    Facility newFacility = new Facility();
+    Facility newFacility = Facility(address(new Facility()).clone());
     newFacility.initialize(newOwner, facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
 
     assertEq(newFacility.owner(), newOwner, "Owner should be set correctly");
   }
 
   function testFuzz_initialize_withDifferentFacilitators(address newFacilitator) public {
-    Facility newFacility = new Facility();
+    Facility newFacility = Facility(address(new Facility()).clone());
     newFacility.initialize(owner, newFacilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
 
     assertTrue(newFacility.hasAllRoles(newFacilitator, FACILITATOR_ROLE), "Facilitator should have role");
