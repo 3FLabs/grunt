@@ -332,8 +332,8 @@ contract CentrifugeFundForkTest is Test {
     _fulfillDeposit(uint128(expectedShares));
     fund.unlock(exact);
 
-    // 2) Just over 1% deviation — should revert
-    uint256 badOutput = expectedShares - (expectedShares * 101 / 10000) - 1;
+    // 2) Just over 5% deviation — should revert
+    uint256 badOutput = expectedShares - (expectedShares * 501 / 10000) - 1;
     Order memory tooLow = Order({
       mode: Mode.DEPOSIT,
       owner: address(this),
@@ -345,8 +345,8 @@ contract CentrifugeFundForkTest is Test {
     vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
     fund.create(tooLow);
 
-    // 3) Exactly at 1% boundary — should succeed
-    uint256 boundaryOutput = expectedShares - (expectedShares * 100 / 10000);
+    // 3) Exactly at 5% boundary — should succeed
+    uint256 boundaryOutput = expectedShares - (expectedShares * 500 / 10000);
     Order memory boundary = Order({
       mode: Mode.DEPOSIT,
       owner: address(this),

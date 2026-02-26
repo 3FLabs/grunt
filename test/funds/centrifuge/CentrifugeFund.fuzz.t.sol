@@ -229,8 +229,8 @@ contract CentrifugeFundFuzzTest is Test {
     uint256 outputAmount = bound(uint256(output), 0, maxAmount);
 
     // With 1:1 rate, expectedOutput == inputAmount
-    // Only reverts when output < expectedOutput AND deviation > 1%
-    uint256 maxDeviation = inputAmount * 100 / 10000;
+    // Only reverts when output < expectedOutput AND deviation > 5%
+    uint256 maxDeviation = inputAmount * 500 / 10000;
 
     Order memory order = Order({
       owner: address(this),
@@ -261,7 +261,7 @@ contract CentrifugeFundFuzzTest is Test {
 
     // For deposit: convertToShares = input * 1e18 / rate
     uint256 expectedOutput = inputAmount * 1e18 / rate;
-    uint256 maxDeviation = expectedOutput * 100 / 10000; // 1%
+    uint256 maxDeviation = expectedOutput * 500 / 10000; // 5%
 
     Order memory order = Order({
       owner: address(this),

@@ -47,7 +47,10 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @notice Maximum allowed deviation between order output and current rate (in basis points).
   /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
-  uint256 public constant MAX_OUTPUT_DEVIATION = 100; // 1%
+  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
+
+  /// @dev Centrifuge convention: requestId = 0 means "the current request for this controller".
+  uint256 internal constant _PENDING_REQUEST = 0;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -252,6 +255,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       _amount = IERC20(_shareToken).balanceOf(address(this)) - _before;
       _shareToken.safeApproveWithRetry(_wrappedShare, _amount);
       IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
+      _shareToken.safeApproveWithRetry(_wrappedShare, 0);
     } else {
       address _asset = $.asset;
       uint256 _before = IERC20(_asset).balanceOf(address(this));
@@ -289,7 +293,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       // Claim cancelled deposit (returns assets)
       address _asset = $.asset;
       uint256 _before = IERC20(_asset).balanceOf(address(this));
-      ICentrifugeVault(_vault).claimCancelDepositRequest(0, address(this), address(this));
+      ICentrifugeVault(_vault).claimCancelDepositRequest(_PENDING_REQUEST, address(this), address(this));
       _amount = IERC20(_asset).balanceOf(address(this)) - _before;
       _asset.safeTransfer(order.receiver, _amount);
     } else {
@@ -297,11 +301,12 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       address _shareToken = $.shareToken;
       address _wrappedShare = $.wrappedShare;
       uint256 _before = IERC20(_shareToken).balanceOf(address(this));
-      ICentrifugeVault(_vault).claimCancelRedeemRequest(0, address(this), address(this));
+      ICentrifugeVault(_vault).claimCancelRedeemRequest(_PENDING_REQUEST, address(this), address(this));
       // Wrap share tokens and send to receiver
       _amount = IERC20(_shareToken).balanceOf(address(this)) - _before;
       _shareToken.safeApproveWithRetry(_wrappedShare, _amount);
       IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
+      _shareToken.safeApproveWithRetry(_wrappedShare, 0);
     }
 
     bool _hasPendingRecover = _stateHasPendingRecover(order.mode, _vault);
@@ -337,9 +342,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     $.internalState = State.RECOVERING;
 
     if (order.mode == Mode.DEPOSIT) {
-      ICentrifugeVault(_vault).cancelDepositRequest(0, address(this));
+      ICentrifugeVault(_vault).cancelDepositRequest(_PENDING_REQUEST, address(this));
     } else {
-      ICentrifugeVault(_vault).cancelRedeemRequest(0, address(this));
+      ICentrifugeVault(_vault).cancelRedeemRequest(_PENDING_REQUEST, address(this));
     }
 
     emit CancelRequestSubmitted(orderId);
@@ -414,8 +419,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   ///      - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
   ///
   ///      For RECOVERING state (after cancelRequest submitted):
-  ///      - Deposit: checks vault.claimableCancelDepositRequest(0, this) > 0 → RECOVERING (ready to claim)
-  ///      - Redeem: checks vault.claimableCancelRedeemRequest(0, this) > 0 → RECOVERING (ready to claim)
+  ///      - Deposit: checks vault.claimableCancelDepositRequest(_PENDING_REQUEST, this) > 0 → RECOVERING (ready to claim)
+  ///      - Redeem: checks vault.claimableCancelRedeemRequest(_PENDING_REQUEST, this) > 0 → RECOVERING (ready to claim)
   ///      - If not yet claimable (cancel still pending), returns PROCESSING
   ///
   ///      For all other states, returns internalState directly.
@@ -453,10 +458,10 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @param _mode  The order mode (DEPOSIT or REDEEM).
   function _stateHasPendingRequest(address _vault, Mode _mode) internal view returns (bool) {
     if (_mode == Mode.DEPOSIT) {
-      return ICentrifugeVault(_vault).pendingDepositRequest(0, address(this)) > 0;
+      return ICentrifugeVault(_vault).pendingDepositRequest(_PENDING_REQUEST, address(this)) > 0;
     }
 
-    return ICentrifugeVault(_vault).pendingRedeemRequest(0, address(this)) > 0;
+    return ICentrifugeVault(_vault).pendingRedeemRequest(_PENDING_REQUEST, address(this)) > 0;
   }
 
   /// @dev Returns whether a cancellation request is still pending or has claimable assets.

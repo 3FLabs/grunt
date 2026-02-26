@@ -228,10 +228,10 @@ contract CentrifugeFundTest is Test {
   }
 
   function test_Create_RevertsOutputDeviationTooLarge() public {
-    // MAX_OUTPUT_DEVIATION = 100 (1%). For input=10000, expected=10000, min allowed = 9900
+    // MAX_OUTPUT_DEVIATION = 500 (5%). For input=10000, expected=10000, min allowed = 9500
     uint256 input = 10000;
     uint256 expectedOutput = input; // 1:1 rate
-    uint256 tooLowOutput = expectedOutput - (expectedOutput * 101 / 10000) - 1; // just over 1%
+    uint256 tooLowOutput = expectedOutput - (expectedOutput * 501 / 10000) - 1; // just over 5%
 
     Order memory order = _depositOrder(input, tooLowOutput);
     vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
@@ -239,10 +239,10 @@ contract CentrifugeFundTest is Test {
   }
 
   function test_Create_OutputAtMaxDeviation() public {
-    // Exactly 1% deviation should succeed
+    // Exactly 5% deviation should succeed
     uint256 input = 10000;
     uint256 expectedOutput = input; // 1:1 rate
-    uint256 maxDeviationOutput = expectedOutput - (expectedOutput * 100 / 10000); // exactly 1% below
+    uint256 maxDeviationOutput = expectedOutput - (expectedOutput * 500 / 10000); // exactly 5% below
 
     Order memory order = _depositOrder(input, maxDeviationOutput);
     State state = fund.create(order);
