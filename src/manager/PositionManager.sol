@@ -37,6 +37,10 @@ contract PositionManager is
   using LibStorage for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
 
+  constructor() {
+    _disableInitializers();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

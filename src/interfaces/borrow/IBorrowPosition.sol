@@ -75,4 +75,14 @@ interface IBorrowPosition {
   /// @param ltv The loan-to-value to use for the calculation.
   /// @return The amount of available collateral in collateral asset units.
   function availableCollateral(uint256 ltv) external view returns (uint256);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                            LTV                              */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns the safe LTV threshold for this borrow position.
+  /// @dev The safe LTV is the maximum LTV that must not be reached upon position mutations
+  ///      (borrow, withdrawCollateral). It is immutable after initialization.
+  /// @return The safe LTV in WAD format (1e18 = 100%).
+  function safeLtv() external view returns (uint128);
 }

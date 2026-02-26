@@ -6,10 +6,12 @@ import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard
 import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardTest
 /// @notice Test suite for TransferGuard contract
 contract TransferGuardTest is Test {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -57,7 +59,7 @@ contract TransferGuardTest is Test {
     blockedUser = makeAddr("blockedUser");
 
     // Deploy guard
-    guard = new TransferGuard();
+    guard = TransferGuard(address(new TransferGuard()).clone());
     guard.initialize(owner);
 
     // Grant roles

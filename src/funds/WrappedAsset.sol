@@ -69,6 +69,10 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
     }
   }
 
+  constructor() {
+    _disableInitializers();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
