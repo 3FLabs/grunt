@@ -10,6 +10,7 @@ import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 
 /// @title PositionManagerAdmin
 /// @author 3F Protocol
@@ -24,9 +25,12 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Validates that the module's collateral and debt assets match the position manager's,
+  /// @dev Accrues fees before adding the module to checkpoint totalAssets.
+  ///      Updates lastTotalAssets after adding so the new module's assets are reflected.
+  ///      Validates that the module's collateral and debt assets match the position manager's,
   ///      the module's owner is this contract, and the module's safe LTV is >= the PM LTV.
   function addBorrowModule(address module) external override onlyOwner {
+    _accrueFees();
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     if (IBorrowPosition(module).collateralAsset() != _storage.metadata.collateralAsset) {
@@ -45,12 +49,16 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
     if (!_storage.borrowModules.add(module)) {
       revert LibManagerErrors.ModuleAlreadyAdded();
     }
+    _storage.updateSnapshot();
     emit IPositionManagerAdmin.BorrowModuleAdded(module);
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
+  /// @dev Accrues fees before removing the module to checkpoint totalAssets.
+  ///      Updates lastTotalAssets after removing so the module's assets are no longer counted.
+  ///      Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
   function removeBorrowModule(address module) external override onlyOwner {
+    _accrueFees();
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Check module is not in supply queue
@@ -72,6 +80,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
     }
 
     _storage.borrowModules.remove(module);
+    _storage.updateSnapshot();
+    Ownable(module).transferOwnership(msg.sender);
     emit IPositionManagerAdmin.BorrowModuleRemoved(module);
   }
 

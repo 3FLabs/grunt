@@ -239,6 +239,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.removeBorrowModule(address(borrowPosition1));
 
     assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
+    assertEq(borrowPosition1.owner(), owner);
   }
 
   function test_removeBorrowModule_revertIfInSupplyQueue() public {
