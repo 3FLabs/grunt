@@ -15,6 +15,7 @@ contract MockBorrowPosition is IBorrowPosition {
   uint256 public override totalCollateralQuoted;
   uint256 public override totalBorrowed;
   uint256 public override availableLiquidity;
+  uint128 public override safeLtv;
 
   bool public healthy = true;
 
@@ -76,6 +77,10 @@ contract MockBorrowPosition is IBorrowPosition {
 
   function setHealthy(bool _healthy) external {
     healthy = _healthy;
+  }
+
+  function setSafeLtv(uint128 _safeLtv) external {
+    safeLtv = _safeLtv;
   }
 
   // Allow receiving borrow assets
