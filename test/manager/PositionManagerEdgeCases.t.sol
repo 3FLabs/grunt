@@ -358,4 +358,92 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     assertEq(sharesDelta, -1, "Should burn exactly 1 share due to roundUp");
     assertEq(positionManager.balanceOf(minter), sharesBefore - 1, "Should have 1 less share");
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*          SMALL ASSET DELTA REVERT (ZeroShares) TESTS           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice PoC: After oracle appreciation with debt, depositing 1 wei of collateral reverts with ZeroShares
+  ///         because the asset delta is too small relative to the totalAssets/totalSupply ratio.
+  ///
+  ///         When the vault holds debt and the oracle price appreciates, totalAssets grows faster than
+  ///         totalSupply (since debt is fixed while collateral value increases). This widens the
+  ///         convertToShares denominator, causing tiny deposits to round to 0 shares.
+  function test_deposit_revertsZeroShares_smallCollateralAfterPriceAppreciation() public {
+    // 1. Initial deposit with debt at 1:1 price
+    //    totalAssets = collateral_quoted - debt = 10_000e18 - 5_000e18 = 5_000e18
+    //    totalSupply ≈ 5_000e18
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 totalSupplyBefore = positionManager.totalSupply();
+
+    // 2. Oracle price doubles
+    //    totalAssets = 10_000e18 * 2 - 5_000e18 = 15_000e18
+    //    totalAssets / totalSupply ≈ 3
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    uint256 totalAssetsAfter = positionManager.totalAssets();
+    assertGt(totalAssetsAfter, totalSupplyBefore * 2, "totalAssets should be > 2x totalSupply");
+
+    // 3. Deposit 1 wei of collateral → asset delta = 2 (1 wei * 2x price)
+    //    convertToShares(2, ~5_000e18, ~15_000e18, 1, false) → rounds to 0 → ZeroShares
+    _mintCollateral(minter, 1);
+    vm.prank(minter);
+    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
+    positionManager.deposit(1, 0);
+  }
+
+  /// @notice PoC: A balanced deposit (collateral ≈ debt in value) that results in a tiny positive
+  ///         asset delta due to rounding reverts with ZeroShares.
+  ///
+  ///         This simulates the scenario described in the finding: a deposit that is intended to
+  ///         be value-neutral (supply collateral + borrow debt of equal value) but due to integer
+  ///         math, the net totalAssets change is a few wei, which rounds to 0 shares.
+  function test_deposit_revertsZeroShares_balancedDepositWithDustDelta() public {
+    // 1. Initial deposit to establish the vault
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // 2. Increase oracle price so totalAssets >> totalSupply
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 100);
+
+    // 3. Balanced deposit: supply collateral and borrow debt of equal value.
+    //    At 100x price, 1 collateral token = 100 debt tokens in value.
+    //    If we deposit 1e18 collateral and borrow 100e18 debt, the net should be ~0.
+    //    But Morpho's rounding can make collateralQuoted - debt = a few wei.
+    //    We intentionally create a 1-wei surplus to show the revert.
+    uint256 depositCollateral = 1e18;
+    uint256 depositDebt = 100e18 - 1; // Net delta ≈ +1 wei in asset terms
+
+    _mintCollateral(minter, depositCollateral);
+    vm.prank(minter);
+    // This reverts because the ~1 wei asset delta converts to 0 shares
+    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
+    positionManager.deposit(depositCollateral, depositDebt);
+  }
+
+  /// @notice PoC: After oracle appreciation, repaying 1 wei of debt via withdraw reverts with ZeroShares.
+  ///
+  ///         withdraw(0, 1) repays 1 wei of debt, which increases totalAssets by 1 wei. The resulting
+  ///         asset delta enters the minting branch (assets increased) which uses roundDown. With
+  ///         totalAssets >> totalSupply after price appreciation, the 1-wei delta rounds to 0 shares.
+  function test_withdraw_revertsZeroShares_smallDebtRepaymentAfterPriceAppreciation() public {
+    // 1. Initial deposit with debt at 1:1 price
+    //    totalAssets = 10_000e18 - 5_000e18 = 5_000e18, totalSupply ≈ 5_000e18
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // 2. Oracle price doubles → totalAssets ≈ 15_000e18, totalSupply ≈ 5_000e18 (ratio ≈ 3)
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+
+    // 3. Repay 1 wei of debt → totalAssets increases by 1 wei
+    //    Since assets increased, _settleShares uses the minting branch (roundDown)
+    //    convertToShares(1, ~5_000e18, ~15_000e18, 1, false) → rounds to 0 → ZeroShares
+    vm.prank(minter);
+    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
+    positionManager.withdraw(0, 1, WithdrawalStrategy.SEQUENTIAL);
+  }
 }
