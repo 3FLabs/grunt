@@ -249,6 +249,64 @@ contract CentrifugeFundFuzzTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              FUZZ: SLIPPAGE GUARD (NON-1:1 RATE)                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function testFuzz_SlippageGuard_NonOneToOneRate(uint96 input, uint96 output, uint64 rawRate) public {
+    uint256 rate = bound(uint256(rawRate), 0.5e18, 2e18);
+    vault.setConversionRate(rate);
+
+    uint256 inputAmount = bound(uint256(input), 100, type(uint96).max);
+    uint256 outputAmount = bound(uint256(output), 0, type(uint96).max);
+
+    // For deposit: convertToShares = input * 1e18 / rate
+    uint256 expectedOutput = inputAmount * 1e18 / rate;
+    uint256 maxDeviation = expectedOutput * 100 / 10000; // 1%
+
+    Order memory order = Order({
+      owner: address(this),
+      receiver: address(this),
+      input: inputAmount,
+      output: outputAmount,
+      mode: Mode.DEPOSIT,
+      salt: keccak256("fuzz-slippage-rate")
+    });
+
+    if (outputAmount < expectedOutput && (expectedOutput - outputAmount > maxDeviation)) {
+      vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    }
+
+    fund.create(order);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              FUZZ: TOTAL ASSETS (NON-1:1 RATE)                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function testFuzz_TotalAssets_NonOneToOneRate(uint96 rawShares, uint64 rawRate) public {
+    uint256 shares = bound(uint256(rawShares), 1, type(uint96).max);
+    uint256 rate = bound(uint256(rawRate), 0.5e18, 2e18);
+
+    // Deposit+fulfill+unlock at 1:1 to mint wrapped shares
+    Order memory order = _depositOrder(shares, shares);
+    fund.create(order);
+
+    assetToken.mint(address(this), shares);
+    assetToken.approve(address(fund), shares);
+    fund.commit(order);
+
+    vault.fulfillDeposit(address(fund), shares);
+    fund.unlock(order);
+
+    assertEq(wrappedShare.totalSupply(), shares, "wShare supply");
+
+    // Change conversion rate and verify totalAssets reflects it
+    vault.setConversionRate(rate);
+    uint256 expected = shares * rate / 1e18;
+    assertEq(fund.totalAssets(), expected, "totalAssets at non-1:1 rate");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    FUZZ: ARCHIVED ORDER                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -389,8 +447,7 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
   }
 
   function invariant_TotalAssetsConsistent() public view {
-    // With 1:1 conversion rate, totalAssets == wrappedShare.totalSupply()
-    assertEq(fund.totalAssets(), wrappedShare.totalSupply(), "totalAssets mismatch");
+    assertEq(fund.totalAssets(), vault.convertToAssets(wrappedShare.totalSupply()), "totalAssets mismatch");
   }
 
   function invariant_StateMatchesModel() public view {

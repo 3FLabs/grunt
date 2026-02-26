@@ -239,6 +239,125 @@ contract CentrifugeFundForkTest is Test {
     fund2.create(order);
   }
 
+  function test_Fork_RedeemCancelLifecycle() public {
+    // First deposit to get wrapped shares
+    uint256 depositAmount = 1000 * ONE;
+    uint256 shares = ICentrifugeVault(VAULT).convertToShares(depositAmount);
+    _doFullDeposit(depositAmount, shares);
+
+    uint256 expectedAssets = ICentrifugeVault(VAULT).convertToAssets(shares);
+    Order memory order = _redeemOrder(shares, expectedAssets);
+    fund.create(order);
+
+    // Approve and commit
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
+
+    // Cancel request (owner only)
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Simulate cancel fulfillment — shares returned to escrow
+    _fulfillCancelRedeem(uint128(shares));
+
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
+
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, shares, "shares recovered");
+    assertEq(wrappedShare.balanceOf(address(this)), shares, "wShare returned");
+  }
+
+  function test_Fork_PartialRedeemFill() public {
+    // First deposit to get wrapped shares
+    uint256 depositAmount = 1000 * ONE;
+    uint256 shares = ICentrifugeVault(VAULT).convertToShares(depositAmount);
+    _doFullDeposit(depositAmount, shares);
+
+    uint256 expectedAssets = ICentrifugeVault(VAULT).convertToAssets(shares);
+    Order memory order = _redeemOrder(shares, expectedAssets);
+    fund.create(order);
+
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    // Partial epoch: only half filled
+    uint128 halfAssets = uint128(expectedAssets / 2);
+    uint128 remainingShares = uint128(shares / 2);
+    _fulfillPartialRedeem(halfAssets, remainingShares);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking (partial)");
+
+    uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
+    (State state1, uint256 amount1) = fund.unlock(order);
+    assertEq(uint256(state1), uint256(State.PROCESSING), "back to processing");
+    assertEq(amount1, halfAssets, "partial assets");
+    assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, halfAssets, "partial USDC");
+
+    // Second epoch: remaining fills
+    uint128 remainingAssets = uint128(expectedAssets) - halfAssets;
+    _fulfillRedeem(remainingAssets);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking again");
+
+    uint256 usdcBefore2 = IERC20(USDC).balanceOf(address(this));
+    (State state2, uint256 amount2) = fund.unlock(order);
+    assertEq(uint256(state2), uint256(State.ENDED), "ended");
+    assertEq(amount2, remainingAssets, "remaining assets");
+    assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore2, remainingAssets, "remaining USDC");
+  }
+
+  function test_Fork_SlippageGuard() public {
+    uint256 inputAmount = 1000 * ONE;
+
+    // Real on-chain rate: ~0.91 shares/USDC (rate > 1e18 means 1 share > 1 USDC)
+    uint256 expectedShares = ICentrifugeVault(VAULT).convertToShares(inputAmount);
+    assertLt(expectedShares, inputAmount, "rate sanity: shares < input");
+
+    // 1) Exact match — should succeed
+    Order memory exact = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: inputAmount,
+      output: expectedShares,
+      salt: keccak256("slippage-exact")
+    });
+    fund.create(exact);
+
+    // Archive so we can create next order
+    _commitDeposit(exact);
+    _fulfillDeposit(uint128(expectedShares));
+    fund.unlock(exact);
+
+    // 2) Just over 1% deviation — should revert
+    uint256 badOutput = expectedShares - (expectedShares * 101 / 10000) - 1;
+    Order memory tooLow = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: inputAmount,
+      output: badOutput,
+      salt: keccak256("slippage-toolow")
+    });
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(tooLow);
+
+    // 3) Exactly at 1% boundary — should succeed
+    uint256 boundaryOutput = expectedShares - (expectedShares * 100 / 10000);
+    Order memory boundary = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: inputAmount,
+      output: boundaryOutput,
+      salt: keccak256("slippage-boundary")
+    });
+    fund.create(boundary);
+  }
+
   function test_Fork_RequestDepositActuallyEscrows() public {
     uint256 depositAmount = 1000 * ONE;
     uint256 expectedShares = ICentrifugeVault(VAULT).convertToShares(depositAmount);
@@ -404,6 +523,45 @@ contract CentrifugeFundForkTest is Test {
     bytes32 slot = bytes32(uint256(structBase) + 2);
     uint256 cur = uint256(vm.load(ARM, slot));
     vm.store(ARM, slot, bytes32(uint256(remaining) | (cur & (type(uint256).max << 128))));
+  }
+
+  /// @dev Sets pendingRedeemRequest at ARM struct offset +2 (high 128 bits).
+  function _setArmPendingRedeem(uint128 shares) internal {
+    bytes32 structBase = _armStructBase(address(fund));
+    bytes32 slot = bytes32(uint256(structBase) + 2);
+    uint256 cur = uint256(vm.load(ARM, slot));
+    vm.store(ARM, slot, bytes32((cur & type(uint128).max) | (uint256(shares) << 128)));
+  }
+
+  /// @dev claimableCancelRedeemRequest in high 128 bits of slot +3.
+  function _setArmClaimableCancelRedeem(uint128 shares) internal {
+    bytes32 structBase = _armStructBase(address(fund));
+    bytes32 slot = bytes32(uint256(structBase) + 3);
+    uint256 cur = uint256(vm.load(ARM, slot));
+    vm.store(ARM, slot, bytes32((cur & type(uint128).max) | (uint256(shares) << 128)));
+  }
+
+  /// @dev Simulates a cancel-redeem fulfillment.
+  ///      Sets the ARM's claimableCancelRedeemRequest, clears cancel flags and pending redeem,
+  ///      mints shares back to the pool escrow, and reserves them for claiming.
+  function _fulfillCancelRedeem(uint128 shares) internal {
+    _setArmClaimableCancelRedeem(shares);
+    _clearArmPendingCancelRedeem();
+    _clearArmPendingRedeem();
+    _mintShares(POOL_ESCROW, shares);
+    _reserveViaBalanceSheet(SHARE_TOKEN, uint256(shares), REASON_REDEEM);
+  }
+
+  /// @dev Simulates a partial redeem fill: fulfills with `halfAssets`, then writes back remaining shares.
+  function _fulfillPartialRedeem(uint128 halfAssets, uint128 remainingShares) internal {
+    _fulfillRedeem(halfAssets);
+    _setArmPendingRedeem(remainingShares);
+  }
+
+  /// @dev Clears pendingCancelRedeemRequest flag (slot +4) without touching pendingDeposit.
+  function _clearArmPendingCancelRedeem() internal {
+    bytes32 structBase = _armStructBase(address(fund));
+    vm.store(ARM, bytes32(uint256(structBase) + 4), bytes32(0));
   }
 
   // ── PoolEscrow/BalanceSheet helpers ──
