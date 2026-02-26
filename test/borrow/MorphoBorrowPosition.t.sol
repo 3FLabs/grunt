@@ -204,9 +204,8 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(address(newPosition.collateralAsset()), address(collateralToken), "Collateral asset mismatch");
     assertEq(Id.unwrap(newPosition.marketId()), Id.unwrap(marketId), "Market ID mismatch");
     assertEq(newPosition.owner(), positionManager, "Owner not set correctly");
-    (uint128 posLtv, uint128 liqLtv) = newPosition.ltvs();
-    assertEq(posLtv, SAFE_LTV, "Safe LTV mismatch");
-    assertEq(liqLtv, LIQUIDATION_LTV, "Liquidation LTV mismatch");
+    assertEq(newPosition.safeLtv(), SAFE_LTV, "Safe LTV mismatch");
+    assertEq(newPosition.liquidationLtv(), LIQUIDATION_LTV, "Liquidation LTV mismatch");
   }
 
   function test_initialize_RevertWhen_MorphoIsZero() public {
@@ -293,9 +292,8 @@ contract MorphoBorrowPositionTest is Test {
     MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition()).clone());
     uint128 posLtv = uint128(DEFAULT_LLTV) - 1;
     newPosition.initialize(morpho, marketId, positionManager, posLtv, uint128(DEFAULT_LLTV));
-    (uint128 storedPosLtv, uint128 storedLiqLtv) = newPosition.ltvs();
-    assertEq(storedPosLtv, posLtv, "Safe LTV should be set correctly");
-    assertEq(storedLiqLtv, uint128(DEFAULT_LLTV), "Liquidation LTV should equal market LLTV");
+    assertEq(newPosition.safeLtv(), posLtv, "Safe LTV should be set correctly");
+    assertEq(newPosition.liquidationLtv(), uint128(DEFAULT_LLTV), "Liquidation LTV should equal market LLTV");
   }
 
   function test_initialize_RevertWhen_LiquidationLtvExceedsMarketLltv() public {
@@ -320,9 +318,8 @@ contract MorphoBorrowPositionTest is Test {
     uint128 lowerSafeLtv = uint128(DEFAULT_LLTV / 4);
     uint128 lowerLiquidationLtv = uint128(DEFAULT_LLTV / 2);
     newPosition.initialize(morpho, marketId, positionManager, lowerSafeLtv, lowerLiquidationLtv);
-    (uint128 storedPosLtv, uint128 storedLiqLtv) = newPosition.ltvs();
-    assertEq(storedPosLtv, lowerSafeLtv, "Safe LTV should be set to lower value");
-    assertEq(storedLiqLtv, lowerLiquidationLtv, "Liquidation LTV should be set to lower value");
+    assertEq(newPosition.safeLtv(), lowerSafeLtv, "Safe LTV should be set to lower value");
+    assertEq(newPosition.liquidationLtv(), lowerLiquidationLtv, "Liquidation LTV should be set to lower value");
   }
 
   function testFuzz_initialize_LtvValidation(uint128 safeLtv_, uint128 liquidationLtv_) public {
@@ -339,9 +336,8 @@ contract MorphoBorrowPositionTest is Test {
       newPosition.initialize(morpho, marketId, positionManager, safeLtv_, liquidationLtv_);
     } else {
       newPosition.initialize(morpho, marketId, positionManager, safeLtv_, liquidationLtv_);
-      (uint128 storedPosLtv, uint128 storedLiqLtv) = newPosition.ltvs();
-      assertEq(storedPosLtv, safeLtv_, "Safe LTV should be set correctly");
-      assertEq(storedLiqLtv, liquidationLtv_, "Liquidation LTV should be set correctly");
+      assertEq(newPosition.safeLtv(), safeLtv_, "Safe LTV should be set correctly");
+      assertEq(newPosition.liquidationLtv(), liquidationLtv_, "Liquidation LTV should be set correctly");
     }
   }
 
