@@ -6,10 +6,12 @@ import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerInitTest
 /// @notice Tests for PositionManager initialization and view functions
 contract PositionManagerInitTest is PositionManagerBaseTest {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INITIALIZATION TESTS                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -103,7 +105,7 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
   }
 
   function test_initialize_withRebalanceConfig() public {
-    PositionManager pm = new PositionManager();
+    PositionManager pm = PositionManager(address(new PositionManager()).clone());
     pm.initialize(
       owner,
       PositionManagerMetadata({
@@ -124,7 +126,7 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
 
   function testFuzz_virtualShareOffset(uint8 decimals_) public {
     MockERC20 token = new MockERC20("TKN", "TKN", decimals_);
-    PositionManager pm = new PositionManager();
+    PositionManager pm = PositionManager(address(new PositionManager()).clone());
     pm.initialize(
       owner,
       PositionManagerMetadata({

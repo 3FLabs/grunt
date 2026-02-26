@@ -18,6 +18,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 import {MaliciousBorrowModule} from "test/mock/guard/MaliciousBorrowModule.sol";
 import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardReentrancyTest
 /// @notice PoC demonstrating that guard state changes mid-rebalance are not re-checked
@@ -28,6 +29,7 @@ import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
 ///      3. This is documented behavior since only trusted modules should be added,
 ///         but demonstrates the importance of this trust assumption
 contract TransferGuardReentrancyTest is Test {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -70,11 +72,11 @@ contract TransferGuardReentrancyTest is Test {
     collateralToken = new MockERC20("Collateral Token", "COLL", 18);
 
     // Deploy guard
-    guard = new TransferGuard();
+    guard = TransferGuard(address(new TransferGuard()).clone());
     guard.initialize(guardOwner);
 
     // Deploy position manager
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
@@ -87,7 +89,9 @@ contract TransferGuardReentrancyTest is Test {
     );
 
     // Deploy malicious module
-    maliciousModule = new MaliciousBorrowModule(address(guard), address(positionManager));
+    maliciousModule = new MaliciousBorrowModule(
+      address(guard), address(positionManager), address(collateralToken), address(debtToken), address(positionManager)
+    );
 
     // Grant PAUSER_ROLE to malicious module (simulating compromised trusted module)
     vm.prank(guardOwner);
@@ -210,7 +214,8 @@ contract TransferGuardReentrancyTest is Test {
   /// @dev A malicious module that tries to re-enter rebalance will fail due to nonReentrant
   function test_reentrancyGuardPreventsReentry() public {
     // Deploy reentrant module
-    ReentrantBorrowModule reentrantModule = new ReentrantBorrowModule(address(positionManager), rebalancer);
+    ReentrantBorrowModule reentrantModule =
+      new ReentrantBorrowModule(address(positionManager), rebalancer, address(collateralToken), address(debtToken));
 
     // Add reentrant module and grant it rebalancer role (to attempt re-entry)
     vm.startPrank(owner);
