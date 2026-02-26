@@ -3,18 +3,18 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {USCCFund} from "src/funds/USCCFund.sol";
-import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
+import {USCCFund} from "src/funds/USCC/USCCFund.sol";
+import {USCCFundFactory} from "src/funds/USCC/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
-import {MockERC20} from "../mock/MockERC20.sol";
-import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
-import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
-import {USCCFundHandler} from "test/mock/funds/USCCFundHandler.sol";
+import {MockERC20} from "../../mock/MockERC20.sol";
+import {MockAllowlist} from "../../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../../mock/funds/MockSuperstateToken.sol";
+import {USCCFundHandler} from "test/mock/funds/USCC/USCCFundHandler.sol";
 
 contract USCCFundFuzzTest is Test {
   using LibOrder for Order;
