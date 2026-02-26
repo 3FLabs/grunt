@@ -49,6 +49,9 @@ library LibManagerErrors {
   /// @notice Thrown when a queue contains a position that is not whitelisted.
   error UnauthorizedPosition();
 
+  /// @notice Thrown when a queue contains the same position more than once.
+  error DuplicateQueueEntry();
+
   /// @notice Thrown when attempting to remove a module that is still in a queue.
   error ModuleStillInQueue();
 
