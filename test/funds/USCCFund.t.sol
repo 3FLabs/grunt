@@ -218,6 +218,43 @@ contract USCCFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsInvalidOutput_Deposit() public {
+    // With oracle price = 1:1, expected output = input = 100 USDC
+    // MAX_OUTPUT_DEVIATION = 500 bps (5%), so min valid output = 100 - 5 = 95
+    // Output of 94 should revert
+    Order memory order = _depositOrder(100 * ONE_USDC, 94 * ONE_USDC);
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsInvalidOutput_Redeem() public {
+    Order memory order = _redeemOrder(100 * ONE_USDC, 94 * ONE_USDC);
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(order);
+  }
+
+  function test_Create_SucceedsAtMinOutputBoundary_Deposit() public {
+    // With oracle price = 1:1, expected output = 100 USDC
+    // maxDeviation = 100e6 * 500 / 10000 = 5e6
+    // minOutput = 100e6 - 5e6 = 95e6
+    Order memory order = _depositOrder(100 * ONE_USDC, 95 * ONE_USDC);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted at boundary");
+  }
+
+  function test_Create_SucceedsAtMinOutputBoundary_Redeem() public {
+    Order memory order = _redeemOrder(100 * ONE_USDC, 95 * ONE_USDC);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted at boundary");
+  }
+
+  function test_Create_SucceedsWithOutputAboveExpected() public {
+    // Output above oracle-derived expected should pass (no downside check triggered)
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC * 2);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted above expected");
+  }
+
   function test_Create_OnlyDepositorRole() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     vm.prank(outsider);

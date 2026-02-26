@@ -53,6 +53,13 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @dev Scaled unit for 6 decimals.
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
 
+  /// @dev Basis points denominator (100%).
+  uint256 private constant _BPS = 10_000;
+
+  /// @notice Maximum allowed negative deviation (in basis points) between the order output
+  ///         and the oracle-derived expected output. Orders with output below this threshold revert.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -164,7 +171,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
-    order.input.checkNotZero(); // no restrictions on output
+    order.input.checkNotZero();
+    _validateOutput(order);
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
     if (order.receiver != msg.sender) revert LibFundsErrors.InvalidReceiver();
 
@@ -370,21 +378,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
   ///      Validates the oracle round data is consistent and complete.
   function totalAssets() external view override returns (uint256) {
-    UsccFundStorage storage _storage = _usccFundStorage();
-
-    AggregatorV3Interface _oracle = AggregatorV3Interface(_storage.oracle);
-
-    // Fetch latest round data
-    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
-
-    // Validate latest round
-    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
-    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
-    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
-
-    uint256 _latestPrice = _answer.toUint256();
-
-    return WUSCC.totalSupply().mulDiv(_latestPrice, _SCALED_UNIT);
+    return WUSCC.totalSupply().mulDiv(_getOraclePrice(), _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
@@ -476,6 +470,42 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
+  }
+
+  /// @dev Returns the validated oracle price for USCC/USD.
+  /// @return The latest oracle price as a uint256.
+  function _getOraclePrice() internal view returns (uint256) {
+    AggregatorV3Interface _oracle = AggregatorV3Interface(_usccFundStorage().oracle);
+
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
+
+    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
+    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
+    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
+
+    return _answer.toUint256();
+  }
+
+  /// @dev Validates that the order output is within acceptable deviation from the oracle-derived expected output.
+  ///      Reverts if the output deviates negatively by more than MAX_OUTPUT_DEVIATION basis points.
+  /// @param order The order to validate.
+  function _validateOutput(Order calldata order) internal view {
+    uint256 _price = _getOraclePrice();
+    uint256 _expectedOutput;
+
+    if (order.mode == Mode.DEPOSIT) {
+      // DEPOSIT: USDC → USCC, expected USCC = input * _SCALED_UNIT / price
+      _expectedOutput = order.input.mulDiv(_SCALED_UNIT, _price);
+    } else {
+      // REDEEM: wUSCC → USDC, expected USDC = input * price / _SCALED_UNIT
+      _expectedOutput = order.input.mulDiv(_price, _SCALED_UNIT);
+    }
+
+    if (order.output < _expectedOutput) {
+      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / _BPS) {
+        revert LibFundsErrors.InvalidOutput();
+      }
+    }
   }
 
   /// @dev Internal function to validate and set the oracle address.

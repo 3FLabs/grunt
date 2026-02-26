@@ -69,7 +69,7 @@ contract USCCFundFuzzTest is Test {
   {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -95,7 +95,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_DepositUnlock_RevertsWhenReceivedLtOutput(uint96 input, uint96 output, uint96 receivedUscc) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 receivedAmount = bound(uint256(receivedUscc), 0, outputAmount - 1);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -118,7 +118,7 @@ contract USCCFundFuzzTest is Test {
   {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 returnedAmount = bound(uint256(returnedUsdc), inputAmount, maxAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -147,7 +147,7 @@ contract USCCFundFuzzTest is Test {
   {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 returnedAmount = bound(uint256(returnedUsdc), 0, inputAmount - 1);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -171,7 +171,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_ArchivedEndedOrderRemainsEndedAfterNewOrder(uint96 input, uint96 output, uint96 nextInput) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount - 1);
-    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 nextInputAmount = bound(uint256(nextInput), 1, maxAmount);
     if (nextInputAmount == inputAmount) {
       nextInputAmount = inputAmount + 1;
@@ -187,7 +187,8 @@ contract USCCFundFuzzTest is Test {
     uscc.mint(address(fund), outputAmount);
     fund.unlock(order);
 
-    Order memory nextOrder = _depositOrder(nextInputAmount, outputAmount);
+    uint256 nextOutputAmount = bound(uint256(output), _minValidOutput(nextInputAmount), maxAmount);
+    Order memory nextOrder = _depositOrder(nextInputAmount, nextOutputAmount);
     fund.create(nextOrder);
 
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order ended");
@@ -197,7 +198,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_RedeemUnlock_SucceedsWhenUsdcOutGteOutput(uint96 input, uint96 output, uint96 usdcOut) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 usdcOutAmount = bound(uint256(usdcOut), outputAmount, maxAmount);
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -223,7 +224,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_RedeemUnlock_RevertsWhenUsdcOutLtOutput(uint96 input, uint96 output, uint96 usdcOut) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 usdcOutAmount = bound(uint256(usdcOut), 0, outputAmount - 1);
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -250,7 +251,7 @@ contract USCCFundFuzzTest is Test {
   ) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 returnedAmount = bound(uint256(returnedUscc), inputAmount, maxAmount);
 
@@ -294,7 +295,7 @@ contract USCCFundFuzzTest is Test {
   ) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 returnedAmount = bound(uint256(returnedUscc), 0, inputAmount - 1);
 
@@ -335,7 +336,8 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _depositOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _depositOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     usdc.mint(address(this), inputAmount);
@@ -387,7 +389,8 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _depositOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _depositOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     usdc.mint(address(this), inputAmount);
@@ -442,7 +445,8 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _redeemOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _redeemOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     _mintWuscc(address(this), inputAmount);
@@ -494,7 +498,8 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _redeemOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _redeemOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     _mintWuscc(address(this), inputAmount);
@@ -544,7 +549,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_CancelRecovering_ThenUnlock_Deposit(uint96 input, uint96 output, uint96 receivedUscc) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -576,7 +581,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_CancelRecovering_ThenUnlock_Redeem(uint96 input, uint96 output, uint96 usdcOut) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 usdcOutAmount = bound(uint256(usdcOut), outputAmount, maxAmount);
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -604,6 +609,12 @@ contract USCCFundFuzzTest is Test {
     assertEq(usdc.balanceOf(address(this)), usdcOutAmount, "usdc received");
     assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  /// @dev Minimum valid output for a given input (within MAX_OUTPUT_DEVIATION of oracle-expected output).
+  ///      With oracle price = 1:1, expected output = input, so min = input * 9500 / 10000.
+  function _minValidOutput(uint256 input) internal pure returns (uint256) {
+    return input - (input * 500 / 10000);
   }
 
   function _depositOrder(uint256 input, uint256 output) internal view returns (Order memory) {
