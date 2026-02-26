@@ -2,12 +2,12 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {USCCFund} from "src/funds/USCCFund.sol";
+import {USCCFund} from "src/funds/USCC/USCCFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 
-import {MockERC20} from "../MockERC20.sol";
-import {MockSuperstateToken} from "./MockSuperstateToken.sol";
+import {MockERC20} from "../../MockERC20.sol";
+import {MockSuperstateToken} from "../MockSuperstateToken.sol";
 
 contract USCCFundHandler is Test {
   using LibOrder for Order;
