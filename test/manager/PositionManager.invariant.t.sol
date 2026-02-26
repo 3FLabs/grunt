@@ -25,6 +25,7 @@ import {PositionManagerHandler} from "test/mock/manager/PositionManagerHandler.s
 ///         then asserts global invariants after every call sequence.
 contract PositionManagerInvariantTest is StdInvariant, Test {
   using MarketParamsLib for MarketParams;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                          */
@@ -63,8 +64,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18;
-  uint128 constant BP_SAFE_LTV = 0.65e18;
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18;
+  uint128 constant BP_SAFE_LTV = 0.72e18;
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18;
   uint256 constant POSITION_MANAGER_LTV = 0.7e18;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
   uint256 constant _ROLE_MINTER = 1 << 0;
@@ -142,7 +143,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     marketId2 = marketParams2.id();
 
     // ---- deploy PositionManager (directly, not via factory) ----
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
@@ -371,8 +372,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
 
       if (borrowed == 0) {
         // A position with no debt is always healthy at any LTV.
-        (uint128 safeLtv,) = MorphoBorrowPosition(modules[i]).ltvs();
-        assertTrue(bp.isHealthy(safeLtv), "PM-7: debt-free position reported unhealthy");
+        uint128 bpSafeLtv = MorphoBorrowPosition(modules[i]).safeLtv();
+        assertTrue(bp.isHealthy(bpSafeLtv), "PM-7: debt-free position reported unhealthy");
       }
 
       if (collateral == 0) {
@@ -380,6 +381,18 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
         // (Morpho requires collateral to borrow).
         assertEq(borrowed, 0, "PM-7: debt without collateral");
       }
+    }
+  }
+
+  /// @notice PM-11: All whitelisted borrow modules have safeLtv >= PM LTV.
+  /// @dev This is enforced on-chain by addBorrowModule and setLtv. This invariant
+  ///      cross-validates that the property holds at all times during stateful fuzzing.
+  function invariant_moduleSafeLtvAbovePmLtv() public view {
+    (uint256 pmLtv,) = positionManager.config();
+    address[] memory modules = positionManager.borrowModules();
+    for (uint256 i = 0; i < modules.length; i++) {
+      uint128 moduleSafeLtv = IBorrowPosition(modules[i]).safeLtv();
+      assertGe(uint256(moduleSafeLtv), pmLtv, "PM-11: module safeLtv < PM LTV");
     }
   }
 
@@ -425,7 +438,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     address[] memory modules = positionManager.borrowModules();
     for (uint256 i = 0; i < modules.length; i++) {
       MorphoBorrowPosition bp = MorphoBorrowPosition(modules[i]);
-      (, uint128 liquidationLtv) = bp.ltvs();
+      uint128 liquidationLtv = bp.liquidationLtv();
 
       // Only test positions that have collateral and are healthy
       if (bp.totalCollateral() > 0 && bp.isHealthy(liquidationLtv)) {

@@ -73,6 +73,7 @@ contract Vault is ControlledVault, Initializable {
   /// @param isYt True to create a Yield Token vault, false for a Principal Token vault
   constructor(bool isYt) {
     _IS_YT = isYt;
+    _disableInitializers();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -41,7 +41,7 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      1. Contract is deployed and initialized with asset, PT/YT tokens, and metadata
 ///      2. Owner can authorize minting for specific addresses or consume signed offers
 ///      3. Authorized addresses can mint PT/YT tokens by depositing the underlying asset
-///      4. Once offers are consumed, the owner pulls funds to a receiver via `pullFunds()`
+///      4. Once offers are consumed, the Facility (holding `_ROLE_PULLER`) pulls funds via `pullFunds()`
 ///      5. The borrower repays by transferring the asset back to the contract
 ///      6. Once fully repaid, the owner calls `setRepaid(uint256)` to enable withdrawals for PT/YT holders
 ///
@@ -65,6 +65,10 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
 
   /// @dev Role for addresses authorized to consume offers and authorize minting via `consume()` and `authorizeMinting()`.
   uint256 internal constant _ROLE_CONSUMER = _ROLE_1;
+
+  constructor() {
+    _disableInitializers();
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */

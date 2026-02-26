@@ -5,7 +5,8 @@ import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibChecks} from "../common/LibChecks.sol";
 import {LibView} from "./LibView.sol";
-import {STORAGE_SLOT} from "./LibConstants.sol";
+import {STORAGE_SLOT, MAX_REBALANCE_LOSS} from "./LibConstants.sol";
+import {LibManagerErrors} from "./LibManagerErrors.sol";
 
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
@@ -125,6 +126,9 @@ library LibStorage {
     uint16 maxRebalanceLoss_,
     uint40 rebalanceCooldown_
   ) internal {
+    if (maxRebalanceLoss_ > MAX_REBALANCE_LOSS) {
+      revert LibManagerErrors.MaxRebalanceLossExceedsMax();
+    }
     self.rebalanceConfig.maxRebalanceLoss = maxRebalanceLoss_;
     self.rebalanceConfig.rebalanceCooldown = rebalanceCooldown_;
     emit IPositionManagerAdmin.RebalanceConfigSet(maxRebalanceLoss_, rebalanceCooldown_);
