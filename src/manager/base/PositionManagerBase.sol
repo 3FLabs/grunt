@@ -5,7 +5,8 @@ import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManager
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
-import {BPS, SECONDS_PER_YEAR} from "../../libs/manager/LibConstants.sol";
+import {SECONDS_PER_YEAR} from "../../libs/manager/LibConstants.sol";
+import {BPS} from "../../libs/Constants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";

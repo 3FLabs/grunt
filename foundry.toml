@@ -14,11 +14,13 @@ auto_detect_solc = false
 ignored_error_codes = [2424, 8429]
 
 # Exclude invariant tests from default test runs (expensive, run separately)
-no_match_test = "^invariant"
+no_match_test = "^invariant|_Fork_"
 
 [profile.ci]
 optimizer = true
 optimizer_runs = 150
+# Run fork tests in CI (ETH_RPC_URL secret required)
+no_match_test = "^invariant"
 
 [profile.full]
 # Run all tests including invariant tests: FOUNDRY_PROFILE=full forge test
@@ -28,6 +30,9 @@ no_match_test = "^$"
 runs = 256
 depth = 64
 fail_on_revert = false
+
+[rpc_endpoints]
+mainnet = "${ETH_RPC_URL}"
 
 [fmt]
 tab_width = 2
