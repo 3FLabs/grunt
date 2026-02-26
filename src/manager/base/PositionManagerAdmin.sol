@@ -2,11 +2,13 @@
 pragma solidity ^0.8.20;
 
 import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
+import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {PositionManagerBase} from "./PositionManagerBase.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {MAX_MANAGEMENT_FEE, MAX_PERFORMANCE_FEE} from "../../libs/manager/LibConstants.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
 /// @title PositionManagerAdmin
@@ -22,8 +24,27 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerAdmin
+  /// @dev Validates that the module's collateral and debt assets match the position manager's,
+  ///      the module's owner is this contract, and the module's safe LTV is >= the PM LTV.
   function addBorrowModule(address module) external override onlyOwner {
-    LibStorage.positionManagerStorage().borrowModules.add(module);
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+
+    if (IBorrowPosition(module).collateralAsset() != _storage.metadata.collateralAsset) {
+      revert LibManagerErrors.CollateralAssetMismatch();
+    }
+    if (IBorrowPosition(module).borrowAsset() != _storage.metadata.debtAsset) {
+      revert LibManagerErrors.DebtAssetMismatch();
+    }
+    if (Ownable(module).owner() != address(this)) {
+      revert LibManagerErrors.InvalidModuleOwner();
+    }
+    if (IBorrowPosition(module).safeLtv() < _storage.ltv) {
+      revert LibManagerErrors.ModuleSafeLtvTooLow();
+    }
+
+    if (!_storage.borrowModules.add(module)) {
+      revert LibManagerErrors.ModuleAlreadyAdded();
+    }
     emit IPositionManagerAdmin.BorrowModuleAdded(module);
   }
 
@@ -88,9 +109,24 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Reverts with {LibCommonErrors.InvalidLtv} if ltv is zero or greater than WAD.
+  /// @dev Reverts with {LibManagerErrors.ModuleSafeLtvTooLow} if any whitelisted borrow module
+  ///      has a safe LTV lower than the new PM LTV.
+  ///      Reverts with {LibCommonErrors.InvalidLtv} (via setLtv) if ltv is zero or greater than WAD.
   function setLtv(uint256 ltv_) external override onlyOwner {
-    LibStorage.positionManagerStorage().setLtv(ltv_);
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+
+    // Check all whitelisted borrow modules have safeLtv >= new PM LTV
+    uint256 len = _storage.borrowModules.length();
+    for (uint256 i; i < len;) {
+      if (IBorrowPosition(_storage.borrowModules.at(i)).safeLtv() < ltv_) {
+        revert LibManagerErrors.ModuleSafeLtvTooLow();
+      }
+      unchecked {
+        ++i;
+      }
+    }
+
+    _storage.setLtv(ltv_);
   }
 
   /// @inheritdoc IPositionManagerAdmin

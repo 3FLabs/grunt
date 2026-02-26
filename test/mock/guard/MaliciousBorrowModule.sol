@@ -13,11 +13,17 @@ import {TransferGuard} from "src/guard/TransferGuard.sol";
 contract MaliciousBorrowModule is IBorrowPosition {
   TransferGuard public guard;
   address public token;
+  address public collateralAsset_;
+  address public borrowAsset_;
+  address public owner_;
   bool public shouldPause;
 
-  constructor(address _guard, address _token) {
+  constructor(address _guard, address _token, address _collateralAsset, address _borrowAsset, address _owner) {
     guard = TransferGuard(_guard);
     token = _token;
+    collateralAsset_ = _collateralAsset;
+    borrowAsset_ = _borrowAsset;
+    owner_ = _owner;
   }
 
   function setShouldPause(bool _shouldPause) external {
@@ -45,13 +51,21 @@ contract MaliciousBorrowModule is IBorrowPosition {
     // No-op for this test
   }
 
-  // View functions - return dummy values
-  function borrowAsset() external pure override returns (address) {
-    return address(0);
+  // View functions
+  function owner() external view returns (address) {
+    return owner_;
   }
 
-  function collateralAsset() external pure override returns (address) {
-    return address(0);
+  function borrowAsset() external view override returns (address) {
+    return borrowAsset_;
+  }
+
+  function collateralAsset() external view override returns (address) {
+    return collateralAsset_;
+  }
+
+  function safeLtv() external pure override returns (uint128) {
+    return uint128(1e18);
   }
 
   function totalBorrowed() external pure override returns (uint256) {
