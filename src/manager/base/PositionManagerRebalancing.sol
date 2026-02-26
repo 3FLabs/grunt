@@ -15,7 +15,7 @@ import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../libs/common/LibCommonErrors.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
-import {BPS} from "../../libs/manager/LibConstants.sol";
+import {BPS} from "../../libs/Constants.sol";
 import {LibExecutor} from "../../libs/manager/LibExecutor.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 

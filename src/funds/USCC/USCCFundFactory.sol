@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {USCCFund} from "./USCCFund.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {LibChecks} from "../libs/common/LibChecks.sol";
+import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title USCCFundFactory
 /// @author 3F Protocol

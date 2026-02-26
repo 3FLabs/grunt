@@ -22,6 +22,12 @@ library LibFundsErrors {
   /// @notice Thrown when trying to create an order while another is still pending.
   error PendingOrder();
 
+  /// @notice Thrown when trying to cancel a request while partial fill assets are still claimable.
+  error PendingClaimableAssets();
+
+  /// @notice Thrown when the order output does not match the vault's current conversion rate.
+  error InvalidOutput();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      AUTHORIZATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -38,6 +44,9 @@ library LibFundsErrors {
 
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
+
+  /// @notice Thrown when the fund is not permissioned to operate with the vault.
+  error NotAllowedToOperateWithVault();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
