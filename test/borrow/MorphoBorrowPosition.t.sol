@@ -2320,7 +2320,6 @@ contract MorphoBorrowPositionTest is Test {
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*              PRE-LIQUIDATION HEALTH CHECK TESTS                */
-  /*     Fixes: CS-GRUNT-011 (3F-97) & CS-GRUNT-012 (3F-98)        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   // ── Helpers ────────────────────────────────────────────────────
@@ -2359,10 +2358,10 @@ contract MorphoBorrowPositionTest is Test {
     loanToken.approve(address(borrowPosition), type(uint256).max);
   }
 
-  // ── CS-GRUNT-012 (3F-98): Repaid Shares Can Exceed Borrow Shares ──
+  // ── Repaid Shares Can Exceed Borrow Shares ──
 
-  /// @notice Corroborates the 3F-98 finding: seizing all collateral with rounding-up shares
-  ///         would previously cause repaidShares > borrowShares and revert in Morpho.
+  /// @notice Seizing all collateral with rounding-up shares would previously cause
+  ///         repaidShares > borrowShares and revert in Morpho.
   ///         After fix, repaidShares is capped at borrowShares.
   function test_preLiquidate_SeizeAllCollateral_SharesCapped() public {
     (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
@@ -2370,7 +2369,7 @@ contract MorphoBorrowPositionTest is Test {
     address liquidator = makeAddr("liquidator");
     _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
 
-    // Seize ALL collateral — this is the scenario from CS-GRUNT-012
+    // Seize ALL collateral — mulDivUp can round repaidShares above borrowShares
     // mulDivUp(borrowShares, collateral) with seizedAssets == collateral can round up beyond borrowShares
     vm.prank(liquidator);
     (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), collateralAmount, 0, "");
@@ -2384,7 +2383,7 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   /// @notice Tests that seizing collateral with a tiny remainder works after a prior partial liquidation.
-  ///         This covers the "exactly the right amount" edge case from CS-GRUNT-012.
+  ///         This covers the "exactly the right amount" edge case.
   function test_preLiquidate_SeizeRemainingCollateralAfterPartialLiquidation() public {
     (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
 
@@ -2409,9 +2408,9 @@ contract MorphoBorrowPositionTest is Test {
     }
   }
 
-  // ── CS-GRUNT-011 (3F-97): Partial Liquidations Fail Health Check ──
+  // ── Partial Liquidations Fail Health Check ──
 
-  /// @notice Corroborates the 3F-97 finding: when LTV > Morpho LLTV, proportional partial
+  /// @notice When LTV > Morpho LLTV, proportional partial
   ///         liquidation would fail Morpho's health check. After fix, the function repays
   ///         enough debt to make the position healthy on Morpho.
   function test_preLiquidate_PartialSeize_AboveLLTV_RepaysExtraDebt() public {
@@ -2432,7 +2431,7 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(seized, seizeTarget, "Should seize requested collateral");
     assertGt(repaid, 0, "Should repay debt");
 
-    // Key assertion from CS-GRUNT-011 fix: more debt is repaid than proportional
+    // Key assertion: more debt is repaid than proportional
     // Proportional repaid would be ≈ 25% of total debt
     uint256 proportionalRepaid = borrowedBefore / 4;
     assertGe(repaid, proportionalRepaid, "Should repay at least proportional debt");
