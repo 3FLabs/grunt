@@ -164,7 +164,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.recover(order);
   }
 
@@ -321,7 +321,7 @@ contract USCCFundFuzzTest is Test {
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.recover(order);
   }
 
