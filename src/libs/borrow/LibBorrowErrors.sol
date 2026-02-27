@@ -18,6 +18,11 @@ library LibBorrowErrors {
   /// @notice Thrown when attempting to initialize with a market that doesn't exist in Morpho.
   error MarketNotCreated();
 
+  /// @notice Thrown when the Morpho market's collateral or loan token does not match the PositionManager's expected assets.
+  /// @param expected The expected asset address from the PositionManager.
+  /// @param actual The actual asset address from the Morpho market.
+  error AssetMismatch(address expected, address actual);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        COLLATERAL                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

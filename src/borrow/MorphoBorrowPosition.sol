@@ -17,6 +17,7 @@ import {IBorrowPosition} from "../interfaces/borrow/IBorrowPosition.sol";
 import {UtilsLib} from "lib/morpho-blue/src/libraries/UtilsLib.sol";
 import {IMorphoRepayCallback} from "lib/morpho-blue/src/interfaces/IMorphoCallbacks.sol";
 import {IPreLiquidationCallback} from "../interfaces/borrow/IPreliquidationCallback.sol";
+import {IPositionManager} from "../interfaces/manager/IPositionManager.sol";
 
 /// @title MorphoBorrowPosition
 /// @notice Implementation of a borrow position with the Morpho Blue protocol.
@@ -90,6 +91,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      Reverts with {LibBorrowErrors.MarketNotCreated} if the market doesn't exist in Morpho.
   ///      Reverts with {LibCommonErrors.InvalidLtv} if liquidationLtv_ is zero or greater than WAD.
   ///      Reverts with {LibBorrowErrors.SafeLtvNotLessThanLiquidationLtv} if safeLtv_ >= liquidationLtv_.
+  ///      Reverts with {LibBorrowErrors.AssetMismatch} if the market's collateral token doesn't match the PositionManager's collateral asset.
+  ///      Reverts with {LibBorrowErrors.AssetMismatch} if the market's loan token doesn't match the PositionManager's debt asset.
   ///      Reverts with {LibBorrowErrors.LiquidationLtvExceedsMarketLltv} if liquidationLtv_ exceeds the Morpho market LLTV.
   function initialize(
     IMorpho morpho_,
@@ -113,6 +116,15 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     _storage.morpho = morpho_;
     _storage.marketId = marketId_;
     _storage.marketParams = morpho_.idToMarketParams(marketId_);
+
+    // Validate market assets match PositionManager's expected assets
+    (address expectedCollateral, address expectedDebt) = IPositionManager(positionManager_).assets();
+    if (_storage.marketParams.collateralToken != expectedCollateral) {
+      revert LibBorrowErrors.AssetMismatch(expectedCollateral, _storage.marketParams.collateralToken);
+    }
+    if (_storage.marketParams.loanToken != expectedDebt) {
+      revert LibBorrowErrors.AssetMismatch(expectedDebt, _storage.marketParams.loanToken);
+    }
 
     // Validate liquidationLtv does not exceed market LLTV
     // This ensures pre-liquidation triggers before Morpho's native liquidation
