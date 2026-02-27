@@ -37,8 +37,11 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Role for operator.
+  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_0;
+  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -53,6 +56,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @param strategy The IdleCreditVault strategy contract address.
   /// @param currentOrderId The order ID of the current (or most recent) order.
   /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
+  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
+  /// @param resolvedInput The resolved input amount (if hasResolvedAmounts is true).
+  /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct ParetoFundStorage {
     address vault;
@@ -62,6 +68,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     address strategy;
     bytes32 currentOrderId;
     State internalState;
+    bool hasResolvedAmounts;
+    uint256 resolvedInput;
+    uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
 
@@ -144,6 +153,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     bytes32 _orderId = order.toId(address(this));
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
+    $.hasResolvedAmounts = false;
+    $.resolvedInput = 0;
+    $.resolvedOutput = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -247,6 +259,34 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       ADMINISTRATION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IParetoFund
+  function resolve(Order memory order, uint256 input, uint256 output)
+    external
+    override
+    onlyOwnerOrRoles(OPERATOR_ROLE)
+  {
+    ParetoFundStorage storage $ = _paretoFundStorage();
+    if ($.internalState != State.PROCESSING) {
+      revert LibFundsErrors.InvalidState($.internalState);
+    }
+    if (order.toId(address(this)) != $.currentOrderId) {
+      revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
+    }
+
+    $.hasResolvedAmounts = true;
+    $.resolvedInput = input;
+    $.resolvedOutput = output;
+
+    order.input = input;
+    order.output = output;
+
+    emit OrderResolved($.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -325,17 +365,18 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
     if (_internalState == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
+        uint256 _expectedOutput = $.hasResolvedAmounts ? $.resolvedOutput : order.output;
         uint256 _balance = IERC20($.aaTranche).balanceOf(address(this));
-        return _balance >= order.output ? (State.UNLOCKING, _balance) : (State.PROCESSING, 0);
+        return _balance >= _expectedOutput ? (State.UNLOCKING, _balance) : (State.PROCESSING, 0);
       } else {
         address _strategy = $.strategy;
         uint256 _withdrawAmount = IIdleCreditVault(_strategy).withdrawsRequests(address(this));
         if (_withdrawAmount > 0) {
-          address _vault = $.vault;
-          uint256 _epochEndDate = IIdleCDOEpochVariant(_vault).epochEndDate();
-          uint256 _lastRequest = IIdleCreditVault(_strategy).lastWithdrawRequest(address(this));
-          uint256 _currentEpoch = IIdleCreditVault(_strategy).epochNumber();
-          if (_epochEndDate == 0 || _currentEpoch > _lastRequest) {
+          if (
+            IIdleCDOEpochVariant($.vault).epochEndDate() == 0
+              || IIdleCreditVault(_strategy).epochNumber()
+                > IIdleCreditVault(_strategy).lastWithdrawRequest(address(this))
+          ) {
             return (State.UNLOCKING, _withdrawAmount);
           }
         }

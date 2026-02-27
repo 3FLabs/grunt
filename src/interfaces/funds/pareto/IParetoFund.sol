@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IFund} from "../IFund.sol";
-import {Mode} from "../../../libs/funds/Order.sol";
+import {Order, Mode} from "../../../libs/funds/Order.sol";
 
 /// @title IParetoFund
 /// @author 3F Protocol
@@ -18,9 +18,15 @@ interface IParetoFund is IFund {
   event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
+  event OrderResolved(
+    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 input, uint256 output, address indexed caller
+  );
 
   // INITIALIZATION
   function initialize(address owner_, address depositor_, address vault_, address wrappedShare_) external;
+
+  // ADMINISTRATION
+  function resolve(Order memory order, uint256 input, uint256 output) external;
 
   // VIEWS
   function vault() external view returns (address);
