@@ -181,7 +181,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
 
     // if (collateralAsset == debtAsset || collateralAsset == positionManager || debtAsset == positionManager)
     //   revert LibFacilityErrors.InvalidPositionManagerAssets();
-    assembly {
+    assembly ("memory-safe") {
       if or(eq(collateralAsset, debtAsset), or(eq(collateralAsset, positionManager), eq(debtAsset, positionManager))) {
         mstore(0, 0x62e437a4) // LibFacilityErrors.InvalidPositionManagerAssets()
         revert(0x1c, 0x04)
