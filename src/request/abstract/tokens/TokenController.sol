@@ -69,7 +69,7 @@ abstract contract TokenController is ITokenController {
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
     to.checkNotZero();
-    // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
+    // casting to 'uint128' is safe because [The balance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {
       (uint128 ptBalanceSender, uint128 ytBalanceSender) = from.balances();
