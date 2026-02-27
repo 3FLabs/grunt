@@ -81,7 +81,7 @@ interface IUSCCFund is IFund {
   /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
   ///      The owner has admin control, while the depositor can execute orders.
   /// @param owner_ The address that will own this contract and manage roles.
-  /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
+  /// @param depositor_ The address that will execute orders (must be a contract, receives _DEPOSITOR_ROLE).
   /// @param recipient_ The superstate address receiving USDC to mint USCC.
   /// @param oracle_ The address of Chainlink USCC Oracle.
   function initialize(address owner_, address depositor_, address recipient_, address oracle_) external;
@@ -91,25 +91,25 @@ interface IUSCCFund is IFund {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets the fund internal state to RECOVERING (if issues arise with Superstate).
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   ///      This is an emergency function to signal that Superstate failed to process the order.
   ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
   ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
   function recovering() external;
 
   /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   ///      Use this if recovering() was called by mistake and Superstate delivered the output tokens.
   ///      Once back to PROCESSING, the state() function will check for output tokens normally.
   function cancelRecovering() external;
 
   /// @notice Sets the oracle address.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
   function setOracle(address oracle) external;
 
   /// @notice Resolves the current order by setting its input and output amounts.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
   ///      differ from expected ones (e.g., due to unexpected conditions).
   ///
