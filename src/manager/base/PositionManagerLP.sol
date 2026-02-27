@@ -33,7 +33,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if both collateral and debt are zero.
   ///      Reverts with {LibManagerErrors.EmptySupplyQueue} if debt is zero but collateral > 0 and supply queue is empty.
   function deposit(uint256 collateral, uint256 debt)
     external
@@ -78,7 +78,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   }
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if both collateral and debt are zero.
   function withdraw(uint256 collateral, uint256 debt, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
@@ -113,7 +113,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   }
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if shares is zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if shares is zero.
   function burn(uint256 shares, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
