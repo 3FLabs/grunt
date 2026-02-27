@@ -228,10 +228,9 @@ contract FacilityBaseTest is Test {
     vm.label(address(positionManager2), "PositionManager2");
 
     // Deploy MorphoBorrowPosition for PositionManager
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
-    address bp = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    address bp =
+      borrowPositionFactory.createBorrowPosition(marketId, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition = MorphoBorrowPosition(bp);
     vm.label(address(borrowPosition), "BorrowPosition");
 

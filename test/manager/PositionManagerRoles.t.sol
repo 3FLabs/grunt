@@ -103,9 +103,8 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
   function test_addBorrowModule_onlyOwner() public {
     // Create a valid borrow module for the success case
-    address newModule = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address newModule =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
 
     vm.prank(user);
     vm.expectRevert();
@@ -133,7 +132,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     morpho.createMarket(wrongParams);
 
     address wrongModule = borrowPositionFactory.createBorrowPosition(
-      morpho, MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+      MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
     );
 
     vm.prank(owner);
@@ -157,7 +156,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     morpho.createMarket(wrongParams);
 
     address wrongModule = borrowPositionFactory.createBorrowPosition(
-      morpho, MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+      MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
     );
 
     vm.prank(owner);
@@ -169,7 +168,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     // Create a module owned by someone else (factory deploys a proxy that can be initialized)
     address wrongOwner = makeAddr("wrongOwner");
     address wrongModule =
-      borrowPositionFactory.createBorrowPosition(morpho, marketId1, wrongOwner, BP_SAFE_LTV, BP_LIQUIDATION_LTV);
+      borrowPositionFactory.createBorrowPosition(marketId1, wrongOwner, BP_SAFE_LTV, BP_LIQUIDATION_LTV);
 
     vm.prank(owner);
     vm.expectRevert(LibManagerErrors.InvalidModuleOwner.selector);
@@ -189,9 +188,8 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     // Create a module with safeLtv < PM LTV
     uint128 lowSafeLtv = uint128(POSITION_MANAGER_LTV) - 1;
     uint128 liquidationLtv = uint128(POSITION_MANAGER_LTV) + 0.01e18;
-    address wrongModule = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId1, address(positionManager), lowSafeLtv, liquidationLtv
-    );
+    address wrongModule =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), lowSafeLtv, liquidationLtv);
 
     vm.prank(owner);
     vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
