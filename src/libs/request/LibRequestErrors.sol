@@ -56,9 +56,6 @@ library LibRequestErrors {
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();
 
-  /// @notice Thrown when attempting to transfer tokens to the same address.
-  error TransferToSelf();
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    VAULT OPERATIONS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

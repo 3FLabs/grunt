@@ -69,15 +69,16 @@ abstract contract TokenController is ITokenController {
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
     to.checkNotZero();
-    if (from == to) revert LibRequestErrors.TransferToSelf();
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {
       (uint128 ptBalanceSender, uint128 ytBalanceSender) = from.balances();
-      (uint128 ptBalanceReceiver, uint128 ytBalanceReceiver) = to.balances();
       if (pt > ptBalanceSender || yt > ytBalanceSender) revert CommonErrors.InsufficientBalance();
-      from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
-      to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
+      if (from != to) {
+        (uint128 ptBalanceReceiver, uint128 ytBalanceReceiver) = to.balances();
+        from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
+        to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
+      }
       if (pt > 0) ControlledToken(_ptToken())._emitTransfer(from, to, pt);
       if (yt > 0) ControlledToken(_ytToken())._emitTransfer(from, to, yt);
       return true;
