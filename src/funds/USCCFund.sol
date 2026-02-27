@@ -42,10 +42,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
-  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+  uint256 internal constant OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+  uint256 internal constant DEPOSITOR_ROLE = _ROLE_1;
 
   /// @dev USCC/USDC/wUSCC all have 6 decimals (same for the oracle).
   uint256 private constant _DECIMALS = 6;

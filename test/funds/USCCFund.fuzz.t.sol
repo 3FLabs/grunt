@@ -690,7 +690,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     wuscc.grantRoles(address(handler), WUSCC_SENDER_ROLE);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
+    uint256 operatorRole = 1 << 0;
     vm.prank(owner);
     fund.grantRoles(address(handler), operatorRole);
 

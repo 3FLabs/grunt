@@ -53,10 +53,10 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Role for managing address statuses.
-  uint256 public constant COMPLIANCE_ROLE = _ROLE_0;
+  uint256 internal constant COMPLIANCE_ROLE = _ROLE_0;
 
   /// @dev Role for pausing/unpausing tokens.
-  uint256 public constant PAUSER_ROLE = _ROLE_1;
+  uint256 internal constant PAUSER_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    ERC-7201 STORAGE                        */

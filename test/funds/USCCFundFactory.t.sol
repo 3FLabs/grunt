@@ -83,7 +83,7 @@ contract USCCFundFactoryTest is Test {
   function test_Factory_ConfiguresRoles() public {
     address fundAddress = factory.createFund(owner, depositor, recipient, address(oracle));
     USCCFund fund = USCCFund(fundAddress);
-    assertEq(fund.rolesOf(depositor), fund.DEPOSITOR_ROLE(), "depositor");
+    assertEq(fund.rolesOf(depositor), 1 << 1, "depositor");
   }
 
   function test_Factory_MultipleDeployments() public {

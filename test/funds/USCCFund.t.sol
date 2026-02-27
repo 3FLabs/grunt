@@ -98,7 +98,7 @@ contract USCCFundTest is Test {
     assertEq(fund.owner(), owner, "owner");
     assertEq(fund.asset(), address(usdc), "usdc");
     assertEq(fund.share(), address(wuscc), "wuscc");
-    assertEq(fund.rolesOf(address(this)), fund.DEPOSITOR_ROLE(), "depositor role");
+    assertEq(fund.rolesOf(address(this)), 1 << 1, "depositor role");
     assertEq(uint256(fund.state(_depositOrder(ONE_USDC, ONE_USDC))), uint256(State.EMPTY), "initial state");
   }
 
@@ -963,7 +963,7 @@ contract USCCFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_OperatorGrantable() public {
-    uint256 operatorRole = fund.OPERATOR_ROLE();
+    uint256 operatorRole = 1 << 0;
     vm.prank(owner);
     fund.grantRoles(operator, operatorRole);
     assertEq(fund.rolesOf(operator), operatorRole, "operator role");
