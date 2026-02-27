@@ -310,8 +310,7 @@ library LibIntent {
   /// @param token The token address to snapshot.
   /// @return snapshot The balance snapshot struct.
   function takeBalanceSnapshot(address token) internal view returns (BalanceSnapshot memory snapshot) {
-    uint256 balance = token.balanceOf(address(this));
-    snapshot = BalanceSnapshot({token: token, balance: balance});
+    snapshot = BalanceSnapshot({token: token, balance: token.balanceOf(address(this))});
   }
 
   /// @notice Commits a balance snapshot by calculating the difference and updating accounting.

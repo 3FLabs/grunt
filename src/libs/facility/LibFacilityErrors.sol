@@ -76,6 +76,11 @@ library LibFacilityErrors {
   /// @param asset The asset address that is not a position manager.
   error AssetNotPositionManager(address asset);
 
+  /// @notice Thrown when a position manager reports invalid asset configuration.
+  /// @dev Reverts if collateralAsset == debtAsset, collateralAsset == positionManager,
+  ///      or debtAsset == positionManager, preventing snapshot double-counting attacks.
+  error InvalidPositionManagerAssets();
+
   /// @notice Thrown when an amount differs from the expected value.
   /// @param expected The expected amount.
   /// @param actual The actual amount.
