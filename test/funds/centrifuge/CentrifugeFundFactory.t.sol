@@ -98,7 +98,7 @@ contract CentrifugeFundFactoryTest is Test {
     vm.prank(owner);
     otherWrappedShare.initialize(owner, owner, address(otherShareToken), "wOther", "wOTH");
 
-    vm.expectRevert(LibFundsErrors.InvalidReceiver.selector);
+    vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
     factory.createFund(owner, depositor, address(vault), address(otherWrappedShare));
   }
 }

@@ -126,7 +126,7 @@ contract CentrifugeFundTest is Test {
     badWrappedShare.initialize(owner, owner, address(otherToken), "bad", "Bad");
 
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.CENTRIFUGE_FUND_BEACON());
-    vm.expectRevert(LibFundsErrors.InvalidReceiver.selector);
+    vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
     CentrifugeFund(fundProxy).initialize(owner, address(this), address(vault), address(badWrappedShare));
   }
 

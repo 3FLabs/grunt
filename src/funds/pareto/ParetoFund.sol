@@ -18,7 +18,7 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title ParetoFund
 /// @author 3F Protocol
-/// @notice Wrapper of the Pareto (Idle Finance) FalconX Credit Vault (IdleCDOEpochVariant).
+/// @notice Wrapper of the Pareto (Idle Finance) Credit Vault (IdleCDOEpochVariant).
 /// @dev - Shares of this fund are represented by WrappedAsset tokens wrapping the CDO's AA tranche token.
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
 ///      - Deposits are synchronous via `depositAA`, withdrawals are epoch-gated via `requestWithdraw` + `claimWithdrawRequest`.
@@ -114,7 +114,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     // Read derived addresses from the vault
     address _aaTranche = IIdleCDOEpochVariant(vault_).AATranche();
     if (IWrappedAsset(wrappedShare_).underlying() != _aaTranche) {
-      revert LibFundsErrors.InvalidReceiver();
+      revert LibFundsErrors.InvalidUnderlyingAsset();
     }
 
     ParetoFundStorage storage $ = _paretoFundStorage();

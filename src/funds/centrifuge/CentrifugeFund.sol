@@ -115,7 +115,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     // Verify wrappedShare wraps the vault's share token
     address _shareToken = ICentrifugeVault(vault_).share();
     if (IWrappedAsset(wrappedShare_).underlying() != _shareToken) {
-      revert LibFundsErrors.InvalidReceiver();
+      revert LibFundsErrors.InvalidUnderlyingAsset();
     }
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();

@@ -38,6 +38,9 @@ library LibFundsErrors {
   /// @notice Thrown when the order receiver does not match the caller (the owner).
   error InvalidReceiver();
 
+  /// @notice Thrown when the wrapped share's underlying token does not match the expected share token.
+  error InvalidUnderlyingAsset();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      INTEGRATIONS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
