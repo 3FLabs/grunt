@@ -197,7 +197,7 @@ contract CentrifugeFundTest is Test {
   function test_Create_RevertsNotPermissioned() public {
     vault.setPermissioned(address(fund), false);
     Order memory order = _depositOrder(ONE, ONE);
-    vm.expectRevert(LibFundsErrors.NotAllowedToOperateWithVault.selector);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
     fund.create(order);
   }
 
@@ -374,7 +374,7 @@ contract CentrifugeFundTest is Test {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
     vault.setPermissioned(address(fund), false);
-    vm.expectRevert(LibFundsErrors.NotAllowedToOperateWithVault.selector);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
     fund.commit(order);
   }
 

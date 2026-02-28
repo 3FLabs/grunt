@@ -144,7 +144,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     address _vault = $.vault;
     if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
-      revert LibFundsErrors.NotAllowedToOperateWithVault();
+      revert LibFundsErrors.NotAllowedByFund();
     }
 
     if (_internalState == State.ENDED) {
@@ -205,7 +205,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     address _vault = $.vault;
     if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
-      revert LibFundsErrors.NotAllowedToOperateWithVault();
+      revert LibFundsErrors.NotAllowedByFund();
     }
 
     if (order.mode == Mode.DEPOSIT) {

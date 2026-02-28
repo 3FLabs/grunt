@@ -49,7 +49,7 @@ library LibFundsErrors {
   error NotAllowedSuperstate();
 
   /// @notice Thrown when the fund is not permissioned to operate with the vault.
-  error NotAllowedToOperateWithVault();
+  error NotAllowedByFund();
 
   /// @notice Thrown when recover() is called on a fund that does not support recovery.
   error RecoverNotSupported();

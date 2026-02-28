@@ -143,7 +143,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
     if (!IIdleCDOEpochVariant($.vault).isWalletAllowed(address(this))) {
-      revert LibFundsErrors.NotAllowedToOperateWithVault();
+      revert LibFundsErrors.NotAllowedByFund();
     }
 
     if (_internalState == State.ENDED) {
