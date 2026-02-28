@@ -84,6 +84,12 @@ interface ICentrifugeFund is IFund {
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Role for operator.
+  function OPERATOR_ROLE() external view returns (uint256);
+
+  /// @notice Role for depositor.
+  function DEPOSITOR_ROLE() external view returns (uint256);
+
   /// @notice The Centrifuge vault address.
   function vault() external view returns (address);
 }
