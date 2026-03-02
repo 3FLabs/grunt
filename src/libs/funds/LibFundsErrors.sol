@@ -38,6 +38,9 @@ library LibFundsErrors {
   /// @notice Thrown when the order receiver does not match the caller (the owner).
   error InvalidReceiver();
 
+  /// @notice Thrown when the wrapped share's underlying token does not match the expected share token.
+  error InvalidUnderlyingAsset();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      INTEGRATIONS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -46,7 +49,10 @@ library LibFundsErrors {
   error NotAllowedSuperstate();
 
   /// @notice Thrown when the fund is not permissioned to operate with the vault.
-  error NotAllowedToOperateWithVault();
+  error NotAllowedByFund();
+
+  /// @notice Thrown when recover() is called on a fund that does not support recovery.
+  error RecoverNotSupported();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */

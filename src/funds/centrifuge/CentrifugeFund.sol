@@ -115,7 +115,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     // Verify wrappedShare wraps the vault's share token
     address _shareToken = ICentrifugeVault(vault_).share();
     if (IWrappedAsset(wrappedShare_).underlying() != _shareToken) {
-      revert LibFundsErrors.InvalidReceiver();
+      revert LibFundsErrors.InvalidUnderlyingAsset();
     }
 
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
@@ -144,7 +144,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     address _vault = $.vault;
     if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
-      revert LibFundsErrors.NotAllowedToOperateWithVault();
+      revert LibFundsErrors.NotAllowedByFund();
     }
 
     if (_internalState == State.ENDED) {
@@ -205,7 +205,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
     address _vault = $.vault;
     if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
-      revert LibFundsErrors.NotAllowedToOperateWithVault();
+      revert LibFundsErrors.NotAllowedByFund();
     }
 
     if (order.mode == Mode.DEPOSIT) {
