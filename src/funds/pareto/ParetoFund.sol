@@ -235,7 +235,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     } else {
       // Claim withdrawal from CDO (underlying asset arrives in this contract) and send to receiver
       address _asset = $.asset;
+      uint256 _before = IERC20(_asset).balanceOf(address(this));
       IIdleCDOEpochVariant($.vault).claimWithdrawRequest();
+      _amount = IERC20(_asset).balanceOf(address(this)) - _before;
       _asset.safeTransfer(order.receiver, _amount);
     }
 
