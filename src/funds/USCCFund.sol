@@ -17,6 +17,7 @@ import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Inte
 import {Order, State, Mode, LibOrder} from "../libs/funds/Order.sol";
 import {LibFundsErrors} from "../libs/funds/LibFundsErrors.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
+import {BPS} from "../libs/Constants.sol";
 
 /// @title USCCFund
 /// @author 3F Protocol
@@ -52,9 +53,6 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @dev Scaled unit for 6 decimals.
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
-
-  /// @dev Basis points denominator (100%).
-  uint256 private constant _BPS = 10_000;
 
   /// @notice Maximum allowed negative deviation (in basis points) between the order output
   ///         and the oracle-derived expected output. Orders with output below this threshold revert.
@@ -502,7 +500,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     if (order.output < _expectedOutput) {
-      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / _BPS) {
+      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
         revert LibFundsErrors.InvalidOutput();
       }
     }
