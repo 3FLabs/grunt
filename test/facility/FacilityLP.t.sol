@@ -105,6 +105,19 @@ contract FacilityLPTest is FacilityBaseTest {
   /*                      WITHDRAW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  function test_withdraw_revertWhenReceiverIsZeroAddress() public {
+    uint256 intentId = _createDefaultIntent();
+    uint256 depositAmount = 1000e18;
+
+    _depositToPM(user, depositAmount);
+    vm.prank(user);
+    facility.deposit(intentId, depositAmount);
+
+    vm.prank(user);
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    facility.withdraw(intentId, user, address(0), depositAmount);
+  }
+
   function test_withdraw_revertWhenZeroAmount() public {
     uint256 intentId = _createDefaultIntent();
     uint256 depositAmount = 1000e18;
@@ -229,6 +242,18 @@ contract FacilityLPTest is FacilityBaseTest {
     assertEq(amounts[0], depositAmount, "Amount should match deposit");
     assertEq(positionManager.balanceOf(user), pmBalanceBefore + depositAmount, "Should receive PM shares");
     assertEq(facility.balanceOf(user, intentId), 0, "LP balance should be 0");
+  }
+
+  function test_claim_revertWhenReceiverIsZeroAddress() public {
+    uint256 depositAmount = 1000e18;
+    uint256 intentId = _createIntentWithDeposits(depositAmount);
+
+    vm.prank(facilitator);
+    facility.resolve(intentId);
+
+    vm.prank(user);
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    facility.claim(intentId, user, address(0), depositAmount);
   }
 
   function test_claim_revertWhenZeroShares() public {
