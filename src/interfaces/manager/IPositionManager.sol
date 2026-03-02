@@ -76,6 +76,19 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
       uint256 lastFeeAccrualTimestamp
     );
 
+  /// @notice Returns the pending fee data needed to compute an accurate share price.
+  /// @dev Mirrors the logic of the internal `_accrueFees()` function without mutating state.
+  ///      Integrators can compute an accurate share price as:
+  ///      `price = totalAssets / (totalSupply + managementFeeShares + performanceFeeShares)`.
+  /// @return totalAssets_ The current total assets (collateral value - debt) across all borrow modules
+  /// @return totalSupply_ The current total supply of shares (excluding pending fee shares)
+  /// @return managementFeeShares The shares that would be minted for management fees
+  /// @return performanceFeeShares The shares that would be minted for performance fees
+  function pendingFees()
+    external
+    view
+    returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares);
+
   /// @notice Returns the virtual share offset used for inflation attack protection.
   /// @dev Derived from the debt asset decimals: 10^(18 - debtAsset.decimals()), floored at 1.
   /// @return The virtual share offset value
