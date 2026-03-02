@@ -9,11 +9,15 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibBorrowErrors} from "../../src/libs/borrow/LibBorrowErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 import {MockBorrowPosition} from "test/mock/borrow/MockBorrowPosition.sol";
 import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerRolesTest
 /// @notice Tests for PositionManager admin functions and role-based access control
@@ -131,13 +135,13 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     vm.prank(owner);
     morpho.createMarket(wrongParams);
 
-    address wrongModule = borrowPositionFactory.createBorrowPosition(
+    // Asset check now fires during initialize() in createBorrowPosition
+    vm.expectRevert(
+      abi.encodeWithSelector(LibBorrowErrors.AssetMismatch.selector, address(collateralToken), address(wrongCollateral))
+    );
+    borrowPositionFactory.createBorrowPosition(
       MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
     );
-
-    vm.prank(owner);
-    vm.expectRevert(LibManagerErrors.CollateralAssetMismatch.selector);
-    positionManager.addBorrowModule(wrongModule);
   }
 
   function test_addBorrowModule_revertWhen_DebtAssetMismatch() public {
@@ -155,21 +159,34 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     vm.prank(owner);
     morpho.createMarket(wrongParams);
 
-    address wrongModule = borrowPositionFactory.createBorrowPosition(
+    // Asset check now fires during initialize() in createBorrowPosition
+    vm.expectRevert(
+      abi.encodeWithSelector(LibBorrowErrors.AssetMismatch.selector, address(debtToken), address(wrongDebt))
+    );
+    borrowPositionFactory.createBorrowPosition(
       MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
     );
-
-    vm.prank(owner);
-    vm.expectRevert(LibManagerErrors.DebtAssetMismatch.selector);
-    positionManager.addBorrowModule(wrongModule);
   }
 
   function test_addBorrowModule_revertWhen_InvalidOwner() public {
-    // Create a module owned by someone else (factory deploys a proxy that can be initialized)
-    address wrongOwner = makeAddr("wrongOwner");
-    address wrongModule =
-      borrowPositionFactory.createBorrowPosition(marketId1, wrongOwner, BP_SAFE_LTV, BP_LIQUIDATION_LTV);
+    // Create a second PositionManager with the same assets so initialize() passes
+    PositionManager otherPM = PositionManager(LibClone.clone(address(new PositionManager())));
+    otherPM.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "Other PM", symbol: "OPM", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
 
+    // Create a module owned by the other PM
+    address wrongModule =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(otherPM), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
+
+    // Adding to the first PM fails because the module's owner is otherPM
     vm.prank(owner);
     vm.expectRevert(LibManagerErrors.InvalidModuleOwner.selector);
     positionManager.addBorrowModule(wrongModule);

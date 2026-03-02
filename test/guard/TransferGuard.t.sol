@@ -34,8 +34,8 @@ contract TransferGuardTest is Test {
   /*                          CONSTANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  uint256 constant COMPLIANCE_ROLE = 1 << 0;
-  uint256 constant PAUSER_ROLE = 1 << 1;
+  uint256 constant _COMPLIANCE_ROLE = 1 << 0;
+  uint256 constant _PAUSER_ROLE = 1 << 1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -64,8 +64,8 @@ contract TransferGuardTest is Test {
 
     // Grant roles
     vm.startPrank(owner);
-    guard.grantRoles(compliance, COMPLIANCE_ROLE);
-    guard.grantRoles(pauser, PAUSER_ROLE);
+    guard.grantRoles(compliance, _COMPLIANCE_ROLE);
+    guard.grantRoles(pauser, _PAUSER_ROLE);
     vm.stopPrank();
 
     // Label contracts

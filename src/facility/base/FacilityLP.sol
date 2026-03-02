@@ -52,6 +52,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
   ///      The intent must be in depositing phase (not yet resolving or resolved).
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
   function withdraw(uint256 id, address from, address receiver, uint256 amount) external override nonReentrant {
+    LibChecks.checkNotZero(receiver);
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, amount);
 
@@ -71,6 +72,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     nonReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
+    LibChecks.checkNotZero(receiver);
     // check withdrawal params and burn shares
     _withdrawalLpChecks(id, from, shares);
 
