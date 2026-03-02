@@ -9,33 +9,33 @@ import {Order, State} from "../../libs/funds/Order.sol";
 /// @dev Implements a state machine for order lifecycle management:
 ///
 ///      State Machine:
-///      ┌────────────────────────────────────────────────────────────────────────────┐
-///      │                                                                            │
-///      │    ┌───────cancel()────────┐                                               │
-///      │    │                       │                                               │
-///      │    │                       │                                               │
-///      │    │               ┌──> ACCEPTED ──commit()──> PROCESSING────────┐         │
-///      │    ▼               │       ▲                        │            │         │
-///      │  EMPTY ──create()──┤       │                        │            │         │
-///      │    ▲               │       │                        ▼            ▼         │
-///      │    │               └──> PENDING                 UNLOCKING    RECOVERING    │
-///      │    │                       │                        │            │         │
-///      │    │                       │                        │            │         │
-///      │    └────────cancel()───────┘                     unlock()     recover()    │
-///      │                                                     │            │         │
-///      │                                                     │            │         │
-///      │                                                     └──────┐─────┘         │
-///      │                                                            │               │
-///      │                                                            ▼               │
-///      │                                                          ENDED             │
-///      └────────────────────────────────────────────────────────────────────────────┘
+///                ┌───────cancel()────────┐
+///                │                       │
+///                │                       │
+///                │               ┌──> ACCEPTED ──commit()──> PROCESSING────────┐
+///                ▼               │       ▲                        │            │
+///              EMPTY ──create()──┤       │                        │            │
+///                                │       │                        ▼            ▼
+///                                └──> PENDING                 UNLOCKING    RECOVERING
+///                ▲                       │                        │            │
+///                │                       │                        │            │
+///                └────────cancel()───────┘                     unlock()     recover()
+///                                                                │            │
+///                                                                │            │
+///                                                                └──────┐─────┘
+///                                                                       │
+///                                                                       ▼
+///              ENDED ◄──────────────────────────────────────────────────┘
+///                │
+///                └──create()──> ACCEPTED / PENDING (same as from EMPTY)
 ///
 ///      Order Modes:
 ///      - DEPOSIT: asset → share (commit assets, unlock shares)
 ///      - REDEEM:  share → asset (commit shares, unlock assets)
 ///
 ///      Comments:
-///      - create() returns ACCEPTED (ready for commit) or PENDING (e.g. queued/rate-limited/KYC)
+///      - create() is callable from EMPTY or ENDED (both mean no pending order) and
+///        returns ACCEPTED (ready for commit) or PENDING (e.g. queued/rate-limited/KYC)
 ///      - PENDING orders transition to ACCEPTED when ready
 ///      - ACCEPTED and PENDING orders can be canceled back to EMPTY via cancel()
 ///      - ACCEPTED orders go to PROCESSING via commit()
@@ -51,7 +51,8 @@ interface IFund {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Create an Order to commit or withdraw.
-  /// @dev Only callable when state() returns EMPTY.
+  /// @dev Only callable when state() returns EMPTY or ENDED (both indicate no pending order).
+  ///      EMPTY means no order was ever created. ENDED means the previous order completed and will be archived.
   /// @param order The order parameters defining the operation.
   /// @return The new state of the order after creation (ACCEPTED or PENDING).
   function create(Order calldata order) external returns (State);
