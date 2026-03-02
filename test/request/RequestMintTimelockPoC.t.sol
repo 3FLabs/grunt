@@ -100,7 +100,14 @@ contract RequestMintTimelockPoCTest is Test {
     // --- Deploy request with a 24h mint-to-repaid timelock ---
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Yield Request", "YIELD", uint64(type(uint64).max), MINT_TIMELOCK
+      owner,
+      puller,
+      consumer,
+      address(asset),
+      "Yield Request",
+      "YIELD",
+      uint64(block.timestamp + 90 days),
+      MINT_TIMELOCK
     );
 
     // --- Step 1: Legitimate broker deposits 1,000,000 USDC ---
@@ -137,7 +144,7 @@ contract RequestMintTimelockPoCTest is Test {
   function test_poc_setRepaidWorksWithoutMinting() public {
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "No Mint", "NM", uint64(type(uint64).max), MINT_TIMELOCK
+      owner, puller, consumer, address(asset), "No Mint", "NM", uint64(block.timestamp + 90 days), MINT_TIMELOCK
     );
 
     vm.prank(owner);
@@ -147,7 +154,7 @@ contract RequestMintTimelockPoCTest is Test {
 
   /// @notice Verifies that deadline-based auto-repay is NOT affected by the mint timelock.
   function test_poc_deadlineAutoRepayNotAffected() public {
-    uint64 deadline = uint64(block.timestamp + 1 days);
+    uint64 deadline = uint64(block.timestamp + 1 days + 1);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline", "DL", deadline, MINT_TIMELOCK);
@@ -174,7 +181,7 @@ contract RequestMintTimelockPoCTest is Test {
   function test_poc_mintFlowAlsoTriggersTimelock() public {
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Mint Flow", "MF", uint64(type(uint64).max), MINT_TIMELOCK
+      owner, puller, consumer, address(asset), "Mint Flow", "MF", uint64(block.timestamp + 90 days), MINT_TIMELOCK
     );
 
     // Authorize and mint

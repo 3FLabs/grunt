@@ -34,7 +34,7 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerRebalancing
-  /// @dev Reverts with {LibManagerErrors.Paused} if the contract is paused.
+  /// @dev Reverts with {LibCommonErrors.Paused} if the contract is paused.
   ///      Reverts with {LibManagerErrors.RebalanceLossExceedsMax} if total assets decrease exceeds maxRebalanceLoss.
   ///      Protected by nonReentrant to prevent malicious modules from manipulating
   ///      guard state (pause/unpause) mid-transaction via callbacks.

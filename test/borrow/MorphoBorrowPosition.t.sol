@@ -2317,4 +2317,420 @@ contract MorphoBorrowPositionTest is Test {
 
     assertLe(freeCollat, theoreticalFree + 1, "Available collateral should be conservatively rounded");
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              PRE-LIQUIDATION HEALTH CHECK TESTS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  // ── Helpers ────────────────────────────────────────────────────
+
+  /// @dev Sets up an unhealthy position by supplying collateral, borrowing, and dropping the price.
+  ///      Returns (collateralAmount, borrowAmount, borrowShares).
+  function _setupUnhealthyPosition(uint256 priceDrop)
+    internal
+    returns (uint256 collateralAmount, uint256 borrowAmount)
+  {
+    collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow near safe LTV
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    borrowAmount = (maxBorrow * 99) / 100;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    // Drop price to make position unhealthy at liquidation LTV
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * priceDrop) / 100);
+    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be unhealthy at liquidation LTV");
+  }
+
+  /// @dev Sets up a liquidator with loan tokens and approval
+  function _setupLiquidator(address liquidator, uint256 amount) internal {
+    loanToken.setBalance(liquidator, amount);
+    vm.prank(liquidator);
+    loanToken.approve(address(borrowPosition), type(uint256).max);
+  }
+
+  // ── Repaid Shares Can Exceed Borrow Shares ──
+
+  /// @notice Seizing all collateral with rounding-up shares would previously cause
+  ///         repaidShares > borrowShares and revert in Morpho.
+  ///         After fix, repaidShares is capped at borrowShares.
+  function test_preLiquidate_SeizeAllCollateral_SharesCapped() public {
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    // Seize ALL collateral — mulDivUp can round repaidShares above borrowShares
+    // mulDivUp(borrowShares, collateral) with seizedAssets == collateral can round up beyond borrowShares
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), collateralAmount, 0, "");
+
+    assertEq(seized, collateralAmount, "Should seize all collateral");
+    assertGt(repaid, 0, "Should repay some debt");
+
+    // Position should have 0 collateral and 0 debt after full liquidation
+    assertEq(borrowPosition.totalCollateral(), 0, "No collateral should remain");
+    assertEq(borrowPosition.totalBorrowed(), 0, "No debt should remain");
+  }
+
+  /// @notice Tests that seizing collateral with a tiny remainder works after a prior partial liquidation.
+  ///         This covers the "exactly the right amount" edge case.
+  function test_preLiquidate_SeizeRemainingCollateralAfterPartialLiquidation() public {
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    // First partial liquidation: seize most but not all collateral
+    uint256 firstSeize = collateralAmount - 1; // leave 1 wei of collateral
+    vm.prank(liquidator);
+    borrowPosition.preLiquidate(address(borrowPosition), firstSeize, 0, "");
+
+    uint256 remainingCollateral = borrowPosition.totalCollateral();
+    assertEq(remainingCollateral, 1, "Should have 1 wei collateral left");
+
+    uint256 remainingDebt = borrowPosition.totalBorrowed();
+
+    // If there's still debt, another liquidation should work (or position should be healthy now)
+    if (remainingDebt > 0 && !borrowPosition.isHealthy(LIQUIDATION_LTV)) {
+      vm.prank(liquidator);
+      borrowPosition.preLiquidate(address(borrowPosition), remainingCollateral, 0, "");
+      assertEq(borrowPosition.totalCollateral(), 0, "No collateral after final liquidation");
+    }
+  }
+
+  // ── Partial Liquidations Fail Health Check ──
+
+  /// @notice When LTV > Morpho LLTV, proportional partial
+  ///         liquidation would fail Morpho's health check. After fix, the function repays
+  ///         enough debt to make the position healthy on Morpho.
+  function test_preLiquidate_PartialSeize_AboveLLTV_RepaysExtraDebt() public {
+    // Drop price enough so the position is above Morpho's 80% LLTV
+    // With 65% safe LTV, borrowing 99% of max, and 75% price: LTV ≈ 65*99/75 ≈ 85.8% > 80% LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+    uint256 seizeTarget = collateralAmount / 4; // seize 25% of collateral
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize requested collateral");
+    assertGt(repaid, 0, "Should repay debt");
+
+    // Key assertion: more debt is repaid than proportional
+    // Proportional repaid would be ≈ 25% of total debt
+    uint256 proportionalRepaid = borrowedBefore / 4;
+    assertGe(repaid, proportionalRepaid, "Should repay at least proportional debt");
+
+    // Position should now be healthy on Morpho after collateral withdrawal
+    // (the test would have reverted otherwise, but let's verify explicitly)
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be healthy on Morpho after partial liquidation");
+  }
+
+  /// @notice When LTV > LLTV and liquidator specifies repaidShares, seized collateral should
+  ///         be capped to what Morpho's health check allows (less than proportional).
+  function test_preLiquidate_PartialRepay_AboveLLTV_SeizesLessCollateral() public {
+    // Position above Morpho LLTV
+    _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 sharesToRepay = pos.borrowShares / 4; // repay 25% of shares
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    assertGt(repaid, 0, "Should repay debt");
+    assertGt(seized, 0, "Should seize some collateral");
+
+    // Key assertion: seized should be ≤ proportional (25% of collateral)
+    uint256 proportionalSeized = collateralBefore / 4;
+    assertLe(seized, proportionalSeized, "Should seize at most proportional collateral");
+
+    // Position should be healthy on Morpho after the operation
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be healthy on Morpho after partial repay");
+  }
+
+  /// @notice When LTV is between liquidationLtv and LLTV, proportional liquidation should work normally.
+  function test_preLiquidate_BetweenLtvs_ProportionalWorks() public {
+    // 85% price: LTV ≈ 65*99/85 ≈ 75.6%, which is > 72% liquidationLtv but < 80% LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be below Morpho LLTV");
+    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be above liquidation LTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    // Seize 50% of collateral
+    uint256 seizeTarget = collateralBefore / 2;
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize target collateral");
+    assertGt(repaid, 0, "Should repay debt");
+
+    // Between the LTVs, proportional liquidation is sufficient for Morpho
+    assertEq(collateralBefore - seized, borrowPosition.totalCollateral(), "Collateral reduced correctly");
+  }
+
+  /// @notice Partial liquidation of a very small amount when above LLTV: the liquidator
+  ///         must repay significantly more debt than proportional to restore health.
+  function test_preLiquidate_SmallSeize_AboveLLTV_RepaysDisproportionateDebt() public {
+    _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowedBefore * 2);
+
+    // Seize only 1% of collateral — a very small partial liquidation
+    uint256 seizeTarget = collateralBefore / 100;
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize 1% of collateral");
+
+    // The repaid amount should be much more than proportional (1% of debt)
+    // because the liquidator must bring the position back to healthy on Morpho
+    uint256 proportionalRepaid = borrowedBefore / 100;
+    assertGt(repaid, proportionalRepaid, "Repaid should exceed proportional for small seize above LLTV");
+  }
+
+  /// @notice Full liquidation still works when deeply underwater (LTV >> LLTV).
+  function test_preLiquidate_FullLiquidation_DeeplyUnderwater() public {
+    // 50% price drop: LTV ≈ 65*99/50 ≈ 128.7%, deeply above LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(50);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be deeply underwater");
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), collateralAmount, 0, "");
+
+    assertEq(seized, collateralAmount, "Should seize all collateral");
+    assertGt(repaid, 0, "Should repay debt");
+    assertEq(borrowPosition.totalCollateral(), 0, "No collateral should remain");
+  }
+
+  /// @notice Repaying all shares should seize all collateral regardless of LTV.
+  function test_preLiquidate_RepayAllShares_SeizesAllCollateral() public {
+    _setupUnhealthyPosition(75);
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 allShares = pos.borrowShares;
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, allShares, "");
+
+    assertEq(seized, collateralBefore, "Should seize all collateral when repaying all shares");
+    assertGt(repaid, 0, "Should repay all debt");
+    assertEq(borrowPosition.totalCollateral(), 0, "No collateral after full repay");
+    assertEq(borrowPosition.totalBorrowed(), 0, "No debt after full repay");
+  }
+
+  /// @notice When position is exactly at LLTV boundary, partial liquidation should still work.
+  function test_preLiquidate_ExactlyAtLLTV() public {
+    // Setup position that's unhealthy at liquidationLtv but approximately at LLTV
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow near safe LTV
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 borrowAmount = (maxBorrow * 99) / 100;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    // Drop price so LTV ≈ LLTV (80%). With 65% LTV at 99%, we need price factor of ~65*99/80 ≈ 80.4%
+    // Use 80% to get LTV slightly above LLTV
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * 80) / 100);
+    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be unhealthy at liquidation LTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    // Partial seize should work
+    uint256 seizeTarget = collateralBefore / 2;
+    vm.prank(liquidator);
+    (uint256 seized,) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize target collateral near LLTV boundary");
+  }
+
+  /// @notice Successive partial liquidations should work, each reducing the position.
+  function test_preLiquidate_SuccessivePartialLiquidations() public {
+    _setupUnhealthyPosition(75);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    uint256 totalSeized;
+    uint256 totalRepaid;
+
+    // Perform 3 successive partial liquidations
+    for (uint256 i = 0; i < 3; i++) {
+      if (borrowPosition.isHealthy(LIQUIDATION_LTV)) break;
+
+      uint256 currentCollateral = borrowPosition.totalCollateral();
+      if (currentCollateral == 0) break;
+
+      uint256 seizeTarget = currentCollateral / 3;
+      if (seizeTarget == 0) break;
+
+      vm.prank(liquidator);
+      (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+      totalSeized += seized;
+      totalRepaid += repaid;
+
+      assertEq(seized, seizeTarget, "Should seize target in each iteration");
+      assertGt(repaid, 0, "Should repay in each iteration");
+    }
+
+    assertGt(totalSeized, 0, "Total seized should be non-zero");
+    assertGt(totalRepaid, 0, "Total repaid should be non-zero");
+  }
+
+  /// @notice With callback and above LLTV, the adjusted amounts are passed correctly.
+  function test_preLiquidate_WithCallback_AboveLLTV() public {
+    _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    MockPreLiquidationCallback mockLiquidator = new MockPreLiquidationCallback(address(loanToken));
+    loanToken.setBalance(address(mockLiquidator), borrowPosition.totalBorrowed() * 2);
+
+    uint256 seizeTarget = borrowPosition.totalCollateral() / 4;
+    vm.prank(address(mockLiquidator));
+    (uint256 seized, uint256 repaid) =
+      borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, abi.encode("test"));
+
+    assertEq(seized, seizeTarget, "Should seize target with callback");
+    assertGt(repaid, 0, "Should repay debt with callback");
+    assertTrue(mockLiquidator.callbackReceived(), "Callback should be called");
+  }
+
+  /// @notice repaidShares mode: repaying half the shares when between LTVs gives proportional collateral.
+  function test_preLiquidate_ByRepayingShares_BetweenLtvs_Proportional() public {
+    // 85% price: LTV between liquidationLtv and LLTV
+    _setupUnhealthyPosition(85);
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be below Morpho LLTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 halfShares = pos.borrowShares / 2;
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized,) = borrowPosition.preLiquidate(address(borrowPosition), 0, halfShares, "");
+
+    // Between LTVs, seized should be proportional: halfShares * collateral / borrowShares
+    uint256 expectedSeized = uint256(halfShares) * collateralBefore / uint256(pos.borrowShares);
+    assertEq(seized, expectedSeized, "Should seize proportional collateral between LTVs");
+  }
+
+  /// @notice Fuzz test: seizedAssets mode works for various price drops and seize fractions.
+  function testFuzz_preLiquidate_BySeizingCollateral(uint256 pricePct, uint256 seizeFraction) public {
+    // Price between 50% and 84% (position must be unhealthy at liquidation LTV 72%)
+    pricePct = bound(pricePct, 50, 84);
+    // Seize between 1% and 100% of collateral
+    seizeFraction = bound(seizeFraction, 1, 100);
+
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(pricePct);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    uint256 seizeTarget = (collateralAmount * seizeFraction) / 100;
+    if (seizeTarget == 0) seizeTarget = 1;
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize target amount");
+    assertGt(repaid, 0, "Should repay some debt");
+    assertEq(borrowPosition.totalCollateral(), collateralAmount - seized, "Collateral properly reduced");
+  }
+
+  /// @notice Fuzz test: repaidShares mode works for various price drops and repay fractions.
+  function testFuzz_preLiquidate_ByRepayingShares(uint256 pricePct, uint256 repayFraction) public {
+    // Price between 50% and 84% (position must be unhealthy at liquidation LTV 72%)
+    pricePct = bound(pricePct, 50, 84);
+    // Repay between 1% and 100% of shares
+    repayFraction = bound(repayFraction, 1, 100);
+
+    _setupUnhealthyPosition(pricePct);
+
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 sharesToRepay = (uint256(pos.borrowShares) * repayFraction) / 100;
+    if (sharesToRepay == 0) sharesToRepay = 1;
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    // When deeply underwater, seized may be 0 if no collateral can be freed
+    assertLe(seized, collateralBefore, "Seized should not exceed collateral");
+    assertGt(repaid, 0, "Should repay some debt");
+  }
+
+  /// @notice When deeply underwater, repaying a tiny fraction of debt cannot free any collateral.
+  ///         The liquidator repays debt but receives 0 collateral. This exercises the
+  ///         seizedAssets == 0 path in onMorphoRepay (skips withdrawCollateral).
+  function test_preLiquidate_ZeroSeizedAssets_DeeplyUnderwater() public {
+    // 30% price: LTV ≈ 65*99/30 ≈ 214%, massively above 80% LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(30);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be deeply underwater");
+
+    // Repay just 1 share — tiny fraction of debt
+    uint256 sharesToRepay = 1;
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    // With such extreme underwater position and tiny repayment, no collateral can be freed
+    assertEq(seized, 0, "Should seize 0 collateral when deeply underwater with tiny repay");
+    assertGt(repaid, 0, "Should still repay some debt");
+    assertEq(borrowPosition.totalCollateral(), collateralAmount, "Collateral should be unchanged");
+  }
 }

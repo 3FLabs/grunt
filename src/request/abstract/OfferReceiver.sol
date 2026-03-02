@@ -124,7 +124,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @param signature The cryptographic signature (EIP-712 or EIP-1271)
   /// @custom:reverts AddressZero if maker is zero address
   /// @custom:reverts AmountZero if amount or expectedReturn is zero
-  /// @custom:reverts OfferExpired if block.timestamp >= offer.expiration
+  /// @custom:reverts OfferExpired if block.timestamp > offer.expiration
   /// @custom:reverts InvalidNonce if offer.nonce <= stored nonce for maker
   /// @custom:reverts InvalidSignature if signature verification fails
   function _validateOffer(Offer calldata offer, bytes calldata signature) internal {
@@ -134,7 +134,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
     offer.expectedReturn.checkNotZero();
 
     // Check offer has not expired
-    if (offer.expiration <= block.timestamp) revert LibRequestErrors.OfferExpired();
+    if (offer.expiration < block.timestamp) revert LibRequestErrors.OfferExpired();
 
     // Ensure offer nonce is fresh (greater than stored nonce)
     if (nonce(offer.maker) >= offer.nonce) revert LibRequestErrors.InvalidNonce();
