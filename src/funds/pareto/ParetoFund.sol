@@ -57,7 +57,6 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @param currentOrderId The order ID of the current (or most recent) order.
   /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
-  /// @param resolvedInput The resolved input amount (if hasResolvedAmounts is true).
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct ParetoFundStorage {
@@ -69,7 +68,6 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     bytes32 currentOrderId;
     State internalState;
     bool hasResolvedAmounts;
-    uint256 resolvedInput;
     uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
@@ -154,7 +152,6 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
     $.hasResolvedAmounts = false;
-    $.resolvedInput = 0;
     $.resolvedOutput = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
@@ -277,7 +274,6 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     }
 
     $.hasResolvedAmounts = true;
-    $.resolvedInput = input;
     $.resolvedOutput = output;
 
     order.input = input;
@@ -307,7 +303,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev Converts total wrapped share supply to assets using the CDO's virtual price.
-  ///      virtualPrice is 18 decimals, wrappedShare totalSupply is 18 decimals (AA tranche),
+  ///      virtualPrice is in underlying token decimals (6 for USDC), wrappedShare totalSupply is 18 decimals (AA tranche),
   ///      result is in underlying (USDC, 6 decimals): totalSupply * virtualPrice / 1e18.
   function totalAssets() external view override returns (uint256) {
     ParetoFundStorage storage $ = _paretoFundStorage();
