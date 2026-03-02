@@ -29,62 +29,7 @@ import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
-import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
-
-/// @notice ERC20 with a transfer callback that tries to call Facility.intentBalances during transfer.
-contract CallbackToken is ERC20 {
-  address public callTarget;
-  uint256 public callIntentId;
-  bool public attackEnabled;
-  bool public callbackTriggered;
-  bool public callbackReverted;
-
-  function name() public pure override returns (string memory) {
-    return "Callback Token";
-  }
-
-  function symbol() public pure override returns (string memory) {
-    return "CBT";
-  }
-
-  function mint(address to, uint256 amount) external {
-    _mint(to, amount);
-  }
-
-  function setBalance(address account, uint256 amount) public {
-    uint256 current = balanceOf(account);
-    if (amount > current) _mint(account, amount - current);
-    else if (amount < current) _burn(account, current - amount);
-  }
-
-  function enableAttack(address facility_, uint256 intentId_) external {
-    callTarget = facility_;
-    callIntentId = intentId_;
-    attackEnabled = true;
-  }
-
-  function disableAttack() external {
-    attackEnabled = false;
-  }
-
-  /// @dev Solady ERC20 has _afterTokenTransfer hook (from, to, amount)
-  function _afterTokenTransfer(address, address to, uint256) internal override {
-    if (!attackEnabled) return;
-    if (to == address(0) || to == callTarget) return;
-
-    callbackTriggered = true;
-    try Facility(callTarget).intentBalances(callIntentId) {
-      callbackReverted = false;
-    } catch {
-      callbackReverted = true;
-    }
-  }
-
-  function offchainRedeem(uint256) external pure {
-    // No-op for compatibility
-  }
-}
+import {CallbackToken} from "test/mock/facility/CallbackToken.sol";
 
 /// @title FacilityReentrancyTest
 /// @notice Tests for read-only reentrancy protection and CEI ordering in FacilityLP.
