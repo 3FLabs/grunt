@@ -157,9 +157,8 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
     // Slippage guard: reject if expected output deviates too far below the current rate.
     uint256 _virtualPrice = IIdleCDOEpochVariant($.vault).virtualPrice($.aaTranche);
-    uint256 _expectedOutput = order.mode == Mode.DEPOSIT
-      ? order.input * 1e18 / _virtualPrice
-      : order.input.mulDiv(_virtualPrice, 1e18);
+    uint256 _expectedOutput =
+      order.mode == Mode.DEPOSIT ? order.input * 1e18 / _virtualPrice : order.input.mulDiv(_virtualPrice, 1e18);
 
     if (order.output < _expectedOutput) {
       if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
