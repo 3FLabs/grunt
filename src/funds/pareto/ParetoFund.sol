@@ -58,6 +58,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
+  /// @param depositReceived The actual AA tranche tokens received during commit() for a DEPOSIT order.
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct ParetoFundStorage {
     address vault;
@@ -69,6 +70,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     State internalState;
     bool hasResolvedAmounts;
     uint256 resolvedOutput;
+    uint256 depositReceived;
     mapping(bytes32 => bool) endedOrders;
   }
 
@@ -153,6 +155,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     $.internalState = State.ACCEPTED;
     $.hasResolvedAmounts = false;
     $.resolvedOutput = 0;
+    $.depositReceived = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -193,19 +196,20 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     if (!IIdleCDOEpochVariant(_vault).isWalletAllowed(address(this))) {
       revert LibFundsErrors.NotAllowedByFund();
     }
-
+    address _aaTranche = $.aaTranche;
     if (order.mode == Mode.DEPOSIT) {
       // Pull underlying asset from depositor, approve to vault, deposit into AA tranche
       address _asset = $.asset;
       _asset.safeTransferFrom(msg.sender, address(this), order.input);
       _asset.safeApproveWithRetry(_vault, order.input);
-      IIdleCDOEpochVariant(_vault).depositAA(order.input);
+      uint256 _before = IERC20(_aaTranche).balanceOf(address(this));
+      IIdleCDOEpochVariant(_vault).depositAA(order.input); // sync
+      $.depositReceived = IERC20(_aaTranche).balanceOf(address(this)) - _before;
       _asset.safeApproveWithRetry(_vault, 0);
     } else {
       // Burn wrapped AA from depositor (unwraps to AA tranche tokens held by this contract)
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
       // Request epoch-gated withdrawal: CDO burns AA tokens, strategy tracks the request
-      address _aaTranche = $.aaTranche;
       _aaTranche.safeApproveWithRetry(_vault, order.input);
       IIdleCDOEpochVariant(_vault).requestWithdraw(order.input, _aaTranche);
       _aaTranche.safeApproveWithRetry(_vault, 0);
@@ -233,9 +237,11 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
       // Wrap AA tranche tokens into WrappedAsset and send to receiver
       address _aaTranche = $.aaTranche;
       address _wrappedShare = $.wrappedShare;
-      _aaTranche.safeApproveWithRetry(_wrappedShare, _amount);
-      IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
+      uint256 _received = $.depositReceived;
+      _aaTranche.safeApproveWithRetry(_wrappedShare, _received);
+      IWrappedAsset(_wrappedShare).mint(order.receiver, _received);
       _aaTranche.safeApproveWithRetry(_wrappedShare, 0);
+      _amount = _received;
     } else {
       // Claim withdrawal from CDO (underlying asset arrives in this contract) and send to receiver
       address _asset = $.asset;
@@ -353,7 +359,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   ///      Queries the CDO and strategy to determine state transitions.
   ///
   ///      For PROCESSING + DEPOSIT:
-  ///      - Checks `aaTranche.balanceOf(this) >= order.output` → UNLOCKING with balance
+  ///      - Checks `depositReceived >= order.output` → UNLOCKING with depositReceived
   ///
   ///      For PROCESSING + REDEEM:
   ///      - Checks strategy has pending withdrawal AND epoch has ended → UNLOCKING
@@ -368,8 +374,8 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     if (_internalState == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
         uint256 _expectedOutput = $.hasResolvedAmounts ? $.resolvedOutput : order.output;
-        uint256 _balance = IERC20($.aaTranche).balanceOf(address(this));
-        return _balance >= _expectedOutput ? (State.UNLOCKING, _balance) : (State.PROCESSING, 0);
+        uint256 _received = $.depositReceived;
+        return _received >= _expectedOutput ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
       } else {
         address _strategy = $.strategy;
         uint256 _withdrawAmount = IIdleCreditVault(_strategy).withdrawsRequests(address(this));

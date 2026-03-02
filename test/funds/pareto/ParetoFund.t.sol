@@ -468,12 +468,18 @@ contract ParetoFundTest is Test {
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
     fund.unlock(order);
 
+    // Complete the first order to reach ENDED state
     _commitDeposit(order);
-    // Clear AA tranche balance to keep PROCESSING (output not met)
-    aaTranche.burn(address(fund), aaTranche.balanceOf(address(fund)));
-    // PROCESSING, not UNLOCKING
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
+
+    // Create a new order where expected output exceeds what depositAA will mint
+    // depositAA(ONE_USDC) mints ONE_AA tokens, so setting output to ONE_AA + 1 keeps state PROCESSING
+    Order memory highOutputOrder = _depositOrder(ONE_USDC, ONE_AA + 1);
+    fund.create(highOutputOrder);
+    _commitDeposit(highOutputOrder);
+    // PROCESSING, not UNLOCKING (depositReceived < expectedOutput)
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(highOutputOrder);
   }
 
   function test_Unlock_OnlyDepositorRole() public {
