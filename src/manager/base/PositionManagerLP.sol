@@ -176,11 +176,12 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       // Assets increased: mint shares to caller
       uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
       uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, false);
-      if (sharesToMint == 0) revert LibManagerErrors.ZeroShares();
-      _mint(msg.sender, sharesToMint);
-      // Safe: sharesToMint is capped by total supply which fits in uint128
-      // forge-lint: disable-next-line(unsafe-typecast)
-      sharesDelta = int256(sharesToMint);
+      if (sharesToMint > 0) {
+        _mint(msg.sender, sharesToMint);
+        // Safe: sharesToMint is capped by total supply which fits in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
+        sharesDelta = int256(sharesToMint);
+      }
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
@@ -197,6 +198,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
         revert CommonErrors.Paused();
       }
     }
+    // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
 
     // Update snapshot for performance fees
     _storage.updateSnapshot();
