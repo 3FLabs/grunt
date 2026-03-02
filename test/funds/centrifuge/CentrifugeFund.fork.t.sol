@@ -235,7 +235,7 @@ contract CentrifugeFundForkTest is Test {
       salt: keccak256("fork-no-perm")
     });
 
-    vm.expectRevert(LibFundsErrors.NotAllowedToOperateWithVault.selector);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
     fund2.create(order);
   }
 
