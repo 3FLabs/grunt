@@ -262,7 +262,8 @@ library LibIntent {
   }
 
   /// @notice Transfers tokens from the intent to a recipient and updates accounting.
-  /// @dev Performs a safe transfer and then records the transfer in intent accounting.
+  /// @dev Updates intent accounting before performing the transfer (checks-effects-interactions)
+  ///      to prevent read-only reentrancy via token callbacks observing inconsistent state.
   ///      Emits TokenSent on success.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
@@ -270,8 +271,8 @@ library LibIntent {
   /// @param to The recipient address.
   /// @param amount The amount to transfer.
   function transferTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
-    token.safeTransfer(to, amount);
     _transferredTokenTo(_self, id, token, to, amount);
+    token.safeTransfer(to, amount);
   }
 
   /// @notice Records that tokens were received by the intent without performing the transfer.

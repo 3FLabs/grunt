@@ -915,12 +915,12 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.deposit(invalidId, 1000e18);
 
-    // withdraw and claim check balance first (via ERC6909 balanceOf which returns 0),
-    // so they revert with InsufficientBalance before checking intent existence
-    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
+    // withdraw and claim now revert with IntentNotFound because _burn's _beforeTokenTransfer
+    // validates the intent before checking balance
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.withdraw(invalidId, user, user, 1000e18);
 
-    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.claim(invalidId, user, user, 1000e18);
 
     vm.stopPrank();

@@ -110,9 +110,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     LibChecks.checkNotZero(amount);
     // check operator if from is not msg.sender
     if (from != msg.sender && !isOperator(from, msg.sender)) revert InsufficientPermission();
-    // check if the user has enough balance
-    if (balanceOf(from, id) < amount) revert InsufficientBalance();
-    // burn the shares
+    // burn the shares (reverts with InsufficientBalance if balance < amount)
     _burn(from, id, amount);
   }
 }

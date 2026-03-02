@@ -94,6 +94,7 @@ contract Facility is
     external
     view
     override
+    nonReadReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
