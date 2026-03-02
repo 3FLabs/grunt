@@ -96,6 +96,8 @@ interface IUSCCFund is IFund {
   ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
   ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
   /// @param orderId The order ID that must match the current order being processed.
+  ///        Required to prevent a stale pending transaction from targeting the wrong order if
+  ///        the current order completes and a new one enters PROCESSING before it is mined.
   function recovering(bytes32 orderId) external;
 
   /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
@@ -103,6 +105,8 @@ interface IUSCCFund is IFund {
   ///      Use this if recovering() was called by mistake and Superstate delivered the output tokens.
   ///      Once back to PROCESSING, the state() function will check for output tokens normally.
   /// @param orderId The order ID that must match the current order in RECOVERING state.
+  ///        Required to prevent a stale pending transaction from targeting the wrong order if
+  ///        the current order completes and a new one enters RECOVERING before it is mined.
   function cancelRecovering(bytes32 orderId) external;
 
   /// @notice Sets the oracle address.
