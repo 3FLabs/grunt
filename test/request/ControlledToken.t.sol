@@ -67,7 +67,6 @@ contract ControlledTokenTest is Test {
   ) public {
     vm.assume(from != address(0));
     vm.assume(to != address(0));
-    vm.assume(from != to);
 
     tokenController.mint(from, ptMint, ytMint);
 
@@ -85,11 +84,15 @@ contract ControlledTokenTest is Test {
     assertEq(result, success);
 
     if (success) {
-      assertEq(ptToken.balanceOf(from), ptMint - ptTransfer);
-      assertEq(ptToken.balanceOf(to), ptTransfer);
+      if (from == to) {
+        assertEq(ptToken.balanceOf(from), ptMint);
+      } else {
+        assertEq(ptToken.balanceOf(from), ptMint - ptTransfer);
+        assertEq(ptToken.balanceOf(to), ptTransfer);
+      }
     } else {
       assertEq(ptToken.balanceOf(from), ptMint);
-      assertEq(ptToken.balanceOf(to), 0);
+      if (from != to) assertEq(ptToken.balanceOf(to), 0);
       success = true;
     }
 
@@ -105,11 +108,15 @@ contract ControlledTokenTest is Test {
     assertEq(result, success);
 
     if (success) {
-      assertEq(ytToken.balanceOf(from), ytMint - ytTransfer);
-      assertEq(ytToken.balanceOf(to), ytTransfer);
+      if (from == to) {
+        assertEq(ytToken.balanceOf(from), ytMint);
+      } else {
+        assertEq(ytToken.balanceOf(from), ytMint - ytTransfer);
+        assertEq(ytToken.balanceOf(to), ytTransfer);
+      }
     } else {
       assertEq(ytToken.balanceOf(from), ytMint);
-      assertEq(ytToken.balanceOf(to), 0);
+      if (from != to) assertEq(ytToken.balanceOf(to), 0);
     }
   }
 
@@ -394,9 +401,20 @@ contract ControlledTokenTest is Test {
 
     tokenController.mint(owner, 100 ether, 200 ether);
 
+    // Self-transfers are allowed per ERC-20 standard (no-op for balances)
     vm.prank(owner);
-    vm.expectRevert(LibRequestErrors.TransferToSelf.selector);
-    ptToken.transfer(owner, 50 ether);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Transfer(owner, owner, 50 ether);
+    bool result = ptToken.transfer(owner, 50 ether);
+    assertTrue(result);
+    assertEq(ptToken.balanceOf(owner), 100 ether);
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Transfer(owner, owner, 75 ether);
+    result = ytToken.transfer(owner, 75 ether);
+    assertTrue(result);
+    assertEq(ytToken.balanceOf(owner), 200 ether);
   }
 
   function test_transferToZeroAddress() public {
