@@ -42,8 +42,8 @@ struct TokenConfig {
 ///
 ///      **Roles:**
 ///      - Owner: Full control (set token config, manage roles)
-///      - COMPLIANCE_ROLE: Manage address statuses
-///      - PAUSER_ROLE: Pause/unpause tokens
+///      - _COMPLIANCE_ROLE: Manage address statuses
+///      - _PAUSER_ROLE: Pause/unpause tokens
 contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   using LibPause for uint40;
   using FixedPointMathLib for bool;
@@ -53,10 +53,10 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Role for managing address statuses.
-  uint256 public constant COMPLIANCE_ROLE = _ROLE_0;
+  uint256 internal constant _COMPLIANCE_ROLE = _ROLE_0;
 
   /// @dev Role for pausing/unpausing tokens.
-  uint256 public constant PAUSER_ROLE = _ROLE_1;
+  uint256 internal constant _PAUSER_ROLE = _ROLE_1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    ERC-7201 STORAGE                        */
@@ -188,7 +188,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Sets the status of an address.
   /// @param account The address to update
   /// @param status The new status
-  function setAddressStatus(address account, AddressStatus status) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
+  function setAddressStatus(address account, AddressStatus status) external onlyOwnerOrRoles(_COMPLIANCE_ROLE) {
     _storage().addressStatus[account] = status;
     emit AddressStatusSet(account, status);
   }
@@ -198,7 +198,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @param status The new status for all addresses
   function setAddressStatusBatch(address[] calldata accounts, AddressStatus status)
     external
-    onlyOwnerOrRoles(COMPLIANCE_ROLE)
+    onlyOwnerOrRoles(_COMPLIANCE_ROLE)
   {
     TransferGuardStorage storage $ = _storage();
     for (uint256 i = 0; i < accounts.length; ++i) {
@@ -213,7 +213,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @notice Pauses all transfers for a token indefinitely.
   /// @param token The token to pause
-  function pause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
+  function pause(address token) external onlyOwnerOrRoles(_PAUSER_ROLE) {
     _storage().tokenConfig[token].pausedUntil = LibPause.PERMANENT_PAUSE;
     emit TokenPausedSet(token, LibPause.PERMANENT_PAUSE);
   }
@@ -221,7 +221,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Pauses all transfers for a token for a specified duration.
   /// @param token The token to pause
   /// @param duration The duration to pause for (in seconds)
-  function pauseFor(address token, uint256 duration) external onlyOwnerOrRoles(PAUSER_ROLE) {
+  function pauseFor(address token, uint256 duration) external onlyOwnerOrRoles(_PAUSER_ROLE) {
     uint40 pauseUntil = LibPause.pauseFor(duration);
     _storage().tokenConfig[token].pausedUntil = pauseUntil;
     emit TokenPausedSet(token, pauseUntil);
@@ -229,7 +229,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @notice Unpauses transfers for a token.
   /// @param token The token to unpause
-  function unpause(address token) external onlyOwnerOrRoles(PAUSER_ROLE) {
+  function unpause(address token) external onlyOwnerOrRoles(_PAUSER_ROLE) {
     _storage().tokenConfig[token].pausedUntil = LibPause.NOT_PAUSED;
     emit TokenPausedSet(token, LibPause.NOT_PAUSED);
   }

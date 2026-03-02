@@ -25,6 +25,9 @@ contract USCCFundFactoryTest is Test {
   MockAllowlist public allowlist;
   MockChainlinkOracle public oracle;
 
+  // USCCFund roles (matching internal constants)
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
+
   address public owner;
   address public depositor;
   address public recipient;
@@ -83,7 +86,7 @@ contract USCCFundFactoryTest is Test {
   function test_Factory_ConfiguresRoles() public {
     address fundAddress = factory.createFund(owner, depositor, recipient, address(oracle));
     USCCFund fund = USCCFund(fundAddress);
-    assertEq(fund.rolesOf(depositor), fund.DEPOSITOR_ROLE(), "depositor");
+    assertEq(fund.rolesOf(depositor), DEPOSITOR_ROLE, "depositor");
   }
 
   function test_Factory_MultipleDeployments() public {
