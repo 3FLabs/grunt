@@ -5,7 +5,7 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {IMorpho, Id, MarketParams, Position} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
 import {MorphoBalancesLib} from "../libs/borrow/MorphoBalancesLib.sol";
@@ -243,6 +243,21 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      This ensures liquidators can always seize their proportional share of collateral, and the liquidation
   ///      bonus scales with how underwater the position is. At the liquidation LTV threshold, the bonus approaches 1 - liquidation LTV.
   ///
+  ///      **Morpho Health Check Adjustment:**
+  ///      When the position's LTV exceeds the Morpho market LLTV, purely proportional liquidation would fail
+  ///      Morpho's internal health check (since removing the same fraction of debt and collateral preserves
+  ///      the LTV). To handle this:
+  ///      - **seizedAssets mode:** The liquidator specifies the collateral to seize. The function computes the
+  ///        minimum debt repayment required to bring the position back to a healthy state on the underlying
+  ///        Morpho market after collateral withdrawal (at least proportional, but potentially more).
+  ///      - **repaidShares mode:** The liquidator specifies the debt to repay. The function computes the
+  ///        maximum collateral that can be seized while keeping the position healthy on Morpho after
+  ///        the withdrawal (at most proportional, but potentially less).
+  ///
+  ///      This means that for small partial liquidations of deeply unhealthy positions, more debt may be
+  ///      repaid than the proportional collateral seized, since the primary goal is to restore the position's
+  ///      health on the underlying Morpho market.
+  ///
   ///      The liquidation uses a callback pattern: Morpho calls `onMorphoRepay` which withdraws collateral
   ///      to the liquidator, optionally calls the liquidator's callback, then pulls loan tokens from the liquidator.
   ///
@@ -278,10 +293,12 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     {
       Position memory position = _storage.morpho.position(_storage.marketId, borrower);
+      Market memory market = _storage.morpho.market(_storage.marketId);
+
       if (seizedAssets > 0) {
-        repaidShares = seizedAssets.mulDivUp(position.borrowShares, position.collateral);
+        repaidShares = _computeRepaidShares(position, market, _storage.marketParams, seizedAssets);
       } else {
-        seizedAssets = repaidShares.mulDiv(position.collateral, position.borrowShares);
+        seizedAssets = _computeSeizedAssets(position, market, _storage.marketParams, repaidShares);
       }
     }
 
@@ -292,6 +309,72 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     }
 
     return (seizedAssets, repaidAssets);
+  }
+
+  /// @dev Computes the repaid shares when the liquidator specifies the collateral to seize.
+  ///      Returns the greater of the proportional amount and the minimum amount required
+  ///      for the position to pass Morpho's health check after collateral withdrawal.
+  ///      The result is capped at the position's total borrow shares.
+  function _computeRepaidShares(
+    Position memory position,
+    Market memory market,
+    MarketParams memory marketParams,
+    uint256 seizedAssets
+  ) internal view returns (uint256 repaidShares) {
+    uint256 borrowShares = uint256(position.borrowShares);
+    uint256 collateral = uint256(position.collateral);
+
+    // Proportional repaidShares (rounds up, conservative for liquidator)
+    uint256 proportional = seizedAssets.mulDivUp(borrowShares, collateral);
+
+    // Minimum repaidShares for Morpho's health check after collateral withdrawal
+    uint256 collateralPrice = IOracle(marketParams.oracle).price();
+    uint256 maxRemainingDebt =
+      (collateral - seizedAssets).mulDiv(collateralPrice, ORACLE_PRICE_SCALE).mulWad(marketParams.lltv);
+    uint256 currentDebt = borrowShares.toAssetsUp(uint256(market.totalBorrowAssets), uint256(market.totalBorrowShares));
+
+    uint256 minShares;
+    if (currentDebt > maxRemainingDebt) {
+      uint256 minRepaidAssets = currentDebt - maxRemainingDebt;
+      minShares = minRepaidAssets.toSharesUp(uint256(market.totalBorrowAssets), uint256(market.totalBorrowShares));
+    }
+
+    // Use the greater of proportional and minimum required, capped at total borrow shares
+    repaidShares = proportional.max(minShares).min(borrowShares);
+  }
+
+  /// @dev Computes the seized assets when the liquidator specifies the debt to repay.
+  ///      Returns the lesser of the proportional amount and the maximum amount allowed
+  ///      by Morpho's health check after collateral withdrawal.
+  function _computeSeizedAssets(
+    Position memory position,
+    Market memory market,
+    MarketParams memory marketParams,
+    uint256 repaidShares
+  ) internal view returns (uint256 seizedAssets) {
+    uint256 borrowShares = uint256(position.borrowShares);
+    uint256 collateral = uint256(position.collateral);
+    uint256 totalBorrowAssets = uint256(market.totalBorrowAssets);
+    uint256 totalBorrowShares = uint256(market.totalBorrowShares);
+
+    // Proportional seizedAssets (rounds down, conservative for liquidator)
+    uint256 proportional = repaidShares.mulDiv(collateral, borrowShares);
+
+    // Maximum seizedAssets for Morpho's health check after collateral withdrawal
+    uint256 remainingBorrowShares = borrowShares - repaidShares;
+
+    uint256 maxSeized;
+    if (remainingBorrowShares == 0) {
+      maxSeized = collateral;
+    } else {
+      uint256 remainingDebt = remainingBorrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
+      uint256 collateralPrice = IOracle(marketParams.oracle).price();
+      uint256 requiredCollateral = remainingDebt.mulDivUp(ORACLE_PRICE_SCALE, collateralPrice.mulWad(marketParams.lltv));
+      maxSeized = collateral.zeroFloorSub(requiredCollateral);
+    }
+
+    // Use the lesser of proportional and maximum allowed
+    seizedAssets = proportional.min(maxSeized);
   }
 
   /// @notice Morpho callback invoked after a repay operation.
@@ -315,7 +398,9 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     MarketParams memory marketParams = _storage.marketParams;
 
-    _morpho.withdrawCollateral(marketParams, seizedAssets, borrower, liquidator);
+    if (seizedAssets > 0) {
+      _morpho.withdrawCollateral(marketParams, seizedAssets, borrower, liquidator);
+    }
 
     if (data.length > 0) {
       IPreLiquidationCallback(liquidator).onPreLiquidate(repaidAssets, data);
