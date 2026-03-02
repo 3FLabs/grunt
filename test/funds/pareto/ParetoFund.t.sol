@@ -368,6 +368,14 @@ contract ParetoFundTest is Test {
     fund.commit(order);
   }
 
+  function test_Commit_RevertsNotAllowed() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    cdo.setWalletAllowed(address(fund), false);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.commit(order);
+  }
+
   function test_Commit_DepositClearsApproval() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);

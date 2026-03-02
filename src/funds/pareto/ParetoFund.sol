@@ -190,6 +190,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
     address _vault = $.vault;
 
+    if (!IIdleCDOEpochVariant(_vault).isWalletAllowed(address(this))) {
+      revert LibFundsErrors.NotAllowedByFund();
+    }
+
     if (order.mode == Mode.DEPOSIT) {
       // Pull underlying asset from depositor, approve to vault, deposit into AA tranche
       address _asset = $.asset;
