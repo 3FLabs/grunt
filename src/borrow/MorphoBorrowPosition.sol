@@ -29,6 +29,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   using SharesMathLib for uint256;
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
+  using LibChecks for address;
   using LibChecks for uint256;
   using MorphoBalancesLib for IMorpho;
 
@@ -72,6 +73,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
   /// @param morpho_ The Morpho Blue protocol contract address.
   constructor(IMorpho morpho_) {
+    address(morpho_).checkContract();
     MORPHO = morpho_;
     _disableInitializers();
   }

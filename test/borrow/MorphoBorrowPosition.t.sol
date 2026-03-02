@@ -71,6 +71,7 @@ contract MorphoBorrowPositionTest is Test {
 
   // MorphoBorrowPosition errors
   error AddressZero();
+  error InvalidContract(address addr);
   error InvalidMarketId(Id marketId);
   error MarketNotCreated();
   error AmountZero();
@@ -207,13 +208,9 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(newPosition.liquidationLtv(), LIQUIDATION_LTV, "Liquidation LTV mismatch");
   }
 
-  function test_initialize_RevertWhen_MorphoIsZero() public {
-    // When morpho is zero address (set in constructor), initialize reverts when calling morpho.market()
-    MorphoBorrowPosition newPosition =
-      MorphoBorrowPosition(address(new MorphoBorrowPosition(IMorpho(address(0)))).clone());
-
-    vm.expectRevert();
-    newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+  function test_constructor_RevertWhen_MorphoIsZero() public {
+    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0)));
+    new MorphoBorrowPosition(IMorpho(address(0)));
   }
 
   function test_initialize_RevertWhen_MarketIdIsZero() public {
