@@ -15,6 +15,7 @@ import {IWrappedAsset} from "../../interfaces/funds/IWrappedAsset.sol";
 import {Order, State, Mode, LibOrder} from "../../libs/funds/Order.sol";
 import {LibFundsErrors} from "../../libs/funds/LibFundsErrors.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {BPS} from "../../libs/Constants.sol";
 
 /// @title ParetoFund
 /// @author 3F Protocol
@@ -42,6 +43,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
   /// @notice Role for depositor.
   uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+
+  /// @notice Maximum allowed deviation between order output and current rate (in basis points).
+  /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -148,6 +153,18 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
     if (_internalState == State.ENDED) {
       $.endedOrders[$.currentOrderId] = true;
+    }
+
+    // Slippage guard: reject if expected output deviates too far below the current rate.
+    uint256 _virtualPrice = IIdleCDOEpochVariant($.vault).virtualPrice($.aaTranche);
+    uint256 _expectedOutput = order.mode == Mode.DEPOSIT
+      ? order.input * 1e18 / _virtualPrice
+      : order.input.mulDiv(_virtualPrice, 1e18);
+
+    if (order.output < _expectedOutput) {
+      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
+        revert LibFundsErrors.InvalidOutput();
+      }
     }
 
     bytes32 _orderId = order.toId(address(this));

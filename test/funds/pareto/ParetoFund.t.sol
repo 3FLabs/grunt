@@ -223,6 +223,38 @@ contract ParetoFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsInvalidOutput_Deposit() public {
+    // At virtualPrice = 1e6, depositing ONE_USDC should yield ONE_AA.
+    // Setting output to ONE_AA / 2 is a 50% deviation — well beyond the 5% max.
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA / 2);
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsInvalidOutput_Redeem() public {
+    // At virtualPrice = 1e6, redeeming ONE_AA should yield ONE_USDC.
+    // Setting output to ONE_USDC / 2 is a 50% deviation — well beyond the 5% max.
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC / 2);
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(order);
+  }
+
+  function test_Create_AcceptsOutputWithinDeviation() public {
+    // At virtualPrice = 1e6, depositing ONE_USDC yields ONE_AA expected output.
+    // 96% of ONE_AA is within the 5% max deviation.
+    uint256 output = ONE_AA * 96 / 100;
+    Order memory order = _depositOrder(ONE_USDC, output);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted within deviation");
+  }
+
+  function test_Create_AcceptsOutputAboveRate() public {
+    // Output above the expected rate should always succeed (no upper bound check).
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA * 2);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted above rate");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                             CANCEL                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
