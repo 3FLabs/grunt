@@ -412,8 +412,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     vm.warp(block.timestamp + 365 days);
 
-    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) =
-      positionManager.pendingFees();
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
     assertGt(totalAssets_, 0, "totalAssets should be non-zero");
     assertGt(totalSupply_, 0, "totalSupply should be non-zero");
@@ -427,8 +426,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     vm.warp(block.timestamp + 365 days);
 
-    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) =
-      positionManager.pendingFees();
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
     assertEq(totalAssets_, 0, "totalAssets should be zero");
     assertEq(totalSupply_, 0, "totalSupply should be zero");
@@ -446,8 +444,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     vm.warp(block.timestamp + 365 days);
 
-    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) =
-      positionManager.pendingFees();
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
     assertEq(totalAssets_, COLLATERAL_AMOUNT, "totalAssets");
     assertGt(totalSupply_, 0, "totalSupply");
@@ -466,8 +463,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     // 20% price increase
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
 
-    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) =
-      positionManager.pendingFees();
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
     assertEq(totalAssets_, COLLATERAL_AMOUNT * 120 / 100, "totalAssets reflects gain");
     assertGt(totalSupply_, 0, "totalSupply");
@@ -486,8 +482,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
     vm.warp(block.timestamp + 365 days);
 
-    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) =
-      positionManager.pendingFees();
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
     assertGt(totalAssets_, 0, "totalAssets");
     assertGt(totalSupply_, 0, "totalSupply");
