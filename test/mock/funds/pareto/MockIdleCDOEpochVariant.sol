@@ -19,6 +19,7 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   bool public _isEpochRunning;
   uint256 public _epochEndDate;
   mapping(address => bool) public _walletAllowed;
+  uint256 public _claimAmountOverride;
 
   constructor(address underlying_, address aaTranche_, address strategy_) {
     _underlying = underlying_;
@@ -92,8 +93,9 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
     uint256 currentEpoch = _strategy.epochNumber();
     require(_epochEndDate == 0 || currentEpoch > lastEpoch, "MockCDO: epoch not ended");
     _strategy.clearWithdraw(msg.sender);
-    // Transfer underlying to caller
-    _underlying.safeTransfer(msg.sender, amount);
+    // Transfer underlying to caller — use override if set
+    uint256 transferAmount = _claimAmountOverride > 0 ? _claimAmountOverride : amount;
+    _underlying.safeTransfer(msg.sender, transferAmount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -102,6 +104,10 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function setWalletAllowed(address wallet, bool allowed) external {
     _walletAllowed[wallet] = allowed;
+  }
+
+  function setClaimAmountOverride(uint256 amount) external {
+    _claimAmountOverride = amount;
   }
 
   function setVirtualPrice(uint256 price) external {

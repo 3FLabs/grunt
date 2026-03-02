@@ -533,6 +533,30 @@ contract ParetoFundTest is Test {
     fund.unlock(order);
   }
 
+  function test_Unlock_RedeemClaimAmountDiffers() public {
+    // Deposit first to get wrappedShares
+    _depositAndUnlock(ONE_USDC);
+
+    // Redeem
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Advance epoch to make withdrawal claimable
+    _fulfillRedeem();
+
+    // CDO will only transfer 80% of the tracked amount
+    uint256 partialAmount = ONE_USDC * 80 / 100;
+    cdo.setClaimAmountOverride(partialAmount);
+
+    (State state, uint256 amount) = fund.unlock(order);
+
+    assertEq(uint256(state), uint256(State.ENDED), "state");
+    assertEq(amount, partialAmount, "receiver gets actual claimed amount");
+    assertEq(usdc.balanceOf(address(this)), partialAmount, "usdc received matches claimed");
+  }
+
   function test_Unlock_DepositClearsApproval() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);
@@ -641,6 +665,38 @@ contract ParetoFundTest is Test {
 
     vm.prank(owner);
     fund.resolve(order, ONE_USDC, ONE_AA);
+  }
+
+  function test_Resolve_WithZeroOutput() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA * 2);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // depositReceived is ONE_AA, order.output is 2*ONE_AA → PROCESSING
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before resolve");
+
+    // Resolve with output=0 → depositReceived (1e18) >= 0 is always true → UNLOCKING
+    vm.prank(owner);
+    fund.resolve(order, ONE_USDC, 0);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after zero output resolve");
+  }
+
+  function test_Resolve_WithZeroInput() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    _commitDeposit(order);
+
+    bytes32 orderId = order.toId(address(fund));
+    Order memory resolvedOrder = Order({
+      mode: order.mode, owner: order.owner, receiver: order.receiver, input: 0, output: ONE_AA, salt: order.salt
+    });
+    bytes32 newOrderId = resolvedOrder.toId(address(fund));
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit OrderResolved(orderId, newOrderId, 0, ONE_AA, owner);
+    fund.resolve(order, 0, ONE_AA);
   }
 
   function test_Resolve_AffectsDepositStateTransition() public {
@@ -902,6 +958,52 @@ contract ParetoFundTest is Test {
     // Old order was archived — state() returns ENDED
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "old order ENDED (archived)");
     assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_Edge_AccidentalTokensNotSweptOnDepositUnlock() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    _commitDeposit(order);
+    _fulfillDeposit(order);
+
+    // Send extra AA tranche tokens to the fund (accidental transfer)
+    uint256 extraAA = 5 * ONE_AA;
+    aaTranche.mint(address(fund), extraAA);
+
+    (State state, uint256 amount) = fund.unlock(order);
+
+    assertEq(uint256(state), uint256(State.ENDED), "state");
+    // Receiver only gets depositReceived worth of wrapped shares, not the extra AA
+    assertEq(amount, ONE_AA, "amount is depositReceived only");
+    assertEq(wrappedShare.balanceOf(address(this)), ONE_AA, "wShare matches depositReceived");
+    // Extra AA tokens remain in the fund
+    assertEq(aaTranche.balanceOf(address(fund)), extraAA, "extra AA remains in fund");
+  }
+
+  function test_Edge_AccidentalTokensNotSweptOnRedeemUnlock() public {
+    // Deposit first to get wrappedShares
+    _depositAndUnlock(ONE_USDC);
+
+    // Redeem
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    _fulfillRedeem();
+
+    // Send extra USDC to the fund (accidental transfer)
+    uint256 extraUSDC = 10 * ONE_USDC;
+    usdc.mint(address(fund), extraUSDC);
+
+    (State state, uint256 amount) = fund.unlock(order);
+
+    assertEq(uint256(state), uint256(State.ENDED), "state");
+    // Receiver only gets the claimed amount (before/after delta), not the extra USDC
+    assertEq(amount, ONE_USDC, "amount is claimed only");
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC, "usdc received matches claimed");
+    // Extra USDC remains in the fund
+    assertEq(usdc.balanceOf(address(fund)), extraUSDC, "extra USDC remains in fund");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
