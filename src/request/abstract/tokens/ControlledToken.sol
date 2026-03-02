@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {TokenController} from "./TokenController.sol";
 import {IERC20} from "../../../interfaces/integrations/IERC20.sol";

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {
   IPositionManagerRebalancing,
@@ -82,11 +82,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     }
 
     uint256 opsLength = data.operations.length;
-    for (uint256 i = 0; i < opsLength;) {
+    for (uint256 i = 0; i < opsLength; ++i) {
       _dispatchRebalancingOperation(data.operations[i], _collateralAsset, _debtAsset);
-      unchecked {
-        ++i;
-      }
     }
 
     collateralExcess = _collateralAsset.safeTransferAll(receiver);

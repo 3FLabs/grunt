@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Status of an address in the transfer guard.
 /// @dev NONE must be 0 so unset mappings default to the token's mode behavior.
