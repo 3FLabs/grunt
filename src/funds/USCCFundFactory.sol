@@ -68,6 +68,14 @@ contract USCCFundFactory {
   address public immutable WUSCC;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all USCCFund contracts deployed by this factory.
+  /// @dev Returns true if the address is a USCCFund deployed by this factory.
+  mapping(address => bool) internal _isFund;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -121,6 +129,15 @@ contract USCCFundFactory {
     // Initialize USCCFund
     USCCFund(fund).initialize(owner, depositor, recipient, oracle);
 
+    _isFund[fund] = true;
+
     emit FundCreated(fund, recipient);
+  }
+
+  /// @notice Checks if an address is a USCCFund contract deployed by this factory.
+  /// @param fund The address to check
+  /// @return True if the address is a USCCFund deployed by this factory
+  function isFund(address fund) external view returns (bool) {
+    return _isFund[fund];
   }
 }

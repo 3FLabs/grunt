@@ -61,6 +61,14 @@ contract MorphoBorrowPositionFactory {
   address public immutable BORROW_POSITION_BEACON;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all MorphoBorrowPosition contracts deployed by this factory.
+  /// @dev Returns true if the address is a MorphoBorrowPosition deployed by this factory.
+  mapping(address => bool) internal _isBorrowPosition;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -100,6 +108,15 @@ contract MorphoBorrowPositionFactory {
 
     MorphoBorrowPosition(borrowPosition).initialize(morpho, marketId, positionManager, safeLtv, liquidationLtv);
 
+    _isBorrowPosition[borrowPosition] = true;
+
     emit BorrowPositionCreated(borrowPosition, address(morpho), marketId, positionManager, safeLtv, liquidationLtv);
+  }
+
+  /// @notice Checks if an address is a MorphoBorrowPosition contract deployed by this factory.
+  /// @param borrowPosition The address to check
+  /// @return True if the address is a MorphoBorrowPosition deployed by this factory
+  function isBorrowPosition(address borrowPosition) external view returns (bool) {
+    return _isBorrowPosition[borrowPosition];
   }
 }

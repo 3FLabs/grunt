@@ -49,6 +49,14 @@ contract TransferGuardFactory {
   address public immutable TRANSFER_GUARD_BEACON;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all TransferGuard contracts deployed by this factory.
+  /// @dev Returns true if the address is a TransferGuard deployed by this factory.
+  mapping(address => bool) internal _isTransferGuard;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -78,6 +86,15 @@ contract TransferGuardFactory {
 
     TransferGuard(transferGuard).initialize(owner);
 
+    _isTransferGuard[transferGuard] = true;
+
     emit TransferGuardCreated(transferGuard, owner);
+  }
+
+  /// @notice Checks if an address is a TransferGuard contract deployed by this factory.
+  /// @param transferGuard The address to check
+  /// @return True if the address is a TransferGuard deployed by this factory
+  function isTransferGuard(address transferGuard) external view returns (bool) {
+    return _isTransferGuard[transferGuard];
   }
 }

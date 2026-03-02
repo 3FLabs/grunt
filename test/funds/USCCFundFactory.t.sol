@@ -96,6 +96,23 @@ contract USCCFundFactoryTest is Test {
     assertTrue(fundOne != fundTwo, "distinct funds");
   }
 
+  function test_isFund_returnsTrueForDeployed() public {
+    address fundAddress = factory.createFund(owner, depositor, recipient, address(oracle));
+    assertTrue(factory.isFund(fundAddress));
+  }
+
+  function test_isFund_returnsFalseForUnknown() public view {
+    assertFalse(factory.isFund(address(0xdead)));
+  }
+
+  function test_isFund_tracksMultipleDeployments() public {
+    address fundOne = factory.createFund(owner, depositor, recipient, address(oracle));
+    address fundTwo = factory.createFund(owner, depositor, recipient, address(oracle));
+
+    assertTrue(factory.isFund(fundOne));
+    assertTrue(factory.isFund(fundTwo));
+  }
+
   function test_Factory_RevertsInvalidContracts() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     factory.createFund(owner, address(1), recipient, address(oracle));
