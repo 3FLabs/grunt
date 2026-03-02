@@ -2707,7 +2707,6 @@ contract MorphoBorrowPositionTest is Test {
     (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
 
     // When deeply underwater, seized may be 0 if no collateral can be freed
-    assertGe(seized, 0, "Seized should be non-negative");
     assertLe(seized, collateralBefore, "Seized should not exceed collateral");
     assertGt(repaid, 0, "Should repay some debt");
   }
@@ -2720,7 +2719,6 @@ contract MorphoBorrowPositionTest is Test {
     (uint256 collateralAmount,) = _setupUnhealthyPosition(30);
     assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be deeply underwater");
 
-    Position memory pos = morpho.position(marketId, address(borrowPosition));
     // Repay just 1 share — tiny fraction of debt
     uint256 sharesToRepay = 1;
 
