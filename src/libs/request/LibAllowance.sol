@@ -27,6 +27,8 @@ library LibAllowance {
   ///      Implements the logic: `result = allowance != type(uint128).max ? allowance : type(uint256).max`
   ///      This converts the internal infinite allowance representation (uint128.max) to the ERC20
   ///      standard representation (uint256.max) for compatibility with standard ERC20 interfaces.
+  ///      Because `_setAllowance` clamps any input >= type(uint128).max to type(uint128).max,
+  ///      approvals in the range [2^128, 2^256 - 2] are normalized to type(uint256).max here.
   /// @param allowance The uint128 allowance value to normalize
   /// @return result The normalized allowance as uint256 (either the original value or uint256.max)
   function normalize(uint128 allowance) internal pure returns (uint256 result) {
