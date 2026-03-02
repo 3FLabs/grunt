@@ -31,6 +31,9 @@ src/
 │   ├── centrifuge/
 │   │   ├── CentrifugeFund.sol       # Centrifuge ERC-7540 integration
 │   │   └── CentrifugeFundFactory.sol # Beacon proxy factory
+│   ├── pareto/
+│   │   ├── ParetoFund.sol           # Pareto (Idle Finance) CDO integration
+│   │   └── ParetoFundFactory.sol    # Beacon proxy factory
 │   ├── USCC/
 │   │   ├── USCCFund.sol             # Superstate USCC integration
 │   │   └── USCCFundFactory.sol      # Beacon proxy factory
@@ -105,6 +108,9 @@ This section provides a consolidated view of all roles across contracts and how 
 | **CentrifugeFund** | Owner | Protocol Admin | Cancel vault requests via `cancelRequest()` |
 | | Operator | Operations Bot | Cancel vault requests via `cancelRequest()` |
 | | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
+| **ParetoFund** | Owner | Protocol Admin | Resolve stuck orders |
+| | Operator | Operations Bot | Resolve stuck orders |
+| | Depositor | Facility | Create/cancel/commit/unlock orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
@@ -552,6 +558,28 @@ stateDiagram-v2
 1. `cancelRequest()` - Owner/operator submits cancellation to Centrifuge vault
 2. *Wait for Centrifuge to process the cancellation*
 3. `recover()` - Claim returned assets/shares, send to receiver
+
+### Pareto (Idle Finance) CDO Integration
+
+`ParetoFund` wraps an IdleCDOEpochVariant (the Pareto/Idle credit vault). Shares are represented by WrappedAsset tokens wrapping the AA (senior) tranche token.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern** (like Centrifuge): the stored `internalState` may differ from what `state()` returns, because `state()` queries the CDO and its strategy to detect async transitions (e.g., PROCESSING → UNLOCKING).
+- Deposits are **synchronous** — `depositAA()` succeeds or reverts atomically. No epoch wait is needed for deposits.
+- Withdrawals are **epoch-gated** — `requestWithdraw()` queues a withdrawal that completes after the CDO epoch ends, then `claimWithdrawRequest()` delivers the underlying assets.
+- **No recovery flow** — `recover()` always reverts with `RecoverNotSupported()`. Deposits are atomic (no stuck intermediate state) and withdrawals always complete after epoch processing.
+- `resolve()` allows the operator/owner to override input/output amounts for an order stuck in PROCESSING when received amounts differ from expected values.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order (validates Keyring wallet allowance)
+2. `commit()` - Pull assets, call `depositAA()` atomically — AA tranche tokens are received immediately
+3. `unlock()` - Wrap AA tranche tokens into WrappedAsset, send to receiver
+
+**Redeem Flow (WrappedShare → Asset):**
+1. `create(REDEEM)` - Initialize order
+2. `commit()` - Burn WrappedAsset (unwrap to AA tranche), call `requestWithdraw()` on CDO
+3. *Wait for CDO epoch to end*
+4. `unlock()` - Call `claimWithdrawRequest()`, send underlying assets to receiver
 
 ## Position Manager
 
@@ -1004,6 +1032,7 @@ flowchart TB
 - `MorphoBorrowPositionFactory` - Deploys borrow positions
 - `USCCFundFactory` - Deploys USCC fund wrappers
 - `CentrifugeFundFactory` - Deploys Centrifuge ERC-7540 fund wrappers
+- `ParetoFundFactory` - Deploys Pareto CDO fund wrappers
 - `TransferGuardFactory` - Deploys transfer guards
 
 **Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.
