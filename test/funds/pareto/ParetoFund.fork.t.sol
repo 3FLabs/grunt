@@ -67,7 +67,7 @@ contract ParetoFundForkTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function setUp() public {
-    vm.createSelectFork(vm.envString("ETH_RPC_URL"));
+    vm.createSelectFork(vm.envString("ETH_RPC_URL"), 24_570_780);
 
     owner = makeAddr("owner");
 
