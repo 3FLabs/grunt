@@ -61,6 +61,14 @@ contract PositionManagerFactory {
   address public immutable POSITION_MANAGER_BEACON;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all PositionManager contracts deployed by this factory.
+  /// @dev Returns true if the address is a PositionManager deployed by this factory.
+  mapping(address => bool) internal _isPositionManager;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -103,8 +111,17 @@ contract PositionManagerFactory {
     PositionManager(positionManager)
       .initialize(owner, metadata, ltv, transferGuard, maxRebalanceLoss, rebalanceCooldown);
 
+    _isPositionManager[positionManager] = true;
+
     emit PositionManagerCreated(
       positionManager, owner, metadata.collateralAsset, metadata.debtAsset, ltv, transferGuard
     );
+  }
+
+  /// @notice Checks if an address is a PositionManager contract deployed by this factory.
+  /// @param positionManager The address to check
+  /// @return True if the address is a PositionManager deployed by this factory
+  function isPositionManager(address positionManager) external view returns (bool) {
+    return _isPositionManager[positionManager];
   }
 }

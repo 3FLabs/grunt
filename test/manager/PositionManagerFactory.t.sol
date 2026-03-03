@@ -175,6 +175,54 @@ contract PositionManagerFactoryTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  DEPLOYMENT TRACKING TESTS                 */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isPositionManager_returnsTrueForDeployed() public {
+    address pm = factory.createPositionManager(
+      positionManagerOwner,
+      PositionManagerMetadata({
+        name: "Test PM", symbol: "TPM", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
+    );
+    assertTrue(factory.isPositionManager(pm));
+  }
+
+  function test_isPositionManager_returnsFalseForUnknown() public view {
+    assertFalse(factory.isPositionManager(address(0xdead)));
+  }
+
+  function test_isPositionManager_tracksMultipleDeployments() public {
+    address pm1 = factory.createPositionManager(
+      positionManagerOwner,
+      PositionManagerMetadata({
+        name: "PM1", symbol: "PM1", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
+    );
+    address pm2 = factory.createPositionManager(
+      user,
+      PositionManagerMetadata({
+        name: "PM2", symbol: "PM2", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
+    );
+
+    assertTrue(factory.isPositionManager(pm1));
+    assertTrue(factory.isPositionManager(pm2));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      UPGRADE TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
