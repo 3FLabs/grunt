@@ -153,6 +153,9 @@ library LibFacilityErrors {
   /// @notice Thrown when the swap deadline has passed.
   error SwapExpired();
 
+  /// @notice Thrown when the signature deadline has passed (setFund/setRequest).
+  error DeadlineExpired();
+
   /// @notice Thrown when swap amounts are zero.
   error InvalidSwapAmount();
 
