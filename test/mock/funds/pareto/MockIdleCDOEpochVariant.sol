@@ -20,6 +20,7 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   uint256 public _epochEndDate;
   mapping(address => bool) public _walletAllowed;
   uint256 public _claimAmountOverride;
+  uint256 public _epochDiscountBps;
 
   constructor(address underlying_, address aaTranche_, address strategy_) {
     _underlying = underlying_;
@@ -65,12 +66,28 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function depositAA(uint256 amount) external override returns (uint256) {
+    require(!_isEpochRunning, "MockCDO: paused during epoch");
     // Pull underlying from caller
     _underlying.safeTransferFrom(msg.sender, address(this), amount);
     // Mint AA tranche tokens to caller based on virtualPrice
     // AA tranche is 18 decimals, underlying is 6 decimals
     // mintAmount = amount * 1e18 / virtualPrice (scaled from 6 to 18 decimals)
     uint256 mintAmount = amount * 1e18 / _virtualPrice;
+    _aaTranche.mint(msg.sender, mintAmount);
+    return mintAmount;
+  }
+
+  function depositDuringEpoch(uint256 amount, address) external override returns (uint256) {
+    require(_isEpochRunning, "MockCDO: epoch not running");
+    // Pull underlying from caller
+    _underlying.safeTransferFrom(msg.sender, address(this), amount);
+    // The real CDO mints at a future end-of-epoch price, which is higher than the current
+    // virtualPrice (because it includes expected interest). This means the depositor receives
+    // fewer tokens than depositAA would give at the same virtualPrice.
+    uint256 mintAmount = amount * 1e18 / _virtualPrice;
+    if (_epochDiscountBps > 0) {
+      mintAmount = mintAmount * (10_000 - _epochDiscountBps) / 10_000;
+    }
     _aaTranche.mint(msg.sender, mintAmount);
     return mintAmount;
   }
@@ -120,6 +137,10 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function setIsEpochRunning(bool running) external {
     _isEpochRunning = running;
+  }
+
+  function setEpochDiscountBps(uint256 discountBps) external {
+    _epochDiscountBps = discountBps;
   }
 
   /// @dev Advances the epoch: clears epochEndDate and increments strategy epoch number.
