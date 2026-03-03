@@ -31,11 +31,14 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
   /*                           EVENTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Emitted when a rebalance operation is executed.
+  /// @notice Emitted when a rebalance operation is executed via Morpho flash loan.
   /// @param positionManager The PositionManager that was rebalanced
   /// @param flashLoanAmount The amount of debt tokens flash loaned
-  /// @param debtExcess The excess debt returned from the rebalance
-  event Rebalanced(address indexed positionManager, uint256 flashLoanAmount, uint256 debtExcess);
+  /// @param collateralExcess The excess collateral returned to the receiver
+  /// @param debtExcess The excess debt returned to the receiver
+  event MorphoRebalanced(
+    address indexed positionManager, uint256 flashLoanAmount, uint256 collateralExcess, uint256 debtExcess
+  );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                          */
@@ -85,10 +88,10 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     MORPHO.flashLoan(debtAsset, data.debt, callbackData);
 
     // Transfer any excess tokens to receiver (after flash loan repayment)
-    collateralAsset.safeTransferAll(receiver);
-    debtAsset.safeTransferAll(receiver);
+    uint256 collateralExcess = collateralAsset.safeTransferAll(receiver);
+    uint256 debtExcess = debtAsset.safeTransferAll(receiver);
 
-    emit Rebalanced(address(positionManager), data.debt, 0);
+    emit MorphoRebalanced(address(positionManager), data.debt, collateralExcess, debtExcess);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

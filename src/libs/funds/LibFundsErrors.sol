@@ -85,4 +85,5 @@ library LibFundsErrors {
   /// @param decimalsA The decimals of the first token.
   /// @param decimalsB The decimals of the second token.
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
+
 }

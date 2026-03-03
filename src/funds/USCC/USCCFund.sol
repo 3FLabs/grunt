@@ -17,6 +17,7 @@ import {AggregatorV3Interface} from "../../interfaces/integrations/AggregatorV3I
 import {Order, State, Mode, LibOrder} from "../../libs/funds/Order.sol";
 import {LibFundsErrors} from "../../libs/funds/LibFundsErrors.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {BPS} from "../../libs/Constants.sol";
 
 /// @title USCCFund
 /// @author 3F Protocol
@@ -42,16 +43,20 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
-  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+  uint256 internal constant _OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+  uint256 internal constant _DEPOSITOR_ROLE = _ROLE_1;
 
   /// @dev USCC/USDC/wUSCC all have 6 decimals (same for the oracle).
   uint256 private constant _DECIMALS = 6;
 
   /// @dev Scaled unit for 6 decimals.
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
+
+  /// @notice Maximum allowed negative deviation (in basis points) between the order output
+  ///         and the oracle-derived expected output. Orders with output below this threshold revert.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
@@ -151,7 +156,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _setOracle(oracle_);
 
     _initializeOwner(owner_);
-    _setRoles(depositor_, DEPOSITOR_ROLE);
+    _setRoles(depositor_, _DEPOSITOR_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -159,8 +164,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFund
-  function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
-    order.input.checkNotZero(); // no restrictions on output
+  function create(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State) {
+    order.input.checkNotZero();
+    _validateOutput(order);
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
     if (order.receiver != msg.sender) revert LibFundsErrors.InvalidReceiver();
 
@@ -192,7 +198,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function cancel(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
+  function cancel(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -215,7 +221,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial commits, always goes to PROCESSING.
-  function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function commit(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -241,7 +247,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED.
-  function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function recover(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -268,7 +274,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED.
-  function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function unlock(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -299,7 +305,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IUSCCFund
-  function recovering() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function recovering() external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
     if (_storage.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.RECOVERING;
@@ -308,7 +314,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
-  function cancelRecovering() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function cancelRecovering() external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
     if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.PROCESSING;
@@ -317,9 +323,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @notice Sets the oracle address.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
-  function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function setOracle(address oracle) external onlyOwnerOrRoles(_OPERATOR_ROLE) {
     _setOracle(oracle);
   }
 
@@ -327,7 +333,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   function resolve(Order memory order, uint256 input, uint256 output)
     external
     override
-    onlyOwnerOrRoles(OPERATOR_ROLE)
+    onlyOwnerOrRoles(_OPERATOR_ROLE)
   {
     UsccFundStorage storage _storage = _usccFundStorage();
     State _internalState = _storage.internalState;
@@ -366,21 +372,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
   ///      Validates the oracle round data is consistent and complete.
   function totalAssets() external view override returns (uint256) {
-    UsccFundStorage storage _storage = _usccFundStorage();
-
-    AggregatorV3Interface _oracle = AggregatorV3Interface(_storage.oracle);
-
-    // Fetch latest round data
-    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
-
-    // Validate latest round
-    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
-    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
-    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
-
-    uint256 _latestPrice = _answer.toUint256();
-
-    return WUSCC.totalSupply().mulDiv(_latestPrice, _SCALED_UNIT);
+    return WUSCC.totalSupply().mulDiv(_getOraclePrice(), _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
@@ -472,6 +464,42 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
+  }
+
+  /// @dev Returns the validated oracle price for USCC/USD.
+  /// @return The latest oracle price as a uint256.
+  function _getOraclePrice() internal view returns (uint256) {
+    AggregatorV3Interface _oracle = AggregatorV3Interface(_usccFundStorage().oracle);
+
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
+
+    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
+    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
+    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
+
+    return _answer.toUint256();
+  }
+
+  /// @dev Validates that the order output is within acceptable deviation from the oracle-derived expected output.
+  ///      Reverts if the output deviates negatively by more than MAX_OUTPUT_DEVIATION basis points.
+  /// @param order The order to validate.
+  function _validateOutput(Order calldata order) internal view {
+    uint256 _price = _getOraclePrice();
+    uint256 _expectedOutput;
+
+    if (order.mode == Mode.DEPOSIT) {
+      // DEPOSIT: USDC → USCC, expected USCC = input * _SCALED_UNIT / price
+      _expectedOutput = order.input.mulDiv(_SCALED_UNIT, _price);
+    } else {
+      // REDEEM: wUSCC → USDC, expected USDC = input * price / _SCALED_UNIT
+      _expectedOutput = order.input.mulDiv(_price, _SCALED_UNIT);
+    }
+
+    if (order.output < _expectedOutput) {
+      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
+        revert LibFundsErrors.InvalidOutput();
+      }
+    }
   }
 
   /// @dev Internal function to validate and set the oracle address.

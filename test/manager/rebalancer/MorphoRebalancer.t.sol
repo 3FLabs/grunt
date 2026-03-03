@@ -86,7 +86,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit MorphoRebalancer.Rebalanced(address(positionManager), debtToMove, 0);
+    emit MorphoRebalancer.MorphoRebalanced(address(positionManager), debtToMove, 0, 0);
     morphoRebalancer.rebalance(positionManager, data, owner);
   }
 

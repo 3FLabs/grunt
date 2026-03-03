@@ -104,7 +104,7 @@ contract USCCFundFactory {
   ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
   ///      to the newly deployed fund address so it can mint wrapped tokens.
   ///
-  ///      The depositor receives DEPOSITOR_ROLE on the fund (can execute orders).
+  ///      The depositor receives _DEPOSITOR_ROLE on the fund (can execute orders).
   ///      Emits a {FundCreated} event.
   /// @param owner The address that will own the USCCFund (admin privileges)
   /// @param depositor The address that will have the depositor role (must be a contract)

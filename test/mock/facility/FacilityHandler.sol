@@ -599,6 +599,11 @@ contract FacilityHandler is Test {
       return;
     }
 
+    // If the timelock has already expired (e.g. setRequest was a no-op because the same
+    // request address was already set, retaining the original requestSetAt), repay
+    // succeeding is legitimate — not a bypass.
+    if (block.timestamp >= facility.repayAvailableAt(id)) return;
+
     // Try to repay immediately — should fail due to timelock
     vm.prank(facilitator);
     try facility.repay(id, 1e18) {

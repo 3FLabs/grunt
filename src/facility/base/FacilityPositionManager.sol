@@ -140,6 +140,8 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @notice Gets the initial parameters related to a position manager for a given intent.
   /// @dev Retrieves the resolving intent and reads either the targetAsset or depositAsset as the selected asset,
   ///      checks if it is a position manager, then fetches the related collateral and debt assets from the manager.
+  ///      Reverts with `InvalidPositionManagerAssets()` if collateralAsset, debtAsset, or positionManager overlap,
+  ///      preventing snapshot-based double-counting attacks (CS-GRUNT-062).
   /// @param id The intent id.
   /// @param useTarget If true, use the targetAsset; otherwise, use the depositAsset.
   /// @return _intent Storage pointer to the retrieved intent struct.
@@ -176,6 +178,15 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     positionManager = _selected.asset;
     // get the position manager assets
     (collateralAsset, debtAsset) = IPositionManager(positionManager).assets();
+
+    // if (collateralAsset == debtAsset || collateralAsset == positionManager || debtAsset == positionManager)
+    //   revert LibFacilityErrors.InvalidPositionManagerAssets();
+    assembly ("memory-safe") {
+      if or(eq(collateralAsset, debtAsset), or(eq(collateralAsset, positionManager), eq(debtAsset, positionManager))) {
+        mstore(0, 0x62e437a4) // LibFacilityErrors.InvalidPositionManagerAssets()
+        revert(0x1c, 0x04)
+      }
+    }
 
     // take snapshots before the operation
     collateralSnapshot = LibIntent.takeBalanceSnapshot(collateralAsset);

@@ -51,7 +51,7 @@ contract USCCFundHandler is Test {
   function act_createDeposit(uint96 input, uint96 output, bytes32 salt) external {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = _bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = _bound(uint256(output), 0, maxAmount);
+    uint256 outputAmount = _bound(uint256(output), inputAmount - (inputAmount * 500 / 10000), maxAmount);
 
     order = Order({
       owner: address(this),
@@ -89,7 +89,7 @@ contract USCCFundHandler is Test {
     if (maxAmount == 0) return;
 
     uint256 inputAmount = _bound(uint256(inputSeed), 1, maxAmount);
-    uint256 outputAmount = _bound(uint256(output), 0, type(uint96).max);
+    uint256 outputAmount = _bound(uint256(output), inputAmount - (inputAmount * 500 / 10000), type(uint96).max);
 
     order = Order({
       owner: address(this),
