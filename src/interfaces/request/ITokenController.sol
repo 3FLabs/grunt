@@ -63,6 +63,9 @@ interface ITokenController {
   function balanceOf(address account, bool yt) external view returns (uint128);
 
   /// @notice Returns the allowance of either PT or YT tokens for a given owner-spender pair.
+  /// @dev NOTE FOR INTEGRATORS: Allowances are stored as uint128. Any approval with amount >= 2^128
+  ///      is stored as type(uint128).max and returned here as type(uint256).max (infinite allowance).
+  ///      Only values below 2^128 behave as finite, decreasing allowances.
   /// @param owner The address that owns the tokens
   /// @param spender The address authorized to spend the tokens
   /// @param yt True to return YT allowance, false to return PT allowance
@@ -89,6 +92,8 @@ interface ITokenController {
   function transferFromBatch(address from, address to, uint256 ptAmount, uint256 ytAmount) external returns (bool);
 
   /// @notice Approves a spender to use both PT and YT tokens on behalf of the caller.
+  /// @dev Amounts >= type(uint128).max are capped and treated as infinite allowance.
+  ///      See {ITokenController-allowance} for details on the clamping behavior.
   /// @param spender The address to grant allowance to
   /// @param ptAmount The PT token allowance to grant
   /// @param ytAmount The YT token allowance to grant
