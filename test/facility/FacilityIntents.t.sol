@@ -342,7 +342,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
 
     vm.prank(facilitator);
-    vm.expectRevert(LibFacilityErrors.SwapExpired.selector);
+    vm.expectRevert(LibFacilityErrors.DeadlineExpired.selector);
     facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
   }
 
@@ -466,7 +466,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     signatures[0] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN_PK);
 
     vm.prank(facilitator);
-    vm.expectRevert(LibFacilityErrors.SwapExpired.selector);
+    vm.expectRevert(LibFacilityErrors.DeadlineExpired.selector);
     facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
   }
 
@@ -678,6 +678,49 @@ contract FacilityIntentsTest is FacilityBaseTest {
     // Verify fund is removed
     (, address newFund,,,) = facility.getIntent(intentId);
     assertEq(newFund, address(0), "Fund should be removed");
+  }
+
+  function test_setFund_removesFundWithoutSignatures() public {
+    uint256 intentId = _createResolvingIntent();
+
+    // First set a fund (requires signatures)
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+
+    (, address fund,,,) = facility.getIntent(intentId);
+    assertEq(fund, address(mockFund));
+
+    // Remove fund with address(0) — no signatures needed
+    address[] memory emptySigners = new address[](0);
+    bytes[] memory emptySignatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    facility.setFund(intentId, address(0), 0, emptySigners, emptySignatures);
+
+    (, address removedFund,,,) = facility.getIntent(intentId);
+    assertEq(removedFund, address(0), "Fund should be removed without signatures");
+  }
+
+  function test_setRequest_removesRequestWithoutSignatures() public {
+    uint256 intentId = _createResolvingIntent();
+
+    // First set a request (requires signatures)
+    vm.prank(facilitator);
+    _setRequest(intentId, address(mockRequest));
+    mockRequest.setRepaid(true);
+
+    (,, address request,,) = facility.getIntent(intentId);
+    assertEq(request, address(mockRequest));
+
+    // Remove request with address(0) — no signatures needed
+    address[] memory emptySigners = new address[](0);
+    bytes[] memory emptySignatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    facility.setRequest(intentId, address(0), 0, emptySigners, emptySignatures);
+
+    (,, address removedRequest,,) = facility.getIntent(intentId);
+    assertEq(removedRequest, address(0), "Request should be removed without signatures");
   }
 
   function test_setFund_skipsWhenSameFund() public {
