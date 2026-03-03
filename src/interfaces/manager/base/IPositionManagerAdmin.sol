@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Structure representing a position in the supply queue with its borrow cap.
 /// @param position The address of the IBorrowPosition contract

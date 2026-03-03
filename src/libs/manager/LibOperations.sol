@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
-import {SupplyQueueEntry, WithdrawalStrategy} from "../../interfaces/manager/IPositionManager.sol";
+import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
 import {LibExecutor} from "./LibExecutor.sol";
 import {LibManagerErrors} from "./LibManagerErrors.sol";

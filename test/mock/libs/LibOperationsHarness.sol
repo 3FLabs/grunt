@@ -4,7 +4,8 @@ pragma solidity ^0.8.20;
 import {LibStorage, PositionManagerStorageData} from "src/libs/manager/LibStorage.sol";
 import {LibOperations} from "src/libs/manager/LibOperations.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
-import {SupplyQueueEntry, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
+import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Harness contract to expose internal LibOperations functions for testing

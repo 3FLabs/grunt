@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositionManager.sol";
 import {IPositionManagerAdmin} from "../interfaces/manager/base/IPositionManagerAdmin.sol";
@@ -162,6 +162,15 @@ contract PositionManager is
     performanceFee = fd.performanceFee;
     lastTotalAssets = _storage.lastTotalAssets;
     lastFeeAccrualTimestamp = _storage.lastFeeAccrualTimestamp;
+  }
+
+  /// @inheritdoc IPositionManager
+  function pendingFees()
+    public
+    view
+    returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
+  {
+    return _pendingFees();
   }
 
   /// @inheritdoc IPositionManager

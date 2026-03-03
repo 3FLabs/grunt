@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Prime Broker Offer structure for lending assets to the protocol.
 /// @param maker The address of the prime broker providing the funds

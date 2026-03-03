@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Enumeration of rebalancing operation types that can be performed on borrow positions.
 enum RebalancingOperationType {

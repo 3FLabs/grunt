@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @dev Parameters describing a two-asset swap between intents.
 /// @param id1 First intent ID.

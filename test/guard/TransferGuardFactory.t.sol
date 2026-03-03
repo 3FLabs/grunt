@@ -89,6 +89,27 @@ contract TransferGuardFactoryTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  DEPLOYMENT TRACKING TESTS                 */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isTransferGuard_returnsTrueForDeployed() public {
+    address guard = factory.createTransferGuard(guardOwner);
+    assertTrue(factory.isTransferGuard(guard));
+  }
+
+  function test_isTransferGuard_returnsFalseForUnknown() public view {
+    assertFalse(factory.isTransferGuard(address(0xdead)));
+  }
+
+  function test_isTransferGuard_tracksMultipleDeployments() public {
+    address guard1 = factory.createTransferGuard(guardOwner);
+    address guard2 = factory.createTransferGuard(user);
+
+    assertTrue(factory.isTransferGuard(guard1));
+    assertTrue(factory.isTransferGuard(guard2));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      UPGRADE TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

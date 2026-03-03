@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {FacilityRoles} from "./FacilityRoles.sol";
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
@@ -145,20 +145,20 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     // skip if the fund is already set to the same address
     if (_intent.fund == newFund) return;
 
-    if (block.timestamp > deadline) revert LibFacilityErrors.SwapExpired();
-
-    {
-      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline)));
-      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
-    }
-
     // ensure the intent has no pending order
     _intent.checkNoPendingOrder(id);
 
     if (newFund == address(0)) {
-      // if the fund is address(0), remove the fund
+      // if the fund is address(0), remove the fund (no signature required)
       _intent.removeOrderAndFund(id);
       return;
+    }
+
+    if (block.timestamp > deadline) revert LibFacilityErrors.DeadlineExpired();
+
+    {
+      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline)));
+      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
     }
 
     // ensure the fund is not already in use
@@ -199,17 +199,16 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     // skip if the request is already set to the same address
     if (_intent.request == newRequest) return;
 
-    if (block.timestamp > deadline) revert LibFacilityErrors.SwapExpired();
-
-    {
-      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline)));
-      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
-    }
-
     // ensure that there is no unpaid request bound to the intent
     _intent.checkRequestRepaid();
 
     if (newRequest != address(0)) {
+      if (block.timestamp > deadline) revert LibFacilityErrors.DeadlineExpired();
+
+      {
+        bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline)));
+        _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
+      }
       // ensure the request is a contract
       newRequest.checkContract();
 

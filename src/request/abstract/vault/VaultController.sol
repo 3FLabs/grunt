@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {TokenController} from "../tokens/TokenController.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";

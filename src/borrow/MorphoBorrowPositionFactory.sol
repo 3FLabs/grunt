@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {MorphoBorrowPosition} from "./MorphoBorrowPosition.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
@@ -64,6 +64,14 @@ contract MorphoBorrowPositionFactory {
   IMorpho public immutable MORPHO;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all MorphoBorrowPosition contracts deployed by this factory.
+  /// @dev Returns true if the address is a MorphoBorrowPosition deployed by this factory.
+  mapping(address => bool) internal _isBorrowPosition;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -102,6 +110,15 @@ contract MorphoBorrowPositionFactory {
 
     MorphoBorrowPosition(borrowPosition).initialize(marketId, positionManager, safeLtv, liquidationLtv);
 
+    _isBorrowPosition[borrowPosition] = true;
+
     emit BorrowPositionCreated(borrowPosition, address(MORPHO), marketId, positionManager, safeLtv, liquidationLtv);
+  }
+
+  /// @notice Checks if an address is a MorphoBorrowPosition contract deployed by this factory.
+  /// @param borrowPosition The address to check
+  /// @return True if the address is a MorphoBorrowPosition deployed by this factory
+  function isBorrowPosition(address borrowPosition) external view returns (bool) {
+    return _isBorrowPosition[borrowPosition];
   }
 }

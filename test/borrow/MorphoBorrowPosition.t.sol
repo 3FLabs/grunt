@@ -198,6 +198,25 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*               FACTORY DEPLOYMENT TRACKING TESTS             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isBorrowPosition_returnsTrueForDeployed() public view {
+    assertTrue(factory.isBorrowPosition(address(borrowPosition)));
+  }
+
+  function test_isBorrowPosition_returnsFalseForUnknown() public view {
+    assertFalse(factory.isBorrowPosition(address(0xdead)));
+  }
+
+  function test_isBorrowPosition_tracksMultipleDeployments() public {
+    address bp2 = factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+
+    assertTrue(factory.isBorrowPosition(address(borrowPosition)));
+    assertTrue(factory.isBorrowPosition(bp2));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   INITIALIZATION TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
