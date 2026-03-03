@@ -232,12 +232,14 @@ contract OfferReceiverTest is Test {
   }
 
   function test_ValidOffer_AtCurrentTimestamp() public {
-    // When expiration == block.timestamp, the offer is not valid (contract checks: expiration <= block.timestamp)
+    // When expiration == block.timestamp, the offer is still valid (expiration is the last valid timestamp)
     Offer memory offer = _createOffer(maker.addr, 1000e6, 100e6, 1, block.timestamp, false);
     bytes memory signature = _signOffer(offer, maker);
 
-    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.OfferExpired.selector));
     receiver.validateOffer(offer, signature);
+
+    // Nonce should be updated to the offer's nonce
+    assertEq(receiver.nonce(maker.addr), 1);
   }
 
   function test_RevertWhen_NonceIsZero() public {

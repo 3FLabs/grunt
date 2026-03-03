@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
@@ -43,10 +43,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
-  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+  uint256 internal constant _OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+  uint256 internal constant _DEPOSITOR_ROLE = _ROLE_1;
 
   /// @dev USCC/USDC/wUSCC all have 6 decimals (same for the oracle).
   uint256 private constant _DECIMALS = 6;
@@ -160,7 +160,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _setOracle(oracle_);
 
     _initializeOwner(owner_);
-    _setRoles(depositor_, DEPOSITOR_ROLE);
+    _setRoles(depositor_, _DEPOSITOR_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -168,7 +168,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFund
-  function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
+  function create(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State) {
     order.input.checkNotZero();
     _validateOutput(order);
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
@@ -202,7 +202,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function cancel(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
+  function cancel(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -225,7 +225,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial commits, always goes to PROCESSING.
-  function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function commit(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -251,7 +251,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED.
-  function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function recover(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -278,7 +278,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED.
-  function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function unlock(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -309,7 +309,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IUSCCFund
-  function recovering(bytes32 orderId) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function recovering(bytes32 orderId) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
     if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState(_storage.internalState);
@@ -319,7 +319,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
-  function cancelRecovering(bytes32 orderId) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function cancelRecovering(bytes32 orderId) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
     if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
@@ -329,9 +329,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @notice Sets the oracle address.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
-  function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function setOracle(address oracle) external onlyOwnerOrRoles(_OPERATOR_ROLE) {
     _setOracle(oracle);
   }
 
@@ -339,7 +339,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   function resolve(Order memory order, uint256 input, uint256 output)
     external
     override
-    onlyOwnerOrRoles(OPERATOR_ROLE)
+    onlyOwnerOrRoles(_OPERATOR_ROLE)
   {
     UsccFundStorage storage _storage = _usccFundStorage();
     State _internalState = _storage.internalState;

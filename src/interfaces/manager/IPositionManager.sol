@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import {IPositionManagerAdmin, SupplyQueueEntry, WithdrawalStrategy} from "./base/IPositionManagerAdmin.sol";
+import {IPositionManagerAdmin, SupplyQueueEntry} from "./base/IPositionManagerAdmin.sol";
 import {IPositionManagerRebalancing} from "./base/IPositionManagerRebalancing.sol";
 import {IPositionManagerLP} from "./base/IPositionManagerLP.sol";
 
@@ -75,6 +75,19 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
       uint256 lastTotalAssets,
       uint256 lastFeeAccrualTimestamp
     );
+
+  /// @notice Returns the pending fee data needed to compute an accurate share price.
+  /// @dev Mirrors the logic of the internal `_accrueFees()` function without mutating state.
+  ///      Integrators can compute an accurate share price as:
+  ///      `price = totalAssets / (totalSupply + managementFeeShares + performanceFeeShares)`.
+  /// @return totalAssets_ The current total assets (collateral value - debt) across all borrow modules
+  /// @return totalSupply_ The current total supply of shares (excluding pending fee shares)
+  /// @return managementFeeShares The shares that would be minted for management fees
+  /// @return performanceFeeShares The shares that would be minted for performance fees
+  function pendingFees()
+    external
+    view
+    returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares);
 
   /// @notice Returns the virtual share offset used for inflation attack protection.
   /// @dev Derived from the debt asset decimals: 10^(18 - debtAsset.decimals()), floored at 1.

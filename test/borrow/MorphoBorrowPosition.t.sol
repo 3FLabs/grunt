@@ -81,6 +81,7 @@ contract MorphoBorrowPositionTest is Test {
   error SafeLtvNotLessThanLiquidationLtv(uint128 safeLtv, uint128 liquidationLtv);
   error InconsistentInput();
   error InvalidBorrower();
+  error AssetMismatch(address expected, address actual);
   error NotMorpho();
 
   // Solady Initializable errors
@@ -138,6 +139,11 @@ contract MorphoBorrowPositionTest is Test {
     morpho.createMarket(marketParams);
     marketId = marketParams.id();
 
+    // Mock PositionManager.assets() to return expected collateral and debt assets
+    vm.mockCall(
+      positionManager, abi.encodeWithSignature("assets()"), abi.encode(address(collateralToken), address(loanToken))
+    );
+
     // Deploy factory and create MorphoBorrowPosition via factory (using beacon proxy)
     factory = new MorphoBorrowPositionFactory(owner);
     address borrowPositionAddress =
@@ -189,6 +195,25 @@ contract MorphoBorrowPositionTest is Test {
     if (borrowed == 0) return true;
     uint256 maxBorrow = _calculateMaxBorrow(collateral, price, lltv);
     return maxBorrow >= borrowed;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*               FACTORY DEPLOYMENT TRACKING TESTS             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isBorrowPosition_returnsTrueForDeployed() public view {
+    assertTrue(factory.isBorrowPosition(address(borrowPosition)));
+  }
+
+  function test_isBorrowPosition_returnsFalseForUnknown() public view {
+    assertFalse(factory.isBorrowPosition(address(0xdead)));
+  }
+
+  function test_isBorrowPosition_tracksMultipleDeployments() public {
+    address bp2 = factory.createBorrowPosition(morpho, marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+
+    assertTrue(factory.isBorrowPosition(address(borrowPosition)));
+    assertTrue(factory.isBorrowPosition(bp2));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -339,6 +364,30 @@ contract MorphoBorrowPositionTest is Test {
       assertEq(newPosition.safeLtv(), safeLtv_, "Safe LTV should be set correctly");
       assertEq(newPosition.liquidationLtv(), liquidationLtv_, "Liquidation LTV should be set correctly");
     }
+  }
+
+  function test_initialize_RevertWhen_CollateralAssetMismatch() public {
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition()).clone());
+
+    // Mock PositionManager.assets() to return a different collateral token
+    address wrongCollateral = makeAddr("wrongCollateral");
+    address mockPM = makeAddr("mockPM");
+    vm.mockCall(mockPM, abi.encodeWithSignature("assets()"), abi.encode(wrongCollateral, address(loanToken)));
+
+    vm.expectRevert(abi.encodeWithSelector(AssetMismatch.selector, wrongCollateral, address(collateralToken)));
+    newPosition.initialize(morpho, marketId, mockPM, SAFE_LTV, LIQUIDATION_LTV);
+  }
+
+  function test_initialize_RevertWhen_DebtAssetMismatch() public {
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition()).clone());
+
+    // Mock PositionManager.assets() to return a different loan token
+    address wrongDebt = makeAddr("wrongDebt");
+    address mockPM = makeAddr("mockPM2");
+    vm.mockCall(mockPM, abi.encodeWithSignature("assets()"), abi.encode(address(collateralToken), wrongDebt));
+
+    vm.expectRevert(abi.encodeWithSelector(AssetMismatch.selector, wrongDebt, address(loanToken)));
+    newPosition.initialize(morpho, marketId, mockPM, SAFE_LTV, LIQUIDATION_LTV);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -2,7 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {IPositionManager, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerEdgeCasesTest
@@ -286,11 +287,11 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
   /*                    ZERO SHARES TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Test ZeroShares revert when minting results in 0 shares due to donation attack
-  /// @dev Covers line 325: if (sharesToMint == 0) revert ZeroShares()
-  /// By donating assets directly to inflate totalAssets without minting shares,
-  /// a tiny deposit can result in 0 shares due to rounding.
-  function test_deposit_revertOnZeroSharesAfterDonation() public {
+  /// @notice After a donation inflates totalAssets, a tiny deposit yields 0 shares (micro-donation)
+  /// @dev By donating assets directly to inflate totalAssets without minting shares,
+  /// a tiny deposit results in 0 shares due to rounding. The deposit succeeds but
+  /// the caller gets no shares.
+  function test_deposit_zeroSharesAfterDonation() public {
     // Step 1: Initial small deposit to establish some shares
     uint256 initialDeposit = 1e6; // Small deposit
     _mintCollateral(minter, initialDeposit);
@@ -299,6 +300,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
 
     uint256 totalSupplyBefore = positionManager.totalSupply();
     uint256 totalAssetsBefore = positionManager.totalAssets();
+    uint256 sharesBefore = positionManager.balanceOf(minter);
 
     // Step 2: Donate massive amount directly to borrow position (bypassing PositionManager)
     // This inflates totalAssets without minting shares
@@ -317,14 +319,15 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
       positionManager.totalAssets(), totalAssetsBefore + donationAmount / 2, "Total assets should have increased"
     );
 
-    // Step 3: Try to deposit just 1 wei - should result in 0 shares and revert
+    // Step 3: Deposit 1 wei — yields 0 shares (micro-donation)
     // shares = 1 * (totalSupply + 1e6) / (totalAssets + 1)
     // With totalAssets ≈ 1e30 and totalSupply ≈ 1e6, shares ≈ 0
     _mintCollateral(minter, 1);
 
     vm.prank(minter);
-    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
-    positionManager.deposit(1, 0);
+    int256 shares = positionManager.deposit(1, 0);
+    assertEq(shares, 0, "Should return 0 shares for dust deposit after donation");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
   }
 
   /// @notice Test that withdrawing 1 wei after donation still burns at least 1 share (roundUp)
@@ -357,5 +360,93 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // sharesDelta should be -1 (burned 1 share via roundUp)
     assertEq(sharesDelta, -1, "Should burn exactly 1 share due to roundUp");
     assertEq(positionManager.balanceOf(minter), sharesBefore - 1, "Should have 1 less share");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*          SMALL ASSET DELTA REVERT (ZeroShares) TESTS           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice After oracle appreciation with debt, depositing 1 wei of collateral yields 0 shares
+  ///         because the asset delta is too small relative to the totalAssets/totalSupply ratio.
+  ///         The deposit succeeds (no revert) but the caller gets 0 shares — a micro-donation.
+  function test_deposit_zeroShares_smallCollateralAfterPriceAppreciation() public {
+    // 1. Initial deposit with debt at 1:1 price
+    //    totalAssets = collateral_quoted - debt = 10_000e18 - 5_000e18 = 5_000e18
+    //    totalSupply ≈ 5_000e18
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 totalSupplyBefore = positionManager.totalSupply();
+    uint256 sharesBefore = positionManager.balanceOf(minter);
+
+    // 2. Oracle price doubles
+    //    totalAssets = 10_000e18 * 2 - 5_000e18 = 15_000e18
+    //    totalAssets / totalSupply ≈ 3
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    uint256 totalAssetsAfter = positionManager.totalAssets();
+    assertGt(totalAssetsAfter, totalSupplyBefore * 2, "totalAssets should be > 2x totalSupply");
+
+    // 3. Deposit 1 wei of collateral → asset delta = 2 (1 wei * 2x price)
+    //    convertToShares(2, ~5_000e18, ~15_000e18, 1, false) → rounds to 0
+    //    No revert — sharesDelta returned as 0
+    _mintCollateral(minter, 1);
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(1, 0);
+    assertEq(shares, 0, "Should return 0 shares for dust deposit");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
+  }
+
+  /// @notice A balanced deposit (collateral ≈ debt in value) that results in a tiny positive
+  ///         asset delta due to rounding yields 0 shares without reverting.
+  ///         The caller's collateral and debt are still processed — a micro-donation.
+  function test_deposit_zeroShares_balancedDepositWithDustDelta() public {
+    // 1. Initial deposit to establish the vault
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    uint256 sharesBefore = positionManager.balanceOf(minter);
+
+    // 2. Increase oracle price so totalAssets >> totalSupply
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 100);
+
+    // 3. Balanced deposit: supply collateral and borrow debt of equal value.
+    //    At 100x price, 1 collateral token = 100 debt tokens in value.
+    //    If we deposit 1e18 collateral and borrow 100e18 debt, the net should be ~0.
+    //    But Morpho's rounding can make collateralQuoted - debt = a few wei.
+    //    We intentionally create a 1-wei surplus to show the 0-shares result.
+    uint256 depositCollateral = 1e18;
+    uint256 depositDebt = 100e18 - 1; // Net delta ≈ +1 wei in asset terms
+
+    _mintCollateral(minter, depositCollateral);
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(depositCollateral, depositDebt);
+    assertEq(shares, 0, "Should return 0 shares for balanced dust deposit");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
+  }
+
+  /// @notice After oracle appreciation, repaying 1 wei of debt via withdraw yields 0 shares.
+  ///         The debt is still repaid but the caller gets no new shares — a micro-donation.
+  function test_withdraw_zeroShares_smallDebtRepaymentAfterPriceAppreciation() public {
+    // 1. Initial deposit with debt at 1:1 price
+    //    totalAssets = 10_000e18 - 5_000e18 = 5_000e18, totalSupply ≈ 5_000e18
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 sharesBefore = positionManager.balanceOf(minter);
+
+    // 2. Oracle price doubles → totalAssets ≈ 15_000e18, totalSupply ≈ 5_000e18 (ratio ≈ 3)
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+
+    // 3. Repay 1 wei of debt → totalAssets increases by 1 wei
+    //    Since assets increased, _settleShares uses the minting branch (roundDown)
+    //    convertToShares(1, ~5_000e18, ~15_000e18, 1, false) → rounds to 0
+    //    No revert — sharesDelta returned as 0
+    vm.prank(minter);
+    int256 shares = positionManager.withdraw(0, 1, WithdrawalStrategy.SEQUENTIAL);
+    assertEq(shares, 0, "Should return 0 shares for dust debt repayment");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
   }
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManagerLP.sol";
 import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
@@ -33,7 +33,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if both collateral and debt are zero.
   ///      Reverts with {LibManagerErrors.EmptySupplyQueue} if debt is zero but collateral > 0 and supply queue is empty.
   function deposit(uint256 collateral, uint256 debt)
     external
@@ -78,7 +78,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   }
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if both collateral and debt are zero.
   function withdraw(uint256 collateral, uint256 debt, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
@@ -113,7 +113,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   }
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if shares is zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if shares is zero.
   function burn(uint256 shares, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
@@ -176,11 +176,12 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       // Assets increased: mint shares to caller
       uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
       uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, false);
-      if (sharesToMint == 0) revert LibManagerErrors.ZeroShares();
-      _mint(msg.sender, sharesToMint);
-      // Safe: sharesToMint is capped by total supply which fits in uint128
-      // forge-lint: disable-next-line(unsafe-typecast)
-      sharesDelta = int256(sharesToMint);
+      if (sharesToMint > 0) {
+        _mint(msg.sender, sharesToMint);
+        // Safe: sharesToMint is capped by total supply which fits in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
+        sharesDelta = int256(sharesToMint);
+      }
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
@@ -197,6 +198,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
         revert CommonErrors.Paused();
       }
     }
+    // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
 
     // Update snapshot for performance fees
     _storage.updateSnapshot();

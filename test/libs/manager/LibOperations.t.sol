@@ -6,7 +6,7 @@ import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
 import {LibOperationsHarness} from "test/mock/libs/LibOperationsHarness.sol";
 import {MockBorrowPosition} from "test/mock/borrow/MockBorrowPosition.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
-import {WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 
 /// @title LibOperationsTest
 /// @notice Unit tests for manager LibOperations library

@@ -20,6 +20,9 @@ contract USCCFundFuzzTest is Test {
   using LibOrder for Order;
   uint256 private constant ONE_USDC = 1e6;
 
+  // USCCFund roles (matching internal constants)
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   // WrappedAsset roles (matching internal constants)
   uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
   uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
@@ -653,6 +656,9 @@ contract USCCFundFuzzTest is Test {
 contract USCCFundInvariantTest is StdInvariant, Test {
   uint256 private constant ONE_USDC = 1e6;
 
+  // USCCFund roles (matching internal constants)
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   // WrappedAsset roles (matching internal constants)
   uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
   uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
@@ -702,9 +708,8 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     wuscc.grantRoles(address(handler), WUSCC_SENDER_ROLE);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(address(handler), operatorRole);
+    fund.grantRoles(address(handler), OPERATOR_ROLE);
 
     handler.initialize(fund, usdc, uscc, wuscc, recipient);
 

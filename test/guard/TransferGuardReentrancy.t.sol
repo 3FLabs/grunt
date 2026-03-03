@@ -55,7 +55,7 @@ contract TransferGuardReentrancyTest is Test {
 
   uint256 constant _ROLE_MINTER = 1 << 0;
   uint256 constant _ROLE_REBALANCER = 1 << 2;
-  uint256 constant PAUSER_ROLE = 1 << 1;
+  uint256 constant _PAUSER_ROLE = 1 << 1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -93,9 +93,9 @@ contract TransferGuardReentrancyTest is Test {
       address(guard), address(positionManager), address(collateralToken), address(debtToken), address(positionManager)
     );
 
-    // Grant PAUSER_ROLE to malicious module (simulating compromised trusted module)
+    // Grant _PAUSER_ROLE to malicious module (simulating compromised trusted module)
     vm.prank(guardOwner);
-    guard.grantRoles(address(maliciousModule), PAUSER_ROLE);
+    guard.grantRoles(address(maliciousModule), _PAUSER_ROLE);
 
     // Setup roles
     vm.startPrank(owner);

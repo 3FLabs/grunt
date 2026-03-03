@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @title Order
 /// @author 3F Protocol
@@ -73,8 +73,6 @@ library LibOrder {
       mcopy(add(start, 0x40), order, 0xC0)
       // compute the hash
       id := keccak256(start, 0x100)
-      // update the free memory pointer
-      mstore(0x40, add(start, 0x100))
     }
   }
 }

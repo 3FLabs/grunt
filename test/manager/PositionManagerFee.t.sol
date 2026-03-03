@@ -400,4 +400,167 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
       "Performance fees should still not increase after third setFeeData call"
     );
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    PENDING FEES VIEW TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_pendingFees_ZeroWhenNoFeeRecipient() public {
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertGt(totalAssets_, 0, "totalAssets should be non-zero");
+    assertGt(totalSupply_, 0, "totalSupply should be non-zero");
+    assertEq(mgmtShares, 0, "no mgmt fee shares without recipient");
+    assertEq(perfShares, 0, "no perf fee shares without recipient");
+  }
+
+  function test_pendingFees_ZeroWhenNoSupply() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertEq(totalAssets_, 0, "totalAssets should be zero");
+    assertEq(totalSupply_, 0, "totalSupply should be zero");
+    assertEq(mgmtShares, 0, "no mgmt fee shares with zero supply");
+    assertEq(perfShares, 0, "no perf fee shares with zero supply");
+  }
+
+  function test_pendingFees_ManagementFeeOnly() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0); // 2% per year
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertEq(totalAssets_, COLLATERAL_AMOUNT, "totalAssets");
+    assertGt(totalSupply_, 0, "totalSupply");
+    assertGt(mgmtShares, 0, "should have management fee shares");
+    assertEq(perfShares, 0, "no performance fee shares");
+  }
+
+  function test_pendingFees_PerformanceFeeOnly() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 0, 2000); // 20% perf fee
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // 20% price increase
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertEq(totalAssets_, COLLATERAL_AMOUNT * 120 / 100, "totalAssets reflects gain");
+    assertGt(totalSupply_, 0, "totalSupply");
+    assertEq(mgmtShares, 0, "no management fee shares");
+    assertGt(perfShares, 0, "should have performance fee shares");
+  }
+
+  function test_pendingFees_BothFees() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertGt(totalAssets_, 0, "totalAssets");
+    assertGt(totalSupply_, 0, "totalSupply");
+    assertGt(mgmtShares, 0, "should have management fee shares");
+    assertGt(perfShares, 0, "should have performance fee shares");
+  }
+
+  function test_pendingFees_MatchesActualAccrual() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+    vm.warp(block.timestamp + 365 days);
+
+    // Read pending fees before accrual
+    (, uint256 totalSupplyBefore, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    uint256 pendingTotal = mgmtShares + perfShares;
+
+    // Trigger accrual with a minimal deposit
+    _mintCollateral(minter, 1e18);
+    vm.prank(minter);
+    positionManager.deposit(1e18, 0);
+
+    uint256 actualFeeShares = positionManager.balanceOf(feeRecipient);
+
+    // The pending fee prediction should exactly match the actual minted fee shares
+    assertEq(pendingTotal, actualFeeShares, "pendingFees must match actual accrued fee shares");
+
+    // totalSupply before accrual should match what was returned
+    // (deposit mints shares for minter + fee shares, so totalSupply increased by both)
+    uint256 totalSupplyAfter = positionManager.totalSupply();
+    // totalSupplyAfter = totalSupplyBefore + feeShares + newDepositShares
+    assertGt(totalSupplyAfter, totalSupplyBefore + actualFeeShares, "supply grew by fees + deposit shares");
+  }
+
+  function test_pendingFees_ZeroAfterAccrual() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+    vm.warp(block.timestamp + 365 days);
+
+    // Trigger accrual
+    _mintCollateral(minter, 1e18);
+    vm.prank(minter);
+    positionManager.deposit(1e18, 0);
+
+    // Immediately after accrual, pending fees should be zero (no time elapsed, no new gains)
+    (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertEq(mgmtShares, 0, "no pending mgmt fees after accrual");
+    assertEq(perfShares, 0, "no pending perf fees after accrual");
+  }
+
+  function test_pendingFees_NoPerformanceFeeWhenMgmtExceedsGain() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // 1% gain but 2% management fee over 1 year => net gain negative => no perf fee
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100);
+    vm.warp(block.timestamp + 365 days);
+
+    (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    assertGt(mgmtShares, 0, "should have management fee shares");
+    assertEq(perfShares, 0, "no performance fee when mgmt fee exceeds gain");
+  }
 }

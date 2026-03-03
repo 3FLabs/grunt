@@ -7,6 +7,7 @@ import {Asset} from "src/libs/facility/LibIntent.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {MockMaliciousPositionManager} from "test/mock/manager/MockMaliciousPositionManager.sol";
 
 /// @title FacilityPositionManagerTest
 /// @notice Tests for Facility position manager operations (depositManager, withdrawManager, burnManager)
@@ -378,5 +379,90 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     // Verify intent has balances
     (address[] memory tokens,) = facility.intentBalances(intentId);
     assertTrue(tokens.length > 0, "Should have balances");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*         INVALID POSITION MANAGER ASSETS (CS-GRUNT-062)       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Helper to create a resolving intent with a malicious PM as deposit asset
+  function _createResolvingIntentWithMaliciousPM(address maliciousPM) internal returns (uint256 intentId) {
+    IntentProperties memory props = IntentProperties({
+      depositAsset: Asset({asset: maliciousPM, isPositionManager: true}),
+      targetAsset: Asset({asset: address(debtToken), isPositionManager: false}),
+      depositCap: DEFAULT_DEPOSIT_CAP,
+      guardKey: maliciousPM,
+      resolveStart: uint40(block.timestamp + 1 days),
+      quorum: 1,
+      transferableIntent: true
+    });
+
+    vm.prank(owner);
+    intentId = facility.createIntent(props);
+
+    // Move to resolving phase
+    vm.warp(block.timestamp + 1 days + 1);
+  }
+
+  function test_depositManager_revertWhenCollateralEqualsDebt() public {
+    // CS-GRUNT-062: PM reports collateralAsset == debtAsset → double-counting
+    MockMaliciousPositionManager maliciousPM =
+      new MockMaliciousPositionManager(address(collateralToken), address(collateralToken));
+    uint256 intentId = _createResolvingIntentWithMaliciousPM(address(maliciousPM));
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidPositionManagerAssets.selector);
+    facility.depositManager(intentId, 100e18, 0, false);
+  }
+
+  function test_withdrawManager_revertWhenCollateralEqualsDebt() public {
+    // CS-GRUNT-062: PM reports collateralAsset == debtAsset → double-counting
+    MockMaliciousPositionManager maliciousPM =
+      new MockMaliciousPositionManager(address(collateralToken), address(collateralToken));
+    uint256 intentId = _createResolvingIntentWithMaliciousPM(address(maliciousPM));
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidPositionManagerAssets.selector);
+    facility.withdrawManager(intentId, 100e18, 0, false, WithdrawalStrategy.SEQUENTIAL);
+  }
+
+  function test_burnManager_revertWhenCollateralEqualsDebt() public {
+    // CS-GRUNT-062: PM reports collateralAsset == debtAsset → double-counting
+    MockMaliciousPositionManager maliciousPM =
+      new MockMaliciousPositionManager(address(collateralToken), address(collateralToken));
+    uint256 intentId = _createResolvingIntentWithMaliciousPM(address(maliciousPM));
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidPositionManagerAssets.selector);
+    facility.burnManager(intentId, 100e18, false, WithdrawalStrategy.PROPORTIONAL);
+  }
+
+  function test_depositManager_revertWhenCollateralEqualsPositionManager() public {
+    // PM reports collateralAsset == positionManager address → shares/collateral double-counting
+    MockMaliciousPositionManager maliciousPM = new MockMaliciousPositionManager(address(0), address(debtToken));
+    // Set collateralAsset to the PM's own address — need to deploy at a known address
+    // Instead, we create a PM that returns its own address as collateral
+    address pmAddr = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+    maliciousPM = new MockMaliciousPositionManager(pmAddr, address(debtToken));
+    assert(address(maliciousPM) == pmAddr);
+
+    uint256 intentId = _createResolvingIntentWithMaliciousPM(address(maliciousPM));
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidPositionManagerAssets.selector);
+    facility.depositManager(intentId, 100e18, 0, false);
+  }
+
+  function test_depositManager_revertWhenDebtEqualsPositionManager() public {
+    // PM reports debtAsset == positionManager address → shares/debt double-counting
+    address pmAddr = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+    MockMaliciousPositionManager maliciousPM = new MockMaliciousPositionManager(address(collateralToken), pmAddr);
+    assert(address(maliciousPM) == pmAddr);
+
+    uint256 intentId = _createResolvingIntentWithMaliciousPM(address(maliciousPM));
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidPositionManagerAssets.selector);
+    facility.depositManager(intentId, 100e18, 0, false);
   }
 }

@@ -3,7 +3,8 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
-import {IPositionManager, SupplyQueueEntry, WithdrawalStrategy} from "src/interfaces/manager/IPositionManager.sol";
+import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {ReentrantMinter} from "../mock/manager/ReentrantMinter.sol";
