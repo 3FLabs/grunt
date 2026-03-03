@@ -38,7 +38,13 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 ///      8. Approves Morpho to pull back the flash loaned amount
 ///
 /// @author 3F Protocol
-contract MorphoFlashLoanRequest is IRequest, IMorphoFlashLoanCallback, Ownable, Initializable, ReentrancyGuardTransient {
+contract MorphoFlashLoanRequest is
+  IRequest,
+  IMorphoFlashLoanCallback,
+  Ownable,
+  Initializable,
+  ReentrancyGuardTransient
+{
   using SafeTransferLib for address;
   using LibChecks for address;
   using LibChecks for uint256;
@@ -186,16 +192,14 @@ contract MorphoFlashLoanRequest is IRequest, IMorphoFlashLoanCallback, Ownable, 
     // Set raw debt — actual debt is rawDebt - assetBalance
     _setRawDebt(assets);
 
-    (SetRequestParams memory params, Operation[] memory operations) =
-      abi.decode(data, (SetRequestParams, Operation[]));
+    (SetRequestParams memory params, Operation[] memory operations) = abi.decode(data, (SetRequestParams, Operation[]));
 
     MorphoFlashLoanRequestStorage storage s = _storage();
     address facility = s.facility;
 
     // Set this contract as the request on the facility
-    IFacilityIntents(facility).setRequest(
-      params.intentId, address(this), params.deadline, params.signers, params.signatures
-    );
+    IFacilityIntents(facility)
+      .setRequest(params.intentId, address(this), params.deadline, params.signers, params.signatures);
 
     // Pull the flash loan amount from this request into the facility
     IFacilityRequests(facility).pull(params.intentId, assets);
@@ -209,9 +213,8 @@ contract MorphoFlashLoanRequest is IRequest, IMorphoFlashLoanCallback, Ownable, 
     IFacilityRequests(facility).repay(params.intentId, assets);
 
     // Remove this contract as the request (assumes no signatures required for address(0))
-    IFacilityIntents(facility).setRequest(
-      params.intentId, address(0), type(uint256).max, new address[](0), new bytes[](0)
-    );
+    IFacilityIntents(facility)
+      .setRequest(params.intentId, address(0), type(uint256).max, new address[](0), new bytes[](0));
 
     // Approve Morpho to pull back the flash loaned amount
     s.asset.safeApproveWithRetry(address(MORPHO), assets);
