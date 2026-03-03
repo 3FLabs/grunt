@@ -85,11 +85,4 @@ library LibFundsErrors {
   /// @param decimalsA The decimals of the first token.
   /// @param decimalsB The decimals of the second token.
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    OUTPUT VALIDATION                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when the order output deviates too much from the oracle-derived expected output.
-  error InvalidOutput();
 }
