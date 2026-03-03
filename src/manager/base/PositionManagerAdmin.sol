@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
@@ -63,20 +63,14 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
     // Check module is not in supply queue
     uint256 supplyQueueLength = _storage.supplyQueue.length;
-    for (uint256 i = 0; i < supplyQueueLength;) {
+    for (uint256 i = 0; i < supplyQueueLength; ++i) {
       if (_storage.supplyQueue[i].position == module) revert LibManagerErrors.ModuleStillInQueue();
-      unchecked {
-        ++i;
-      }
     }
 
     // Check module is not in withdrawal queue
     uint256 withdrawalQueueLength = _storage.withdrawalQueue.length;
-    for (uint256 i = 0; i < withdrawalQueueLength;) {
+    for (uint256 i = 0; i < withdrawalQueueLength; ++i) {
       if (_storage.withdrawalQueue[i] == module) revert LibManagerErrors.ModuleStillInQueue();
-      unchecked {
-        ++i;
-      }
     }
 
     _storage.borrowModules.remove(module);
@@ -93,18 +87,12 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
     delete _storage.supplyQueue;
     uint256 queueLength = queue.length;
-    for (uint256 i = 0; i < queueLength;) {
+    for (uint256 i = 0; i < queueLength; ++i) {
       if (!_storage.borrowModules.contains(queue[i].position)) revert LibManagerErrors.UnauthorizedPosition();
-      for (uint256 j = 0; j < i;) {
+      for (uint256 j = 0; j < i; ++j) {
         if (queue[j].position == queue[i].position) revert LibManagerErrors.DuplicateQueueEntry();
-        unchecked {
-          ++j;
-        }
       }
       _storage.supplyQueue.push(queue[i]);
-      unchecked {
-        ++i;
-      }
     }
     emit IPositionManagerAdmin.SupplyQueueSet(queue);
   }
@@ -116,16 +104,10 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     uint256 queueLength = queue.length;
-    for (uint256 i = 0; i < queueLength;) {
+    for (uint256 i = 0; i < queueLength; ++i) {
       if (!_storage.borrowModules.contains(queue[i])) revert LibManagerErrors.UnauthorizedPosition();
-      for (uint256 j = 0; j < i;) {
+      for (uint256 j = 0; j < i; ++j) {
         if (queue[j] == queue[i]) revert LibManagerErrors.DuplicateQueueEntry();
-        unchecked {
-          ++j;
-        }
-      }
-      unchecked {
-        ++i;
       }
     }
     _storage.withdrawalQueue = queue;
@@ -141,12 +123,9 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
     // Check all whitelisted borrow modules have safeLtv >= new PM LTV
     uint256 len = _storage.borrowModules.length();
-    for (uint256 i; i < len;) {
+    for (uint256 i; i < len; ++i) {
       if (IBorrowPosition(_storage.borrowModules.at(i)).safeLtv() < ltv_) {
         revert LibManagerErrors.ModuleSafeLtvTooLow();
-      }
-      unchecked {
-        ++i;
       }
     }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManagerLP.sol";
 import {FeeData, PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";

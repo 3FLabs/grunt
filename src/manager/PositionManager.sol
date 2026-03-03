@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositionManager.sol";
 import {IPositionManagerAdmin} from "../interfaces/manager/base/IPositionManagerAdmin.sol";

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
@@ -21,11 +21,8 @@ library LibView {
   function collateralAmount(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       amount += IBorrowPosition(modules[i]).totalCollateral();
-      unchecked {
-        ++i;
-      }
     }
   }
 
@@ -35,11 +32,8 @@ library LibView {
   function collateralAmountQuoted(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       amount += IBorrowPosition(modules[i]).totalCollateralQuoted();
-      unchecked {
-        ++i;
-      }
     }
   }
 
@@ -49,11 +43,8 @@ library LibView {
   function debtAmount(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       amount += IBorrowPosition(modules[i]).totalBorrowed();
-      unchecked {
-        ++i;
-      }
     }
   }
 
@@ -65,13 +56,10 @@ library LibView {
   function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       uint256 collateral = IBorrowPosition(modules[i]).totalCollateralQuoted();
       uint256 debt = IBorrowPosition(modules[i]).totalBorrowed();
       amount += collateral.zeroFloorSub(debt);
-      unchecked {
-        ++i;
-      }
     }
   }
 
