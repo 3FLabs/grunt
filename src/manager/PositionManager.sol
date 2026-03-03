@@ -165,6 +165,15 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
+  function pendingFees()
+    public
+    view
+    returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
+  {
+    return _pendingFees();
+  }
+
+  /// @inheritdoc IPositionManager
   function virtualShareOffset() public view returns (uint256) {
     return LibStorage.positionManagerStorage().virtualShareOffset;
   }
