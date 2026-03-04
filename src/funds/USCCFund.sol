@@ -309,8 +309,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IUSCCFund
-  function recovering() external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
+  function recovering(bytes32 orderId) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
+    if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.RECOVERING;
 
@@ -318,8 +319,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
-  function cancelRecovering() external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
+  function cancelRecovering(bytes32 orderId) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
+    if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.PROCESSING;
 

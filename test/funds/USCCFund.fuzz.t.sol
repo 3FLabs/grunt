@@ -6,7 +6,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {USCCFund} from "src/funds/USCCFund.sol";
 import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Order, Mode, State} from "src/libs/funds/Order.sol";
+import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
@@ -17,6 +17,7 @@ import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
 import {USCCFundHandler} from "test/mock/funds/USCCFundHandler.sol";
 
 contract USCCFundFuzzTest is Test {
+  using LibOrder for Order;
   uint256 private constant ONE_USDC = 1e6;
 
   // USCCFund roles (matching internal constants)
@@ -132,7 +133,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     usdc.mint(address(fund), returnedAmount);
 
@@ -161,7 +162,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     if (returnedAmount > 0) usdc.mint(address(fund), returnedAmount);
 
@@ -275,7 +276,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     // Superstate returns USCC to fund
     uscc.mint(address(fund), returnedAmount);
@@ -319,7 +320,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     if (returnedAmount > 0) uscc.mint(address(fund), returnedAmount);
 
@@ -401,7 +402,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(original);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(original.toId(address(fund)));
 
     uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
@@ -510,7 +511,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(original);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(original.toId(address(fund)));
 
     uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
@@ -564,14 +565,14 @@ contract USCCFundFuzzTest is Test {
 
     // Operator mistakenly calls recovering
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     // Superstate delivers output USCC despite recovering state
     if (receivedAmount > 0) uscc.mint(address(fund), receivedAmount);
 
     // Operator cancels recovering
     vm.prank(owner);
-    fund.cancelRecovering();
+    fund.cancelRecovering(order.toId(address(fund)));
 
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
 
@@ -596,14 +597,14 @@ contract USCCFundFuzzTest is Test {
 
     // Operator mistakenly calls recovering
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     // Superstate delivers output USDC despite recovering state
     if (usdcOutAmount > 0) usdc.mint(address(fund), usdcOutAmount);
 
     // Operator cancels recovering
     vm.prank(owner);
-    fund.cancelRecovering();
+    fund.cancelRecovering(order.toId(address(fund)));
 
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
 

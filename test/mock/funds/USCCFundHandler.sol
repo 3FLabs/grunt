@@ -4,12 +4,13 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {USCCFund} from "src/funds/USCCFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Order, Mode, State} from "src/libs/funds/Order.sol";
+import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 
 import {MockERC20} from "../MockERC20.sol";
 import {MockSuperstateToken} from "./MockSuperstateToken.sol";
 
 contract USCCFundHandler is Test {
+  using LibOrder for Order;
   USCCFund public fund;
   MockERC20 public usdc;
   MockSuperstateToken public uscc;
@@ -128,12 +129,12 @@ contract USCCFundHandler is Test {
   }
 
   function act_setRecovering() external {
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
     internalState = State.RECOVERING;
   }
 
   function act_cancelRecovering() external {
-    fund.cancelRecovering();
+    fund.cancelRecovering(order.toId(address(fund)));
     internalState = State.PROCESSING;
   }
 
