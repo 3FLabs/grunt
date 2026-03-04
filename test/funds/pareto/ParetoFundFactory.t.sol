@@ -17,6 +17,8 @@ contract ParetoFundFactoryTest is Test {
   event FactoryDeployed();
   event FundCreated(address indexed fund, address indexed vault);
 
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
+
   ParetoFundFactory public factory;
   WrappedAsset public wrappedShare;
   MockERC20 public usdc;
@@ -70,7 +72,7 @@ contract ParetoFundFactoryTest is Test {
   function test_Factory_ConfiguresRoles() public {
     address fundAddress = factory.createFund(owner, depositor, address(cdo), address(wrappedShare));
     ParetoFund fund = ParetoFund(fundAddress);
-    assertEq(fund.rolesOf(depositor), fund.DEPOSITOR_ROLE(), "depositor");
+    assertEq(fund.rolesOf(depositor), DEPOSITOR_ROLE, "depositor");
   }
 
   function test_Factory_MultipleDeployments() public {

@@ -31,6 +31,10 @@ contract CentrifugeFundTest is Test {
 
   uint256 private constant ONE = 1e6;
 
+  // CentrifugeFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
+
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -87,7 +91,7 @@ contract CentrifugeFundTest is Test {
     assertEq(fund.asset(), address(assetToken), "asset");
     assertEq(fund.share(), address(wrappedShare), "share");
     assertEq(fund.vault(), address(vault), "vault");
-    assertEq(fund.rolesOf(address(this)), fund.DEPOSITOR_ROLE(), "depositor role");
+    assertEq(fund.rolesOf(address(this)), DEPOSITOR_ROLE, "depositor role");
     assertEq(uint256(fund.state(_depositOrder(ONE, ONE))), uint256(State.EMPTY), "initial state");
   }
 
@@ -747,9 +751,8 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
+    fund.grantRoles(operator, OPERATOR_ROLE);
     vm.prank(operator);
     fund.cancelRequest(order);
   }
@@ -965,10 +968,9 @@ contract CentrifugeFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_OperatorGrantable() public {
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
-    assertEq(fund.rolesOf(operator), operatorRole, "operator role");
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    assertEq(fund.rolesOf(operator), OPERATOR_ROLE, "operator role");
   }
 
   function test_Roles_OwnershipTransfer() public {
