@@ -105,9 +105,12 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
 
   /// @inheritdoc IFacilityLP
   /// @dev Checks that deposit asset balance >= totalSupply to ensure the intent has not been
-  ///      resolved or still has enough balance to reimburse. Sends the deposit asset directly
-  ///      to the share holder (`from`) to prevent fund redirection by the compliance role.
-  function revertDeposit(uint256 id, address from) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
+  ///      resolved or still has enough balance to reimburse. When receiver differs from the
+  ///      share holder, only the owner can call this to prevent the compliance role from
+  ///      redirecting user funds.
+  function revertDeposit(uint256 id, address from, address receiver) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
+    // only the owner can redirect funds to a different address
+    if (receiver != from) _checkOwner();
     // no-op if the user has no shares for this intent
     uint256 balance = balanceOf(from, id);
     if (balance == 0) return;
@@ -123,9 +126,8 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
     if (_intent.isResolved() || _intent.amounts._values[_depositAsset] < _intent.totalSupply) {
       revert LibFacilityErrors.AlreadyResolving(id);
     }
-    // send the deposit asset directly to the share holder to prevent the compliance
-    // role from redirecting funds to an arbitrary address
-    _intent.transferTokenTo(id, _depositAsset, from, balance);
+    // transfer the deposit asset to the receiver
+    _intent.transferTokenTo(id, _depositAsset, receiver, balance);
     // burn the user's shares to reflect the withdrawal
     _burn(from, id, balance);
   }

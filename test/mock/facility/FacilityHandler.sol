@@ -387,7 +387,7 @@ contract FacilityHandler is Test {
     address who = users[userSeed % users.length];
 
     vm.prank(owner);
-    try facility.revertDeposit(id, who) {
+    try facility.revertDeposit(id, who, who) {
       userDeposits[id][who] = 0;
     } catch {}
   }

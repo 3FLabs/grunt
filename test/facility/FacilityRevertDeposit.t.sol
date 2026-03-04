@@ -18,7 +18,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
     facility.deposit(intentId, DEFAULT_AMOUNT);
 
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(facility.balanceOf(user, intentId), 0, "User shares should be 0");
     assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
@@ -31,7 +31,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
     facility.deposit(intentId, DEFAULT_AMOUNT);
 
     vm.prank(pauser); // pauser has COMPLIANCE_ROLE
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(facility.balanceOf(user, intentId), 0, "User shares should be 0");
   }
@@ -44,7 +44,37 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     vm.prank(user);
     vm.expectRevert(); // Unauthorized
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    RECEIVER ACCESS CONTROL                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_revertDeposit_ownerCanRedirectToReceiver() public {
+    uint256 intentId = _createDefaultIntent();
+    _depositToPM(user, DEFAULT_AMOUNT);
+    vm.prank(user);
+    facility.deposit(intentId, DEFAULT_AMOUNT);
+
+    // owner can send to a different receiver
+    vm.prank(owner);
+    facility.revertDeposit(intentId, user, user2);
+
+    assertEq(facility.balanceOf(user, intentId), 0, "User shares should be 0");
+    assertEq(positionManager.balanceOf(user2), DEFAULT_AMOUNT, "Receiver should get the assets");
+  }
+
+  function test_revertDeposit_complianceCannotRedirectToReceiver() public {
+    uint256 intentId = _createDefaultIntent();
+    _depositToPM(user, DEFAULT_AMOUNT);
+    vm.prank(user);
+    facility.deposit(intentId, DEFAULT_AMOUNT);
+
+    // compliance role cannot send to a different receiver
+    vm.prank(pauser);
+    vm.expectRevert(); // Unauthorized (checkOwner fails)
+    facility.revertDeposit(intentId, user, user2);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -61,7 +91,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
     assertEq(positionManager.balanceOf(user), pmBalanceBefore - DEFAULT_AMOUNT, "PM balance should decrease");
 
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(positionManager.balanceOf(user), pmBalanceBefore, "PM balance should be restored");
   }
@@ -71,7 +101,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     // user has no deposit — should not revert, just no-op
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(facility.balanceOf(user, intentId), 0, "Balance should remain 0");
   }
@@ -91,7 +121,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     // Revert only user1's deposit
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(facility.balanceOf(user, intentId), 0, "User 1 shares should be 0");
     assertEq(facility.balanceOf(user2, intentId), deposit2, "User 2 shares should be unchanged");
@@ -111,7 +141,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.AlreadyResolving.selector, intentId));
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
   }
 
   function test_revertDeposit_revertWhenDepositAssetBalanceBelowTotalSupply() public {
@@ -137,7 +167,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
     // Now deposit asset (debtToken) balance is 0, which is < totalSupply
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.AlreadyResolving.selector, intentId));
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
   }
 
   function test_revertDeposit_worksInResolvingPhaseIfBalanceSufficient() public {
@@ -146,7 +176,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     // Still in resolving phase but balance is intact
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(facility.balanceOf(user, intentId), 0, "Shares should be burned");
     assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
@@ -168,7 +198,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
     uint256 pmBalanceBefore = positionManager.balanceOf(user);
 
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(positionManager.balanceOf(user), pmBalanceBefore + amount, "Should get back exact amount");
     assertEq(facility.balanceOf(user, intentId), 0, "Shares should be 0");
@@ -190,7 +220,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     // Revert user1 only
     vm.prank(owner);
-    facility.revertDeposit(intentId, user);
+    facility.revertDeposit(intentId, user, user);
 
     assertEq(facility.balanceOf(user, intentId), 0, "User 1 shares should be 0");
     assertEq(facility.balanceOf(user2, intentId), amount2, "User 2 shares unchanged");
@@ -198,7 +228,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
 
     // Revert user2
     vm.prank(owner);
-    facility.revertDeposit(intentId, user2);
+    facility.revertDeposit(intentId, user2, user2);
 
     assertEq(facility.balanceOf(user2, intentId), 0, "User 2 shares should be 0");
     assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
