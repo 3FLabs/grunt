@@ -65,6 +65,7 @@ contract FacilityReentrancyTest is Test {
   uint256 constant PM_LTV = 0.7e18;
   uint128 constant BP_SAFE_LTV = 0.72e18;
   uint128 constant BP_LIQUIDATION_LTV = 0.78e18;
+
   function setUp() public {
     owner = makeAddr("owner");
     facilitator = makeAddr("facilitator");

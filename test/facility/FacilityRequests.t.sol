@@ -302,5 +302,4 @@ contract FacilityRequestsTest is FacilityBaseTest {
     assertEq(mockRequest.pullFundsCallCount(), 2, "Should have 2 pulls");
     assertEq(mockRequest.repayCallCount(), 1, "Should have 1 repay");
   }
-
 }

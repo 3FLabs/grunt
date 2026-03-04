@@ -394,5 +394,4 @@ contract FacilityInvariantTest is StdInvariant, Test {
       assertGe(uint256(pausedUntil), block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
     }
   }
-
 }
