@@ -120,9 +120,8 @@ contract FacilityReentrancyTest is Test {
     );
 
     // Setup borrow position
-    bpFactory = new MorphoBorrowPositionFactory(owner);
-    address bp =
-      bpFactory.createBorrowPosition(morpho, mp.id(), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
+    bpFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    address bp = bpFactory.createBorrowPosition(mp.id(), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
 
     vm.prank(owner);
     positionManager.addBorrowModule(bp);

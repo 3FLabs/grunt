@@ -159,16 +159,14 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     );
 
     // ---- deploy MorphoBorrowPositionFactory and create 2 borrow positions ----
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
 
-    address bp1 = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address bp1 =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition1 = MorphoBorrowPosition(bp1);
 
-    address bp2 = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address bp2 =
+      borrowPositionFactory.createBorrowPosition(marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
     // ---- add borrow modules & grant PM roles ----

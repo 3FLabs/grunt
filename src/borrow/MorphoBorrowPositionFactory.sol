@@ -60,6 +60,9 @@ contract MorphoBorrowPositionFactory {
   /// @dev All MorphoBorrowPosition proxies deployed by this factory delegate to this beacon's implementation.
   address public immutable BORROW_POSITION_BEACON;
 
+  /// @notice The Morpho Blue protocol contract address shared by all borrow positions.
+  IMorpho public immutable MORPHO;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -76,8 +79,11 @@ contract MorphoBorrowPositionFactory {
   /// @dev Deploys one UpgradeableBeacon wrapping a freshly deployed MorphoBorrowPosition implementation.
   ///      The beacon owner can later upgrade the implementation for all proxies.
   /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
-  constructor(address initialBeaconOwner) {
-    BORROW_POSITION_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new MorphoBorrowPosition())));
+  /// @param morpho The Morpho Blue protocol contract address
+  constructor(address initialBeaconOwner, IMorpho morpho) {
+    MORPHO = morpho;
+    BORROW_POSITION_BEACON =
+      address(new UpgradeableBeacon(initialBeaconOwner, address(new MorphoBorrowPosition(morpho))));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -91,26 +97,22 @@ contract MorphoBorrowPositionFactory {
   ///
   ///      The position manager becomes the owner and has exclusive control over the position.
   ///      Emits a {BorrowPositionCreated} event.
-  /// @param morpho The Morpho Blue protocol contract address
   /// @param marketId The Morpho market ID for this borrow position
   /// @param positionManager The address of the position manager (owner) that will control this position
   /// @param safeLtv The safe LTV threshold for position mutations (must be > 0 and < liquidationLtv)
   /// @param liquidationLtv The liquidation LTV for this borrow position (must be > safeLtv, <= WAD, and <= market LLTV)
   /// @return borrowPosition The address of the newly deployed MorphoBorrowPosition proxy
-  function createBorrowPosition(
-    IMorpho morpho,
-    Id marketId,
-    address positionManager,
-    uint128 safeLtv,
-    uint128 liquidationLtv
-  ) external returns (address borrowPosition) {
+  function createBorrowPosition(Id marketId, address positionManager, uint128 safeLtv, uint128 liquidationLtv)
+    external
+    returns (address borrowPosition)
+  {
     borrowPosition = BORROW_POSITION_BEACON.deployERC1967BeaconProxy();
 
-    MorphoBorrowPosition(borrowPosition).initialize(morpho, marketId, positionManager, safeLtv, liquidationLtv);
+    MorphoBorrowPosition(borrowPosition).initialize(marketId, positionManager, safeLtv, liquidationLtv);
 
     _isBorrowPosition[borrowPosition] = true;
 
-    emit BorrowPositionCreated(borrowPosition, address(morpho), marketId, positionManager, safeLtv, liquidationLtv);
+    emit BorrowPositionCreated(borrowPosition, address(MORPHO), marketId, positionManager, safeLtv, liquidationLtv);
   }
 
   /// @notice Checks if an address is a MorphoBorrowPosition contract deployed by this factory.
