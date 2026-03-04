@@ -24,11 +24,6 @@ contract FacilityInitTest is FacilityBaseTest {
     assertTrue(facility.hasAllRoles(facilitator, FACILITATOR_ROLE), "Facilitator role should be granted");
   }
 
-  function test_initialize_setsRepayTimelock() public view {
-    (,, uint40 _repayTimelock) = facility.facilityConfig();
-    assertEq(_repayTimelock, DEFAULT_REPAY_TIMELOCK, "Repay timelock should be set");
-  }
-
   function test_initialize_setsDescriptor() public {
     // Verify descriptor is set by calling name() which delegates to descriptor
     uint256 intentId = _createDefaultIntent();
@@ -39,25 +34,25 @@ contract FacilityInitTest is FacilityBaseTest {
   function test_initialize_revertOnZeroOwner() public {
     Facility newFacility = Facility(address(new Facility()).clone());
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
-    newFacility.initialize(address(0), facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
+    newFacility.initialize(address(0), facilitator, address(descriptor));
   }
 
   function test_initialize_revertOnZeroDescriptor() public {
     Facility newFacility = Facility(address(new Facility()).clone());
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, address(0)));
-    newFacility.initialize(owner, facilitator, address(0), DEFAULT_REPAY_TIMELOCK);
+    newFacility.initialize(owner, facilitator, address(0));
   }
 
   function test_initialize_revertOnEOADescriptor() public {
     Facility newFacility = Facility(address(new Facility()).clone());
     address notContract = makeAddr("notContract");
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, notContract));
-    newFacility.initialize(owner, facilitator, notContract, DEFAULT_REPAY_TIMELOCK);
+    newFacility.initialize(owner, facilitator, notContract);
   }
 
   function test_initialize_cannotReinitialize() public {
     vm.expectRevert();
-    facility.initialize(owner, facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
+    facility.initialize(owner, facilitator, address(descriptor));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -92,38 +87,11 @@ contract FacilityInitTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                   REPAY TIMELOCK TESTS                     */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_setRepayTimelock_ownerCanSet() public {
-    uint40 newTimelock = 2 hours;
-    vm.prank(owner);
-    vm.expectEmit(true, true, true, true);
-    emit IFacility.RepayTimelockSet(newTimelock);
-    facility.setRepayTimelock(newTimelock);
-
-    (,, uint40 _repayTimelock) = facility.facilityConfig();
-    assertEq(_repayTimelock, newTimelock, "Timelock should be updated");
-  }
-
-  function test_setRepayTimelock_revertOnNonOwner() public {
-    vm.prank(user);
-    vm.expectRevert();
-    facility.setRepayTimelock(2 hours);
-  }
-
-  function test_setRepayTimelock_revertsOnZero() public {
-    vm.prank(owner);
-    vm.expectRevert(LibCommonErrors.AmountZero.selector);
-    facility.setRepayTimelock(0);
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    PAUSE VIEW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_paused_initiallyNotPaused() public view {
-    (bool isPaused, uint40 pausedUntil,) = facility.facilityConfig();
+    (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertFalse(isPaused, "Should not be paused initially");
     assertEq(pausedUntil, 0, "PausedUntil should be 0");
   }
@@ -197,14 +165,14 @@ contract FacilityInitTest is FacilityBaseTest {
     vm.assume(newOwner != address(0));
 
     Facility newFacility = Facility(address(new Facility()).clone());
-    newFacility.initialize(newOwner, facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
+    newFacility.initialize(newOwner, facilitator, address(descriptor));
 
     assertEq(newFacility.owner(), newOwner, "Owner should be set correctly");
   }
 
   function testFuzz_initialize_withDifferentFacilitators(address newFacilitator) public {
     Facility newFacility = Facility(address(new Facility()).clone());
-    newFacility.initialize(owner, newFacilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
+    newFacility.initialize(owner, newFacilitator, address(descriptor));
 
     assertTrue(newFacility.hasAllRoles(newFacilitator, FACILITATOR_ROLE), "Facilitator should have role");
   }

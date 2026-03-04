@@ -28,7 +28,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     assertEq(intentId, 1, "First intent should have ID 1");
 
-    (IntentProperties memory props, address fund, address request, bool resolved,) = facility.getIntent(intentId);
+    (IntentProperties memory props, address fund, address request, bool resolved) = facility.getIntent(intentId);
 
     assertEq(props.depositAsset.asset, address(positionManager), "Deposit asset should match");
     assertTrue(props.depositAsset.isPositionManager, "Deposit should be PM");
@@ -62,7 +62,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(params);
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.depositAsset.asset, address(debtToken), "Deposit should be debt token");
     assertFalse(props.depositAsset.isPositionManager, "Deposit should not be PM");
     assertEq(props.targetAsset.asset, address(positionManager), "Target should be PM");
@@ -75,7 +75,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(params);
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertTrue(props.depositAsset.isPositionManager, "Deposit should be PM");
     assertTrue(props.targetAsset.isPositionManager, "Target should be PM");
     assertEq(props.quorum, 2, "Quorum should be 2");
@@ -150,7 +150,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     facility.updateTarget(intentId, newTarget, address(positionManager));
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.targetAsset.asset, address(collateralToken), "Target should be updated");
   }
 
@@ -184,7 +184,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     facility.updateTarget(intentId, newTarget, address(positionManager));
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.targetAsset.asset, address(collateralToken), "Target should be updated");
   }
 
@@ -300,7 +300,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     _setFund(intentId, address(mockFund));
 
-    (, address fund,,,) = facility.getIntent(intentId);
+    (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund), "Fund should be set");
   }
 
@@ -328,7 +328,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     _setFund(intentId, address(mockFund));
 
-    (, address fund,,,) = facility.getIntent(intentId);
+    (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund), "Fund should be set");
   }
 
@@ -452,7 +452,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     _setRequest(intentId, address(mockRequest));
 
-    (,, address request,,) = facility.getIntent(intentId);
+    (,, address request,) = facility.getIntent(intentId);
     assertEq(request, address(mockRequest), "Request should be set");
   }
 
@@ -583,30 +583,6 @@ contract FacilityIntentsTest is FacilityBaseTest {
     _setRequest(intentId, address(mockRequest));
   }
 
-  function test_setRequest_setsRequestSetAt() public {
-    uint256 intentId = _createResolvingIntent();
-
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-
-    (,,,, uint40 requestSetAt) = facility.getIntent(intentId);
-    assertEq(requestSetAt, uint40(block.timestamp), "requestSetAt should be set");
-  }
-
-  function test_setRequest_clearsRequestSetAtOnRemove() public {
-    uint256 intentId = _createResolvingIntent();
-
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-    mockRequest.setRepaid(true);
-
-    vm.prank(facilitator);
-    _setRequest(intentId, address(0));
-
-    (,,,, uint40 requestSetAt) = facility.getIntent(intentId);
-    assertEq(requestSetAt, 0, "requestSetAt should be cleared");
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       FUZZ TESTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -618,7 +594,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(params);
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.quorum, quorum, "Quorum should match");
   }
 
@@ -629,7 +605,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(params);
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.depositCap, cap, "Deposit cap should match");
   }
 
@@ -642,7 +618,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(params);
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.resolveStart, resolveStart, "Resolve start should match");
   }
 
@@ -652,7 +628,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.setDepositCap(intentId, cap);
 
-    (IntentProperties memory props,,,,) = facility.getIntent(intentId);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
     assertEq(props.depositCap, cap, "Deposit cap should be updated");
   }
 
@@ -668,7 +644,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     _setFund(intentId, address(mockFund));
 
     // Verify fund is set
-    (, address fund,,,) = facility.getIntent(intentId);
+    (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund), "Fund should be set");
 
     // Now remove the fund with address(0)
@@ -676,7 +652,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     _setFund(intentId, address(0));
 
     // Verify fund is removed
-    (, address newFund,,,) = facility.getIntent(intentId);
+    (, address newFund,,) = facility.getIntent(intentId);
     assertEq(newFund, address(0), "Fund should be removed");
   }
 
@@ -687,7 +663,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     _setFund(intentId, address(mockFund));
 
-    (, address fund,,,) = facility.getIntent(intentId);
+    (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund));
 
     // Remove fund with address(0) — no signatures needed
@@ -697,7 +673,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.setFund(intentId, address(0), 0, emptySigners, emptySignatures);
 
-    (, address removedFund,,,) = facility.getIntent(intentId);
+    (, address removedFund,,) = facility.getIntent(intentId);
     assertEq(removedFund, address(0), "Fund should be removed without signatures");
   }
 
@@ -709,7 +685,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     _setRequest(intentId, address(mockRequest));
     mockRequest.setRepaid(true);
 
-    (,, address request,,) = facility.getIntent(intentId);
+    (,, address request,) = facility.getIntent(intentId);
     assertEq(request, address(mockRequest));
 
     // Remove request with address(0) — no signatures needed
@@ -719,7 +695,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     facility.setRequest(intentId, address(0), 0, emptySigners, emptySignatures);
 
-    (,, address removedRequest,,) = facility.getIntent(intentId);
+    (,, address removedRequest,) = facility.getIntent(intentId);
     assertEq(removedRequest, address(0), "Request should be removed without signatures");
   }
 
@@ -739,7 +715,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     _setFund(intentId1, address(mockFund));
 
     // Fund should still be set
-    (, address fund,,,) = facility.getIntent(intentId1);
+    (, address fund,,) = facility.getIntent(intentId1);
     assertEq(fund, address(mockFund), "Fund should still be set");
 
     // Reverse mapping must be preserved — setting same fund on another intent should revert
@@ -782,7 +758,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     _setRequest(intentId1, address(mockRequest));
 
     // Request should still be set
-    (,, address request,,) = facility.getIntent(intentId1);
+    (,, address request,) = facility.getIntent(intentId1);
     assertEq(request, address(mockRequest), "Request should still be set");
 
     // Reverse mapping must be preserved — setting same request on another intent should revert

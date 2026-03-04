@@ -31,10 +31,6 @@ interface IFacility is
   /// @param descriptor The new descriptor address.
   event DescriptorSet(address descriptor);
 
-  /// @notice Emitted when the repay timelock is updated.
-  /// @param repayTimelock The new repay timelock duration (seconds).
-  event RepayTimelockSet(uint40 repayTimelock);
-
   /// @notice Emitted when a token is sent from an intent.
   /// @param id The intent ID.
   /// @param token The token address.
@@ -53,11 +49,10 @@ interface IFacility is
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the facility configuration: pause state and repay timelock.
+  /// @notice Returns the facility configuration: pause state.
   /// @return isPaused True if paused, false otherwise.
   /// @return pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent).
-  /// @return repayTimelock The minimum delay (seconds) between setRequest and first repay.
-  function facilityConfig() external view returns (bool isPaused, uint40 pausedUntil, uint40 repayTimelock);
+  function facilityConfig() external view returns (bool isPaused, uint40 pausedUntil);
 
   /// @notice Returns all tokens and their balances held by an intent.
   /// @dev Useful for displaying intent holdings and calculating claim previews.
@@ -71,18 +66,9 @@ interface IFacility is
   /*                          ADMIN                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the earliest timestamp at which repay is allowed for an intent.
-  /// @param id The intent ID.
-  /// @return The timestamp at which repay becomes available (0 if no request is set).
-  function repayAvailableAt(uint256 id) external view returns (uint40);
-
   /// @notice Sets a new intent descriptor address.
   /// @param descriptor The new descriptor address.
   function setDescriptor(address descriptor) external;
-
-  /// @notice Sets the repay timelock duration.
-  /// @param repayTimelock_ The new repay timelock (seconds).
-  function setRepayTimelock(uint40 repayTimelock_) external;
 
   /// @notice Pauses the facility indefinitely.
   function pause() external;

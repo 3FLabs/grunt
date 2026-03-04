@@ -48,12 +48,6 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     // getting the initial request parameters
     (Intent storage _intent, address _request, address _asset) = _initialRequestParameters(id);
 
-    // enforce the repay timelock: repay is blocked until requestSetAt + repayTimelock
-    uint40 _availableAt = _intent.requestSetAt + LibStorage.facilityStorage().repayTimelock;
-    if (block.timestamp < _availableAt) {
-      revert LibFacilityErrors.RepayTimelockActive(id, _availableAt);
-    }
-
     // take snapshot before the operation
     BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_asset);
 

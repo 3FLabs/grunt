@@ -14,16 +14,13 @@ contract FacilityRequestsTest is FacilityBaseTest {
   /*                      SETUP HELPERS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Creates an intent with deposits and request set, warped past the repay timelock
+  /// @notice Creates an intent with deposits and request set
   function _createIntentWithRequest(uint256 depositAmount) internal returns (uint256 intentId) {
     intentId = _createIntentWithDeposits(depositAmount);
 
     // Set request for the intent
     vm.prank(facilitator);
     _setRequest(intentId, address(mockRequest));
-
-    // Warp past the repay timelock so repay is allowed
-    vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
   }
 
   /// @notice Funds the mock request with tokens for pulling
@@ -306,125 +303,4 @@ contract FacilityRequestsTest is FacilityBaseTest {
     assertEq(mockRequest.repayCallCount(), 1, "Should have 1 repay");
   }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                     REPAY TIMELOCK TESTS                      */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_pull_succeedsImmediatelyAfterSetRequest() public {
-    uint256 intentId = _createIntentWithDeposits(1000e18);
-    uint256 pullAmount = 500e18;
-
-    // Set request (starts the repay timelock, but pull is NOT affected)
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-    _fundMockRequest(pullAmount);
-
-    // Pull should succeed immediately — timelock only applies to repay
-    vm.prank(facilitator);
-    facility.pull(intentId, pullAmount);
-    assertEq(mockRequest.lastPullAmount(), pullAmount, "Pull should succeed immediately");
-  }
-
-  function test_repay_revertWhenTimelockActive() public {
-    uint256 intentId = _createIntentWithDeposits(1000e18);
-
-    // Set request (starts the timelock)
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-
-    // Try to repay immediately - should revert
-    uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
-    vm.prank(facilitator);
-    vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
-    );
-    facility.repay(intentId, 300e18);
-  }
-
-  function test_repay_succeedsAfterTimelockExpires() public {
-    uint256 intentId = _createIntentWithDeposits(1000e18);
-    uint256 pullAmount = 500e18;
-
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-    _fundMockRequest(pullAmount);
-
-    // Warp past the timelock
-    vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
-
-    // Pull first, then repay
-    vm.prank(facilitator);
-    facility.pull(intentId, pullAmount);
-    vm.prank(facilitator);
-    facility.repay(intentId, 200e18);
-    assertEq(mockRequest.lastRepayAmount(), 200e18, "Repay should succeed after timelock");
-  }
-
-  function test_repayAvailableAt_returnsCorrectTimestamp() public {
-    uint256 intentId = _createIntentWithDeposits(1000e18);
-
-    // Before request is set, should return 0
-    assertEq(facility.repayAvailableAt(intentId), 0, "Should be 0 when no request");
-
-    // Set request
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-
-    // Should return requestSetAt + repayTimelock
-    uint40 expected = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
-    assertEq(facility.repayAvailableAt(intentId), expected, "Should return correct available timestamp");
-  }
-
-  function test_requestSetAt_trackedOnSetRequest() public {
-    uint256 intentId = _createResolvingIntent();
-
-    // Set request and check requestSetAt is tracked
-    uint40 beforeTimestamp = uint40(block.timestamp);
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-
-    (,,,, uint40 requestSetAt) = facility.getIntent(intentId);
-    assertEq(requestSetAt, beforeTimestamp, "requestSetAt should equal block.timestamp");
-  }
-
-  function test_requestSetAt_clearedOnRemoveRequest() public {
-    uint256 intentId = _createResolvingIntent();
-
-    // Set request
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-    mockRequest.setRepaid(true);
-
-    // Remove request (set to address(0))
-    vm.prank(facilitator);
-    _setRequest(intentId, address(0));
-
-    (,,,, uint40 requestSetAt) = facility.getIntent(intentId);
-    assertEq(requestSetAt, 0, "requestSetAt should be cleared when request is removed");
-  }
-
-  function test_timelockRestartsOnNewRequest() public {
-    uint256 intentId = _createIntentWithDeposits(1000e18);
-
-    // Set first request
-    vm.prank(facilitator);
-    _setRequest(intentId, address(mockRequest));
-    mockRequest.setRepaid(true);
-
-    // Warp past timelock
-    vm.warp(block.timestamp + DEFAULT_REPAY_TIMELOCK);
-
-    // Replace request - timelock restarts
-    MockRequest newRequest = new MockRequest(address(debtToken));
-    vm.prank(facilitator);
-    _setRequest(intentId, address(newRequest));
-
-    // Try to repay immediately - should revert (timelock restarted)
-    uint40 expectedAvailableAt = uint40(block.timestamp) + DEFAULT_REPAY_TIMELOCK;
-    vm.prank(facilitator);
-    vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.RepayTimelockActive.selector, intentId, expectedAvailableAt)
-    );
-    facility.repay(intentId, 100e18);
-  }
 }

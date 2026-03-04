@@ -65,8 +65,6 @@ contract FacilityReentrancyTest is Test {
   uint256 constant PM_LTV = 0.7e18;
   uint128 constant BP_SAFE_LTV = 0.72e18;
   uint128 constant BP_LIQUIDATION_LTV = 0.78e18;
-  uint40 constant DEFAULT_REPAY_TIMELOCK = 1 hours;
-
   function setUp() public {
     owner = makeAddr("owner");
     facilitator = makeAddr("facilitator");
@@ -145,7 +143,7 @@ contract FacilityReentrancyTest is Test {
     // Deploy Facility
     IntentDescriptor descriptor = new IntentDescriptor();
     facility = Facility(address(new Facility()).clone());
-    facility.initialize(owner, facilitator, address(descriptor), DEFAULT_REPAY_TIMELOCK);
+    facility.initialize(owner, facilitator, address(descriptor));
 
     // Roles
     vm.startPrank(owner);
