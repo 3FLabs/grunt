@@ -70,13 +70,5 @@ interface IFacility is
   /// @param descriptor The new descriptor address.
   function setDescriptor(address descriptor) external;
 
-  /// @notice Pauses the facility indefinitely.
-  function pause() external;
-
-  /// @notice Pauses the facility for a specified duration.
-  /// @param duration The duration to pause for (in seconds).
   function pauseFor(uint256 duration) external;
-
-  /// @notice Unpauses the facility.
-  function unpause() external;
 }

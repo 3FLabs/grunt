@@ -57,7 +57,7 @@ contract FacilityReentrancyTest is Test {
   uint256 constant GUARDIAN_PK = 0x1234;
   uint256 constant FACILITATOR_ROLE = 1 << 0;
   uint256 constant GUARDIAN_ROLE = 1 << 1;
-  uint256 constant PAUSER_ROLE = 1 << 2;
+  uint256 constant COMPLIANCE_ROLE = 1 << 2;
   uint256 constant PM_MINTER_ROLE = 1 << 0;
   uint256 constant PM_CURATOR_ROLE = 1 << 1;
   uint256 constant DEFAULT_DEPOSIT_CAP = 1_000_000e18;
@@ -151,7 +151,7 @@ contract FacilityReentrancyTest is Test {
     positionManager.grantRoles(address(facility), PM_MINTER_ROLE);
     positionManager.grantRoles(minter, PM_MINTER_ROLE);
     facility.grantRoles(guardian, GUARDIAN_ROLE);
-    facility.grantRoles(pauser, PAUSER_ROLE);
+    facility.grantRoles(pauser, COMPLIANCE_ROLE);
     transferGuard.setTokenConfig(address(positionManager), false, false);
     vm.stopPrank();
 

@@ -86,7 +86,6 @@ contract FacilityInitTest is FacilityBaseTest {
     facility.setDescriptor(notContract);
   }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    PAUSE VIEW TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

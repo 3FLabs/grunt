@@ -11,13 +11,15 @@ import {LibIntent, Intent} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibChecks} from "src/libs/common/LibChecks.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
+import {FacilityRoles} from "./FacilityRoles.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 /// @title FacilityLP
 /// @author 3F Protocol
 /// @notice Abstract contract implementing liquidity provider operations for intents.
 /// @dev Inherits ERC6909 for multi-token accounting. Descendant contracts must implement
 ///      ERC6909 metadata functions (name, symbol, tokenURI, decimals).
-abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
+abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, FacilityRoles {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
@@ -101,6 +103,33 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     return (tokens, amounts);
   }
 
+  /// @inheritdoc IFacilityLP
+  /// @dev Checks that deposit asset balance >= totalSupply to ensure the intent has not been
+  ///      resolved or still has enough balance to reimburse. Sends the deposit asset directly
+  ///      to the share holder (`from`) to prevent fund redirection by the compliance role.
+  function revertDeposit(uint256 id, address from) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
+    // no-op if the user has no shares for this intent
+    uint256 balance = balanceOf(from, id);
+    if (balance == 0) return;
+    Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
+    address _depositAsset = _intent.properties.depositAsset.asset;
+    // ensure the intent has not been resolved and the deposit asset balance covers the
+    // total supply — this guarantees resolution has not started consuming deposits
+    // (or there is still enough to fully reimburse the user).
+    // we access `_values` directly instead of `get()` to avoid reverting with
+    // EnumerableMapKeyNotFound when the deposit asset key has been removed from the map
+    // (fully drained). A missing key returns 0 which is < totalSupply, so AlreadyResolving
+    // is correctly emitted.
+    if (_intent.isResolved() || _intent.amounts._values[_depositAsset] < _intent.totalSupply) {
+      revert LibFacilityErrors.AlreadyResolving(id);
+    }
+    // send the deposit asset directly to the share holder to prevent the compliance
+    // role from redirecting funds to an arbitrary address
+    _intent.transferTokenTo(id, _depositAsset, from, balance);
+    // burn the user's shares to reflect the withdrawal
+    _burn(from, id, balance);
+  }
+
   /// @dev Checks the withdrawal parameters and burns the shares.
   /// @param id The intent id.
   /// @param from The address to withdraw from.
@@ -109,7 +138,9 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient {
     LibStorage.checkNotPaused();
     LibChecks.checkNotZero(amount);
     // check operator if from is not msg.sender
-    if (from != msg.sender && !isOperator(from, msg.sender)) revert InsufficientPermission();
+    if (from != msg.sender && !isOperator(from, msg.sender)) {
+      revert InsufficientPermission();
+    }
     // burn the shares (reverts with InsufficientBalance if balance < amount)
     _burn(from, id, amount);
   }

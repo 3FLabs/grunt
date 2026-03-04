@@ -100,7 +100,7 @@ contract FacilityBaseTest is Test {
   // Role constants (from FacilityRoles)
   uint256 constant FACILITATOR_ROLE = 1 << 0;
   uint256 constant GUARDIAN_ROLE = 1 << 1;
-  uint256 constant PAUSER_ROLE = 1 << 2;
+  uint256 constant COMPLIANCE_ROLE = 1 << 2;
 
   // PositionManager roles
   uint256 constant PM_MINTER_ROLE = 1 << 0;
@@ -270,7 +270,7 @@ contract FacilityBaseTest is Test {
     vm.startPrank(owner);
     facility.grantRoles(guardian, GUARDIAN_ROLE);
     facility.grantRoles(guardian2, GUARDIAN_ROLE);
-    facility.grantRoles(pauser, PAUSER_ROLE);
+    facility.grantRoles(pauser, COMPLIANCE_ROLE);
     vm.stopPrank();
 
     // Deploy mock fund and request

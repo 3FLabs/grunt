@@ -18,8 +18,8 @@ abstract contract FacilityRoles is OwnableRoles {
   /// @notice Role for addresses authorized to sign guardian-gated intents and swaps.
   uint256 internal constant GUARDIAN_ROLE = _ROLE_1;
 
-  /// @notice Role for addresses authorized to pause/unpause the facility.
-  uint256 internal constant PAUSER_ROLE = _ROLE_2;
+  /// @notice Role for addresses authorized to pause/unpause the facility and revert deposits.
+  uint256 internal constant COMPLIANCE_ROLE = _ROLE_2;
 
   /// @dev Verifies signatures against quorum and guardian-role constraints.
   ///      Signers must be sorted in strictly ascending order and unique.

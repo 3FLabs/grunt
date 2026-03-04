@@ -325,16 +325,18 @@ library LibIntent {
     BalanceSnapshot memory snapshot,
     address counterparty
   ) internal {
-    uint256 currentBalance = snapshot.token.balanceOf(address(this));
+    unchecked {
+      uint256 currentBalance = snapshot.token.balanceOf(address(this));
 
-    if (currentBalance > snapshot.balance) {
-      // Balance increased - record as received
-      uint256 amount = currentBalance - snapshot.balance;
-      _receivedTokenFrom(_self, id, snapshot.token, counterparty, amount);
-    } else if (currentBalance < snapshot.balance) {
-      // Balance decreased - record as sent
-      uint256 amount = snapshot.balance - currentBalance;
-      _transferredTokenTo(_self, id, snapshot.token, counterparty, amount);
+      if (currentBalance > snapshot.balance) {
+        // Balance increased - record as received
+        uint256 amount = currentBalance - snapshot.balance;
+        _receivedTokenFrom(_self, id, snapshot.token, counterparty, amount);
+      } else if (currentBalance < snapshot.balance) {
+        // Balance decreased - record as sent
+        uint256 amount = snapshot.balance - currentBalance;
+        _transferredTokenTo(_self, id, snapshot.token, counterparty, amount);
+      }
     }
   }
 
