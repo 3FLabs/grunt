@@ -416,6 +416,93 @@ contract ParetoFundTest is Test {
     assertEq(usdc.allowance(address(fund), address(cdo)), 0, "approval cleared");
   }
 
+  function test_Commit_DepositDuringEpoch_Success() public {
+    // Enable epoch and set a 100bps (1%) discount (end-of-epoch price is higher)
+    cdo.setIsEpochRunning(true);
+    cdo.setEpochDiscountBps(100);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA * 99 / 100);
+    fund.create(order);
+
+    usdc.mint(address(this), order.input);
+    usdc.approve(address(fund), order.input);
+
+    (State state, uint256 amount) = fund.commit(order);
+
+    assertEq(uint256(state), uint256(State.PROCESSING), "state");
+    assertEq(amount, order.input, "amount");
+    // depositDuringEpoch mints fewer tokens: 1e18 * 99% = 0.99e18
+    uint256 expectedAA = ONE_AA * 99 / 100;
+    assertEq(aaTranche.balanceOf(address(fund)), expectedAA, "fund has discounted AA");
+    assertEq(usdc.balanceOf(address(cdo)), order.input, "cdo has usdc");
+    // State transitions to UNLOCKING since depositReceived (0.99e18) >= order.output (0.99e18)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+  }
+
+  function test_Commit_DepositDuringEpoch_StateTransition() public {
+    cdo.setIsEpochRunning(true);
+    cdo.setEpochDiscountBps(100);
+
+    // Set output to exactly the discounted amount — should transition directly to UNLOCKING
+    uint256 discountedOutput = ONE_AA * 99 / 100;
+    Order memory order = _depositOrder(ONE_USDC, discountedOutput);
+    fund.create(order);
+    _commitDeposit(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "direct UNLOCKING");
+  }
+
+  function test_Commit_DepositDuringEpoch_ResolveFlow() public {
+    cdo.setIsEpochRunning(true);
+    cdo.setEpochDiscountBps(100);
+
+    // Set output based on virtualPrice (no discount) — will exceed what depositDuringEpoch mints
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // depositReceived = 0.99e18, order.output = 1e18 → stays PROCESSING
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
+
+    // Resolve with actual received amount unblocks the order
+    vm.prank(owner);
+    fund.resolve(order, ONE_USDC, ONE_AA * 99 / 100);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after resolve");
+  }
+
+  function test_Commit_DepositDuringEpoch_FullLifecycle() public {
+    cdo.setIsEpochRunning(true);
+    cdo.setEpochDiscountBps(50); // 0.5% discount
+
+    uint256 discountedOutput = ONE_AA * 9950 / 10_000;
+    Order memory order = _depositOrder(ONE_USDC, discountedOutput);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Should be UNLOCKING: depositReceived == discountedOutput
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, discountedOutput, "shares received");
+    assertEq(wrappedShare.balanceOf(address(this)), discountedOutput, "wShare balance");
+  }
+
+  function test_Commit_DepositAA_RevertsWhenEpochRunning() public {
+    cdo.setIsEpochRunning(true);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+
+    usdc.mint(address(this), order.input);
+    usdc.approve(address(fund), order.input);
+
+    // Calling depositAA directly on the mock would revert, confirming routing is necessary
+    vm.expectRevert("MockCDO: paused during epoch");
+    cdo.depositAA(order.input);
+  }
+
   function test_Commit_RedeemClearsApproval() public {
     // First deposit to get wrappedShares
     Order memory depositOrder = _depositOrder(ONE_USDC, ONE_AA);

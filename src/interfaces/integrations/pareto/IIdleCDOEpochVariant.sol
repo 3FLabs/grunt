@@ -13,6 +13,16 @@ interface IIdleCDOEpochVariant {
   /// @return The amount of AA tranche tokens minted.
   function depositAA(uint256 amount) external returns (uint256);
 
+  /// @notice Deposits assets into a tranche during a running epoch at the projected end-of-epoch price.
+  /// @dev Callable only while an epoch is active. Mints fewer tokens than `depositAA` would
+  ///      at the same `virtualPrice`, because the effective price is the higher end-of-epoch
+  ///      price (current price + expected interest). The depositor receives proportionally fewer
+  ///      tokens but each token will be worth more when the epoch settles.
+  /// @param amount The amount of underlying tokens to deposit.
+  /// @param tranche The tranche token address (AA or BB).
+  /// @return The amount of tranche tokens minted.
+  function depositDuringEpoch(uint256 amount, address tranche) external returns (uint256);
+
   /// @notice Requests an epoch-gated withdrawal of tranche tokens.
   /// @param amount The amount of tranche tokens to withdraw.
   /// @param tranche The tranche token address (AA or BB).
