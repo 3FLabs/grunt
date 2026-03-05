@@ -323,6 +323,28 @@ contract ParetoFundForkTest is Test {
     assertEq(uint256(fund.state(redeemOrder)), uint256(State.ENDED), "redeem ENDED");
   }
 
+  function test_Fork_DepositDuringEpoch() public {
+    uint256 depositAmount = 1000 * ONE;
+    uint256 expectedShares = _computeExpectedShares(depositAmount);
+
+    // Start a new epoch so the CDO is paused (depositAA would revert)
+    address manager = IIdleCreditVaultFork(STRATEGY).manager();
+    vm.prank(manager);
+    IIdleCDOFork(CDO).startEpoch();
+    assertTrue(IIdleCDOEpochVariant(CDO).isEpochRunning(), "epoch running");
+
+    // Create and commit deposit — should route to depositDuringEpoch
+    Order memory order = _depositOrder(depositAmount, expectedShares);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Fund should have received AA tranche tokens (possibly fewer due to prorated price)
+    uint256 fundBalance = IERC20(AA_TRANCHE).balanceOf(address(fund));
+    assertGt(fundBalance, 0, "fund received AA tokens");
+    // The discounted amount should be less than or equal to the between-epoch amount
+    assertLe(fundBalance, expectedShares * 101 / 100, "within expected range");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      INTERNAL HELPERS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
