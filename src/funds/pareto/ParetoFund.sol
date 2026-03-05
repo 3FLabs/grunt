@@ -22,7 +22,8 @@ import {BPS} from "../../libs/Constants.sol";
 /// @notice Wrapper of the Pareto (Idle Finance) Credit Vault (IdleCDOEpochVariant).
 /// @dev - Shares of this fund are represented by WrappedAsset tokens wrapping the CDO's AA tranche token.
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
-///      - Deposits are synchronous via `depositAA`, withdrawals are epoch-gated via `requestWithdraw` + `claimWithdrawRequest`.
+///      - Deposits are synchronous via `depositAA` (between epochs) or `depositDuringEpoch` (during a running epoch).
+///        Withdrawals are epoch-gated via `requestWithdraw` + `claimWithdrawRequest`.
 ///      - No recovery flow: deposits are atomic (succeed or revert), withdrawals always complete after epoch ends.
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function queries the CDO
@@ -219,7 +220,11 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
       _asset.safeTransferFrom(msg.sender, address(this), order.input);
       _asset.safeApproveWithRetry(_vault, order.input);
       uint256 _before = IERC20(_aaTranche).balanceOf(address(this));
-      IIdleCDOEpochVariant(_vault).depositAA(order.input); // sync
+      if (IIdleCDOEpochVariant(_vault).isEpochRunning()) {
+        IIdleCDOEpochVariant(_vault).depositDuringEpoch(order.input, _aaTranche);
+      } else {
+        IIdleCDOEpochVariant(_vault).depositAA(order.input);
+      }
       $.depositReceived = IERC20(_aaTranche).balanceOf(address(this)) - _before;
       _asset.safeApproveWithRetry(_vault, 0);
     } else {
@@ -275,7 +280,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No recovery flow: deposits are atomic (depositAA succeeds or reverts in the same tx),
+  /// @dev No recovery flow: deposits are atomic (depositAA/depositDuringEpoch succeed or revert in the same tx),
   ///      and withdrawals always complete after the epoch ends (no cancel mechanism in the CDO).
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     _checkOrderOwner(order);
