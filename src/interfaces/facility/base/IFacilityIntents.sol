@@ -58,11 +58,10 @@ interface IFacilityIntents {
   /// @return fund The fund address (or address(0) if none).
   /// @return request The request address (or address(0) if none).
   /// @return resolved Whether the intent has been resolved.
-  /// @return requestSetAt Timestamp when the current request was linked (0 if none).
   function getIntent(uint256 id)
     external
     view
-    returns (IntentProperties memory properties, address fund, address request, bool resolved, uint40 requestSetAt);
+    returns (IntentProperties memory properties, address fund, address request, bool resolved);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INTENT MANAGEMENT                      */

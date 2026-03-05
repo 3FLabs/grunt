@@ -18,7 +18,6 @@ import {LibPause} from "../common/LibPause.sol";
 /// @param fundsIntent Mapping from fund address to intent ID.
 /// @param requestsIntent Mapping from request address to intent ID.
 /// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
-/// @param repayTimelock Minimum delay (seconds) between setRequest and first repay. Packed with `pausedUntil`.
 struct FacilityStorageData {
   mapping(uint256 => Intent) intents;
   IIntentDescriptor descriptor;
@@ -27,7 +26,6 @@ struct FacilityStorageData {
   mapping(address => uint256) fundsIntent;
   mapping(address => uint256) requestsIntent;
   uint40 pausedUntil;
-  uint40 repayTimelock;
 }
 
 /// @title LibStorage
