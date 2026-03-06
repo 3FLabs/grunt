@@ -130,10 +130,10 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
     if (_intent.isResolved() || _intent.amounts._values[_depositAsset] < _intent.totalSupply) {
       revert LibFacilityErrors.AlreadyResolving(id);
     }
-    // transfer the deposit asset to the receiver
-    _intent.transferTokenTo(id, _depositAsset, receiver, balance);
     // burn the user's shares to reflect the withdrawal
     _burn(from, id, balance);
+    // transfer the deposit asset to the receiver
+    _intent.transferTokenTo(id, _depositAsset, receiver, balance);
   }
 
   /// @dev Checks the withdrawal parameters and burns the shares.
