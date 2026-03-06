@@ -9,7 +9,6 @@ import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {ISuperstateToken} from "../interfaces/integrations/superstate/ISuperstateToken.sol";
-import {IAllowlist} from "../interfaces/integrations/superstate/IAllowlist.sol";
 import {IFund} from "../interfaces/funds/IFund.sol";
 import {IUSCCFund} from "../interfaces/funds/integrations/IUSCCFund.sol";
 import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
@@ -179,7 +178,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
     // Check allowlist permissions for this contract to deposit in USCC
-    if (!IAllowlist(ISuperstateToken(USCC).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC")) {
+    if (!ISuperstateToken(USCC).isAllowed(address(this))) {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
 

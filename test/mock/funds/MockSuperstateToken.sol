@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 import {IERC20} from "src/interfaces/integrations/IERC20.sol";
+import {IAllowlist} from "src/interfaces/integrations/superstate/IAllowlist.sol";
 
 contract MockSuperstateToken is ERC20 {
   string internal _name;
@@ -46,6 +47,10 @@ contract MockSuperstateToken is ERC20 {
     lastOffchainRedeemAmount = amount;
     lastOffchainRedeemer = msg.sender;
     _burn(msg.sender, amount);
+  }
+
+  function isAllowed(address addr) external view returns (bool) {
+    return IAllowlist(allowlist).isAddressAllowedForPrivateInstrument(addr, "USCC");
   }
 
   function simulateRedemptionComplete(address recipient, uint256 usdcAmount) external {
