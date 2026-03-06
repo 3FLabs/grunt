@@ -417,6 +417,16 @@ contract USCCFundTest is Test {
     fund.commit(order);
   }
 
+  function test_Commit_RevertsNotAllowedSuperstate() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    allowlist.setAllowed(address(fund), "USCC", false);
+
+    vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
+    fund.commit(order);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          UNLOCK                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
