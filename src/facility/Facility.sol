@@ -69,7 +69,7 @@ contract Facility is
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @inheritdoc IFacility
+  /// @inheritdoc IFacility
   function facilityConfig() external view override returns (bool isPaused, uint40 pausedUntil) {
     pausedUntil = LibStorage.facilityStorage().pausedUntil;
     isPaused = pausedUntil.paused();
