@@ -23,9 +23,10 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 /// @dev This contract must be granted FACILITATOR_ROLE on the target facility.
 ///      Assumes that calling setRequest with address(0) does not require guardian signatures.
 ///
-///      Debt model: the flash loan amount is stored in transient storage as the raw debt.
-///      The actual outstanding debt is computed as rawDebt - assetBalance. The asset balance
-///      must never exceed the raw debt.
+///      Debt model: the contract's full token balance at callback start (flash loan amount +
+///      any pre-existing dust) is stored in transient storage as the raw debt. The actual
+///      outstanding debt is computed as rawDebt - assetBalance. The asset balance must never
+///      exceed the raw debt.
 ///
 ///      Flow:
 ///      1. Owner calls execute() with flash loan amount, setRequest params, and operations
@@ -189,12 +190,12 @@ contract MorphoFlashLoanRequest is
     if (msg.sender != address(MORPHO)) revert UnauthorizedCaller();
     if (_getRawDebt() != 0) revert DebtNotRepaid();
 
-    // Set raw debt — actual debt is rawDebt - assetBalance
-    _setRawDebt(assets);
+    MorphoFlashLoanRequestStorage storage s = _storage();
+
+    // Set raw debt to full balance (flash loan + any pre-existing dust) — actual debt is rawDebt - assetBalance
+    _setRawDebt(s.asset.balanceOf(address(this)));
 
     (SetRequestParams memory params, Operation[] memory operations) = abi.decode(data, (SetRequestParams, Operation[]));
-
-    MorphoFlashLoanRequestStorage storage s = _storage();
     address facility = s.facility;
 
     // Set this contract as the request on the facility
