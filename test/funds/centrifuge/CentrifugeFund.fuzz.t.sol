@@ -20,6 +20,9 @@ contract CentrifugeFundFuzzTest is Test {
 
   uint256 private constant ONE = 1e6;
 
+  // CentrifugeFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -375,6 +378,8 @@ contract CentrifugeFundFuzzTest is Test {
 }
 
 contract CentrifugeFundInvariantTest is StdInvariant, Test {
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
 
@@ -415,9 +420,8 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     wrappedShare.grantRoles(address(handler), SENDER_ROLE);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(address(handler), operatorRole);
+    fund.grantRoles(address(handler), OPERATOR_ROLE);
 
     handler.initialize(fund, assetToken, shareToken, wrappedShare, vault);
 
