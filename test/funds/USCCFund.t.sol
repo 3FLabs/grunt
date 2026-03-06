@@ -966,13 +966,22 @@ contract USCCFundTest is Test {
     fund.totalAssets();
   }
 
-  function test_MaxDeposit_ReturnsMax() public view {
-    assertEq(fund.maxDeposit(address(this)), type(uint256).max, "max deposit");
+  function test_MaxDeposit_ReturnsBalance() public {
+    usdc.mint(address(this), ONE_USDC);
+    assertEq(fund.maxDeposit(address(this)), ONE_USDC, "max deposit");
+  }
+
+  function test_MaxDeposit_ReturnsZero_WhenNotDepositor() public view {
+    assertEq(fund.maxDeposit(outsider), 0, "max deposit outsider");
   }
 
   function test_MaxRedeem_ReturnsBalance() public {
     _mintWuscc(address(this), ONE_USDC);
     assertEq(fund.maxRedeem(address(this)), ONE_USDC, "max redeem");
+  }
+
+  function test_MaxRedeem_ReturnsZero_WhenNotDepositor() public view {
+    assertEq(fund.maxRedeem(outsider), 0, "max redeem outsider");
   }
 
   function test_State_AllStates() public {
