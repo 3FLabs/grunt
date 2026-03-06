@@ -350,6 +350,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
       revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     }
 
+    input.checkNotZero();
+
     _storage.hasResolvedAmounts = true;
     _storage.resolvedInput = input;
     _storage.resolvedOutput = output;

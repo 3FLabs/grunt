@@ -140,7 +140,7 @@ contract USCCFundHandler is Test {
 
   function act_resolve(uint96 newInput, uint96 newOutput) external {
     uint256 maxAmount = type(uint96).max;
-    uint256 resolvedInput = _bound(uint256(newInput), 0, maxAmount);
+    uint256 resolvedInput = _bound(uint256(newInput), 1, maxAmount);
     uint256 resolvedOutput = _bound(uint256(newOutput), 0, maxAmount);
 
     fund.resolve(order, resolvedInput, resolvedOutput);
