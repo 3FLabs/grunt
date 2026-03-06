@@ -108,7 +108,11 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
   ///      resolved or still has enough balance to reimburse. When receiver differs from the
   ///      share holder, only the owner can call this to prevent the compliance role from
   ///      redirecting user funds.
-  function revertDeposit(uint256 id, address from, address receiver) external onlyOwnerOrRoles(COMPLIANCE_ROLE) {
+  function revertDeposit(uint256 id, address from, address receiver)
+    external
+    nonReentrant
+    onlyOwnerOrRoles(COMPLIANCE_ROLE)
+  {
     // only the owner can redirect funds to a different address
     if (receiver != from) _checkOwner();
     // no-op if the user has no shares for this intent
