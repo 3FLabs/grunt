@@ -88,9 +88,9 @@ contract MorphoFlashLoanRequest is
   bytes32 private constant _STORAGE_SLOT = 0xe235e8263aa081940d6fc27ca3127dc45529c8e5313f795cd9f59b68f1c2c600;
 
   /// @dev Returns the ERC-7201 namespaced storage pointer.
-  function _storage() internal pure returns (MorphoFlashLoanRequestStorage storage s) {
+  function _storage() internal pure returns (MorphoFlashLoanRequestStorage storage morphoFlashLoanRequestStorage) {
     assembly ("memory-safe") {
-      s.slot := _STORAGE_SLOT
+      morphoFlashLoanRequestStorage.slot := _STORAGE_SLOT
     }
   }
 
@@ -150,9 +150,9 @@ contract MorphoFlashLoanRequest is
     facility_.checkContract();
     asset_.checkContract();
 
-    MorphoFlashLoanRequestStorage storage s = _storage();
-    s.facility = facility_;
-    s.asset = asset_;
+    MorphoFlashLoanRequestStorage storage $ = _storage();
+    $.facility = facility_;
+    $.asset = asset_;
 
     _initializeOwner(owner_);
   }
@@ -190,13 +190,13 @@ contract MorphoFlashLoanRequest is
     if (msg.sender != address(MORPHO)) revert UnauthorizedCaller();
     if (_getRawDebt() != 0) revert DebtNotRepaid();
 
-    MorphoFlashLoanRequestStorage storage s = _storage();
+    MorphoFlashLoanRequestStorage storage $ = _storage();
 
     // Set raw debt to full balance (flash loan + any pre-existing dust) — actual debt is rawDebt - assetBalance
-    _setRawDebt(s.asset.balanceOf(address(this)));
+    _setRawDebt($.asset.balanceOf(address(this)));
 
     (SetRequestParams memory params, Operation[] memory operations) = abi.decode(data, (SetRequestParams, Operation[]));
-    address facility = s.facility;
+    address facility = $.facility;
 
     // Set this contract as the request on the facility
     IFacilityIntents(facility)
@@ -218,7 +218,7 @@ contract MorphoFlashLoanRequest is
       .setRequest(params.intentId, address(0), type(uint256).max, new address[](0), new bytes[](0));
 
     // Approve Morpho to pull back the flash loaned amount
-    s.asset.safeApproveWithRetry(address(MORPHO), assets);
+    $.asset.safeApproveWithRetry(address(MORPHO), assets);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -250,11 +250,11 @@ contract MorphoFlashLoanRequest is
   /// @dev Called by the facility during repay(). Transfers assets in, decreasing the computed debt.
   ///      Reverts if the resulting balance would exceed the raw debt.
   function repay(uint256 amount) external {
-    MorphoFlashLoanRequestStorage storage s = _storage();
-    s.asset.safeTransferFrom(msg.sender, address(this), amount);
+    MorphoFlashLoanRequestStorage storage $ = _storage();
+    $.asset.safeTransferFrom(msg.sender, address(this), amount);
 
     uint256 rawDebt = _getRawDebt();
-    if (rawDebt != 0 && s.asset.balanceOf(address(this)) > rawDebt) revert BalanceExceedsDebt();
+    if (rawDebt != 0 && $.asset.balanceOf(address(this)) > rawDebt) revert BalanceExceedsDebt();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
