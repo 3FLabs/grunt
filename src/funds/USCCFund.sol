@@ -232,6 +232,11 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     if (_storage.internalState != State.ACCEPTED) revert LibFundsErrors.InvalidState(_storage.internalState);
 
+    // Check allowlist permissions for this contract to deposit in USCC
+    if (!ISuperstateToken(USCC).isAllowed(address(this))) {
+      revert LibFundsErrors.NotAllowedSuperstate();
+    }
+
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
       USDC.safeTransferFrom(msg.sender, _storage.recipient, order.input);
