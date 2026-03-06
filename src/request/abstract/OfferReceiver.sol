@@ -9,10 +9,10 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title OfferReceiver
 /// @author 3F Protocol
-/// @notice Abstract contract for validating and consuming cryptographically signed prime broker offers.
+/// @notice Abstract contract for validating and consuming cryptographically signed bridge facilitator offers.
 /// @dev Implements EIP-712 typed data hashing and signature verification (EIP-712/EIP-1271).
 ///      Manages nonces to prevent replay attacks and enable offer cancellation. Contracts inheriting
-///      from this can validate offers before processing funds from prime brokers.
+///      from this can validate offers before processing funds from bridge facilitators.
 ///
 ///      Key Features:
 ///      - **EIP-712 Signatures**: Type-safe structured data signing for EOAs

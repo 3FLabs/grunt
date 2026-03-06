@@ -33,13 +33,13 @@ contract RequestMintSlippagePoCTest is Test {
   address public owner;
   address public puller;
   address public consumer; // acts as facilitator for authorizeMinting
-  address public primeBroker;
+  address public bridgeFacilitator;
 
   function setUp() public {
     owner = makeAddr("owner");
     puller = makeAddr("puller");
     consumer = makeAddr("consumer");
-    primeBroker = makeAddr("primeBroker");
+    bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     asset = new MockERC20("USDC", "USDC", 6);
     factory = new RequestFactory(makeAddr("beaconOwner"));
@@ -62,34 +62,34 @@ contract RequestMintSlippagePoCTest is Test {
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 500_000e6;
 
-    // Step 1: Facilitator authorizes minting for the prime broker
+    // Step 1: Facilitator authorizes minting for the bridge facilitator
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
     // Verify the broker sees the expected authorization
-    (uint128 authPt, uint128 authYt) = request.mintAuthorization(primeBroker);
+    (uint128 authPt, uint128 authYt) = request.mintAuthorization(bridgeFacilitator);
     assertEq(authPt, ptAmount, "Broker should see 1M PT authorized");
     assertEq(authYt, ytAmount, "Broker should see 500k YT authorized");
 
     // Step 2: Broker prepares to mint (approves funds)
-    asset.mint(primeBroker, ptAmount);
-    vm.prank(primeBroker);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.prank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
 
     // Step 3: Facilitator FRONT-RUNS by overwriting authorization to zero YT
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount, 0);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, 0);
 
     // Step 4: Broker's mint() reverts because YT authorization (0) < minYt (500k)
-    vm.prank(primeBroker);
+    vm.prank(bridgeFacilitator);
     vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
     request.mint(ptAmount, ytAmount);
 
     // --- Verify the attack was prevented ---
     // Broker still has their funds (nothing was transferred)
-    assertEq(asset.balanceOf(primeBroker), ptAmount, "Broker funds should be intact");
-    assertEq(ptVault.balanceOf(primeBroker), 0, "No PT tokens should be minted");
-    assertEq(ytVault.balanceOf(primeBroker), 0, "No YT tokens should be minted");
+    assertEq(asset.balanceOf(bridgeFacilitator), ptAmount, "Broker funds should be intact");
+    assertEq(ptVault.balanceOf(bridgeFacilitator), 0, "No PT tokens should be minted");
+    assertEq(ytVault.balanceOf(bridgeFacilitator), 0, "No YT tokens should be minted");
   }
 
   /// @notice Demonstrates that PT amount can also be front-run and is protected.
@@ -101,23 +101,23 @@ contract RequestMintSlippagePoCTest is Test {
 
     // Facilitator authorizes
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
-    asset.mint(primeBroker, ptAmount);
-    vm.prank(primeBroker);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.prank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
 
     // Facilitator front-runs by reducing PT
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount / 2, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount / 2, ytAmount);
 
     // Broker's mint reverts because PT authorization (500k) < minPt (1M)
-    vm.prank(primeBroker);
+    vm.prank(bridgeFacilitator);
     vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
     request.mint(ptAmount, ytAmount);
 
     // Broker funds intact
-    assertEq(asset.balanceOf(primeBroker), ptAmount, "Broker funds should be intact");
+    assertEq(asset.balanceOf(bridgeFacilitator), ptAmount, "Broker funds should be intact");
   }
 
   /// @notice Verifies that legitimate minting succeeds when authorization matches expectations.
@@ -127,20 +127,20 @@ contract RequestMintSlippagePoCTest is Test {
 
     // Facilitator authorizes
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
     // Broker mints with slippage protection matching the authorization
-    asset.mint(primeBroker, ptAmount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
     request.mint(ptAmount, ytAmount);
     vm.stopPrank();
 
     // Verify tokens minted correctly
-    assertEq(ptVault.balanceOf(primeBroker), ptAmount, "PT tokens should be minted");
-    assertEq(ytVault.balanceOf(primeBroker), ytAmount, "YT tokens should be minted");
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount, "PT tokens should be minted");
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount, "YT tokens should be minted");
     assertEq(asset.balanceOf(address(request)), ptAmount, "Assets should be in the request");
-    assertEq(asset.balanceOf(primeBroker), 0, "Broker should have spent all funds");
+    assertEq(asset.balanceOf(bridgeFacilitator), 0, "Broker should have spent all funds");
   }
 
   /// @notice Verifies that a broker can set lower minimums to allow partial adjustments.
@@ -152,16 +152,16 @@ contract RequestMintSlippagePoCTest is Test {
 
     // Facilitator authorizes the full amount
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
     // Broker mints with a lower minimum — succeeds because 500k >= 400k
-    asset.mint(primeBroker, ptAmount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
     request.mint(ptAmount, minYt);
     vm.stopPrank();
 
-    assertEq(ytVault.balanceOf(primeBroker), ytAmount, "Should receive full YT amount");
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount, "Should receive full YT amount");
   }
 
   /// @notice Verifies zero minimums still work for backwards-compatible behavior.
@@ -171,15 +171,15 @@ contract RequestMintSlippagePoCTest is Test {
     uint128 ytAmount = 500_000e6;
 
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
-    asset.mint(primeBroker, ptAmount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
     request.mint(0, 0); // No slippage protection
     vm.stopPrank();
 
-    assertEq(ptVault.balanceOf(primeBroker), ptAmount, "PT should be minted");
-    assertEq(ytVault.balanceOf(primeBroker), ytAmount, "YT should be minted");
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount, "PT should be minted");
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount, "YT should be minted");
   }
 }
