@@ -40,10 +40,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
-  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+  uint256 internal constant OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+  uint256 internal constant DEPOSITOR_ROLE = _ROLE_1;
 
   /// @notice Maximum allowed deviation between order output and current rate (in basis points).
   /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.

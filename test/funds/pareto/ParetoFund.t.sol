@@ -34,6 +34,10 @@ contract ParetoFundTest is Test {
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_AA = 1e18;
 
+  // ParetoFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
+
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -92,7 +96,7 @@ contract ParetoFundTest is Test {
     assertEq(fund.asset(), address(usdc), "asset");
     assertEq(fund.share(), address(wrappedShare), "share");
     assertEq(fund.vault(), address(cdo), "vault");
-    assertEq(fund.rolesOf(address(this)), fund.DEPOSITOR_ROLE(), "depositor role");
+    assertEq(fund.rolesOf(address(this)), DEPOSITOR_ROLE, "depositor role");
     assertEq(uint256(fund.state(_depositOrder(ONE_USDC, ONE_AA))), uint256(State.EMPTY), "initial state");
   }
 
@@ -737,9 +741,8 @@ contract ParetoFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
+    fund.grantRoles(operator, OPERATOR_ROLE);
 
     vm.prank(operator);
     fund.resolve(order, ONE_USDC, ONE_AA);
@@ -994,10 +997,9 @@ contract ParetoFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_OperatorGrantable() public {
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
-    assertEq(fund.rolesOf(operator), operatorRole, "operator role");
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    assertEq(fund.rolesOf(operator), OPERATOR_ROLE, "operator role");
   }
 
   function test_Roles_OwnershipTransfer() public {
