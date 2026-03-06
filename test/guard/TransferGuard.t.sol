@@ -241,10 +241,16 @@ contract TransferGuardTest is Test {
     assertTrue(guard.paused(token));
   }
 
-  function test_pauseFor_revertsOnZeroDuration() public {
+  function test_pauseFor_zeroDurationUnpauses() public {
+    // First pause
     vm.prank(pauser);
-    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    guard.pause(token);
+    assertTrue(guard.paused(token));
+
+    // pauseFor(0) unpauses
+    vm.prank(pauser);
     guard.pauseFor(token, 0);
+    assertFalse(guard.paused(token));
   }
 
   function test_pauseFor_revertsUnauthorized() public {

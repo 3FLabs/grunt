@@ -114,22 +114,10 @@ contract Facility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function pause() external override onlyOwnerOrRoles(PAUSER_ROLE) {
-    LibStorage.facilityStorage().pausedUntil = LibPause.PERMANENT_PAUSE;
-    emit FacilityPausedSet(LibPause.PERMANENT_PAUSE);
-  }
-
-  /// @inheritdoc IFacility
-  function pauseFor(uint256 duration) external override onlyOwnerOrRoles(PAUSER_ROLE) {
+  function pauseFor(uint256 duration) external override onlyOwnerOrRoles(COMPLIANCE_ROLE) {
     uint40 pauseUntil = LibPause.pauseFor(duration);
     LibStorage.facilityStorage().pausedUntil = pauseUntil;
     emit FacilityPausedSet(pauseUntil);
-  }
-
-  /// @inheritdoc IFacility
-  function unpause() external override onlyOwnerOrRoles(PAUSER_ROLE) {
-    LibStorage.facilityStorage().pausedUntil = LibPause.NOT_PAUSED;
-    emit FacilityPausedSet(LibPause.NOT_PAUSED);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -199,7 +187,11 @@ contract Facility is
     if (from == address(0) && to != address(0)) {
       _intent.totalSupply += amount;
     } else if (from != address(0) && to == address(0)) {
-      _intent.totalSupply -= amount;
+      // when burning, we can assume that total supply is always greater or equal to amount
+      // or the subsequent burn will revert because the user doesn't have enough shares
+      unchecked {
+        _intent.totalSupply -= amount;
+      }
     }
   }
 

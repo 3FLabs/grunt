@@ -92,7 +92,7 @@ This section provides a consolidated view of all roles across contracts and how 
 | **Facility** | Owner | Protocol Admin | Create intents, update target asset, set descriptor |
 | | Facilitator | Operations Bot | Create intents, lock, resolve, set caps, set fund/request, all fund/request/PM/swap operations |
 | | Guardian | Signers (EOA) | Sign swap authorizations (multi-sig for quorum) |
-| | Pauser | Emergency Admin | Pause/unpause facility |
+| | Compliance | Emergency Admin / Compliance Bot | Pause/unpause facility, revert deposits |
 | **Request** | Owner | Protocol Admin | Mark loan as repaid, authorize minting |
 | | Puller | Facility | Pull bridge loan funds, repay funds |
 | | Consumer | Protocol Admin | Consume signed offers |
@@ -116,7 +116,7 @@ flowchart TB
         FO[Owner]
         FF[Facilitator]
         FG[Guardian]
-        FP[Pauser]
+        FC[Compliance]
     end
 
     subgraph Users["Users"]
@@ -151,8 +151,8 @@ flowchart TB
     %% Guardian operations
     FG -->|sign swaps| Facility
 
-    %% Pauser operations
-    FP -->|pause/unpause| Facility
+    %% Compliance operations
+    FC -->|pauseFor<br/>revertDeposit| Facility
 
     %% User operations
     LP -->|deposit<br/>withdraw<br/>claim| Facility
@@ -256,6 +256,8 @@ stateDiagram-v2
 | `withdrawManager` | Facilitator | RESOLVING | Asset is PositionManager |
 | `burnManager` | Facilitator | RESOLVING | Asset is PositionManager |
 | `swap` | Facilitator | RESOLVING | Valid signatures, quorum met |
+| `revertDeposit` | Owner/Compliance | DEPOSITING | Deposit asset balance >= totalSupply; only owner can set receiver != from |
+| `pauseFor` | Owner/Compliance | Any | duration=0 to unpause |
 
 ## Facility
 
@@ -304,6 +306,7 @@ stateDiagram-v2
 |-------|----------|-------------|
 | Depositing | `deposit(id, amount)` | Deposit asset, receive LP tokens 1:1 |
 | Depositing | `withdraw(id, from, receiver, amount)` | Burn LP tokens, receive asset 1:1 |
+| Depositing | `revertDeposit(id, from, receiver)` | Owner/Compliance force-withdraws a user's full deposit. Only owner can set receiver != from |
 | Resolved | `claim(id, from, receiver, shares)` | Burn LP tokens, receive proportional share of all accumulated tokens. Returns `(tokens[], amounts[])` for easy tracking of claimed assets |
 
 ### View Functions
@@ -327,8 +330,9 @@ The facilitator role can:
 
 | Role | Permission |
 |------|------------|
-| Owner | Create intents, update target, set descriptor |
+| Owner | Create intents, update target, set descriptor, revert deposits (custom receiver) |
 | Facilitator | Lock, resolve, set caps, attach fund/request, execute operations |
+| Compliance | Pause/unpause facility, revert deposits |
 
 ## Request Contract
 

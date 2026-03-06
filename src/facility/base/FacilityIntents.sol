@@ -155,10 +155,13 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
 
     if (block.timestamp > deadline) revert LibFacilityErrors.DeadlineExpired();
 
-    {
-      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline)));
-      _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
-    }
+    _checkSignatures(
+      _facilityStorage,
+      _hashTypedData(keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline))),
+      signers,
+      signatures,
+      _intent.properties.quorum
+    );
 
     // ensure the fund is not already in use
     _facilityStorage.checkFundIntent(newFund, id);
@@ -204,10 +207,14 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     if (newRequest != address(0)) {
       if (block.timestamp > deadline) revert LibFacilityErrors.DeadlineExpired();
 
-      {
-        bytes32 _digest = _hashTypedData(keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline)));
-        _checkSignatures(_facilityStorage, _digest, signers, signatures, _intent.properties.quorum);
-      }
+      _checkSignatures(
+        _facilityStorage,
+        _hashTypedData(keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))),
+        signers,
+        signatures,
+        _intent.properties.quorum
+      );
+
       // ensure the request is a contract
       newRequest.checkContract();
 

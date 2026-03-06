@@ -374,6 +374,24 @@ contract FacilityHandler is Test {
     }
   }
 
+  /// @notice Reverts a user's deposit via the compliance role.
+  /// @dev Picks a random depositing intent and a random user, then calls revertDeposit.
+  ///      Updates ghost state accordingly.
+  /// @param intentSeed Seed for selecting an intent.
+  /// @param userSeed Seed for selecting a user.
+  function act_revertDeposit(uint256 intentSeed, uint256 userSeed) external {
+    uint256[] memory depositingIds = _getIntentsByState(0);
+    if (depositingIds.length == 0) return;
+
+    uint256 id = depositingIds[intentSeed % depositingIds.length];
+    address who = users[userSeed % users.length];
+
+    vm.prank(owner);
+    try facility.revertDeposit(id, who, who) {
+      userDeposits[id][who] = 0;
+    } catch {}
+  }
+
   /// @notice Locks a DEPOSITING intent, transitioning it to RESOLVING.
   /// @dev Sets resolveStart to current timestamp via the facilitator role.
   ///      Early-returns if no depositing intents exist.
@@ -600,28 +618,21 @@ contract FacilityHandler is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Pauses the Facility (permanent or timed).
-  /// @dev 50/50 chance of permanent vs timed pause. Uses owner (who has PAUSER_ROLE equiv).
+  /// @dev 50/50 chance of permanent vs timed pause. Uses owner (who has COMPLIANCE_ROLE equiv).
   /// @param durationSeed Seed for choosing pause type and duration.
   function act_pauseFacility(uint256 durationSeed) external {
     bool permanent = durationSeed % 2 == 0;
-    if (permanent) {
-      vm.prank(owner);
-      try facility.pause() {
-        facilityCurrentlyPaused = true;
-      } catch {}
-    } else {
-      uint256 duration = _bound(durationSeed, 1, 30 days);
-      vm.prank(owner);
-      try facility.pauseFor(duration) {
-        facilityCurrentlyPaused = true;
-      } catch {}
-    }
+    uint256 duration = permanent ? type(uint256).max : _bound(durationSeed, 1, 30 days);
+    vm.prank(owner);
+    try facility.pauseFor(duration) {
+      facilityCurrentlyPaused = true;
+    } catch {}
   }
 
   /// @notice Unpauses the Facility to allow operations to resume.
   function act_unpauseFacility() external {
     vm.prank(owner);
-    try facility.unpause() {
+    try facility.pauseFor(0) {
       facilityCurrentlyPaused = false;
     } catch {}
   }

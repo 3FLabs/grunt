@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {LibChecks} from "./LibChecks.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title LibPause
@@ -13,7 +12,6 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///      - Value > 0: Paused until block.timestamp > value
 ///      - Value of type(uint40).max (PERMANENT_PAUSE): Effectively permanent pause (~35,000 years)
 library LibPause {
-  using LibChecks for uint256;
   using FixedPointMathLib for uint256;
 
   /// @notice Value representing a permanent pause state.
@@ -33,12 +31,16 @@ library LibPause {
     return block.timestamp <= self;
   }
 
-  /// @notice Returns a pause state representing a timed pause.
-  /// @dev If duration would overflow 40 bits, the result is capped at PERMANENT_PAUSE.
-  /// @param duration The duration to pause for (must be non-zero).
-  /// @return The pause-until timestamp.
+  /// @notice Returns a pause state for the given duration.
+  /// @dev A duration of 0 means unpause (returns NOT_PAUSED).
+  ///      If duration would overflow 40 bits, the result is capped at PERMANENT_PAUSE.
+  /// @param duration The duration to pause for in seconds (0 = unpause).
+  /// @return The pause-until timestamp (0 if unpausing).
   function pauseFor(uint256 duration) internal view returns (uint40) {
-    duration.checkNotZero();
+    if (duration == 0) return NOT_PAUSED;
+    // cap duration to avoid overflow in the addition below
+    // any duration >= PERMANENT_PAUSE results in a permanent pause
+    if (duration >= PERMANENT_PAUSE) return PERMANENT_PAUSE;
     uint256 pauseUntil = block.timestamp + duration;
     // casting to 'uint40' is safe because pauseUntil is equal or less than PERMANENT_PAUSE
     // forge-lint: disable-next-line(unsafe-typecast)

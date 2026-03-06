@@ -90,7 +90,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
   // Facility roles
   uint256 constant FACILITATOR_ROLE = 1 << 0;
   uint256 constant GUARDIAN_ROLE = 1 << 1;
-  uint256 constant PAUSER_ROLE = 1 << 2;
+  uint256 constant COMPLIANCE_ROLE = 1 << 2;
 
   // PositionManager roles
   uint256 constant PM_MINTER_ROLE = 1 << 0;
@@ -235,10 +235,10 @@ contract FacilityInvariantTest is StdInvariant, Test {
     positionManager.grantRoles(minter, PM_MINTER_ROLE);
     vm.stopPrank();
 
-    // ----- 13. Grant GUARDIAN_ROLE, PAUSER_ROLE on facility -----
+    // ----- 13. Grant GUARDIAN_ROLE, COMPLIANCE_ROLE on facility -----
     vm.startPrank(owner);
     facility.grantRoles(guardian, GUARDIAN_ROLE);
-    facility.grantRoles(pauser, PAUSER_ROLE);
+    facility.grantRoles(pauser, COMPLIANCE_ROLE);
     vm.stopPrank();
 
     // ----- 14. Set transfer guard config: blocklist mode for PM token -----
@@ -257,22 +257,23 @@ contract FacilityInvariantTest is StdInvariant, Test {
     handler.initializeDependencies(oracle, IMorpho(address(morpho)), marketParams);
 
     // Register handler action selectors with the invariant fuzzer
-    bytes4[] memory selectors = new bytes4[](15);
+    bytes4[] memory selectors = new bytes4[](16);
     selectors[0] = FacilityHandler.act_createIntent.selector;
     selectors[1] = FacilityHandler.act_deposit.selector;
     selectors[2] = FacilityHandler.act_withdraw.selector;
-    selectors[3] = FacilityHandler.act_lock.selector;
-    selectors[4] = FacilityHandler.act_warpToResolving.selector;
-    selectors[5] = FacilityHandler.act_resolve.selector;
-    selectors[6] = FacilityHandler.act_claim.selector;
-    selectors[7] = FacilityHandler.act_transfer.selector;
-    selectors[8] = FacilityHandler.act_swap.selector;
-    selectors[9] = FacilityHandler.act_pauseFacility.selector;
-    selectors[10] = FacilityHandler.act_unpauseFacility.selector;
-    selectors[11] = FacilityHandler.act_changeOraclePrice.selector;
-    selectors[12] = FacilityHandler.act_accrueInterest.selector;
-    selectors[13] = FacilityHandler.act_setRequest.selector;
-    selectors[14] = FacilityHandler.act_updateDepositCap.selector;
+    selectors[3] = FacilityHandler.act_revertDeposit.selector;
+    selectors[4] = FacilityHandler.act_lock.selector;
+    selectors[5] = FacilityHandler.act_warpToResolving.selector;
+    selectors[6] = FacilityHandler.act_resolve.selector;
+    selectors[7] = FacilityHandler.act_claim.selector;
+    selectors[8] = FacilityHandler.act_transfer.selector;
+    selectors[9] = FacilityHandler.act_swap.selector;
+    selectors[10] = FacilityHandler.act_pauseFacility.selector;
+    selectors[11] = FacilityHandler.act_unpauseFacility.selector;
+    selectors[12] = FacilityHandler.act_changeOraclePrice.selector;
+    selectors[13] = FacilityHandler.act_accrueInterest.selector;
+    selectors[14] = FacilityHandler.act_setRequest.selector;
+    selectors[15] = FacilityHandler.act_updateDepositCap.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -391,7 +392,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
   function invariant_pauseConsistency() public view {
     (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     if (isPaused) {
-      assertGe(uint256(pausedUntil), block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
+      assertGe(pausedUntil, block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
     }
   }
 }

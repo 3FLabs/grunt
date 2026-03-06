@@ -81,8 +81,7 @@ abstract contract FacilityRequests is IFacilityRequests, ReentrancyGuardTransien
     // check if the facility is paused
     LibStorage.checkNotPaused();
     // getting the intent
-    FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
-    _intent = _facilityStorage.getResolvingIntent(id);
+    _intent = LibStorage.facilityStorage().getResolvingIntent(id);
 
     // getting the request address
     request = _intent.request;

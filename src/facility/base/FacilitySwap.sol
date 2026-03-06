@@ -22,6 +22,7 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
   using LibIntent for Intent;
   using LibStorage for FacilityStorageData;
   using LibTokenBalances for EnumerableMapLib.AddressToUint256Map;
+  using FixedPointMathLib for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -82,13 +83,14 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
     Intent storage intent1 = _facilityStorage.getResolvingIntent(params.id1);
     Intent storage intent2 = _facilityStorage.getResolvingIntent(params.id2);
 
-    { // get the higher quorum
-      uint256 _quorum = FixedPointMathLib.max(intent1.properties.quorum, intent2.properties.quorum);
-
-      // compute the digest and validate the signatures
-      bytes32 _digest = _hashTypedData(keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params)));
-      _checkSignatures(_facilityStorage, _digest, signers, signatures, _quorum);
-    }
+    _checkSignatures(
+      _facilityStorage,
+      _hashTypedData(keccak256(abi.encode(SWAP_PARAMS_TYPEHASH, params))),
+      signers,
+      signatures,
+      // get the highest quorum of the two intents
+      uint256(intent1.properties.quorum).max(intent2.properties.quorum)
+    );
 
     // swap between intents (ensures both intents are in resolving state)
     intent1.amounts.sub(params.token1, params.amount1);
