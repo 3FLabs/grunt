@@ -61,14 +61,15 @@ contract LibOperationsTest is Test {
     harness.addSupplyQueueEntry(address(position1), type(uint96).max);
     harness.addSupplyQueueEntry(address(position2), type(uint96).max);
 
-    // Fund harness with collateral
-    collateralToken.mint(address(harness), 100e18);
-    harness.approveToken(address(collateralToken), address(position1), 100e18);
-    harness.approveToken(address(collateralToken), address(position2), 100e18);
+    // At 86% LTV, borrowing 100 total requires ceil(100/0.86) ≈ 117 collateral
+    // Supply enough collateral to cover both positions
+    collateralToken.mint(address(harness), 120e18);
+    harness.approveToken(address(collateralToken), address(position1), 120e18);
+    harness.approveToken(address(collateralToken), address(position2), 120e18);
 
-    harness.processDeposit(100e18, 100e18);
+    harness.processDeposit(120e18, 100e18);
 
-    // Should borrow 30 from first, 70 from second (proportionally distribute collateral)
+    // Should borrow 30 from first, 70 from second
     assertEq(position1.totalBorrowed(), 30e18);
     assertEq(position2.totalBorrowed(), 70e18);
     assertEq(debtToken.balanceOf(address(harness)), 100e18);
@@ -128,12 +129,263 @@ contract LibOperationsTest is Test {
     harness.addSupplyQueueEntry(address(position2), type(uint96).max);
 
     collateralToken.mint(address(harness), 100e18);
+    // Approve both: position2 for the borrow collateral, position1 for leftover collateral
+    harness.approveToken(address(collateralToken), address(position1), 100e18);
     harness.approveToken(address(collateralToken), address(position2), 100e18);
 
     harness.processDeposit(100e18, 50e18);
 
     assertEq(position1.totalBorrowed(), 0);
     assertEq(position2.totalBorrowed(), 50e18);
+    // Leftover collateral goes to the first position in the supply queue
+    assertGt(position1.totalCollateral(), 0, "Leftover collateral should go to first position");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*             processDeposit LTV CONSTRAINT TESTS              */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_processDeposit_respectsLtv_singlePosition() public {
+    // At 86% LTV with 1:1 price, borrowing 86 requires ceil(86/0.86) = 100 collateral
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(1000e18);
+    debtToken.mint(address(position), 1000e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    collateralToken.mint(address(harness), 100e18);
+    harness.approveToken(address(collateralToken), address(position), 100e18);
+
+    harness.processDeposit(100e18, 86e18);
+
+    // Position should have exactly 100 collateral and 86 borrowed (86% LTV)
+    assertEq(position.totalCollateral(), 100e18, "All collateral should be supplied");
+    assertEq(position.totalBorrowed(), 86e18, "Should borrow exactly 86");
+  }
+
+  function test_processDeposit_cannotExceedLtv() public {
+    // Trying to borrow 90 with 100 collateral at 86% LTV should fail
+    // because 90/100 = 90% > 86%
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(1000e18);
+    debtToken.mint(address(position), 1000e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    collateralToken.mint(address(harness), 100e18);
+    harness.approveToken(address(collateralToken), address(position), 100e18);
+
+    // borrowForCollateral(100, 0.86) = 86, which is less than 90 → remaining debt > 0
+    vm.expectRevert(LibManagerErrors.InsufficientBorrowCapacity.selector);
+    harness.processDeposit(100e18, 90e18);
+  }
+
+  function test_processDeposit_ltvBoundCollateralAllocation() public {
+    // Two positions with enough liquidity. Collateral should be allocated per LTV needs, not proportionally.
+    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+
+    position1.setAvailableLiquidity(50e18);
+    position2.setAvailableLiquidity(50e18);
+
+    debtToken.mint(address(position1), 50e18);
+    debtToken.mint(address(position2), 50e18);
+
+    harness.addSupplyQueueEntry(address(position1), type(uint96).max);
+    harness.addSupplyQueueEntry(address(position2), type(uint96).max);
+
+    // At 86% LTV, borrowing 50+50=100 requires ceil(100/0.86) ≈ 117 collateral total
+    collateralToken.mint(address(harness), 120e18);
+    harness.approveToken(address(collateralToken), address(position1), 120e18);
+    harness.approveToken(address(collateralToken), address(position2), 120e18);
+
+    harness.processDeposit(120e18, 100e18);
+
+    // Each position should be at or below 86% LTV
+    // position1: borrowed=50, collateral=ceil(50/0.86)≈59
+    assertLe(
+      position1.totalBorrowed() * 1e18 / position1.totalCollateral(),
+      0.86e18,
+      "Position 1 should be at or below 86% LTV"
+    );
+    // position2: borrowed=50, collateral=ceil(50/0.86)≈59
+    assertLe(
+      position2.totalBorrowed() * 1e18 / position2.totalCollateral(),
+      0.86e18,
+      "Position 2 should be at or below 86% LTV"
+    );
+    // Total borrowed should be 100
+    assertEq(position1.totalBorrowed() + position2.totalBorrowed(), 100e18);
+  }
+
+  function test_processDeposit_leftoverCollateralGoesToFirstPosition() public {
+    // If collateral exceeds what's needed for borrowing, the excess goes to position[0]
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(100e18);
+    debtToken.mint(address(position), 100e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    // Supply 200 collateral but only borrow 50 (needs ~59 at 86% LTV, 141 leftover)
+    collateralToken.mint(address(harness), 200e18);
+    harness.approveToken(address(collateralToken), address(position), 200e18);
+
+    harness.processDeposit(200e18, 50e18);
+
+    // All 200 collateral should end up in the position (59 for borrow + 141 leftover)
+    assertEq(position.totalCollateral(), 200e18, "All collateral should be in the position");
+    assertEq(position.totalBorrowed(), 50e18, "Should borrow exactly 50");
+  }
+
+  function test_processDeposit_collateralConstrainedBorrow() public {
+    // Position has lots of liquidity, but limited collateral means limited borrow
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(1000e18);
+    debtToken.mint(address(position), 1000e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    // Only 50 collateral → at 86% LTV, max borrow = 50 * 0.86 = 43
+    collateralToken.mint(address(harness), 50e18);
+    harness.approveToken(address(collateralToken), address(position), 50e18);
+
+    // Requesting 43 should work
+    harness.processDeposit(50e18, 43e18);
+
+    assertEq(position.totalBorrowed(), 43e18);
+    assertEq(position.totalCollateral(), 50e18);
+  }
+
+  function test_processDeposit_collateralFallbackReducesBorrow() public {
+    // When collateral can't cover the full borrow, toBorrow is reduced via borrowForCollateral
+    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+
+    position1.setAvailableLiquidity(100e18);
+    position2.setAvailableLiquidity(100e18);
+    debtToken.mint(address(position1), 100e18);
+    debtToken.mint(address(position2), 100e18);
+
+    harness.addSupplyQueueEntry(address(position1), type(uint96).max);
+    harness.addSupplyQueueEntry(address(position2), type(uint96).max);
+
+    // 100 collateral, trying to borrow 100+100=200. At 86% LTV, needs 233 collateral.
+    // Position1 tries to borrow 100, needs ~117 collateral. Only 100 available.
+    // Falls back: borrowForCollateral(100, 0.86) = 86. Supplies 100 collateral, borrows 86.
+    // Position2 tries to borrow remaining 114, needs ~133 collateral. Only 0 remaining.
+    // Falls back: borrowForCollateral(0, 0.86) = 0, skip.
+    // remainingDebt = 114 > 0 → revert
+    collateralToken.mint(address(harness), 100e18);
+    harness.approveToken(address(collateralToken), address(position1), 100e18);
+    harness.approveToken(address(collateralToken), address(position2), 100e18);
+
+    vm.expectRevert(LibManagerErrors.InsufficientBorrowCapacity.selector);
+    harness.processDeposit(100e18, 200e18);
+  }
+
+  function test_processDeposit_existingPositionWithExcessCollateral() public {
+    // Position already has collateral that can absorb new borrow without needing more
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(100e18);
+    position.setTotalCollateral(200e18); // Already has 200 collateral, 0 debt
+    position.setTotalCollateralQuoted(200e18);
+    debtToken.mint(address(position), 100e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    // At 86% LTV, 200 existing collateral supports 172 borrow. Borrowing 50 needs 0 new collateral.
+    collateralToken.mint(address(harness), 10e18);
+    harness.approveToken(address(collateralToken), address(position), 10e18);
+
+    harness.processDeposit(10e18, 50e18);
+
+    // Should borrow 50 without adding collateral (existing 200 covers it)
+    assertEq(position.totalBorrowed(), 50e18);
+    // All 10 collateral goes as leftover to position[0]
+    assertEq(position.totalCollateral(), 210e18, "Leftover collateral added to first position");
+  }
+
+  function test_processDeposit_multiplePositions_ltvPerPosition() public {
+    // Verify each position individually stays within LTV, not just the aggregate
+    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    MockBorrowPosition position3 = new MockBorrowPosition(address(collateralToken), address(debtToken));
+
+    position1.setAvailableLiquidity(40e18);
+    position2.setAvailableLiquidity(30e18);
+    position3.setAvailableLiquidity(30e18);
+    debtToken.mint(address(position1), 40e18);
+    debtToken.mint(address(position2), 30e18);
+    debtToken.mint(address(position3), 30e18);
+
+    harness.addSupplyQueueEntry(address(position1), type(uint96).max);
+    harness.addSupplyQueueEntry(address(position2), type(uint96).max);
+    harness.addSupplyQueueEntry(address(position3), type(uint96).max);
+
+    // Need enough collateral: ceil(100/0.86) ≈ 117
+    collateralToken.mint(address(harness), 120e18);
+    harness.approveToken(address(collateralToken), address(position1), 120e18);
+    harness.approveToken(address(collateralToken), address(position2), 120e18);
+    harness.approveToken(address(collateralToken), address(position3), 120e18);
+
+    harness.processDeposit(120e18, 100e18);
+
+    // Each position must individually be at or below 86% LTV
+    if (position1.totalCollateral() > 0 && position1.totalBorrowed() > 0) {
+      assertLe(position1.totalBorrowed() * 1e18 / position1.totalCollateral(), 0.86e18, "Position 1 exceeds LTV");
+    }
+    if (position2.totalCollateral() > 0 && position2.totalBorrowed() > 0) {
+      assertLe(position2.totalBorrowed() * 1e18 / position2.totalCollateral(), 0.86e18, "Position 2 exceeds LTV");
+    }
+    if (position3.totalCollateral() > 0 && position3.totalBorrowed() > 0) {
+      assertLe(position3.totalBorrowed() * 1e18 / position3.totalCollateral(), 0.86e18, "Position 3 exceeds LTV");
+    }
+
+    // Total borrowed must be 100
+    assertEq(
+      position1.totalBorrowed() + position2.totalBorrowed() + position3.totalBorrowed(),
+      100e18,
+      "Total borrowed must match requested debt"
+    );
+  }
+
+  function test_processDeposit_differentLtvValues() public {
+    // Test with a lower LTV (50%) — should require more collateral
+    harness.setLtv(0.5e18);
+
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(1000e18);
+    debtToken.mint(address(position), 1000e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    // At 50% LTV, borrowing 50 requires 100 collateral
+    collateralToken.mint(address(harness), 100e18);
+    harness.approveToken(address(collateralToken), address(position), 100e18);
+
+    harness.processDeposit(100e18, 50e18);
+
+    assertEq(position.totalBorrowed(), 50e18);
+    assertEq(position.totalCollateral(), 100e18);
+    // 50/100 = 50% = LTV, exactly at the limit
+    assertEq(position.totalBorrowed() * 1e18 / position.totalCollateral(), 0.5e18);
+  }
+
+  function test_processDeposit_differentLtv_insufficientCollateral() public {
+    // At 50% LTV, 100 collateral can only borrow 50. Requesting 60 should fail.
+    harness.setLtv(0.5e18);
+
+    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    position.setAvailableLiquidity(1000e18);
+    debtToken.mint(address(position), 1000e18);
+
+    harness.addSupplyQueueEntry(address(position), type(uint96).max);
+
+    collateralToken.mint(address(harness), 100e18);
+    harness.approveToken(address(collateralToken), address(position), 100e18);
+
+    vm.expectRevert(LibManagerErrors.InsufficientBorrowCapacity.selector);
+    harness.processDeposit(100e18, 60e18);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

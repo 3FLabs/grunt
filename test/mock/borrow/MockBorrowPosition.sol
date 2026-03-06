@@ -3,10 +3,13 @@ pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
-/// @dev Mock borrow position for testing manager libraries
+/// @dev Mock borrow position for testing manager libraries.
+///      Uses a 1:1 collateral-to-borrow price for simplicity.
 contract MockBorrowPosition is IBorrowPosition {
   using SafeTransferLib for address;
+  using FixedPointMathLib for uint256;
 
   address public override collateralAsset;
   address public override borrowAsset;
@@ -56,6 +59,23 @@ contract MockBorrowPosition is IBorrowPosition {
 
   function availableCollateral(uint256) external view override returns (uint256) {
     return totalCollateral;
+  }
+
+  /// @dev Returns additional collateral needed to borrow `borrowAmount` at `ltv` (1:1 price).
+  ///      Formula: ceil((totalBorrowed + borrowAmount) / ltv) - totalCollateral, floored at 0.
+  function collateralForBorrow(uint256 borrowAmount, uint256 ltv) external view override returns (uint256) {
+    uint256 requiredCollateral = (totalBorrowed + borrowAmount).divWadUp(ltv);
+    if (requiredCollateral <= totalCollateral) return 0;
+    return requiredCollateral - totalCollateral;
+  }
+
+  /// @dev Returns additional borrow capacity from supplying `collateralAmount` at `ltv` (1:1 price).
+  ///      Formula: min((totalCollateral + collateralAmount) * ltv - totalBorrowed, availableLiquidity), floored at 0.
+  function borrowForCollateral(uint256 collateralAmount, uint256 ltv) external view override returns (uint256) {
+    uint256 maxDebt = (totalCollateral + collateralAmount).mulWad(ltv);
+    if (maxDebt <= totalBorrowed) return 0;
+    uint256 capacity = maxDebt - totalBorrowed;
+    return capacity < availableLiquidity ? capacity : availableLiquidity;
   }
 
   // Test helpers

@@ -80,6 +80,22 @@ interface IBorrowPosition {
   /*                            LTV                              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Returns the additional collateral needed to borrow `borrowAmount` at the given `ltv`,
+  ///         accounting for the position's current collateral and debt.
+  /// @dev Returns 0 if the position already has enough excess collateral to cover the requested borrow.
+  /// @param borrowAmount The additional borrow amount desired.
+  /// @param ltv The loan-to-value ratio to use for the calculation (WAD).
+  /// @return The additional collateral required (in collateral asset units). 0 if already sufficient.
+  function collateralForBorrow(uint256 borrowAmount, uint256 ltv) external view returns (uint256);
+
+  /// @notice Returns the additional borrow capacity gained by supplying `collateralAmount` at the given `ltv`,
+  ///         accounting for the position's current collateral and debt.
+  /// @dev Includes any existing excess collateral in the calculation.
+  /// @param collateralAmount The additional collateral amount to hypothetically supply.
+  /// @param ltv The loan-to-value ratio to use for the calculation (WAD).
+  /// @return The additional borrow capacity (in borrow asset units).
+  function borrowForCollateral(uint256 collateralAmount, uint256 ltv) external view returns (uint256);
+
   /// @notice Returns the safe LTV threshold for this borrow position.
   /// @dev The safe LTV is the maximum LTV that must not be reached upon position mutations
   ///      (borrow, withdrawCollateral). It is immutable after initialization.
