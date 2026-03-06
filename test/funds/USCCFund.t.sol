@@ -821,6 +821,16 @@ contract USCCFundTest is Test {
     fund.resolve(wrongOrder, ONE_USDC, ONE_USDC);
   }
 
+  function test_Resolve_RevertsInputZero() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
+    fund.resolve(order, 0, ONE_USDC);
+  }
+
   function test_Resolve_OnlyOperatorOrOwner() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     fund.create(order);

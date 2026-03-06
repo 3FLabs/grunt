@@ -348,7 +348,7 @@ contract USCCFundFuzzTest is Test {
     usdc.approve(address(fund), inputAmount);
     fund.commit(original);
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -404,7 +404,7 @@ contract USCCFundFuzzTest is Test {
     vm.prank(owner);
     fund.recovering(original.toId(address(fund)));
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -420,7 +420,7 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    State expectedState = newInput == 0 ? State.RECOVERING : State.PROCESSING;
+    State expectedState = State.PROCESSING;
     assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
     assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
@@ -457,7 +457,7 @@ contract USCCFundFuzzTest is Test {
     wuscc.approve(address(fund), inputAmount);
     fund.commit(original);
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -513,7 +513,7 @@ contract USCCFundFuzzTest is Test {
     vm.prank(owner);
     fund.recovering(original.toId(address(fund)));
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -529,7 +529,7 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    State expectedState = newInput == 0 ? State.RECOVERING : State.PROCESSING;
+    State expectedState = State.PROCESSING;
     assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
     assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
