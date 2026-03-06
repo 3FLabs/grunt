@@ -382,13 +382,13 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function maxDeposit(address) external pure override returns (uint256) {
-    return type(uint256).max;
+  function maxDeposit(address account) external view override returns (uint256) {
+    return hasAllRoles(account, _DEPOSITOR_ROLE) ? USDC.balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return WUSCC.balanceOf(account);
+    return hasAllRoles(account, _DEPOSITOR_ROLE) ? WUSCC.balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
