@@ -164,6 +164,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     bytes32 _orderId = order.toId(address(this));
+    if ($.endedOrders[_orderId]) revert LibFundsErrors.OrderAlreadyExists(_orderId);
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
 
