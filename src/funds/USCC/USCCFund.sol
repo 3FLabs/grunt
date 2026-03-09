@@ -186,6 +186,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
     // No pending state, always accepted or revert.
     bytes32 _orderId = order.toId(address(this));
+    if (_storage.endedOrders[_orderId]) revert LibFundsErrors.OrderAlreadyExists(_orderId);
     _storage.currentOrderId = _orderId;
     _storage.internalState = State.ACCEPTED;
     _storage.hasResolvedAmounts = false;

@@ -201,6 +201,26 @@ contract ParetoFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    _commitDeposit(order);
+    _fulfillDeposit(order);
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_AA * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    _fulfillDeposit(nextOrder);
+    fund.unlock(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
+    fund.create(order);
+  }
+
   function test_Create_RevertsNotAllowed() public {
     cdo.setWalletAllowed(address(fund), false);
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
