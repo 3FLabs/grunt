@@ -215,6 +215,24 @@ contract USCCFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    _unlockDeposit(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    _unlockDeposit(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
+    fund.create(order);
+  }
+
   function test_Create_RevertsNotAllowedSuperstate() public {
     allowlist.setAllowed(address(fund), "USCC", false);
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);

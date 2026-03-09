@@ -198,6 +198,26 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+    vault.fulfillDeposit(address(fund), order.output);
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE * 2, ONE * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    vault.fulfillDeposit(address(fund), nextOrder.output);
+    fund.unlock(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
+    fund.create(order);
+  }
+
   function test_Create_RevertsNotPermissioned() public {
     vault.setPermissioned(address(fund), false);
     Order memory order = _depositOrder(ONE, ONE);
