@@ -1103,6 +1103,40 @@ contract CentrifugeFundTest is Test {
     assertEq(assetToken.balanceOf(address(this)), ONE, "assets received");
   }
 
+  function test_Unlock_RedeemPartialFulfilledDuringRecovery() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge partially fulfills redeem AND returns remaining as cancel
+    uint256 halfAssets = ONE / 2;
+    uint256 halfShares = ONE / 2;
+    vault.fulfillRedeemAndCancelRedeem(address(fund), halfAssets, halfShares);
+
+    // state() should return UNLOCKING (fulfilled assets first)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking first");
+
+    // unlock() claims assets, stays RECOVERING (cancel shares still pending)
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.RECOVERING), "still recovering");
+    assertEq(amount, halfAssets, "half assets claimed");
+    assertEq(assetToken.balanceOf(address(this)), halfAssets, "assets received");
+
+    // Now state() returns RECOVERING (cancel shares claimable)
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering visible");
+
+    // recover() claims cancel shares as wrapped shares and transitions to ENDED
+    (State finalState, uint256 recoveredAmount) = fund.recover(order);
+    assertEq(uint256(finalState), uint256(State.ENDED), "ended");
+    assertEq(recoveredAmount, halfShares, "half shares recovered");
+    assertEq(wrappedShare.balanceOf(address(this)), halfShares, "wShare recovered");
+  }
+
   function test_State_RecoveringShowsUnlockingWhenFulfilled() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
