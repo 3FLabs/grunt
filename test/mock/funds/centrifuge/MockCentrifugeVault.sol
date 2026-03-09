@@ -236,4 +236,27 @@ contract MockCentrifugeVault is ICentrifugeVault {
     _pendingRedeems[controller] -= sharesConsumed;
     _claimableCancelRedeem[controller] += shares;
   }
+
+  /// @dev Simulates the race condition where the Centrifuge pool fulfills a deposit AND
+  ///      processes the cancel in the same epoch. Both shares (from fulfillment) and
+  ///      cancelled assets become claimable simultaneously.
+  function fulfillDepositAndCancelDeposit(address controller, uint256 shares, uint256 cancelledAssets) external {
+    _pendingDeposits[controller] = 0;
+    _pendingCancelDeposit[controller] = false;
+    _claimableMint[controller] += shares;
+    _claimableCancelDeposit[controller] += cancelledAssets;
+    MockERC20(_share).mint(address(this), shares);
+    // Cancelled assets are already held by the vault (received during requestDeposit)
+  }
+
+  /// @dev Simulates the race condition where the Centrifuge pool fulfills a redeem AND
+  ///      processes the cancel in the same epoch.
+  function fulfillRedeemAndCancelRedeem(address controller, uint256 assets, uint256 cancelledShares) external {
+    _pendingRedeems[controller] = 0;
+    _pendingCancelRedeem[controller] = false;
+    _claimableWithdraw[controller] += assets;
+    _claimableCancelRedeem[controller] += cancelledShares;
+    MockERC20(_asset).mint(address(this), assets);
+    // Cancelled shares are already held by the vault (received during requestRedeem)
+  }
 }
