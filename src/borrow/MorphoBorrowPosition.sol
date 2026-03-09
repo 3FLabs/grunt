@@ -482,13 +482,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     Position memory _pos = MORPHO.position(_storage.marketId, address(this));
 
-    uint256 borrowed = uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
-
-    // Calculate remaining borrow capacity: (collateralValue * LTV) - alreadyBorrowed
-    // Uses zeroFloorSub to return 0 instead of underflowing if already over-utilized
-    // Return remaining capacity or available liquidity, whichever is lower
-    return uint256(_pos.collateral).mulDiv(IOracle(_storage.marketParams.oracle).price(), ORACLE_PRICE_SCALE)
-      .mulWad(_ltv).zeroFloorSub(borrowed).min(_totalSupplyAssets - _totalBorrowAssets);
+    return _maxBorrow(
+      _pos.collateral,
+      uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares),
+      _totalSupplyAssets - _totalBorrowAssets,
+      IOracle(_storage.marketParams.oracle).price(),
+      _ltv
+    );
   }
 
   /// @inheritdoc IBorrowPosition
@@ -519,18 +519,120 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // Use expected (interest-accrued) market totals to avoid understating debt
     (,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
       MORPHO.expectedMarketBalances(_storage.marketParams, _marketId);
-    uint256 _collateralPrice = IOracle(_storage.marketParams.oracle).price();
 
-    // Calculate borrowed amount (rounds up to be conservative)
-    uint256 _borrowed = uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
+    return uint256(_pos.collateral)
+      .zeroFloorSub(
+        _requiredCollateral(
+          // set the collateral to 0 to compute the total required collateral
+          0,
+          // compute the borrowed amount
+          uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares),
+          IOracle(_storage.marketParams.oracle).price(),
+          _ltv
+        )
+      );
+  }
 
-    // Required collateral = borrowed * ORACLE_PRICE_SCALE / (ltv * price)
-    // This rounds up to be conservative (more collateral required = less available)
-    uint256 _requiredCollateral = _borrowed.mulDivUp(ORACLE_PRICE_SCALE, _ltv.mulWad(_collateralPrice));
+  /// @inheritdoc IBorrowPosition
+  /// @dev Computes the additional collateral needed so that supplying it and then borrowing `borrowAmount`
+  ///      would keep the position at or below the given `ltv`.
+  ///      Steps:
+  ///        1. Fetch interest-accrued market balances to get accurate current debt.
+  ///        2. Revert if `borrowAmount` exceeds available market liquidity.
+  ///        3. Compute the total required collateral for (currentDebt + borrowAmount) at `ltv`.
+  ///        4. Subtract the position's existing collateral (floored at 0).
+  ///      Reverts with {LibBorrowErrors.InsufficientLiquidity} if `borrowAmount` exceeds market liquidity.
+  function collateralForBorrow(uint256 borrowAmount, uint256 ltv) external view override returns (uint256) {
+    BorrowPositionStorage storage _storage = _borrowPositionStorage();
 
-    // Return available collateral (0 if required > total)
-    if (_requiredCollateral >= uint256(_pos.collateral)) return 0;
-    return uint256(_pos.collateral) - _requiredCollateral;
+    // Fetch interest-accrued market totals for accurate debt conversion
+    (uint256 _totalSupplyAssets,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
+      MORPHO.expectedMarketBalances(_storage.marketParams, _storage.marketId);
+
+    // Ensure the market has enough liquidity to fulfill the requested borrow
+    if (borrowAmount > _totalSupplyAssets - _totalBorrowAssets) revert LibBorrowErrors.InsufficientLiquidity();
+
+    Position memory _pos = MORPHO.position(_storage.marketId, address(this));
+
+    // Compute how much total collateral is needed for (currentDebt + borrowAmount) at the given ltv,
+    // then subtract existing collateral to get the additional amount required
+    return _requiredCollateral(
+      uint256(_pos.collateral),
+      uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares) + borrowAmount,
+      IOracle(_storage.marketParams.oracle).price(),
+      ltv
+    );
+  }
+
+  /// @inheritdoc IBorrowPosition
+  /// @dev Computes the additional borrow capacity if `collateralAmount` were supplied, at the given `ltv`.
+  ///      Steps:
+  ///        1. Fetch interest-accrued market balances to get accurate current debt and liquidity.
+  ///        2. Compute max borrow for (currentCollateral + collateralAmount) at `ltv`.
+  ///        3. Subtract current debt (floored at 0) to get additional capacity.
+  ///        4. Cap at available market liquidity.
+  ///      The result accounts for any existing excess collateral: if the position is already
+  ///      under-leveraged, passing collateralAmount=0 returns the existing spare capacity.
+  function borrowForCollateral(uint256 collateralAmount, uint256 ltv) external view override returns (uint256) {
+    BorrowPositionStorage storage _storage = _borrowPositionStorage();
+
+    // Fetch interest-accrued market totals for accurate debt conversion and liquidity
+    (uint256 _totalSupplyAssets,, uint256 _totalBorrowAssets, uint256 _totalBorrowShares) =
+      MORPHO.expectedMarketBalances(_storage.marketParams, _storage.marketId);
+
+    Position memory _pos = MORPHO.position(_storage.marketId, address(this));
+
+    // Compute remaining borrow capacity with hypothetical additional collateral,
+    // accounting for existing debt and capped at available market liquidity
+    return _maxBorrow(
+      uint256(_pos.collateral) + collateralAmount,
+      uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares),
+      _totalSupplyAssets - _totalBorrowAssets,
+      IOracle(_storage.marketParams.oracle).price(),
+      ltv
+    );
+  }
+
+  /// @dev Computes the additional collateral needed to back `borrowed` at the given `ltv`.
+  ///      Formula: additionalCollateral = ceil(borrowed * ORACLE_PRICE_SCALE / (ltv * price)) - collateral
+  ///      The division rounds up so the collateral requirement is conservative (never underestimates).
+  ///      Returns 0 (via zeroFloorSub) if the existing `collateral` already covers the requirement.
+  /// @param collateral The position's current collateral (in collateral asset units).
+  /// @param borrowed The total debt to collateralize (in borrow asset units).
+  /// @param price The oracle price of collateral denominated in borrow asset (ORACLE_PRICE_SCALE-scaled).
+  /// @param ltv The loan-to-value ratio (WAD-scaled, 1e18 = 100%).
+  /// @return The additional collateral required (in collateral asset units). 0 if already sufficient.
+  function _requiredCollateral(uint256 collateral, uint256 borrowed, uint256 price, uint256 ltv)
+    internal
+    pure
+    returns (uint256)
+  {
+    // Convert borrowed amount to collateral units: borrowed / (price * ltv / WAD / ORACLE_PRICE_SCALE)
+    // Rounds up to be conservative — requires slightly more collateral rather than less
+    // Subtract existing collateral; floor at 0 if position is already sufficiently collateralized
+    return borrowed.mulDivUp(ORACLE_PRICE_SCALE, ltv.mulWad(price)).zeroFloorSub(collateral);
+  }
+
+  /// @dev Computes the remaining borrow capacity for a given collateral, debt, liquidity, price, and ltv.
+  ///      Formula: maxAdditionalBorrow = min((collateral * price / ORACLE_PRICE_SCALE * ltv) - borrowed, liquidity)
+  ///      The collateral is first quoted in borrow asset units, then scaled by the ltv to get the
+  ///      maximum allowable debt. The existing debt is subtracted (floored at 0 if over-utilized).
+  ///      The result is capped at available market liquidity since you cannot borrow more than exists.
+  /// @param collateral The position's collateral (in collateral asset units).
+  /// @param borrowed The position's current debt (in borrow asset units).
+  /// @param liquidity The available market liquidity (in borrow asset units).
+  /// @param price The oracle price of collateral denominated in borrow asset (ORACLE_PRICE_SCALE-scaled).
+  /// @param ltv The loan-to-value ratio (WAD-scaled, 1e18 = 100%).
+  /// @return The additional amount that can be borrowed (in borrow asset units).
+  function _maxBorrow(uint256 collateral, uint256 borrowed, uint256 liquidity, uint256 price, uint256 ltv)
+    internal
+    pure
+    returns (uint256)
+  {
+    // Quote collateral in borrow asset units, then apply ltv to get max allowable debt
+    // Subtract existing debt; floor at 0 if position is already over-utilized
+    // Cap at available market liquidity
+    return collateral.mulDiv(price, ORACLE_PRICE_SCALE).mulWad(ltv).zeroFloorSub(borrowed).min(liquidity);
   }
 
   /// @dev Internal helper to determine if the position is healthy based on provided ltv and oracle.

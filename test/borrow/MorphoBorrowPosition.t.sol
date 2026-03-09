@@ -84,6 +84,7 @@ contract MorphoBorrowPositionTest is Test {
   error InvalidBorrower();
   error AssetMismatch(address expected, address actual);
   error NotMorpho();
+  error InsufficientLiquidity();
 
   // Solady Initializable errors
   error InvalidInitialization();
@@ -2779,5 +2780,359 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(seized, 0, "Should seize 0 collateral when deeply underwater with tiny repay");
     assertGt(repaid, 0, "Should still repay some debt");
     assertEq(borrowPosition.totalCollateral(), collateralAmount, "Collateral should be unchanged");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  COLLATERAL FOR BORROW TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_collateralForBorrow_NoExistingPosition() public {
+    // No collateral, no debt — borrowing requires full collateral
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    // At 65% LTV with 1:1 price, borrowing 6500e18 requires 10000e18 collateral
+    uint256 borrowAmount = 6_500e18;
+    uint256 required = borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+
+    // required = ceil(6500e18 * 1e36 / (0.65e18 * 1e36)) = 10000e18
+    assertEq(required, 10_000e18, "Should require full collateral when position is empty");
+  }
+
+  function test_collateralForBorrow_ExcessCollateralCoversNewBorrow() public {
+    // Position with 10k collateral, 0 debt — excess collateral covers the new borrow
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // At 65% LTV, 10k collateral supports up to 6500 debt. Borrowing 5000 needs 0 additional.
+    uint256 required = borrowPosition.collateralForBorrow(LOAN_AMOUNT, SAFE_LTV);
+    assertEq(required, 0, "Should require 0 additional collateral when existing collateral covers borrow");
+  }
+
+  function test_collateralForBorrow_PartialCoverage() public {
+    // Position with 10k collateral, 5k debt — borrowing 2k more requires some additional collateral
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(LOAN_AMOUNT);
+
+    // Current state: 10k collateral, ~5k debt
+    // New total debt = 5k + 2k = 7k
+    // Required collateral = ceil(7000e18 / 0.65) ≈ 10769.23e18
+    // Additional needed = 10769.23e18 - 10000e18 ≈ 769.23e18
+    uint256 required = borrowPosition.collateralForBorrow(2_000e18, SAFE_LTV);
+    assertGt(required, 0, "Should require additional collateral");
+    assertLt(required, 2_000e18, "Should require less collateral than borrow amount at < 100% LTV");
+  }
+
+  function test_collateralForBorrow_ExactlyAtCapacity() public {
+    // Position at maximum utilization for its LTV — any new borrow needs collateral
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Borrow exactly the max at SAFE_LTV: 10000 * 0.65 = 6500
+    uint256 maxAtSafeLtv = borrowPosition.maxBorrow(SAFE_LTV);
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxAtSafeLtv);
+
+    // Any additional borrow requires additional collateral
+    uint256 required = borrowPosition.collateralForBorrow(1_000e18, SAFE_LTV);
+    assertGt(required, 0, "Should require additional collateral when at capacity");
+  }
+
+  function test_collateralForBorrow_RevertWhen_InsufficientLiquidity() public {
+    // No liquidity in the market — should revert
+    uint256 borrowAmount = LOAN_AMOUNT;
+
+    vm.expectRevert(InsufficientLiquidity.selector);
+    borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+  }
+
+  function test_collateralForBorrow_RevertWhen_BorrowExceedsLiquidity() public {
+    // Supply some liquidity but try to borrow more than available
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    vm.expectRevert(InsufficientLiquidity.selector);
+    borrowPosition.collateralForBorrow(LOAN_AMOUNT + 1, SAFE_LTV);
+  }
+
+  function test_collateralForBorrow_ZeroBorrowAmount() public {
+    // Borrowing 0 should require 0 collateral
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    uint256 required = borrowPosition.collateralForBorrow(0, SAFE_LTV);
+    assertEq(required, 0, "Should require 0 collateral for 0 borrow");
+  }
+
+  function test_collateralForBorrow_WithDifferentOraclePrice() public {
+    // Set oracle price to 2:1 (1 collateral = 2 borrow tokens)
+    oracle.setPrice(2e36);
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    // No position yet, borrowing 6500 at 65% LTV
+    // required = ceil(6500e18 * 1e36 / (0.65e18 * 2e36)) = 5000e18
+    uint256 required = borrowPosition.collateralForBorrow(6_500e18, SAFE_LTV);
+    assertEq(required, 5_000e18, "Should require half the collateral at 2x price");
+  }
+
+  function test_collateralForBorrow_WithDifferentLtv() public {
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    // At 50% LTV, borrowing 5000 requires 10000 collateral
+    uint256 requiredAt50 = borrowPosition.collateralForBorrow(LOAN_AMOUNT, 0.5e18);
+    assertEq(requiredAt50, 10_000e18, "At 50% LTV, 5000 borrow needs 10000 collateral");
+
+    // At 80% LTV (market LLTV), borrowing 4000 requires 5000 collateral
+    uint256 requiredAt80 = borrowPosition.collateralForBorrow(4_000e18, DEFAULT_LLTV);
+    assertEq(requiredAt80, 5_000e18, "At 80% LTV, 4000 borrow needs 5000 collateral");
+  }
+
+  function testFuzz_collateralForBorrow_ConsistentWithMaxBorrow(uint256 collateralAmount, uint256 borrowAmount) public {
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 maxBorrowable = borrowPosition.maxBorrow(SAFE_LTV);
+
+    if (borrowAmount <= maxBorrowable) {
+      // If we can borrow this much, no additional collateral needed
+      uint256 required = borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+      assertEq(required, 0, "Should require 0 when borrow is within capacity");
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  BORROW FOR COLLATERAL TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_borrowForCollateral_NoExistingPosition() public {
+    // No collateral, no debt — adding collateral gives full borrow capacity
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    // At 65% LTV with 1:1 price, 10000 collateral => 6500 borrow capacity
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 6_500e18, "Should return full borrow capacity for new collateral");
+  }
+
+  function test_borrowForCollateral_WithExistingExcessCollateral() public {
+    // 10k collateral, 0 debt — already have excess capacity, adding more increases it
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Existing capacity: 10000 * 0.65 = 6500
+    // Adding 5000 more collateral: (10000 + 5000) * 0.65 = 9750
+    uint256 capacity = borrowPosition.borrowForCollateral(5_000e18, SAFE_LTV);
+    assertEq(capacity, 9_750e18, "Should include existing excess collateral in capacity");
+  }
+
+  function test_borrowForCollateral_WithExistingDebt() public {
+    // 10k collateral, 5k debt — adding collateral increases remaining capacity
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(LOAN_AMOUNT);
+
+    // Current: 10k collateral, 5k debt, capacity at 65% = 6500 - 5000 = 1500
+    // Adding 10k more: (10k + 10k) * 0.65 - 5k = 8000
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 8_000e18, "Should account for existing debt when computing capacity");
+  }
+
+  function test_borrowForCollateral_ZeroAdditionalCollateral() public {
+    // Just returns the existing remaining capacity
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    uint256 capacityFromZero = borrowPosition.borrowForCollateral(0, SAFE_LTV);
+    uint256 maxBorrowDirect = borrowPosition.maxBorrow(SAFE_LTV);
+    assertEq(capacityFromZero, maxBorrowDirect, "Zero additional collateral should equal maxBorrow");
+  }
+
+  function test_borrowForCollateral_CappedByLiquidity() public {
+    // Limited liquidity — capacity capped at available liquidity
+    uint256 limitedLiquidity = 1_000e18;
+    _supplyLiquidity(limitedLiquidity);
+
+    // 10k collateral at 65% LTV = 6500 capacity, but only 1000 liquidity
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, limitedLiquidity, "Should be capped at available liquidity");
+  }
+
+  function test_borrowForCollateral_FullyUtilizedPosition() public {
+    // Position at max utilization — adding collateral gives new capacity
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    uint256 maxAtSafeLtv = borrowPosition.maxBorrow(SAFE_LTV);
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxAtSafeLtv);
+
+    // Verify no remaining capacity
+    assertEq(borrowPosition.maxBorrow(SAFE_LTV), 0, "Should have 0 remaining capacity");
+
+    // Adding 10k collateral at 65% LTV gives 6500 new capacity
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 6_500e18, "New collateral should unlock new borrow capacity");
+  }
+
+  function test_borrowForCollateral_WithDifferentOraclePrice() public {
+    // Set oracle price to 2:1 (1 collateral = 2 borrow tokens)
+    oracle.setPrice(2e36);
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    // 10k collateral at 2:1 price and 65% LTV = 10000 * 2 * 0.65 = 13000
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 13_000e18, "Should double capacity at 2x price");
+  }
+
+  function test_borrowForCollateral_WithDifferentLtv() public {
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    // At 50% LTV: 10000 * 0.5 = 5000
+    uint256 capacityAt50 = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, 0.5e18);
+    assertEq(capacityAt50, 5_000e18, "At 50% LTV should give 5000 capacity");
+
+    // At 80% LTV (market LLTV): 10000 * 0.8 = 8000
+    uint256 capacityAt80 = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, DEFAULT_LLTV);
+    assertEq(capacityAt80, 8_000e18, "At 80% LTV should give 8000 capacity");
+  }
+
+  function testFuzz_borrowForCollateral_SupplyAndBorrowIsHealthy(
+    uint256 existingCollateral,
+    uint256 existingBorrow,
+    uint256 collateralAmount,
+    uint256 ltv
+  ) public {
+    existingCollateral = bound(existingCollateral, 0, MAX_TEST_AMOUNT / 2);
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    // Cap at safeLtv because borrow() enforces the safeLtv health check internally
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // Build a pre-existing position
+    if (existingCollateral > 0) {
+      collateralToken.setBalance(positionManager, existingCollateral);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(existingCollateral);
+
+      // Borrow up to a fraction of max capacity so the position stays healthy
+      uint256 maxExistingBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+      existingBorrow = bound(existingBorrow, 0, maxExistingBorrow);
+      if (existingBorrow > 0) {
+        vm.prank(positionManager);
+        borrowPosition.borrow(existingBorrow);
+      }
+    }
+
+    // Compute how much we can borrow if we supply collateralAmount
+    uint256 borrowable = borrowPosition.borrowForCollateral(collateralAmount, ltv);
+    vm.assume(borrowable > 0);
+
+    // Supply the collateral and borrow the computed amount
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+    borrowPosition.borrow(borrowable);
+    vm.stopPrank();
+
+    // Position should be healthy at the same LTV used to compute capacity
+    assertTrue(borrowPosition.isHealthy(ltv), "Position should be healthy after borrowing computed capacity");
+  }
+
+  function testFuzz_collateralForBorrow_SupplyAndBorrowIsHealthy(
+    uint256 existingCollateral,
+    uint256 existingBorrow,
+    uint256 borrowAmount,
+    uint256 ltv
+  ) public {
+    existingCollateral = bound(existingCollateral, 0, MAX_TEST_AMOUNT / 2);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    // Cap at safeLtv because borrow() enforces the safeLtv health check internally
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // Build a pre-existing position
+    if (existingCollateral > 0) {
+      collateralToken.setBalance(positionManager, existingCollateral);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(existingCollateral);
+
+      // Borrow up to a fraction of max capacity so the position stays healthy
+      uint256 maxExistingBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+      existingBorrow = bound(existingBorrow, 0, maxExistingBorrow);
+      if (existingBorrow > 0) {
+        vm.prank(positionManager);
+        borrowPosition.borrow(existingBorrow);
+      }
+    }
+
+    // Compute how much collateral we need to borrow borrowAmount
+    uint256 requiredCollateral = borrowPosition.collateralForBorrow(borrowAmount, ltv);
+
+    // Supply the required collateral (if any) and borrow
+    vm.startPrank(positionManager);
+    if (requiredCollateral > 0) {
+      collateralToken.setBalance(positionManager, requiredCollateral);
+      borrowPosition.supplyCollateral(requiredCollateral);
+    }
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    // Position should be healthy at the same LTV used to compute required collateral
+    assertTrue(borrowPosition.isHealthy(ltv), "Position should be healthy after supplying computed collateral");
+  }
+
+  function testFuzz_borrowForCollateral_ConsistentWithCollateralForBorrow(
+    uint256 collateralAmount,
+    uint256 borrowAmount
+  ) public {
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // If borrowForCollateral says we can borrow X with Y collateral,
+    // then collateralForBorrow(X) with that collateral supplied should return 0
+    uint256 capacity = borrowPosition.borrowForCollateral(collateralAmount, SAFE_LTV);
+
+    if (capacity > 0) {
+      // Supply the collateral
+      collateralToken.setBalance(positionManager, collateralAmount);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(collateralAmount);
+
+      // Borrowing up to capacity should require 0 additional collateral
+      uint256 required = borrowPosition.collateralForBorrow(capacity, SAFE_LTV);
+      assertEq(required, 0, "Should not need extra collateral to borrow within reported capacity");
+    }
   }
 }

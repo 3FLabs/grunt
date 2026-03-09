@@ -575,7 +575,7 @@ assets = shares × (totalAssets + 1) / (totalSupply + 1e6)
 
 ### Deposit
 
-Deposits collateral and borrows debt across positions in the supply queue.
+Deposits collateral and borrows debt across positions in the supply queue, respecting the position manager's target LTV.
 
 ```solidity
 function deposit(uint256 collateral, uint256 debt) external returns (int256 shares);
@@ -585,20 +585,28 @@ function deposit(uint256 collateral, uint256 debt) external returns (int256 shar
 1. Pull collateral from caller
 2. If `debt == 0`: supply all collateral to first position
 3. If `debt > 0`: iterate through supply queue:
-   - For each position, borrow up to `min(availableLiquidity, maxBorrow, remainingDebt)`
-   - Supply collateral proportionally: `collateral × (amountBorrowed / totalDebt)`
-4. Transfer borrowed debt to caller
-5. Mint/burn shares based on total assets change
+   - For each position, calculate the initial borrow: `min(availableLiquidity, maxBorrow, remainingDebt)`
+   - Query the position for required collateral at the target LTV via `collateralForBorrow(toBorrow, ltv)`
+   - If not enough collateral remains, reduce the borrow to what the remaining collateral supports via `borrowForCollateral(remainingCollateral, ltv)`
+   - Supply collateral and execute borrow
+4. Deposit any leftover collateral (not needed for borrowing) into the first supply queue position
+5. Transfer borrowed debt to caller
+6. Mint/burn shares based on total assets change
+
+**LTV Enforcement:** Each position is individually constrained to the target LTV. The `collateralForBorrow` and `borrowForCollateral` functions account for the position's existing collateral and debt, so positions with excess collateral may not need additional collateral for new borrows.
 
 **Example:**
 ```
 Supply Queue: [(PositionA, maxBorrow=1000), (PositionB, maxBorrow=2000)]
-Deposit: collateral=1500, debt=2000
+Deposit: collateral=1500, debt=2000, ltv=70%
 
-Position A: available=800, maxBorrow=1000 → borrows 800, collateral=600
-Position B: remaining=1200, available=5000, maxBorrow=2000 → borrows 1200, collateral=900
+Position A: available=800 → collateralForBorrow(800, 0.7) = 1143 → supplies 1143, borrows 800
+Position B: remaining collateral=357 → borrowForCollateral(357, 0.7) = 250 → supplies 357, borrows 250
+Remaining debt = 2000 - 800 - 250 = 950 → reverts InsufficientBorrowCapacity
 
-Result: 1500 collateral supplied, 2000 debt borrowed
+With enough collateral (e.g., 3000):
+Position A: borrows 800, needs 1143 collateral
+Position B: borrows 1200, needs 1714 collateral → total 2857, leftover 143 → first position
 ```
 
 ### Withdraw
@@ -780,6 +788,8 @@ function initialize(
 | `maxBorrow(lltv)` | Maximum borrowable at given LLTV |
 | `availableLiquidity()` | Available liquidity in market |
 | `availableCollateral(lltv)` | Withdrawable collateral while maintaining health |
+| `collateralForBorrow(amount, ltv)` | Additional collateral needed to borrow `amount` at `ltv` |
+| `borrowForCollateral(amount, ltv)` | Additional borrow capacity from supplying `amount` at `ltv` |
 
 ### Health Factor & Pre-Liquidation
 
@@ -970,7 +980,7 @@ flowchart TB
 |-----------|---------|
 | **Virtual Share Offset** | Prevents first-depositor inflation attacks in PositionManager |
 | **Conservative Rounding** | Debt rounds up, collateral rounds down to protect vaults |
-| **LLTV Enforcement** | Withdrawals check available collateral to maintain position health |
+| **LTV Enforcement** | Deposits and withdrawals respect the target LTV per position |
 | **Fee Accrual Ordering** | Fees always accrued before operations for fair accounting |
 | **Role-Based Access** | Operations restricted to specific roles via OwnableRoles |
 | **Reentrancy Guards** | `ReentrancyGuardTransient` on all state-changing operations |

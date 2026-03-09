@@ -17,41 +17,62 @@ library LibOperations {
   using FixedPointMathLib for uint256;
   using LibExecutor for address;
 
-  /// @dev Processes deposit through the supply queue.
-  ///      Reverts with {LibManagerErrors.InsufficientBorrowCapacity} if the requested debt cannot be borrowed.
-  /// @param _storage The position manager storage data
-  /// @param collateral The amount of collateral to deposit
-  /// @param debt The amount of debt to borrow
+  /// @dev Processes a deposit by iterating through the supply queue, supplying collateral and borrowing
+  ///      debt from each position while respecting the position manager's target LTV.
+  ///
+  ///      For each position in the supply queue (until all debt is fulfilled):
+  ///        1. Determine the maximum borrow: min(available liquidity, entry.maxBorrow, remainingDebt).
+  ///        2. Ask the position how much additional collateral is needed to borrow that amount at the
+  ///           target LTV, accounting for any existing collateral/debt in the position.
+  ///        3. If the required collateral exceeds what's available, reduce the borrow amount to what
+  ///           the remaining collateral can support at the target LTV.
+  ///        4. Supply the collateral (if any) and execute the borrow.
+  ///
+  ///      After the loop, any leftover collateral (not needed for borrowing) is deposited into the
+  ///      first supply queue position as idle collateral.
+  ///
+  ///      Reverts with {LibManagerErrors.InsufficientBorrowCapacity} if the requested debt cannot
+  ///      be fully borrowed across all positions in the queue.
+  /// @param _storage The position manager storage data.
+  /// @param collateral The total amount of collateral to deposit.
+  /// @param debt The total amount of debt to borrow.
   function processDeposit(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) internal {
     unchecked {
-
       uint256 remainingCollateral = collateral;
       uint256 remainingDebt = debt;
       uint256 queueLength = _storage.supplyQueue.length;
+
+      // Cache the target LTV set by the position manager owner
+      uint256 ltv = _storage.ltv;
 
       for (uint256 i = 0; i < queueLength && remainingDebt > 0; i++) {
         SupplyQueueEntry memory entry = _storage.supplyQueue[i];
         address position = entry.position;
 
-        // Calculate how much we can borrow from this position
-        uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
-        uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
+        // Cap the borrow at available liquidity, the per-entry max, and the remaining debt
+        uint256 toBorrow =
+          IBorrowPosition(position).availableLiquidity().min(uint256(entry.maxBorrow)).min(remainingDebt);
 
-        if (toBorrow == 0) {
-          continue;
+        if (toBorrow == 0) continue;
+
+        // Determine how much collateral this position needs to borrow `toBorrow` at the target LTV.
+        // Returns 0 if the position already has enough excess collateral from prior deposits.
+        uint256 collateralNeeded = IBorrowPosition(position).collateralForBorrow(toBorrow, ltv);
+
+        // If we don't have enough collateral, reduce the borrow to what our remaining collateral allows
+        if (collateralNeeded > remainingCollateral) {
+          toBorrow = IBorrowPosition(position).borrowForCollateral(remainingCollateral, ltv);
+          if (toBorrow == 0) continue;
+          collateralNeeded = remainingCollateral;
         }
 
-        // Calculate proportional collateral
-        // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
-        uint256 collateralToSupply = remainingCollateral.mulDiv(toBorrow, remainingDebt);
-
-        // Supply collateral first (if any)
-        if (collateralToSupply > 0) {
-          position.supply(_storage.metadata.collateralAsset, collateralToSupply);
-          remainingCollateral -= collateralToSupply;
+        // Supply collateral to the position (via LibExecutor which handles approval)
+        if (collateralNeeded > 0) {
+          position.supply(_storage.metadata.collateralAsset, collateralNeeded);
+          remainingCollateral -= collateralNeeded;
         }
 
-        // Then borrow
+        // Execute the borrow
         position.borrow(toBorrow);
         remainingDebt -= toBorrow;
       }
@@ -59,8 +80,11 @@ library LibOperations {
       // If we couldn't borrow all the requested debt, revert
       if (remainingDebt > 0) revert LibManagerErrors.InsufficientBorrowCapacity();
 
-      // Note: remainingCollateral is guaranteed to be 0 here due to proportional math.
-      // When toBorrow == remainingDebt (final iteration), collateralToSupply = remainingCollateral.
+      // Deposit any leftover collateral (not needed for borrowing) into the first position.
+      // This keeps all collateral productively deployed rather than idle in the PositionManager.
+      if (remainingCollateral > 0) {
+        _storage.supplyQueue[0].position.supply(_storage.metadata.collateralAsset, remainingCollateral);
+      }
     }
   }
 

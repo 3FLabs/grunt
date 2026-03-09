@@ -23,6 +23,9 @@ library LibBorrowErrors {
   /// @param actual The actual asset address from the Morpho market.
   error AssetMismatch(address expected, address actual);
 
+  /// @notice Thrown when the borrow amount is greater than the available liquidity.
+  error InsufficientLiquidity();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        COLLATERAL                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

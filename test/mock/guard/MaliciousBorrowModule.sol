@@ -95,4 +95,12 @@ contract MaliciousBorrowModule is IBorrowPosition {
   function availableCollateral(uint256) external pure override returns (uint256) {
     return 0;
   }
+
+  function collateralForBorrow(uint256, uint256) external pure override returns (uint256) {
+    return 0;
+  }
+
+  function borrowForCollateral(uint256, uint256) external pure override returns (uint256) {
+    return 0;
+  }
 }
