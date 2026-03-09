@@ -59,19 +59,19 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @notice Storage struct containing all persistent state for the CentrifugeFund contract.
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility.
   /// @param vault The Centrifuge ERC-7540 vault address.
+  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param wrappedShare The WrappedAsset contract that wraps the vault's share token.
   /// @param asset The underlying asset of the vault (e.g. USDC).
   /// @param shareToken The vault's raw share token (unwrapped).
   /// @param currentOrderId The order ID of the current (or most recent) order.
-  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct CentrifugeFundStorage {
     address vault;
+    State internalState;
     address wrappedShare;
     address asset;
     address shareToken;
     bytes32 currentOrderId;
-    State internalState;
     mapping(bytes32 => bool) endedOrders;
   }
 
