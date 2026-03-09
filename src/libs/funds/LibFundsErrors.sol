@@ -22,6 +22,10 @@ library LibFundsErrors {
   /// @notice Thrown when trying to create an order while another is still pending.
   error PendingOrder();
 
+  /// @notice Thrown when a new order's computed ID collides with a previously ended order.
+  /// @param orderId The colliding order Id.
+  error OrderAlreadyExists(bytes32 orderId);
+
   /// @notice Thrown when trying to cancel a request while partial fill assets are still claimable.
   error PendingClaimableAssets();
 
