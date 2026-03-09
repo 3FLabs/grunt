@@ -486,13 +486,23 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
 
     if (stage == State.RECOVERING) {
       if (order.mode == Mode.DEPOSIT) {
-        uint256 claimable = vault._claimableCancelDeposit(address(fund));
-        State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
-        assertEq(uint256(actual), uint256(expected), "recovering deposit");
+        uint256 claimableFulfilled = vault._claimableMint(address(fund));
+        if (claimableFulfilled > 0) {
+          assertEq(uint256(actual), uint256(State.UNLOCKING), "recovering deposit: fulfilled");
+        } else {
+          uint256 claimable = vault._claimableCancelDeposit(address(fund));
+          State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
+          assertEq(uint256(actual), uint256(expected), "recovering deposit");
+        }
       } else {
-        uint256 claimable = vault._claimableCancelRedeem(address(fund));
-        State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
-        assertEq(uint256(actual), uint256(expected), "recovering redeem");
+        uint256 claimableFulfilled = vault._claimableWithdraw(address(fund));
+        if (claimableFulfilled > 0) {
+          assertEq(uint256(actual), uint256(State.UNLOCKING), "recovering redeem: fulfilled");
+        } else {
+          uint256 claimable = vault._claimableCancelRedeem(address(fund));
+          State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
+          assertEq(uint256(actual), uint256(expected), "recovering redeem");
+        }
       }
       return;
     }

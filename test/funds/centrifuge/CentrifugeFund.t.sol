@@ -1022,6 +1022,106 @@ contract CentrifugeFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  RECOVERY RACE CONDITION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_Unlock_DepositFulfilledDuringRecovery() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // cancelRequest passes (maxMint == 0 at this point)
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge fulfills the entire deposit despite the cancel
+    // (cancel arrived between approveDeposits and notifyDeposit)
+    vault.fulfillDepositAndCancelDeposit(address(fund), ONE, 0);
+
+    // state() should return UNLOCKING (fulfilled shares take priority)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking despite recovering");
+
+    // unlock() claims shares and transitions to ENDED (no cancel assets to recover)
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, ONE, "full shares claimed");
+    assertEq(wrappedShare.balanceOf(address(this)), ONE, "wShare minted");
+  }
+
+  function test_Unlock_DepositPartialFulfilledDuringRecovery() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge partially fulfills deposit AND returns remaining as cancel
+    uint256 halfShares = ONE / 2;
+    uint256 halfAssets = ONE / 2;
+    vault.fulfillDepositAndCancelDeposit(address(fund), halfShares, halfAssets);
+
+    // state() should return UNLOCKING (fulfilled shares first)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking first");
+
+    // unlock() claims shares, stays RECOVERING (cancel assets still pending)
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.RECOVERING), "still recovering");
+    assertEq(amount, halfShares, "half shares claimed");
+    assertEq(wrappedShare.balanceOf(address(this)), halfShares, "wShare minted");
+
+    // Now state() returns RECOVERING (cancel assets claimable)
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering visible");
+
+    // recover() claims cancel assets and transitions to ENDED
+    (State finalState, uint256 recoveredAmount) = fund.recover(order);
+    assertEq(uint256(finalState), uint256(State.ENDED), "ended");
+    assertEq(recoveredAmount, halfAssets, "half assets recovered");
+    assertEq(assetToken.balanceOf(address(this)), halfAssets, "assets received");
+  }
+
+  function test_Unlock_RedeemFulfilledDuringRecovery() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge fulfills the entire redeem despite the cancel
+    vault.fulfillRedeemAndCancelRedeem(address(fund), ONE, 0);
+
+    // state() should return UNLOCKING
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking despite recovering");
+
+    // unlock() claims assets and transitions to ENDED
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, ONE, "full assets claimed");
+    assertEq(assetToken.balanceOf(address(this)), ONE, "assets received");
+  }
+
+  function test_State_RecoveringShowsUnlockingWhenFulfilled() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Before fulfillment: state shows PROCESSING (cancel not yet processed)
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before fulfillment");
+
+    // After race condition fulfillment: both maxMint and claimableCancelDeposit are set
+    vault.fulfillDepositAndCancelDeposit(address(fund), ONE / 2, ONE / 2);
+
+    // state() should return UNLOCKING (maxMint > 0 takes priority over RECOVERING)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking not processing");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            HELPERS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
