@@ -15,11 +15,11 @@ import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
 ///         last-minute YT inflation from stealing yield from legitimate holders.
 ///
 ///      Attack sequence (without fix):
-///        1. Legitimate brokers deposit 1,000,000 USDC → 1,000,000 PT + 1,000,000 YT
+///        1. Legitimate bridge facilitators deposit 1,000,000 USDC → 1,000,000 PT + 1,000,000 YT
 ///        2. Borrower uses funds and repays 1,100,000 USDC (100,000 yield)
 ///        3. Colluding facilitator calls consume() with inflated YT (1 USDC → 1 PT + 9,000,000 YT)
 ///        4. Facilitator calls setRepaid(uint256) atomically
-///        5. Colluding broker extracts 90% of the yield (90,000 USDC) having invested only 1 USDC
+///        5. Colluding bridge facilitator extracts 90% of the yield (90,000 USDC) having invested only 1 USDC
 ///
 ///      With the mint-to-repaid timelock fix, step 4 reverts because a minimum delay
 ///      is enforced between the last mint/consume and setRepaid(uint256).
@@ -32,8 +32,8 @@ contract RequestMintTimelockPoCTest is Test {
   address public consumer;
   address public beaconOwner;
 
-  Vm.Wallet internal legitimateBroker;
-  Vm.Wallet internal colludingBroker;
+  Vm.Wallet internal legitimateBF;
+  Vm.Wallet internal colludingBF;
 
   // Constants
   uint40 constant MINT_TIMELOCK = 24 hours;
@@ -46,8 +46,8 @@ contract RequestMintTimelockPoCTest is Test {
     puller = makeAddr("puller");
     consumer = makeAddr("consumer");
     beaconOwner = makeAddr("beaconOwner");
-    legitimateBroker = vm.createWallet("legitimateBroker");
-    colludingBroker = vm.createWallet("colludingBroker");
+    legitimateBF = vm.createWallet("legitimateBF");
+    colludingBF = vm.createWallet("colludingBF");
 
     asset = new MockERC20("USDC", "USDC", 6);
     factory = new RequestFactory(beaconOwner);
@@ -110,11 +110,11 @@ contract RequestMintTimelockPoCTest is Test {
       MINT_TIMELOCK
     );
 
-    // --- Step 1: Legitimate broker deposits 1,000,000 USDC ---
-    _consumeOffer(reqAddr, legitimateBroker, 1_000_000e6, 1_000_000e6, 1);
+    // --- Step 1: Legitimate bridge facilitator deposits 1,000,000 USDC ---
+    _consumeOffer(reqAddr, legitimateBF, 1_000_000e6, 1_000_000e6, 1);
 
-    assertEq(Vault(ptAddr).balanceOf(legitimateBroker.addr), 1_000_000e6, "Legitimate broker should have 1M PT");
-    assertEq(Vault(ytAddr).balanceOf(legitimateBroker.addr), 1_000_000e6, "Legitimate broker should have 1M YT");
+    assertEq(Vault(ptAddr).balanceOf(legitimateBF.addr), 1_000_000e6, "Legitimate bridge facilitator should have 1M PT");
+    assertEq(Vault(ytAddr).balanceOf(legitimateBF.addr), 1_000_000e6, "Legitimate bridge facilitator should have 1M YT");
 
     // --- Step 2: Borrower repays 1,100,000 USDC (100k yield) ---
     vm.prank(puller);
@@ -122,8 +122,8 @@ contract RequestMintTimelockPoCTest is Test {
     asset.mint(reqAddr, 1_100_000e6);
 
     // --- Step 3: Colluding facilitator tries to inflate YT (1 USDC → 9M YT) ---
-    _consumeOffer(reqAddr, colludingBroker, 1e6, 9_000_000e6, 1);
-    assertEq(Vault(ytAddr).balanceOf(colludingBroker.addr), 9_000_000e6, "Attacker has inflated YT");
+    _consumeOffer(reqAddr, colludingBF, 1e6, 9_000_000e6, 1);
+    assertEq(Vault(ytAddr).balanceOf(colludingBF.addr), 9_000_000e6, "Attacker has inflated YT");
 
     // --- Step 4: Facilitator tries to call setRepaid(uint256) atomically — BLOCKED ---
     uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;

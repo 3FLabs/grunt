@@ -454,7 +454,7 @@ contract RequestConsumeTest is Test {
   function test_integration_mixedFunding() public {
     // Test mixing consume() and authorizeMinting() funding methods
 
-    // 1. First, use consume() for one prime broker
+    // 1. First, use consume() for one bridge facilitator
     uint256 consumeAmount = 500_000e6;
     uint256 consumeReturn = 50_000e6;
 
@@ -468,7 +468,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     request.consume(offer, signature, consumeAmount);
 
-    // 2. Then use authorizeMinting() for another prime broker
+    // 2. Then use authorizeMinting() for another bridge facilitator
     address broker2 = makeAddr("broker2");
     uint256 mintAmount = 500_000e6;
     uint256 mintYield = 50_000e6;
