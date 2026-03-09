@@ -266,7 +266,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     bool _hasPendingRequest = _stateHasPendingRequest(_vault, order.mode);
-    State _newState = _hasPendingRequest ? State.PROCESSING : State.ENDED;
+
+    State _newState;
+    if ($.internalState == State.RECOVERING) {
+      bool _hasPendingRecover = _stateHasPendingRecover(order.mode, _vault);
+      _newState = (_hasPendingRecover || _hasPendingRequest) ? State.RECOVERING : State.ENDED;
+    } else {
+      _newState = _hasPendingRequest ? State.PROCESSING : State.ENDED;
+    }
     $.internalState = _newState;
 
     emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
@@ -419,9 +426,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   ///      - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
   ///
   ///      For RECOVERING state (after cancelRequest submitted):
-  ///      - Deposit: checks vault.claimableCancelDepositRequest(_PENDING_REQUEST, this) > 0 → RECOVERING (ready to claim)
-  ///      - Redeem: checks vault.claimableCancelRedeemRequest(_PENDING_REQUEST, this) > 0 → RECOVERING (ready to claim)
-  ///      - If not yet claimable (cancel still pending), returns PROCESSING
+  ///      - First checks for fulfilled shares/assets (race condition: the Centrifuge pool can
+  ///        approve a deposit/redeem even after cancelRequest, since fulfillment is multi-step):
+  ///        - Deposit: checks vault.maxMint(this) > 0 → UNLOCKING
+  ///        - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
+  ///      - Then checks for claimable cancel assets:
+  ///        - Deposit: checks vault.claimableCancelDepositRequest(_PENDING_REQUEST, this) > 0 → RECOVERING
+  ///        - Redeem: checks vault.claimableCancelRedeemRequest(_PENDING_REQUEST, this) > 0 → RECOVERING
+  ///      - If neither is claimable (cancel still pending), returns PROCESSING
   ///
   ///      For all other states, returns internalState directly.
   function _state(Order calldata order) internal view returns (State, uint256) {
@@ -439,7 +451,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     if (_internalState == State.RECOVERING) {
+      // Check for fulfilled shares/assets first (race condition: deposit approved despite cancel)
       uint256 _claimable = order.mode == Mode.DEPOSIT
+        ? ICentrifugeVault(_vault).maxMint(address(this))
+        : ICentrifugeVault(_vault).maxWithdraw(address(this));
+
+      if (_claimable > 0) return (State.UNLOCKING, _claimable);
+
+      _claimable = order.mode == Mode.DEPOSIT
         ? ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this))
         : ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this));
 
