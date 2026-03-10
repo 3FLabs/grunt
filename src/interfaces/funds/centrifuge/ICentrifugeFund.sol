@@ -89,8 +89,10 @@ interface ICentrifugeFund is IFund {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   ///      Intended for orders stuck in PROCESSING due to griefing (e.g., an attacker
   ///      inflating the vault's pendingDepositRequest via direct requestDeposit calls).
-  ///      Must be in PROCESSING or RECOVERING state. Sets internalState to ENDED and
-  ///      archives the order ID.
+  ///      Must be in PROCESSING or RECOVERING state. Reverts with `PendingClaimableAssets`
+  ///      if the vault has claimable fills (maxMint/maxWithdraw) or recoverable cancel assets
+  ///      (claimableCancelDepositRequest/claimableCancelRedeemRequest) that must be drained
+  ///      via `unlock()` or `recover()` first.
   /// @param order The order to force-end.
   function forceEnd(Order calldata order) external;
 

@@ -1316,6 +1316,66 @@ contract CentrifugeFundTest is Test {
     fund.forceEnd(order);
   }
 
+  function test_ForceEnd_RevertsWithPendingClaimableDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Partial fill: 500 of 1000 shares fulfilled
+    vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Partial fill: 500 of 1000 assets fulfilled
+    vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingRecoverableDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    vault.fulfillCancelDeposit(address(fund), order.input);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingRecoverableRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    vault.fulfillCancelRedeem(address(fund), order.input);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            HELPERS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

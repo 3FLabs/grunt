@@ -371,6 +371,28 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       revert LibFundsErrors.InvalidOrder(_orderId);
     }
 
+    address _vault = $.vault;
+
+    // Revert if claimable fills exist (must be drained via unlock() first)
+    if (order.mode == Mode.DEPOSIT) {
+      if (ICentrifugeVault(_vault).maxMint(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
+    } else {
+      if (ICentrifugeVault(_vault).maxWithdraw(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
+    }
+
+    // Revert if recoverable cancel assets exist (must be drained via recover() first)
+    if (_internalState == State.RECOVERING) {
+      if (order.mode == Mode.DEPOSIT) {
+        if (ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this)) > 0) {
+          revert LibFundsErrors.PendingClaimableAssets();
+        }
+      } else {
+        if (ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this)) > 0) {
+          revert LibFundsErrors.PendingClaimableAssets();
+        }
+      }
+    }
+
     $.internalState = State.ENDED;
 
     emit OrderForceEnded(_orderId, msg.sender);
