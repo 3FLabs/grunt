@@ -345,13 +345,13 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function maxDeposit(address) external pure override returns (uint256) {
-    return type(uint256).max;
+  function maxDeposit(address account) external view override returns (uint256) {
+    return hasAllRoles(account, DEPOSITOR_ROLE) ? type(uint256).max : 0;
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return IERC20(_paretoFundStorage().wrappedShare).balanceOf(account);
+    return hasAllRoles(account, DEPOSITOR_ROLE) ? IERC20(_paretoFundStorage().wrappedShare).balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund

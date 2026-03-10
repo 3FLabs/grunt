@@ -873,6 +873,9 @@ contract CentrifugeFundTest is Test {
     // Set vault max to less than balance
     vault.setMaxDeposit(50 * ONE);
     assertEq(fund.maxDeposit(address(this)), 50 * ONE, "vault limited");
+
+    // Non-depositor returns 0
+    assertEq(fund.maxDeposit(outsider), 0, "non-depositor");
   }
 
   function test_MaxRedeem_ReturnsMinOfBalanceAndVaultMax() public {
@@ -884,6 +887,9 @@ contract CentrifugeFundTest is Test {
     // Set vault max to less than balance
     vault.setMaxRedeem(50 * ONE);
     assertEq(fund.maxRedeem(address(this)), 50 * ONE, "vault limited");
+
+    // Non-depositor returns 0
+    assertEq(fund.maxRedeem(outsider), 0, "non-depositor");
   }
 
   function test_State_AllStates() public {
