@@ -364,6 +364,46 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     emit CancelRequestSubmitted(orderId);
   }
 
+  /// @inheritdoc ICentrifugeFund
+  function forceEnd(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+    CentrifugeFundStorage storage $ = _centrifugeFundStorage();
+    State _internalState = $.internalState;
+    if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) {
+      revert LibFundsErrors.InvalidState(_internalState);
+    }
+
+    bytes32 _orderId = order.toId(address(this));
+    if (_orderId != $.currentOrderId) {
+      revert LibFundsErrors.InvalidOrder(_orderId);
+    }
+
+    address _vault = $.vault;
+
+    // Revert if claimable fills exist (must be drained via unlock() first)
+    if (order.mode == Mode.DEPOSIT) {
+      if (ICentrifugeVault(_vault).maxMint(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
+    } else {
+      if (ICentrifugeVault(_vault).maxWithdraw(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
+    }
+
+    // Revert if recoverable cancel assets exist (must be drained via recover() first)
+    if (_internalState == State.RECOVERING) {
+      if (order.mode == Mode.DEPOSIT) {
+        if (ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this)) > 0) {
+          revert LibFundsErrors.PendingClaimableAssets();
+        }
+      } else {
+        if (ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this)) > 0) {
+          revert LibFundsErrors.PendingClaimableAssets();
+        }
+      }
+    }
+
+    $.internalState = State.ENDED;
+
+    emit OrderForceEnded(_orderId, msg.sender);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
