@@ -74,6 +74,7 @@ contract CentrifugeFundTest is Test {
     fund = CentrifugeFund(fundAddress);
 
     vault.setPermissioned(address(fund), true);
+    vault.setPermissioned(address(wrappedShare), true);
 
     vm.prank(owner);
     wrappedShare.grantRoles(address(fund), ISSUER_ROLE);
@@ -222,6 +223,13 @@ contract CentrifugeFundTest is Test {
     vault.setPermissioned(address(fund), false);
     Order memory order = _depositOrder(ONE, ONE);
     vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsWrappedShareNotPermissioned() public {
+    vault.setPermissioned(address(wrappedShare), false);
+    Order memory order = _depositOrder(ONE, ONE);
+    vm.expectRevert(LibFundsErrors.WrappedShareNotPermissioned.selector);
     fund.create(order);
   }
 
@@ -399,6 +407,15 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
     vault.setPermissioned(address(fund), false);
     vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.commit(order);
+  }
+
+  function test_Commit_RevertsWrappedShareNotPermissioned() public {
+    vault.setPermissioned(address(wrappedShare), true);
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    vault.setPermissioned(address(wrappedShare), false);
+    vm.expectRevert(LibFundsErrors.WrappedShareNotPermissioned.selector);
     fund.commit(order);
   }
 

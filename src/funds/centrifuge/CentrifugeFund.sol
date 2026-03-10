@@ -146,6 +146,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
       revert LibFundsErrors.NotAllowedByFund();
     }
+    if (!ICentrifugeVault(_vault).isPermissioned($.wrappedShare)) {
+      revert LibFundsErrors.WrappedShareNotPermissioned();
+    }
 
     if (_internalState == State.ENDED) {
       // Archive ended order
@@ -207,6 +210,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     address _vault = $.vault;
     if (!ICentrifugeVault(_vault).isPermissioned(address(this))) {
       revert LibFundsErrors.NotAllowedByFund();
+    }
+    if (!ICentrifugeVault(_vault).isPermissioned($.wrappedShare)) {
+      revert LibFundsErrors.WrappedShareNotPermissioned();
     }
 
     if (order.mode == Mode.DEPOSIT) {
