@@ -55,6 +55,9 @@ library LibFundsErrors {
   /// @notice Thrown when the fund is not permissioned to operate with the vault.
   error NotAllowedByFund();
 
+  /// @notice Thrown when the wrapped share contract is not permissioned on the vault's share token.
+  error WrappedShareNotPermissioned();
+
   /// @notice Thrown when recover() is called on a fund that does not support recovery.
   error RecoverNotSupported();
 
