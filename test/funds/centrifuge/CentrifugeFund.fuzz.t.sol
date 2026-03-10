@@ -54,6 +54,7 @@ contract CentrifugeFundFuzzTest is Test {
     fund = CentrifugeFund(fundAddr);
 
     vault.setPermissioned(address(fund), true);
+    vault.setPermissioned(address(wrappedShare), true);
     vm.prank(owner);
     wrappedShare.grantRoles(address(fund), ISSUER_ROLE);
     vm.prank(owner);
@@ -414,6 +415,7 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
     fund = CentrifugeFund(fundAddr);
 
     vault.setPermissioned(address(fund), true);
+    vault.setPermissioned(address(wrappedShare), true);
 
     vm.prank(owner);
     wrappedShare.grantRoles(address(fund), ISSUER_ROLE);
