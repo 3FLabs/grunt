@@ -54,6 +54,11 @@ interface ICentrifugeFund is IFund {
   /// @param orderId The unique identifier of the order being canceled.
   event CancelRequestSubmitted(bytes32 indexed orderId);
 
+  /// @notice Emitted when an order is force-ended by an operator.
+  /// @param orderId The unique identifier of the resolved order.
+  /// @param operator The address that resolved the order.
+  event OrderForceEnded(bytes32 indexed orderId, address indexed operator);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -79,6 +84,15 @@ interface ICentrifugeFund is IFund {
   ///      cancelDepositRequest or cancelRedeemRequest on the vault depending on the order mode.
   /// @param order The order to cancel.
   function cancelRequest(Order calldata order) external;
+
+  /// @notice Force-ends a stuck order that cannot transition to ENDED naturally.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
+  ///      Intended for orders stuck in PROCESSING due to griefing (e.g., an attacker
+  ///      inflating the vault's pendingDepositRequest via direct requestDeposit calls).
+  ///      Must be in PROCESSING or RECOVERING state. Sets internalState to ENDED and
+  ///      archives the order ID.
+  /// @param order The order to force-end.
+  function forceEnd(Order calldata order) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */

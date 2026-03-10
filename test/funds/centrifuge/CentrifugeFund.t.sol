@@ -28,6 +28,7 @@ contract CentrifugeFundTest is Test {
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
   event CancelRequestSubmitted(bytes32 indexed orderId);
+  event OrderForceEnded(bytes32 indexed orderId, address indexed operator);
 
   uint256 private constant ONE = 1e6;
 
@@ -1173,6 +1174,146 @@ contract CentrifugeFundTest is Test {
 
     // state() should return UNLOCKING (maxMint > 0 takes priority over RECOVERING)
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking not processing");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           FORCE END                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_ForceEnd_FromProcessing_Success() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_FromRecovering_Success() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_RevertsInvalidState_Empty() public {
+    Order memory order = _depositOrder(ONE, ONE);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.EMPTY));
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsInvalidState_Accepted() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsInvalidState_Ended() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+    vault.fulfillDeposit(address(fund), order.output);
+    fund.unlock(order);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ENDED));
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsInvalidOrder() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    Order memory wrongOrder = order;
+    wrongOrder.salt = keccak256("wrong");
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    fund.forceEnd(wrongOrder);
+  }
+
+  function test_ForceEnd_RevertsUnauthorized() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_OwnerCanCall() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_OperatorCanCall() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+
+    vm.prank(operator);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_CanCreateNewOrderAfter() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    // Create new order after forceEnd (ENDED → ACCEPTED)
+    Order memory nextOrder = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: ONE * 2,
+      output: ONE * 2,
+      salt: keccak256("second-order")
+    });
+    fund.create(nextOrder);
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_ForceEnd_EmitsEvent() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    bytes32 orderId = order.toId(address(fund));
+
+    vm.expectEmit(true, true, true, true);
+    emit OrderForceEnded(orderId, owner);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
