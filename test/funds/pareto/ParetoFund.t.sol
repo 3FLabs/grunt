@@ -884,7 +884,7 @@ contract ParetoFundTest is Test {
 
   function test_MaxDeposit_ReturnsMax() public view {
     assertEq(fund.maxDeposit(address(this)), type(uint256).max, "max deposit");
-    assertEq(fund.maxDeposit(outsider), type(uint256).max, "max deposit outsider");
+    assertEq(fund.maxDeposit(outsider), 0, "non-depositor");
   }
 
   function test_MaxRedeem_ReturnsBalance() public {
@@ -893,6 +893,7 @@ contract ParetoFundTest is Test {
     _depositAndUnlock(ONE_USDC);
 
     assertEq(fund.maxRedeem(address(this)), ONE_AA, "has balance");
+    assertEq(fund.maxRedeem(outsider), 0, "non-depositor");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
