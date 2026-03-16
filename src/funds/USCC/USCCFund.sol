@@ -351,10 +351,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _storage.resolvedInput = input;
     _storage.resolvedOutput = output;
 
-    order.input = input;
-    order.output = output;
-
-    emit OrderResolved(_storage.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+    emit OrderResolved(_storage.currentOrderId, input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

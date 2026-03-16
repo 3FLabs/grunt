@@ -310,10 +310,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     $.hasResolvedAmounts = true;
     $.resolvedOutput = output;
 
-    order.input = input;
-    order.output = output;
-
-    emit OrderResolved($.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+    emit OrderResolved($.currentOrderId, input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
