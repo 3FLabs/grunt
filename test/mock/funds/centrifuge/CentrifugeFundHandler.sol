@@ -144,12 +144,23 @@ contract CentrifugeFundHandler is Test {
   }
 
   function act_unlock() external {
+    State prevState = internalState;
     (State newState,) = fund.unlock(order);
-    internalState = newState;
+    // Return value PROCESSING during recovery means internal state stays RECOVERING
+    if (prevState == State.RECOVERING && newState == State.PROCESSING) {
+      internalState = State.RECOVERING;
+    } else {
+      internalState = newState;
+    }
   }
 
   function act_recover() external {
     (State newState,) = fund.recover(order);
-    internalState = newState;
+    // Return value PROCESSING means internal state stays RECOVERING
+    if (newState == State.PROCESSING) {
+      internalState = State.RECOVERING;
+    } else {
+      internalState = newState;
+    }
   }
 }
