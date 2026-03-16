@@ -434,14 +434,14 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   function maxDeposit(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    return IERC20($.asset).balanceOf(account).min(ICentrifugeVault($.vault).maxDeposit(address(this)));
+    return IERC20($.asset).balanceOf(account).min(ICentrifugeVault($.vault).maxDeposit(account));
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
-    return IERC20($.wrappedShare).balanceOf(account).min(ICentrifugeVault($.vault).maxRedeem(address(this)));
+    return IERC20($.wrappedShare).balanceOf(account).min(ICentrifugeVault($.vault).maxRedeem(account));
   }
 
   /// @inheritdoc IFund
