@@ -93,8 +93,8 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   }
 
   function requestWithdraw(uint256 amount, address) external override returns (uint256) {
-    // Pull AA tranche tokens from caller
-    address(_aaTranche).safeTransferFrom(msg.sender, address(this), amount);
+    // Burn AA tranche tokens directly from caller (matches real IdleCDO behavior — no approval needed)
+    _aaTranche.burn(msg.sender, amount);
     // Convert AA tranche amount to underlying amount
     uint256 underlyingAmount = amount * _virtualPrice / 1e18;
     // Register withdrawal in strategy
