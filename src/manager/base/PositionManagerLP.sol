@@ -99,7 +99,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     }
 
     // Process withdrawals through withdrawal queue using the specified strategy
-    _storage.processWithdrawal(collateral, debt, strategy);
+    // checkLtv=true: proportional withdrawals must respect per-position LTV bounds
+    _storage.processWithdrawal(collateral, debt, strategy, true);
 
     // Send collateral to caller
     if (collateral > 0) {
@@ -145,7 +146,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     }
 
     // Process through withdrawal queue using the specified strategy
-    _storage.processWithdrawal(collateral, debt, strategy);
+    // checkLtv=false: burn amounts are proportional to total debt/collateral, no per-position LTV check needed
+    _storage.processWithdrawal(collateral, debt, strategy, false);
 
     // Send collateral to caller
     if (collateral > 0) {
