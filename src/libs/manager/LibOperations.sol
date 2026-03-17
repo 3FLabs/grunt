@@ -97,13 +97,12 @@ library LibOperations {
     PositionManagerStorageData storage _storage,
     uint256 collateral,
     uint256 debt,
-    WithdrawalStrategy strategy,
-    bool checkLtv
+    WithdrawalStrategy strategy
   ) internal {
     if (strategy == WithdrawalStrategy.SEQUENTIAL) {
       _withdrawSequential(_storage, collateral, debt);
     } else {
-      _withdrawProportional(_storage, collateral, debt, checkLtv);
+      _withdrawProportional(_storage, collateral, debt);
     }
   }
 
@@ -164,16 +163,11 @@ library LibOperations {
   function _withdrawProportional(
     PositionManagerStorageData storage _storage,
     uint256 collateralToWithdraw,
-    uint256 debtToRepay,
-    bool checkLtv
+    uint256 debtToRepay
   ) private {
     unchecked {
       address[] memory queue = _storage.withdrawalQueue;
       uint256 queueLength = queue.length;
-
-      // Cache storage values to avoid stack-too-deep
-      uint256 ltv = _storage.ltv;
-      address debtAsset = _storage.metadata.debtAsset;
 
       // Pass 1: build cumulative debt and collateral arrays
       uint256[] memory cumDebts = new uint256[](queueLength);
@@ -192,6 +186,7 @@ library LibOperations {
       // Pass 2: cumulative proportional distribution
       // Each position's allocation = target_cumulative(i) - target_cumulative(i-1), which is
       // guaranteed to never exceed the position's actual debt/collateral.
+      address debtAsset = _storage.metadata.debtAsset;
       uint256 prevRepaid;
       uint256 prevWithdrawn;
 
@@ -206,14 +201,7 @@ library LibOperations {
         if (collateralToWithdraw > 0) {
           uint256 targetWithdrawn = cumCollaterals[i].mulDiv(collateralToWithdraw, cumCollaterals[lastIdx]);
           uint256 toWithdraw = targetWithdrawn - prevWithdrawn;
-          if (toWithdraw > 0) {
-            // When checkLtv is true (withdrawals), verify the position can release this collateral
-            // while respecting the storage LTV. Burns skip this check since amounts are proportional.
-            if (checkLtv && toWithdraw > IBorrowPosition(queue[i]).availableCollateral(ltv)) {
-              revert LibManagerErrors.InsufficientAvailableCollateral();
-            }
-            queue[i].withdraw(toWithdraw);
-          }
+          if (toWithdraw > 0) queue[i].withdraw(toWithdraw);
           prevWithdrawn = targetWithdrawn;
         }
       }

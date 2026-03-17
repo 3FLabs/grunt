@@ -407,7 +407,7 @@ contract LibOperationsTest is Test {
     debtToken.mint(address(harness), 50e18);
     harness.approveToken(address(debtToken), address(position), 50e18);
 
-    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.SEQUENTIAL, false);
+    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.SEQUENTIAL);
 
     assertEq(position.totalBorrowed(), 0);
     assertEq(position.totalCollateral(), 0);
@@ -429,7 +429,7 @@ contract LibOperationsTest is Test {
     harness.approveToken(address(debtToken), address(position), 50e18);
 
     vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
-    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.SEQUENTIAL, false);
+    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawSequential_revertOnInsufficientCollateral() public {
@@ -443,7 +443,7 @@ contract LibOperationsTest is Test {
     harness.addWithdrawalQueueEntry(address(position));
 
     vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
-    harness.processWithdrawal(100e18, 0, WithdrawalStrategy.SEQUENTIAL, false);
+    harness.processWithdrawal(100e18, 0, WithdrawalStrategy.SEQUENTIAL);
   }
 
   function test_withdrawSequential_multiplePositions() public {
@@ -467,7 +467,7 @@ contract LibOperationsTest is Test {
     harness.approveToken(address(debtToken), address(position1), 50e18);
     harness.approveToken(address(debtToken), address(position2), 50e18);
 
-    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.SEQUENTIAL, false);
+    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.SEQUENTIAL);
 
     assertEq(position1.totalBorrowed(), 0);
     assertEq(position2.totalBorrowed(), 0);
@@ -493,7 +493,7 @@ contract LibOperationsTest is Test {
     harness.approveToken(address(debtToken), address(position), 50e18);
 
     // Burn 50% of position
-    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.PROPORTIONAL);
 
     assertEq(position.totalBorrowed(), 50e18);
     assertEq(position.totalCollateral(), 100e18);
@@ -522,7 +522,7 @@ contract LibOperationsTest is Test {
     harness.approveToken(address(debtToken), address(position2), 50e18);
 
     // Burn 50% proportionally
-    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(100e18, 50e18, WithdrawalStrategy.PROPORTIONAL);
 
     // Debt repaid proportionally: 60% from position1, 40% from position2
     assertEq(position1.totalBorrowed(), 30e18); // 60 - 50*60/100 = 30
@@ -543,7 +543,7 @@ contract LibOperationsTest is Test {
 
     harness.addWithdrawalQueueEntry(address(position));
 
-    harness.processWithdrawal(50e18, 0, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(50e18, 0, WithdrawalStrategy.PROPORTIONAL);
 
     assertEq(position.totalCollateral(), 50e18);
     assertEq(collateralToken.balanceOf(address(harness)), 50e18);
@@ -559,7 +559,7 @@ contract LibOperationsTest is Test {
     debtToken.mint(address(harness), 50e18);
     harness.approveToken(address(debtToken), address(position), 50e18);
 
-    harness.processWithdrawal(0, 50e18, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(0, 50e18, WithdrawalStrategy.PROPORTIONAL);
 
     assertEq(position.totalBorrowed(), 50e18);
   }
@@ -573,7 +573,7 @@ contract LibOperationsTest is Test {
     harness.addWithdrawalQueueEntry(address(position));
 
     vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
-    harness.processWithdrawal(50e18, 50e18, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(50e18, 50e18, WithdrawalStrategy.PROPORTIONAL);
   }
 
   function test_withdrawProportional_revertOnInsufficientCollateral() public {
@@ -585,7 +585,7 @@ contract LibOperationsTest is Test {
     harness.addWithdrawalQueueEntry(address(position));
 
     vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
-    harness.processWithdrawal(50e18, 50e18, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(50e18, 50e18, WithdrawalStrategy.PROPORTIONAL);
   }
 
   /// @notice Reproduces the over-repay bug on the last position when debt is skewed.
@@ -622,7 +622,7 @@ contract LibOperationsTest is Test {
 
     // This should NOT revert — the total debt in the queue (91) covers debtToRepay (90).
     // But the current implementation assigns remainingDebt=9 to position 9 which only has debt=1.
-    harness.processWithdrawal(collateralToWithdraw, debtToRepay, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(collateralToWithdraw, debtToRepay, WithdrawalStrategy.PROPORTIONAL);
 
     // Verify no position was over-repaid
     for (uint256 i = 0; i < numPositions; i++) {
@@ -661,151 +661,10 @@ contract LibOperationsTest is Test {
 
     // This should NOT revert — total collateral (181) covers withdrawal (180).
     // But current code assigns remainingCollateral=9 to position 9 which only has collateral=1.
-    harness.processWithdrawal(collateralToWithdraw, debtToRepay, WithdrawalStrategy.PROPORTIONAL, false);
+    harness.processWithdrawal(collateralToWithdraw, debtToRepay, WithdrawalStrategy.PROPORTIONAL);
 
     for (uint256 i = 0; i < numPositions; i++) {
       assertGe(positions[i].totalCollateral(), 0, "position collateral should not underflow");
     }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*          withdrawProportional checkLtv TESTS                   */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_withdrawProportional_checkLtv_revertsWhenExceedsAvailable() public {
-    // Two positions at 86% LTV. Withdraw collateral without repaying enough debt
-    // so that the proportional withdrawal exceeds per-position availableCollateral.
-    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    // Both positions at ~86% LTV: 86 debt / 100 collateral
-    position1.setTotalBorrowed(86e18);
-    position1.setTotalCollateral(100e18);
-    position1.setTotalCollateralQuoted(100e18);
-    position2.setTotalBorrowed(86e18);
-    position2.setTotalCollateral(100e18);
-    position2.setTotalCollateralQuoted(100e18);
-
-    collateralToken.mint(address(position1), 100e18);
-    collateralToken.mint(address(position2), 100e18);
-
-    harness.addWithdrawalQueueEntry(address(position1));
-    harness.addWithdrawalQueueEntry(address(position2));
-
-    // Try to withdraw 50 collateral with 0 debt repayment.
-    // At 86% LTV with 86 debt and 100 collateral, availableCollateral = 100 - ceil(86/0.86) = 0.
-    // So any collateral withdrawal should revert with checkLtv=true.
-    vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
-    harness.processWithdrawal(50e18, 0, WithdrawalStrategy.PROPORTIONAL, true);
-  }
-
-  function test_withdrawProportional_checkLtv_succeedsWhenSufficientRepayment() public {
-    // Repay enough debt so that each position has sufficient availableCollateral.
-    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    // Both positions: 50 debt / 100 collateral (50% LTV, well below 86% limit)
-    position1.setTotalBorrowed(50e18);
-    position1.setTotalCollateral(100e18);
-    position1.setTotalCollateralQuoted(100e18);
-    position2.setTotalBorrowed(50e18);
-    position2.setTotalCollateral(100e18);
-    position2.setTotalCollateralQuoted(100e18);
-
-    collateralToken.mint(address(position1), 100e18);
-    collateralToken.mint(address(position2), 100e18);
-
-    harness.addWithdrawalQueueEntry(address(position1));
-    harness.addWithdrawalQueueEntry(address(position2));
-
-    // Repay 50 debt proportionally (25 each), then withdraw 20 collateral (10 each).
-    // After repay: each position has 25 debt / 100 collateral.
-    // availableCollateral(0.86) = 100 - ceil(25/0.86) ≈ 100 - 30 = 70. 10 < 70, so OK.
-    debtToken.mint(address(harness), 50e18);
-    harness.approveToken(address(debtToken), address(position1), 50e18);
-    harness.approveToken(address(debtToken), address(position2), 50e18);
-
-    harness.processWithdrawal(20e18, 50e18, WithdrawalStrategy.PROPORTIONAL, true);
-
-    assertEq(position1.totalBorrowed(), 25e18);
-    assertEq(position2.totalBorrowed(), 25e18);
-    assertEq(position1.totalCollateral(), 90e18);
-    assertEq(position2.totalCollateral(), 90e18);
-    assertEq(collateralToken.balanceOf(address(harness)), 20e18);
-  }
-
-  function test_withdrawProportional_checkLtv_false_skipsLtvCheck() public {
-    // Same scenario as the revert test above, but with checkLtv=false (burn path).
-    // Should succeed because LTV is not checked.
-    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    // Both positions at ~86% LTV
-    position1.setTotalBorrowed(86e18);
-    position1.setTotalCollateral(100e18);
-    position1.setTotalCollateralQuoted(100e18);
-    position2.setTotalBorrowed(86e18);
-    position2.setTotalCollateral(100e18);
-    position2.setTotalCollateralQuoted(100e18);
-
-    collateralToken.mint(address(position1), 100e18);
-    collateralToken.mint(address(position2), 100e18);
-
-    harness.addWithdrawalQueueEntry(address(position1));
-    harness.addWithdrawalQueueEntry(address(position2));
-
-    // Repay 86 debt proportionally, withdraw 50 collateral. After repay each has 43 debt / 100 coll.
-    // availableCollateral(0.86) = 100 - ceil(43/0.86) = 100 - 50 = 50. 25 <= 50, so passes anyway.
-    // But let's do 0 debt repayment + 50 withdrawal — same as the revert test but checkLtv=false.
-    // This should succeed (burn path doesn't check LTV).
-    harness.processWithdrawal(50e18, 0, WithdrawalStrategy.PROPORTIONAL, false);
-
-    assertEq(position1.totalCollateral(), 75e18);
-    assertEq(position2.totalCollateral(), 75e18);
-  }
-
-  function test_withdrawProportional_checkLtv_multiplePositions_partialLtvViolation() public {
-    // One position is tight on LTV, the other has room. Proportional withdrawal should
-    // revert if the tight position can't release its proportional share.
-    MockBorrowPosition position1 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    MockBorrowPosition position2 = new MockBorrowPosition(address(collateralToken), address(debtToken));
-
-    // Position1: 86 debt / 100 collateral (tight, no room)
-    position1.setTotalBorrowed(86e18);
-    position1.setTotalCollateral(100e18);
-    position1.setTotalCollateralQuoted(100e18);
-    // Position2: 0 debt / 100 collateral (lots of room)
-    position2.setTotalBorrowed(0);
-    position2.setTotalCollateral(100e18);
-    position2.setTotalCollateralQuoted(100e18);
-
-    collateralToken.mint(address(position1), 100e18);
-    collateralToken.mint(address(position2), 100e18);
-
-    harness.addWithdrawalQueueEntry(address(position1));
-    harness.addWithdrawalQueueEntry(address(position2));
-
-    // Withdraw 100 collateral proportionally (50 from each), repay 0 debt.
-    // Position1 availableCollateral(0.86) = 100 - ceil(86/0.86) = 0. Needs 50. Revert.
-    vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
-    harness.processWithdrawal(100e18, 0, WithdrawalStrategy.PROPORTIONAL, true);
-  }
-
-  function test_withdrawProportional_checkLtv_zeroCollateralWithdrawal() public {
-    // checkLtv=true but collateralToWithdraw=0. Should succeed (no LTV check needed).
-    MockBorrowPosition position = new MockBorrowPosition(address(collateralToken), address(debtToken));
-    position.setTotalBorrowed(86e18);
-    position.setTotalCollateral(100e18);
-    position.setTotalCollateralQuoted(100e18);
-
-    harness.addWithdrawalQueueEntry(address(position));
-
-    debtToken.mint(address(harness), 50e18);
-    harness.approveToken(address(debtToken), address(position), 50e18);
-
-    // Only repay debt, no collateral withdrawal — should always work
-    harness.processWithdrawal(0, 50e18, WithdrawalStrategy.PROPORTIONAL, true);
-
-    assertEq(position.totalBorrowed(), 36e18);
   }
 }
