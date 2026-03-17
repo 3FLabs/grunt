@@ -57,8 +57,11 @@ contract MockBorrowPosition is IBorrowPosition {
     return availableLiquidity;
   }
 
-  function availableCollateral(uint256) external view override returns (uint256) {
-    return totalCollateral;
+  function availableCollateral(uint256 ltv) external view override returns (uint256) {
+    if (ltv == 0 || totalBorrowed == 0) return totalCollateral;
+    uint256 requiredCollateral = totalBorrowed.divWadUp(ltv);
+    if (requiredCollateral >= totalCollateral) return 0;
+    return totalCollateral - requiredCollateral;
   }
 
   /// @dev Returns additional collateral needed to borrow `borrowAmount` at `ltv` (1:1 price).
