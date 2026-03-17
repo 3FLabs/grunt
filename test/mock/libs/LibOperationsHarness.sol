@@ -24,8 +24,8 @@ contract LibOperationsHarness {
   }
 
   /// @dev Expose processWithdrawal
-  function processWithdrawal(uint256 collateral, uint256 debt, WithdrawalStrategy strategy) external {
-    LibStorage.positionManagerStorage().processWithdrawal(collateral, debt, strategy);
+  function processWithdrawal(uint256 collateral, uint256 debt, WithdrawalStrategy strategy, bool checkLtv) external {
+    LibStorage.positionManagerStorage().processWithdrawal(collateral, debt, strategy, checkLtv);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
