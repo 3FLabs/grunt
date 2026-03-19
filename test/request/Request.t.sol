@@ -1209,7 +1209,7 @@ contract RequestTest is Test {
   }
 
   function testFuzz_setRepaid_respectsTimelock(uint40 delay, uint40 timePassed) public {
-    delay = uint40(bound(delay, 1, 90 days)); // delay must fit within max deadline offset
+    delay = uint40(bound(delay, 1, 90 days - 1)); // delay must be strictly less than deadline offset
     timePassed = uint40(bound(timePassed, 0, 2 * 90 days));
 
     vm.prank(owner);
