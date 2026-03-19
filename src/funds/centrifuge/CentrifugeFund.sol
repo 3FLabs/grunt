@@ -347,12 +347,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     address _vault = $.vault;
-
-    if (order.mode == Mode.DEPOSIT) {
-      if (ICentrifugeVault(_vault).maxMint(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
-    } else {
-      if (ICentrifugeVault(_vault).maxWithdraw(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
-    }
+    _revertIfUnclaimedFills(_vault, order.mode);
 
     $.internalState = State.RECOVERING;
 
@@ -379,13 +374,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     address _vault = $.vault;
-
-    // Revert if claimable fills exist (must be drained via unlock() first)
-    if (order.mode == Mode.DEPOSIT) {
-      if (ICentrifugeVault(_vault).maxMint(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
-    } else {
-      if (ICentrifugeVault(_vault).maxWithdraw(address(this)) > 0) revert LibFundsErrors.PendingClaimableAssets();
-    }
+    _revertIfUnclaimedFills(_vault, order.mode);
 
     // Revert if recoverable cancel assets exist (must be drained via recover() first)
     if (_internalState == State.RECOVERING) {
@@ -537,6 +526,25 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     return ICentrifugeVault(_vault).pendingRedeemRequest(_PENDING_REQUEST, address(this)) > 0;
+  }
+
+  /// @dev Reverts if claimable fills exist and no pending request is active.
+  ///      When a pending request exists, claimable amounts may be polluted
+  ///      by attacker deposits and should not block fund operations.
+  /// @param _vault The Centrifuge vault address.
+  /// @param _mode  The order mode (DEPOSIT or REDEEM).
+  function _revertIfUnclaimedFills(address _vault, Mode _mode) internal view {
+    if (_stateHasPendingRequest(_vault, _mode)) return;
+
+    if (_mode == Mode.DEPOSIT) {
+      if (ICentrifugeVault(_vault).maxMint(address(this)) > 0) {
+        revert LibFundsErrors.PendingClaimableAssets();
+      }
+    } else {
+      if (ICentrifugeVault(_vault).maxWithdraw(address(this)) > 0) {
+        revert LibFundsErrors.PendingClaimableAssets();
+      }
+    }
   }
 
   /// @dev Returns whether a cancellation request is still pending or has claimable assets.
