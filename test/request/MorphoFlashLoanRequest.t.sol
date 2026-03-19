@@ -5,11 +5,13 @@ import {FacilityBaseTest} from "test/facility/FacilityBase.t.sol";
 import {MorphoFlashLoanRequest} from "src/request/MorphoFlashLoanRequest.sol";
 import {MorphoFlashLoanRequestFactory} from "src/request/MorphoFlashLoanRequestFactory.sol";
 import {SyncDeposit} from "src/request/scripts/SyncDeposit.sol";
+import {SyncWithdrawal} from "src/request/scripts/SyncWithdrawal.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {Mode, State} from "src/libs/funds/Order.sol";
 import {IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                      HELPER CONTRACTS                         */
@@ -51,6 +53,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   MorphoFlashLoanRequest public flashLoanRequest;
   MockScript public mockScript;
   SyncDeposit public syncDeposit;
+  SyncWithdrawal public syncWithdrawal;
 
   uint256 public intentId;
 
@@ -82,6 +85,12 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.prank(owner);
     flashLoanRequest.setScript(address(syncDeposit), true);
 
+    // Deploy and whitelist SyncWithdrawal
+    syncWithdrawal = new SyncWithdrawal();
+    vm.label(address(syncWithdrawal), "SyncWithdrawal");
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(syncWithdrawal), true);
+
     // Create an intent with deposits and move to resolving phase
     intentId = _createIntentWithDeposits(DEFAULT_AMOUNT);
   }
@@ -112,6 +121,17 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
 
   function _noOpScript() internal view returns (address, bytes memory) {
     return (address(mockScript), abi.encodeCall(MockScript.run, ()));
+  }
+
+  function _syncWithdrawalPayload(uint256 _intentId, uint256 withdrawAmount, uint256 repayAmount)
+    internal
+    view
+    returns (bytes memory)
+  {
+    return abi.encodeCall(
+      SyncWithdrawal.run,
+      (address(facility), _intentId, withdrawAmount, repayAmount, true, WithdrawalStrategy.SEQUENTIAL, repayAmount)
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -505,6 +525,148 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
 
     // Verify: collateral was deposited into PM (facility no longer holds it)
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*          H2. SYNC WITHDRAWAL INTEGRATION TEST                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_execute_syncWithdrawalFullCycle() public {
+    uint256 amount = 1_000e18;
+    uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
+
+    // ── Phase 1: Run SyncDeposit to create a PM position to unwind ──
+
+    // Snapshot Morpho position before SyncDeposit to measure actual deltas
+    uint256 pmCollateralBefore = borrowPosition.totalCollateral();
+    uint256 pmDebtBefore = borrowPosition.totalBorrowed();
+
+    uint256 syncIntentId;
+    {
+      vm.prank(owner);
+      syncIntentId = facility.createIntent(_intentParamsWithTargetPM());
+
+      _mintDebt(user, amount);
+      vm.prank(user);
+      facility.deposit(syncIntentId, amount);
+
+      vm.warp(block.timestamp + 1 days + 1);
+
+      vm.prank(facilitator);
+      _setFund(syncIntentId, address(mockFund));
+
+      mockFund.setNextCreateState(State.ACCEPTED);
+      mockFund.setNextCommitState(State.UNLOCKING);
+      mockFund.setNextUnlockState(State.ENDED);
+      mockFund.setCommitAmount(amount);
+      mockFund.setUnlockAmount(amount);
+      collateralToken.setBalance(address(mockFund), amount);
+
+      vm.prank(owner);
+      flashLoanRequest.execute(
+        amount,
+        _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours),
+        address(syncDeposit),
+        abi.encodeCall(SyncDeposit.run, (address(facility), syncIntentId, amount, amount, amount, true))
+      );
+    }
+
+    // ── Intermediate checks: capture actual on-chain state after SyncDeposit ──
+
+    // Morpho balance decreased by borrowed amount
+    assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore - amount);
+
+    // Facility holds user's original debtToken deposit, no collateral
+    assertEq(debtToken.balanceOf(address(facility)), amount);
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+
+    // Flash loan request fully repaid
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+
+    // MockFund received debtToken from deposit commit, sent all collateralToken during unlock
+    assertEq(debtToken.balanceOf(address(mockFund)), amount);
+    assertEq(collateralToken.balanceOf(address(mockFund)), 0);
+
+    // Capture actual PM position delta from Morpho (avoids off-chain assumptions)
+    uint256 actualCollateralDeposited = borrowPosition.totalCollateral() - pmCollateralBefore;
+    uint256 actualDebtBorrowed = borrowPosition.totalBorrowed() - pmDebtBefore;
+    assertTrue(actualCollateralDeposited > 0, "PM should have new collateral");
+    assertTrue(actualDebtBorrowed > 0, "PM should have new debt");
+
+    // ── Phase 2: Run SyncWithdrawal to unwind the position ──
+
+    // Use actual Morpho position deltas for withdrawal amounts
+    bytes memory withdrawPayload = _syncWithdrawalPayload(syncIntentId, actualCollateralDeposited, actualDebtBorrowed);
+
+    address proxy2;
+    {
+      // Deploy a second flash loan request proxy (transient storage requires separate proxy)
+      proxy2 = flashLoanFactory.createFlashLoanRequest(owner, address(facility), address(debtToken));
+
+      vm.startPrank(owner);
+      facility.grantRoles(proxy2, FACILITATOR_ROLE);
+      MorphoFlashLoanRequest(proxy2).setScript(address(syncWithdrawal), true);
+      vm.stopPrank();
+
+      // Re-set fund on intent (was cleared when SyncDeposit's unlock returned ENDED)
+      {
+        address[] memory fundSigners = new address[](1);
+        bytes[] memory fundSigs = new bytes[](1);
+        uint256 fundDeadline = block.timestamp + 3 hours;
+        fundSigners[0] = guardian;
+        fundSigs[0] = _signSetFund(syncIntentId, address(mockFund), fundDeadline, GUARDIAN_PK);
+        vm.prank(facilitator);
+        _setFund(syncIntentId, address(mockFund), fundDeadline, fundSigners, fundSigs);
+      }
+
+      // Configure MockFund for synchronous redeem using actual amounts
+      mockFund.setCommitAmount(actualCollateralDeposited);
+      mockFund.setUnlockAmount(actualDebtBorrowed);
+      // Seed fund with enough debtToken for unlock if needed
+      uint256 fundDebtBal = debtToken.balanceOf(address(mockFund));
+      if (actualDebtBorrowed > fundDebtBal) {
+        debtToken.setBalance(address(mockFund), actualDebtBorrowed);
+      }
+
+      // Build setRequest params for the second proxy
+      address[] memory signers = new address[](1);
+      bytes[] memory sigs = new bytes[](1);
+      signers[0] = guardian;
+      sigs[0] = _signSetRequest(syncIntentId, proxy2, block.timestamp + 2 hours, GUARDIAN_PK);
+
+      // Flash loan amount = actualDebtBorrowed (need enough debtToken to repay PM)
+      vm.prank(owner);
+      MorphoFlashLoanRequest(proxy2)
+        .execute(
+          actualDebtBorrowed,
+          MorphoFlashLoanRequest.SetRequestParams({
+            intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
+          }),
+          address(syncWithdrawal),
+          withdrawPayload
+        );
+    }
+
+    // ── Final verification ──
+
+    // Request removed from intent
+    (,, address request,) = facility.getIntent(syncIntentId);
+    assertEq(request, address(0));
+
+    // Morpho balance restored (PM debt fully repaid + flash loan repaid)
+    assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore);
+
+    // PM position unwound back to pre-deposit state
+    assertEq(borrowPosition.totalCollateral(), pmCollateralBefore);
+    assertEq(borrowPosition.totalBorrowed(), pmDebtBefore);
+
+    // Flash loan request proxies have no leftover balance
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+    assertEq(debtToken.balanceOf(proxy2), 0);
+
+    // Facility retains the user's original deposit, no collateral
+    assertEq(debtToken.balanceOf(address(facility)), amount);
     assertEq(collateralToken.balanceOf(address(facility)), 0);
   }
 
