@@ -61,6 +61,9 @@ library LibFundsErrors {
   /// @notice Thrown when recover() is called on a fund that does not support recovery.
   error RecoverNotSupported();
 
+  /// @notice Thrown when the CDO routes a withdrawal to the instant path instead of the normal epoch-gated queue.
+  error InstantWithdrawDetected();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
