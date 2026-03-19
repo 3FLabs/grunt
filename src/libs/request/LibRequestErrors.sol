@@ -12,10 +12,15 @@ library LibRequestErrors {
   /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid(uint256)`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
 
-  /// @notice Thrown when `setRepaid(uint256)` is called but the contract balance is below the caller-specified minimum.
+  /// @notice Thrown when `setRepaid` is called but the contract balance is below the caller-specified minimum.
   /// @param balance The current asset balance of the contract.
   /// @param minBalance The minimum balance required by the caller.
   error InsufficientBalance(uint256 balance, uint256 minBalance);
+
+  /// @notice Thrown when `setRepaid` is called but the contract balance exceeds the caller-specified maximum.
+  /// @param balance The current asset balance of the contract.
+  /// @param maxBalance The maximum balance allowed by the caller.
+  error ExcessiveBalance(uint256 balance, uint256 maxBalance);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    OFFER VALIDATION                        */

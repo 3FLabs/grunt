@@ -276,7 +276,7 @@ contract RequestTest is Test {
 
     // Set as repaid
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // Try to mint
     vm.prank(bridgeFacilitator);
@@ -539,7 +539,7 @@ contract RequestTest is Test {
 
   function test_pullFunds_revertsWhenRepaid() public {
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     vm.prank(puller);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
@@ -853,7 +853,7 @@ contract RequestTest is Test {
 
     // Mark as repaid
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // Try to repay again - should revert (even if puller has funds)
     asset.mint(puller, amount);
@@ -907,7 +907,7 @@ contract RequestTest is Test {
     emit Repaid(0);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     assertEq(request.canWithdraw(), true);
   }
@@ -931,7 +931,7 @@ contract RequestTest is Test {
     emit Repaid(amount);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     assertEq(request.canWithdraw(), true);
   }
@@ -941,16 +941,16 @@ contract RequestTest is Test {
 
     vm.prank(notOwner);
     vm.expectRevert(LibRequestErrors.Unauthorized.selector);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
   }
 
   function test_setRepaid_cannotCallTwice() public {
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -974,7 +974,7 @@ contract RequestTest is Test {
     emit Repaid(amount);
 
     vm.prank(owner);
-    request.setRepaid(amount);
+    request.setRepaid(amount, type(uint256).max);
 
     assertEq(request.canWithdraw(), true);
   }
@@ -999,7 +999,7 @@ contract RequestTest is Test {
     // setRepaid with minBalance should revert because balance is 0
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, 0, amount));
-    request.setRepaid(amount);
+    request.setRepaid(amount, type(uint256).max);
   }
 
   function test_setRepaid_withMinBalance_frontrunProtection() public {
@@ -1022,11 +1022,11 @@ contract RequestTest is Test {
     // setRepaid with minBalance = full amount should revert
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, 500_000e6, amount));
-    request.setRepaid(amount);
+    request.setRepaid(amount, type(uint256).max);
 
     // setRepaid with minBalance matching remaining balance should succeed
     vm.prank(owner);
-    request.setRepaid(500_000e6);
+    request.setRepaid(500_000e6, type(uint256).max);
 
     assertEq(request.canWithdraw(), true);
   }
@@ -1034,8 +1034,183 @@ contract RequestTest is Test {
   function test_setRepaid_zeroMinBalance_alwaysSucceeds() public {
     // setRepaid(0) should always succeed (no balance check)
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
     assertEq(request.canWithdraw(), true);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*             SET REPAID MAX BALANCE TESTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setRepaid_withMaxBalance_success() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    // maxBalance matches balance exactly — should succeed
+    vm.prank(owner);
+    request.setRepaid(0, amount);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_withMaxBalance_revertsWhenBalanceTooHigh() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    // Malicious facilitator over-repays to inflate YT value
+    uint256 excessAmount = 500_000e6;
+    asset.mint(address(request), excessAmount);
+
+    // setRepaid with maxBalance = original amount should revert
+    vm.prank(owner);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, amount + excessAmount, uint256(amount))
+    );
+    request.setRepaid(0, amount);
+  }
+
+  function test_setRepaid_withMaxBalance_overRepayProtection() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    // Pull funds then "repay" with excess — facilitator is also a YT holder
+    vm.prank(puller);
+    request.pullFunds(ptAmount, "");
+
+    // Facilitator over-repays: sends back ptAmount + extra to inflate YT redemption value
+    uint256 overRepayAmount = ptAmount + 500_000e6;
+    asset.mint(address(request), overRepayAmount);
+
+    // Owner sets bounds: expect at least ptAmount, at most ptAmount + small tolerance
+    uint256 maxExpected = ptAmount + 10_000e6; // small tolerance for interest
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, overRepayAmount, maxExpected));
+    request.setRepaid(ptAmount, maxExpected);
+
+    // After facilitator corrects the balance, setRepaid succeeds
+    // Simulate: remove the excess, leave ptAmount + small interest within tolerance
+    asset.burn(address(request), overRepayAmount - ptAmount - 5_000e6);
+    assertEq(asset.balanceOf(address(request)), ptAmount + 5_000e6);
+
+    vm.prank(owner);
+    request.setRepaid(ptAmount, maxExpected);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_withBothBounds_success() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    // Balance is exactly amount — both min and max match
+    vm.prank(owner);
+    request.setRepaid(amount, amount);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_typeUint256Max_skipsMaxCheck() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    // Add excess — but type(uint256).max skips the check
+    asset.mint(address(request), 10_000_000e6);
+
+    vm.prank(owner);
+    request.setRepaid(0, type(uint256).max);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function testFuzz_setRepaid_balanceBounds(
+    uint128 depositAmount,
+    uint128 pullAmount,
+    uint128 extraAssets,
+    uint128 minBalance,
+    uint128 maxBalance
+  ) public {
+    vm.assume(depositAmount > 0 && depositAmount < type(uint128).max / 2);
+    vm.assume(pullAmount <= depositAmount);
+    vm.assume(extraAssets < type(uint128).max / 2);
+
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, depositAmount, 0);
+
+    asset.mint(bridgeFacilitator, depositAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), depositAmount);
+    request.mint(0, 0);
+    vm.stopPrank();
+
+    if (pullAmount > 0) {
+      vm.prank(puller);
+      request.pullFunds(pullAmount, "");
+    }
+    if (extraAssets > 0) {
+      asset.mint(address(request), extraAssets);
+    }
+
+    uint256 balance = uint256(depositAmount) - pullAmount + extraAssets;
+
+    if (balance < minBalance) {
+      vm.prank(owner);
+      vm.expectRevert(
+        abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, balance, uint256(minBalance))
+      );
+      request.setRepaid(minBalance, maxBalance);
+    } else if (balance > maxBalance) {
+      vm.prank(owner);
+      vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, balance, uint256(maxBalance)));
+      request.setRepaid(minBalance, maxBalance);
+    } else {
+      vm.prank(owner);
+      request.setRepaid(minBalance, maxBalance);
+      assertTrue(request.canWithdraw());
+    }
   }
 
   function testFuzz_setRepaid_minBalance(uint128 depositAmount, uint128 pullAmount, uint128 minBalance) public {
@@ -1065,10 +1240,10 @@ contract RequestTest is Test {
       vm.expectRevert(
         abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, remainingBalance, uint256(minBalance))
       );
-      request.setRepaid(minBalance);
+      request.setRepaid(minBalance, type(uint256).max);
     } else {
       vm.prank(owner);
-      request.setRepaid(minBalance);
+      request.setRepaid(minBalance, type(uint256).max);
       assertTrue(request.canWithdraw());
     }
   }
@@ -1134,7 +1309,7 @@ contract RequestTest is Test {
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
-    timelockRequest.setRepaid(0);
+    timelockRequest.setRepaid(0, type(uint256).max);
   }
 
   function test_setRepaid_succeedsAfterTimelockExpires() public {
@@ -1160,7 +1335,7 @@ contract RequestTest is Test {
     vm.warp(block.timestamp + delay);
 
     vm.prank(owner);
-    timelockRequest.setRepaid(0);
+    timelockRequest.setRepaid(0, type(uint256).max);
     assertTrue(timelockRequest.canWithdraw());
   }
 
@@ -1176,7 +1351,7 @@ contract RequestTest is Test {
     // Actually, if block.timestamp >= delay, it would pass. Let's ensure it works at timestamp 1.
     vm.warp(1);
     vm.prank(owner);
-    timelockRequest.setRepaid(0);
+    timelockRequest.setRepaid(0, type(uint256).max);
     assertTrue(timelockRequest.canWithdraw());
   }
 
@@ -1255,17 +1430,17 @@ contract RequestTest is Test {
       // Past the repayment deadline — contract auto-repays, setRepaid reverts
       vm.prank(owner);
       vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-      timelockRequest.setRepaid(0);
+      timelockRequest.setRepaid(0, type(uint256).max);
     } else if (timePassed < delay) {
       uint40 expectedAvailableAt = uint40(mintTime) + delay;
       vm.prank(owner);
       vm.expectRevert(
         abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt)
       );
-      timelockRequest.setRepaid(0);
+      timelockRequest.setRepaid(0, type(uint256).max);
     } else {
       vm.prank(owner);
-      timelockRequest.setRepaid(0);
+      timelockRequest.setRepaid(0, type(uint256).max);
       assertTrue(timelockRequest.canWithdraw());
     }
   }
@@ -1282,7 +1457,7 @@ contract RequestTest is Test {
     assertEq(request.isRepaid(), false);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     assertEq(request.isRepaid(), true);
   }
@@ -1349,7 +1524,7 @@ contract RequestTest is Test {
 
     // 5. Owner marks as repaid
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // 6. Bridge facilitator redeems PT and YT
     vm.startPrank(bridgeFacilitator);
@@ -1404,7 +1579,7 @@ contract RequestTest is Test {
     asset.transfer(address(request), 1_650_000e6);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // BF 1 redeems
     vm.startPrank(bf1);
@@ -1449,7 +1624,7 @@ contract RequestTest is Test {
     asset.transfer(address(request), 900_000e6);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // Verify total assets
     assertEq(ptVault.totalAssets(), 900_000e6);
@@ -1549,7 +1724,7 @@ contract RequestTest is Test {
     asset.mint(address(request), actualReturn);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // Calculate expected redemption values
     uint256 totalAssets = actualReturn;
@@ -1739,7 +1914,7 @@ contract RequestTest is Test {
 
     // Call setRepaid before deadline
     vm.prank(owner);
-    deadlineRequest.setRepaid(0);
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     // Should be enabled immediately
     assertEq(deadlineRequest.canWithdraw(), true);
@@ -1776,7 +1951,7 @@ contract RequestTest is Test {
     // Operations should be blocked after deadline (they trigger the sync internally and revert)
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    deadlineRequest.setRepaid(0);
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     vm.prank(puller);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
@@ -1878,7 +2053,7 @@ contract RequestTest is Test {
 
     // setRepaid should work
     vm.prank(owner);
-    deadlineRequest.setRepaid(0);
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     assertEq(deadlineRequest.canWithdraw(), true);
   }
@@ -1950,7 +2125,7 @@ contract RequestTest is Test {
 
     // setRepaid before deadline
     vm.prank(owner);
-    deadlineRequest.setRepaid(0);
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     // syncRepaidStatus should return true
     bool repaid = deadlineRequest.syncRepaidStatus();

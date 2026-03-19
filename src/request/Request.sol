@@ -238,10 +238,15 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @dev Only callable by the owner. Once called, `canWithdraw()` returns true and users
   ///      can redeem their PT/YT tokens for the underlying asset. This action is irreversible.
   ///      Emits a {Repaid} event with the total amount of underlying assets available for redemption.
+  ///
+  ///      minBalance prevents a malicious facilitator from draining assets before setRepaid is called.
+  ///      maxBalance prevents a malicious facilitator (who is also a YT holder) from over-repaying
+  ///      assets just before setRepaid to inflate their YT redemption value at the expense of intent
+  ///      shareholders. Pass type(uint256).max to skip the upper bound check.
   /// @custom:reverts If the request has already been repaid or the deadline has passed
   /// @custom:reverts If the mint-to-repaid delay has not elapsed since the last mint/consume
-  /// @custom:reverts If the current balance is below the specified minimum
-  function setRepaid(uint256 minBalance) external onlyOwner {
+  /// @custom:reverts If the current balance is below minBalance or above maxBalance
+  function setRepaid(uint256 minBalance, uint256 maxBalance) external onlyOwner {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     RequestStorage storage req = _requestStorage();
     uint40 _lastMint = req.lastMintTimestamp;
@@ -253,6 +258,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     }
     uint256 balance = _asset().balanceOf(address(this));
     if (balance < minBalance) revert LibRequestErrors.InsufficientBalance(balance, minBalance);
+    if (balance > maxBalance) revert LibRequestErrors.ExcessiveBalance(balance, maxBalance);
     req.repaid = true;
     emit Repaid(balance);
   }
