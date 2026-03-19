@@ -32,9 +32,7 @@ contract USCCFundTest is Test {
   event OrderRecovering(bytes32 indexed orderId);
   event OrderProcessing(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
   uint256 private constant ONE_USDC = 1e6;
 
@@ -796,23 +794,13 @@ contract USCCFundTest is Test {
     bytes32 orderId = order.toId(address(fund));
     uint256 newInput = order.input;
     uint256 newOutput = ONE_USDC / 2;
-    Order memory resolvedOrder = Order({
-      mode: order.mode,
-      owner: order.owner,
-      receiver: order.receiver,
-      input: newInput,
-      output: newOutput,
-      salt: order.salt
-    });
-    bytes32 resolvedOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, resolvedOrderId, newInput, newOutput, owner);
+    emit OrderResolved(orderId, newInput, newOutput, owner);
     fund.resolve(order, newInput, newOutput);
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "original processing");
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved empty");
 
     uscc.mint(address(fund), newOutput);
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "uses resolved output");

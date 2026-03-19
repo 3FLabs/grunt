@@ -27,9 +27,7 @@ contract ParetoFundTest is Test {
   event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 input, uint256 output, address indexed caller
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 input, uint256 output, address indexed caller);
 
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_AA = 1e18;
@@ -701,20 +699,10 @@ contract ParetoFundTest is Test {
     _commitDeposit(order);
 
     bytes32 orderId = order.toId(address(fund));
-    // Compute the new order ID after resolve modifies input/output in memory
-    Order memory resolvedOrder = Order({
-      mode: order.mode,
-      owner: order.owner,
-      receiver: order.receiver,
-      input: ONE_USDC / 2,
-      output: ONE_AA / 2,
-      salt: order.salt
-    });
-    bytes32 newOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, newOrderId, ONE_USDC / 2, ONE_AA / 2, owner);
+    emit OrderResolved(orderId, ONE_USDC / 2, ONE_AA / 2, owner);
     fund.resolve(order, ONE_USDC / 2, ONE_AA / 2);
   }
 
@@ -798,14 +786,10 @@ contract ParetoFundTest is Test {
     _commitDeposit(order);
 
     bytes32 orderId = order.toId(address(fund));
-    Order memory resolvedOrder = Order({
-      mode: order.mode, owner: order.owner, receiver: order.receiver, input: 0, output: ONE_AA, salt: order.salt
-    });
-    bytes32 newOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, newOrderId, 0, ONE_AA, owner);
+    emit OrderResolved(orderId, 0, ONE_AA, owner);
     fund.resolve(order, 0, ONE_AA);
   }
 
