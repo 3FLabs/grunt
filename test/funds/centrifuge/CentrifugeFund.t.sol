@@ -679,7 +679,7 @@ contract CentrifugeFundTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
 
     (State state, uint256 amount) = fund.recover(order);
-    assertEq(uint256(state), uint256(State.RECOVERING), "still recovering");
+    assertEq(uint256(state), uint256(State.PROCESSING), "still processing");
     assertEq(amount, halfAssets, "partial amount");
   }
 
@@ -701,7 +701,7 @@ contract CentrifugeFundTest is Test {
 
     (State state, uint256 amount) = fund.recover(order);
     // After claiming, there's still pendingCancelRedeem = true (flag from cancelRequest)
-    assertEq(uint256(state), uint256(State.RECOVERING), "still recovering");
+    assertEq(uint256(state), uint256(State.PROCESSING), "still processing");
     assertEq(amount, halfShares, "partial amount");
   }
 
@@ -1116,9 +1116,9 @@ contract CentrifugeFundTest is Test {
     // state() should return UNLOCKING (fulfilled shares first)
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking first");
 
-    // unlock() claims shares, stays RECOVERING (cancel assets still pending)
+    // unlock() claims shares, returns PROCESSING per IFund spec (cancel assets still pending)
     (State newState, uint256 amount) = fund.unlock(order);
-    assertEq(uint256(newState), uint256(State.RECOVERING), "still recovering");
+    assertEq(uint256(newState), uint256(State.PROCESSING), "still processing");
     assertEq(amount, halfShares, "half shares claimed");
     assertEq(wrappedShare.balanceOf(address(this)), halfShares, "wShare minted");
 
@@ -1173,9 +1173,9 @@ contract CentrifugeFundTest is Test {
     // state() should return UNLOCKING (fulfilled assets first)
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking first");
 
-    // unlock() claims assets, stays RECOVERING (cancel shares still pending)
+    // unlock() claims assets, returns PROCESSING per IFund spec (cancel shares still pending)
     (State newState, uint256 amount) = fund.unlock(order);
-    assertEq(uint256(newState), uint256(State.RECOVERING), "still recovering");
+    assertEq(uint256(newState), uint256(State.PROCESSING), "still processing");
     assertEq(amount, halfAssets, "half assets claimed");
     assertEq(assetToken.balanceOf(address(this)), halfAssets, "assets received");
 
