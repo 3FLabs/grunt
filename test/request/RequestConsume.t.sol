@@ -158,7 +158,7 @@ contract RequestConsumeTest is Test {
 
     // Set as repaid first
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days, true);
     bytes memory signature = _signOffer(offer);
@@ -437,7 +437,7 @@ contract RequestConsumeTest is Test {
 
     // 4. Mark as repaid
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // 5. Callback contract redeems its PT/YT tokens
     vm.startPrank(address(callback));
@@ -496,7 +496,7 @@ contract RequestConsumeTest is Test {
     asset.transfer(address(request), consumeAmount + mintAmount + consumeReturn + mintYield);
 
     vm.prank(owner);
-    request.setRepaid(0);
+    request.setRepaid(0, type(uint256).max);
 
     // Both can redeem fully
     vm.prank(address(callback));
