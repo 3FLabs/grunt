@@ -4,32 +4,23 @@ pragma solidity ^0.8.24;
 import {FacilityBaseTest} from "test/facility/FacilityBase.t.sol";
 import {MorphoFlashLoanRequest} from "src/request/MorphoFlashLoanRequest.sol";
 import {MorphoFlashLoanRequestFactory} from "src/request/MorphoFlashLoanRequestFactory.sol";
+import {SyncDeposit} from "src/request/scripts/SyncDeposit.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {Mode, State} from "src/libs/funds/Order.sol";
+import {IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                      HELPER CONTRACTS                         */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @notice Simple target contract for operation testing.
-contract MockTarget {
-  uint256 public lastValue;
-  uint256 public callCount;
-  bool public shouldRevert;
-
-  function doSomething(uint256 value) external {
-    if (shouldRevert) revert("MockTarget: reverted");
-    lastValue = value;
-    callCount++;
-  }
-
-  function setShouldRevert(bool _shouldRevert) external {
-    shouldRevert = _shouldRevert;
-  }
+/// @notice Simple no-op script for basic flash loan mechanic tests.
+contract MockScript {
+  function run() external {}
 }
 
-/// @notice Contract that attempts to re-enter execute() when called as an operation.
+/// @notice Contract that attempts to re-enter execute() when delegatecalled as a script.
 contract ReentrantAttacker {
   MorphoFlashLoanRequest public target;
   MorphoFlashLoanRequest.SetRequestParams public params;
@@ -45,9 +36,10 @@ contract ReentrantAttacker {
 
   function attack() external {
     attempted = true;
-    MorphoFlashLoanRequest.Operation[] memory ops = new MorphoFlashLoanRequest.Operation[](0);
-    target.execute(1e18, params, ops);
+    target.execute(1e18, params, address(this), abi.encodeCall(this.run, ()));
   }
+
+  function run() external {}
 }
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -57,7 +49,8 @@ contract ReentrantAttacker {
 contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   MorphoFlashLoanRequestFactory public flashLoanFactory;
   MorphoFlashLoanRequest public flashLoanRequest;
-  MockTarget public mockTarget;
+  MockScript public mockScript;
+  SyncDeposit public syncDeposit;
 
   uint256 public intentId;
 
@@ -77,9 +70,17 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.prank(owner);
     facility.grantRoles(proxy, FACILITATOR_ROLE);
 
-    // Deploy MockTarget
-    mockTarget = new MockTarget();
-    vm.label(address(mockTarget), "MockTarget");
+    // Deploy and whitelist MockScript
+    mockScript = new MockScript();
+    vm.label(address(mockScript), "MockScript");
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(mockScript), true);
+
+    // Deploy and whitelist SyncDeposit
+    syncDeposit = new SyncDeposit();
+    vm.label(address(syncDeposit), "SyncDeposit");
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(syncDeposit), true);
 
     // Create an intent with deposits and move to resolving phase
     intentId = _createIntentWithDeposits(DEFAULT_AMOUNT);
@@ -109,15 +110,8 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     return _buildSetRequestParams(intentId, block.timestamp + 1 hours);
   }
 
-  function _noOperations() internal pure returns (MorphoFlashLoanRequest.Operation[] memory) {
-    return new MorphoFlashLoanRequest.Operation[](0);
-  }
-
-  function _singleOperation() internal view returns (MorphoFlashLoanRequest.Operation[] memory ops) {
-    ops = new MorphoFlashLoanRequest.Operation[](1);
-    ops[0] = MorphoFlashLoanRequest.Operation({
-      target: address(mockTarget), data: abi.encodeCall(MockTarget.doSomething, (42))
-    });
+  function _noOpScript() internal view returns (address, bytes memory) {
+    return (address(mockScript), abi.encodeCall(MockScript.run, ()));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -208,19 +202,89 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                D. EXECUTE ACCESS CONTROL                    */
+  /*               D. SCRIPT MANAGEMENT TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setScript_whitelists() public {
+    MockScript newScript = new MockScript();
+
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(newScript), true);
+
+    assertTrue(flashLoanRequest.isScript(address(newScript)));
+  }
+
+  function test_setScript_dewhitelists() public {
+    assertTrue(flashLoanRequest.isScript(address(mockScript)));
+
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(mockScript), false);
+
+    assertFalse(flashLoanRequest.isScript(address(mockScript)));
+  }
+
+  function test_setScript_emitsEvent() public {
+    MockScript newScript = new MockScript();
+
+    vm.expectEmit(true, false, false, true);
+    emit MorphoFlashLoanRequest.ScriptSet(address(newScript), true);
+
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(newScript), true);
+  }
+
+  function test_setScript_emitsEventOnDewhitelist() public {
+    vm.expectEmit(true, false, false, true);
+    emit MorphoFlashLoanRequest.ScriptSet(address(mockScript), false);
+
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(mockScript), false);
+  }
+
+  function test_setScript_revertsWhenNotOwner() public {
+    vm.prank(user);
+    vm.expectRevert();
+    flashLoanRequest.setScript(address(mockScript), true);
+  }
+
+  function test_setScript_revertsOnNonContract() public {
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, address(0xbeef)));
+    flashLoanRequest.setScript(address(0xbeef), true);
+  }
+
+  function test_setScript_allowsDewhitelistNonContract() public {
+    // Dewhitelisting a non-contract should not revert (no checkContract on remove)
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(0xbeef), false);
+    assertFalse(flashLoanRequest.isScript(address(0xbeef)));
+  }
+
+  function test_isScript_returnsFalseByDefault() public view {
+    assertFalse(flashLoanRequest.isScript(address(0xdead)));
+  }
+
+  function test_isScript_returnsTrueForWhitelisted() public view {
+    assertTrue(flashLoanRequest.isScript(address(mockScript)));
+    assertTrue(flashLoanRequest.isScript(address(syncDeposit)));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                E. EXECUTE ACCESS CONTROL                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_execute_revertsWhenNotOwner() public {
+    (address script, bytes memory payload) = _noOpScript();
     vm.prank(user);
     vm.expectRevert();
-    flashLoanRequest.execute(1e18, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(1e18, _defaultSetRequestParams(), script, payload);
   }
 
   function test_execute_revertsOnZeroAmount() public {
+    (address script, bytes memory payload) = _noOpScript();
     vm.prank(owner);
     vm.expectRevert(LibCommonErrors.AmountZero.selector);
-    flashLoanRequest.execute(0, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(0, _defaultSetRequestParams(), script, payload);
   }
 
   function test_execute_revertsOnReentrancy() public {
@@ -228,21 +292,33 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     attacker.setTarget(flashLoanRequest);
     attacker.setParams(_defaultSetRequestParams());
 
+    // Whitelist attacker as script
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(attacker), true);
+
     // Transfer ownership to attacker so it can call execute
     vm.prank(owner);
     flashLoanRequest.transferOwnership(address(attacker));
 
-    MorphoFlashLoanRequest.Operation[] memory ops = new MorphoFlashLoanRequest.Operation[](1);
-    ops[0] =
-      MorphoFlashLoanRequest.Operation({target: address(attacker), data: abi.encodeCall(ReentrantAttacker.attack, ())});
-
     vm.prank(address(attacker));
     vm.expectRevert();
-    flashLoanRequest.execute(1e18, _defaultSetRequestParams(), ops);
+    flashLoanRequest.execute(
+      1e18, _defaultSetRequestParams(), address(attacker), abi.encodeCall(ReentrantAttacker.attack, ())
+    );
+  }
+
+  function test_execute_revertsOnUnauthorizedScript() public {
+    MockScript unauthorizedScript = new MockScript();
+
+    vm.prank(owner);
+    vm.expectRevert();
+    flashLoanRequest.execute(
+      1_000e18, _defaultSetRequestParams(), address(unauthorizedScript), abi.encodeCall(MockScript.run, ())
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*             E. onMorphoFlashLoan ACCESS CONTROL             */
+  /*             F. onMorphoFlashLoan ACCESS CONTROL             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_onMorphoFlashLoan_revertsWhenNotMorpho() public {
@@ -252,9 +328,11 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   function test_onMorphoFlashLoan_revertsOnDebtNotRepaid() public {
+    (address script, bytes memory payload) = _noOpScript();
+
     // Execute sets rawDebt in transient storage (persists within Foundry tx)
     vm.prank(owner);
-    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), script, payload);
 
     // Prank as Morpho and call callback again — rawDebt is still non-zero
     vm.prank(address(morpho));
@@ -263,16 +341,17 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*              F. INTEGRATION (FULL EXECUTE CYCLE)            */
+  /*              G. INTEGRATION (FULL EXECUTE CYCLE)            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_execute_fullCycleNoOperations() public {
+  function test_execute_fullCycleNoOpScript() public {
     uint256 flashAmount = 1_000e18;
+    (address script, bytes memory payload) = _noOpScript();
 
     uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
 
     vm.prank(owner);
-    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), script, payload);
 
     // After execution, request should be removed from intent
     (,, address request,) = facility.getIntent(intentId);
@@ -283,57 +362,18 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
 
     // Flash loan request should have no balance
     assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
-
-    // Note: isRepaid() cannot be checked here because rawDebt (transient storage)
-    // is not cleared within a single Foundry test transaction. In production,
-    // transient storage resets between transactions, so isRepaid() returns true.
-  }
-
-  function test_execute_fullCycleWithOperations() public {
-    uint256 flashAmount = 1_000e18;
-
-    vm.prank(owner);
-    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), _singleOperation());
-
-    // Verify the operation was executed
-    assertEq(mockTarget.lastValue(), 42);
-    assertEq(mockTarget.callCount(), 1);
-
-    // Request removed
-    (,, address request,) = facility.getIntent(intentId);
-    assertEq(request, address(0));
-  }
-
-  function test_execute_fullCycleWithMultipleOperations() public {
-    uint256 flashAmount = 1_000e18;
-
-    MorphoFlashLoanRequest.Operation[] memory ops = new MorphoFlashLoanRequest.Operation[](3);
-    ops[0] = MorphoFlashLoanRequest.Operation({
-      target: address(mockTarget), data: abi.encodeCall(MockTarget.doSomething, (1))
-    });
-    ops[1] = MorphoFlashLoanRequest.Operation({
-      target: address(mockTarget), data: abi.encodeCall(MockTarget.doSomething, (2))
-    });
-    ops[2] = MorphoFlashLoanRequest.Operation({
-      target: address(mockTarget), data: abi.encodeCall(MockTarget.doSomething, (3))
-    });
-
-    vm.prank(owner);
-    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), ops);
-
-    assertEq(mockTarget.lastValue(), 3);
-    assertEq(mockTarget.callCount(), 3);
   }
 
   function test_execute_withDustBalance() public {
     uint256 flashAmount = 1_000e18;
     uint256 dustAmount = 1;
+    (address script, bytes memory payload) = _noOpScript();
 
     // Seed dust into the flash loan request
     debtToken.setBalance(address(flashLoanRequest), dustAmount);
 
     vm.prank(owner);
-    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), script, payload);
 
     // Should succeed despite dust — the fix handles this by setting rawDebt to full balance
     // Dust remains after the cycle
@@ -342,12 +382,13 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
 
   function test_execute_tokenBalancesCorrect() public {
     uint256 flashAmount = 1_000e18;
+    (address script, bytes memory payload) = _noOpScript();
 
     uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
     uint256 facilityBalBefore = debtToken.balanceOf(address(facility));
 
     vm.prank(owner);
-    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(flashAmount, _defaultSetRequestParams(), script, payload);
 
     // Morpho balance unchanged
     assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore);
@@ -359,27 +400,23 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
   }
 
-  function test_execute_revertsWhenOperationReverts() public {
-    mockTarget.setShouldRevert(true);
-
-    vm.prank(owner);
-    vm.expectRevert();
-    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), _singleOperation());
-  }
-
   function test_execute_multipleSeparateExecutions() public {
+    (address script, bytes memory payload) = _noOpScript();
+
     // Multiple executions on the same flash loan request require separate transactions
     // because rawDebt uses transient storage (cleared between txs, not within a tx).
     // We test this by deploying a second flash loan request proxy.
     address proxy2 = flashLoanFactory.createFlashLoanRequest(owner, address(facility), address(debtToken));
     MorphoFlashLoanRequest flashLoanRequest2 = MorphoFlashLoanRequest(proxy2);
 
-    vm.prank(owner);
+    vm.startPrank(owner);
     facility.grantRoles(proxy2, FACILITATOR_ROLE);
+    flashLoanRequest2.setScript(address(mockScript), true);
+    vm.stopPrank();
 
     // First execution with original proxy
     vm.prank(owner);
-    flashLoanRequest.execute(500e18, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(500e18, _defaultSetRequestParams(), script, payload);
 
     (,, address request1,) = facility.getIntent(intentId);
     assertEq(request1, address(0));
@@ -396,14 +433,83 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     });
 
     vm.prank(owner);
-    flashLoanRequest2.execute(500e18, params2, _noOperations());
+    flashLoanRequest2.execute(500e18, params2, script, payload);
 
     (,, address request2,) = facility.getIntent(intentId);
     assertEq(request2, address(0));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    G. pullFunds() TESTS                     */
+  /*           H. SYNC DEPOSIT INTEGRATION TEST                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_execute_syncDepositFullCycle() public {
+    // Setup: Create a new intent with targetPM config (depositAsset=debtToken, targetAsset=PM)
+    vm.prank(owner);
+    uint256 syncIntentId = facility.createIntent(_intentParamsWithTargetPM());
+
+    // Deposit debtToken into the intent (user deposits)
+    uint256 depositAmount = 1_000e18;
+    _mintDebt(user, depositAmount);
+    vm.prank(user);
+    facility.deposit(syncIntentId, depositAmount);
+
+    // Move to resolving phase
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Set the mock fund on the intent (requires facilitator + guardian sig)
+    vm.prank(facilitator);
+    _setFund(syncIntentId, address(mockFund));
+
+    // Configure MockFund for synchronous behavior:
+    // create → ACCEPTED, commit → UNLOCKING (sync, skip PROCESSING), unlock → ENDED
+    mockFund.setNextCreateState(State.ACCEPTED);
+    mockFund.setNextCommitState(State.UNLOCKING);
+    mockFund.setNextUnlockState(State.ENDED);
+    mockFund.setCommitAmount(depositAmount);
+
+    // Supply collateralToken to MockFund so it can return shares on unlock.
+    // sharesFromFund must equal borrowAmount so the PM deposit doesn't net-decrease shares
+    // (which would underflow the second intent's zero share balance).
+    uint256 sharesFromFund = depositAmount;
+    mockFund.setUnlockAmount(sharesFromFund);
+    collateralToken.setBalance(address(mockFund), sharesFromFund);
+
+    // Build setRequest params for the new intent
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+
+    // Build SyncDeposit script payload
+    // borrowAmount = depositAmount to cover the flash loan repay.
+    // collateral = sharesFromFund = depositAmount so net share change is zero.
+    uint256 borrowAmount = depositAmount;
+    bytes memory scriptPayload = abi.encodeCall(
+      SyncDeposit.run,
+      (address(facility), syncIntentId, depositAmount, depositAmount, borrowAmount, true) // useTarget=true for targetPM
+    );
+
+    uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
+
+    // Execute the flash loan with SyncDeposit
+    vm.prank(owner);
+    flashLoanRequest.execute(depositAmount, params, address(syncDeposit), scriptPayload);
+
+    // Verify: request removed from intent
+    (,, address request,) = facility.getIntent(syncIntentId);
+    assertEq(request, address(0));
+
+    // Verify: flash loan fully repaid (Morpho balance only decreased by borrow amount, not flash loan)
+    assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore - borrowAmount);
+
+    // Verify: flash loan request has no leftover balance
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+
+    // Verify: collateral was deposited into PM (facility no longer holds it)
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    I. pullFunds() TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_pullFunds_revertsWhenNotFacility() public {
@@ -427,7 +533,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      H. repay() TESTS                       */
+  /*                      J. repay() TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_repay_allowsRepayWhenRawDebtIsZero() public {
@@ -446,8 +552,10 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   function test_repay_revertsOnBalanceExceedsDebt() public {
+    (address script, bytes memory payload) = _noOpScript();
+
     vm.prank(owner);
-    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), script, payload);
 
     // Repay more than rawDebt to trigger BalanceExceedsDebt
     uint256 excessAmount = 1_001e18;
@@ -461,7 +569,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                  I. VIEW FUNCTION TESTS                     */
+  /*                  K. VIEW FUNCTION TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_isRepaid_returnsTrueOutsideFlashLoan() public view {
@@ -470,8 +578,10 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   function test_isRepaid_revertsOnBalanceExceedsDebt() public {
+    (address script, bytes memory payload) = _noOpScript();
+
     vm.prank(owner);
-    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), _noOperations());
+    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), script, payload);
 
     // Seed tokens to push balance above rawDebt
     debtToken.setBalance(address(flashLoanRequest), 1_001e18);
@@ -485,7 +595,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*             J. UNSUPPORTED IRequest METHODS                 */
+  /*             L. UNSUPPORTED IRequest METHODS                 */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_setRepaid_revertsNotSupported() public {
@@ -533,7 +643,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    K. rescue() TESTS                        */
+  /*                    M. rescue() TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_rescue_transfersTokens() public {

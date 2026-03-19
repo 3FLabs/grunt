@@ -18,8 +18,8 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 
 /// @title MorphoFlashLoanRequest
 /// @notice A facilitator contract that uses Morpho flash loans to temporarily act as a request
-///         on a facility intent. It atomically sets itself as the request, executes caller-specified
-///         operations (e.g. pull, arbitrary ops, repay), then unsets itself and repays the flash loan.
+///         on a facility intent. It atomically sets itself as the request, delegatecalls a
+///         whitelisted script, then unsets itself and repays the flash loan.
 /// @dev This contract must be granted FACILITATOR_ROLE on the target facility.
 ///      Assumes that calling setRequest with address(0) does not require guardian signatures.
 ///
@@ -29,11 +29,11 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 ///      exceed the raw debt.
 ///
 ///      Flow:
-///      1. Owner calls execute() with flash loan amount, setRequest params, and operations
+///      1. Owner calls execute() with flash loan amount, setRequest params, script, and payload
 ///      2. Contract initiates a flash loan from Morpho
 ///      3. In callback: sets raw debt, sets itself as the request on the facility
 ///      4. Pulls the flash loan amount from this request into the facility
-///      5. Executes caller-specified operations
+///      5. Delegatecalls the whitelisted script (which can chain facility operations)
 ///      6. Repays the flash loan amount from the facility back to this request
 ///      7. Removes itself as the request on the facility
 ///      8. Approves Morpho to pull back the flash loaned amount
@@ -52,7 +52,7 @@ contract MorphoFlashLoanRequest is
   using LibCall for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           ERRORS                              */
+  /*                           ERRORS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when the caller is not the expected address.
@@ -67,21 +67,32 @@ contract MorphoFlashLoanRequest is
   /// @notice Thrown when a function from IRequest that is not supported by this contract is called.
   error NotSupported();
 
+  /// @notice Thrown when a script is not whitelisted.
+  error ScriptNotAllowed();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         IMMUTABLES                            */
+  /*                          EVENTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted when a script's whitelist status is updated.
+  event ScriptSet(address indexed script, bool allowed);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         IMMUTABLES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice The Morpho protocol contract used for flash loans.
   IMorpho public immutable MORPHO;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      ERC-7201 STORAGE                         */
+  /*                      ERC-7201 STORAGE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Storage layout for the MorphoFlashLoanRequest contract.
   struct MorphoFlashLoanRequestStorage {
     address facility;
     address asset;
+    mapping(address => bool) scripts;
   }
 
   /// @dev keccak256(abi.encode(uint256(keccak256("morpho.flashloan.request")) - 1)) & ~bytes32(uint256(0xff))
@@ -95,14 +106,14 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                     TRANSIENT STORAGE                         */
+  /*                     TRANSIENT STORAGE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Transient storage slot for the raw debt set during a flash loan.
   uint256 private constant _RAW_DEBT_TSLOT = uint256(keccak256("MorphoFlashLoanRequest.debt")) - 1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          STRUCTS                              */
+  /*                          STRUCTS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Parameters for calling setRequest on the facility.
@@ -117,16 +128,8 @@ contract MorphoFlashLoanRequest is
     bytes[] signatures;
   }
 
-  /// @notice An arbitrary call to execute during the flash loan callback.
-  /// @param target The contract to call.
-  /// @param data The calldata to send.
-  struct Operation {
-    address target;
-    bytes data;
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        CONSTRUCTOR                            */
+  /*                        CONSTRUCTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Deploys the MorphoFlashLoanRequest implementation contract.
@@ -138,7 +141,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        INITIALIZE                             */
+  /*                        INITIALIZE                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the proxy instance.
@@ -158,34 +161,56 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          EXECUTE                              */
+  /*                          EXECUTE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Executes an atomic flash-loan-backed request cycle on the facility.
   /// @dev Only callable by the owner. Initiates a Morpho flash loan, sets this contract as
-  ///      the request on the facility, executes the operations, then unsets itself.
+  ///      the request on the facility, delegatecalls the whitelisted script, then unsets itself.
   /// @param flashLoanAmount The amount of asset to flash loan from Morpho.
   /// @param requestParams Parameters for the setRequest call (intent ID + guardian signatures).
-  /// @param operations Arbitrary calls to execute between the automatic pull and repay.
-  function execute(uint256 flashLoanAmount, SetRequestParams calldata requestParams, Operation[] calldata operations)
-    external
-    onlyOwner
-    nonReentrant
-  {
+  /// @param script The whitelisted script contract to delegatecall.
+  /// @param scriptPayload The calldata to pass to the script.
+  function execute(
+    uint256 flashLoanAmount,
+    SetRequestParams calldata requestParams,
+    address script,
+    bytes calldata scriptPayload
+  ) external onlyOwner nonReentrant {
     flashLoanAmount.checkNotZero();
-    MORPHO.flashLoan(_storage().asset, flashLoanAmount, abi.encode(requestParams, operations));
+    MORPHO.flashLoan(_storage().asset, flashLoanAmount, abi.encode(requestParams, script, scriptPayload));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    FLASH LOAN CALLBACK                        */
+  /*                     SCRIPT MANAGEMENT                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Sets whether a script is whitelisted for delegatecall during execute.
+  /// @param script The script contract address.
+  /// @param allowed Whether the script should be whitelisted.
+  function setScript(address script, bool allowed) external onlyOwner {
+    if (allowed) script.checkContract();
+    _storage().scripts[script] = allowed;
+    emit ScriptSet(script, allowed);
+  }
+
+  /// @notice Returns whether a script is whitelisted.
+  /// @param script The script contract address.
+  /// @return Whether the script is whitelisted.
+  function isScript(address script) external view returns (bool) {
+    return _storage().scripts[script];
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    FLASH LOAN CALLBACK                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Callback called by Morpho during a flash loan.
   /// @dev Sets the raw debt, registers this contract as the request, pulls the flash loan amount
-  ///      into the facility, executes operations, repays back, unsets itself, and approves Morpho
-  ///      to reclaim the loaned amount. Only callable by Morpho.
+  ///      into the facility, delegatecalls the whitelisted script, repays back, unsets itself,
+  ///      and approves Morpho to reclaim the loaned amount. Only callable by Morpho.
   /// @param assets The amount of assets that was flash loaned.
-  /// @param data The encoded SetRequestParams and Operation[] array.
+  /// @param data The encoded SetRequestParams, script address, and script payload.
   function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
     if (msg.sender != address(MORPHO)) revert UnauthorizedCaller();
     if (_getRawDebt() != 0) revert DebtNotRepaid();
@@ -195,7 +220,8 @@ contract MorphoFlashLoanRequest is
     // Set raw debt to full balance (flash loan + any pre-existing dust) — actual debt is rawDebt - assetBalance
     _setRawDebt($.asset.balanceOf(address(this)));
 
-    (SetRequestParams memory params, Operation[] memory operations) = abi.decode(data, (SetRequestParams, Operation[]));
+    (SetRequestParams memory params, address script, bytes memory scriptPayload) =
+      abi.decode(data, (SetRequestParams, address, bytes));
     address facility = $.facility;
 
     // Set this contract as the request on the facility
@@ -205,10 +231,9 @@ contract MorphoFlashLoanRequest is
     // Pull the flash loan amount from this request into the facility
     IFacilityRequests(facility).pull(params.intentId, assets);
 
-    // Execute caller-specified operations
-    for (uint256 i; i < operations.length; ++i) {
-      operations[i].target.callContract(operations[i].data);
-    }
+    // Delegatecall the whitelisted script
+    if (!$.scripts[script]) revert ScriptNotAllowed();
+    script.delegateCallContract(scriptPayload);
 
     // Repay the flash loan amount from the facility back to this request
     IFacilityRequests(facility).repay(params.intentId, assets);
@@ -222,7 +247,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         IHasAsset                             */
+  /*                         IHasAsset                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IHasAsset
@@ -231,7 +256,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    IRequestInteractions                       */
+  /*                    IRequestInteractions                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRequestInteractions
@@ -258,7 +283,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                  IRequest (not applicable)                    */
+  /*                  IRequest (not applicable)                 */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRequest
@@ -312,7 +337,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          RESCUE                               */
+  /*                          RESCUE                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Rescues tokens stuck in the contract.
@@ -325,7 +350,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         INTERNALS                             */
+  /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Computes the actual outstanding debt as rawDebt - assetBalance.
