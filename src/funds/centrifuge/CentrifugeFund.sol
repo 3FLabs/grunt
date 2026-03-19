@@ -431,6 +431,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
+  /// @dev The Centrifuge vault requires `account` to be permissioned at the vault level.
+  /// In practice, only the fund contract is permissioned, so this will return 0 for
+  /// accounts that are not also permissioned on the Centrifuge vault.
   function maxDeposit(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
@@ -438,6 +441,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
+  /// @dev The Centrifuge vault requires `account` to be permissioned at the vault level.
+  /// In practice, only the fund contract is permissioned, so this will return 0 for
+  /// accounts that are not also permissioned on the Centrifuge vault.
   function maxRedeem(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
