@@ -866,28 +866,36 @@ contract CentrifugeFundTest is Test {
   }
 
   function test_MaxDeposit_ReturnsMinOfBalanceAndVaultMax() public {
-    assetToken.mint(address(this), 100 * ONE);
+    address depositor = makeAddr("depositor");
+    vm.prank(owner);
+    fund.grantRoles(depositor, DEPOSITOR_ROLE);
+    vault.setPermissioned(depositor, true);
+    assetToken.mint(depositor, 100 * ONE);
 
     // Vault max is unlimited, so maxDeposit = balance
-    assertEq(fund.maxDeposit(address(this)), 100 * ONE, "balance limited");
+    assertEq(fund.maxDeposit(depositor), 100 * ONE, "balance limited");
 
     // Set vault max to less than balance
     vault.setMaxDeposit(50 * ONE);
-    assertEq(fund.maxDeposit(address(this)), 50 * ONE, "vault limited");
+    assertEq(fund.maxDeposit(depositor), 50 * ONE, "vault limited");
 
     // Non-depositor returns 0
     assertEq(fund.maxDeposit(outsider), 0, "non-depositor");
   }
 
   function test_MaxRedeem_ReturnsMinOfBalanceAndVaultMax() public {
-    _mintWrappedShare(address(this), 100 * ONE);
+    address depositor = makeAddr("depositor");
+    vm.prank(owner);
+    fund.grantRoles(depositor, DEPOSITOR_ROLE);
+    vault.setPermissioned(depositor, true);
+    _mintWrappedShare(depositor, 100 * ONE);
 
     // Vault max is unlimited, so maxRedeem = balance
-    assertEq(fund.maxRedeem(address(this)), 100 * ONE, "balance limited");
+    assertEq(fund.maxRedeem(depositor), 100 * ONE, "balance limited");
 
     // Set vault max to less than balance
     vault.setMaxRedeem(50 * ONE);
-    assertEq(fund.maxRedeem(address(this)), 50 * ONE, "vault limited");
+    assertEq(fund.maxRedeem(depositor), 50 * ONE, "vault limited");
 
     // Non-depositor returns 0
     assertEq(fund.maxRedeem(outsider), 0, "non-depositor");
