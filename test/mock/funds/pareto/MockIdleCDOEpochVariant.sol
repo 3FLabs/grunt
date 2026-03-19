@@ -21,7 +21,7 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   mapping(address => bool) public _walletAllowed;
   uint256 public _claimAmountOverride;
   uint256 public _epochDiscountBps;
-  bool public _apr0Mode;
+  bool public _simulateInstantWithdraw;
 
   constructor(address underlying_, address aaTranche_, address strategy_) {
     _underlying = underlying_;
@@ -98,18 +98,16 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
     _aaTranche.burn(msg.sender, amount);
     // Convert AA tranche amount to underlying amount
     uint256 underlyingAmount = amount * _virtualPrice / 1e18;
-    // Register withdrawal in strategy
+    // Register withdrawal in strategy (skipped when simulating instant path)
     uint256 epoch = _strategy.epochNumber();
-    if (_apr0Mode) {
-      _strategy.registerWithdrawApr0(msg.sender, underlyingAmount, epoch);
-    } else {
+    if (!_simulateInstantWithdraw) {
       _strategy.registerWithdraw(msg.sender, underlyingAmount, epoch);
     }
     return epoch;
   }
 
   function claimWithdrawRequest() external override {
-    uint256 amount = _strategy.totalClaimable(msg.sender);
+    uint256 amount = _strategy.withdrawsRequests(msg.sender);
     require(amount > 0, "MockCDO: no withdrawal");
     uint256 lastEpoch = _strategy.lastWithdrawRequest(msg.sender);
     uint256 currentEpoch = _strategy.epochNumber();
@@ -148,8 +146,8 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
     _epochDiscountBps = discountBps;
   }
 
-  function setApr0Mode(bool mode) external {
-    _apr0Mode = mode;
+  function setSimulateInstantWithdraw(bool simulate) external {
+    _simulateInstantWithdraw = simulate;
   }
 
   /// @dev Advances the epoch: clears epochEndDate and increments strategy epoch number.
