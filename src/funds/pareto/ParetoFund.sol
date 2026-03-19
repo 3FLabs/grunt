@@ -384,8 +384,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   ///      - Checks `depositReceived >= order.output` → UNLOCKING with depositReceived
   ///
   ///      For PROCESSING + REDEEM:
-  ///      - Checks strategy has pending withdrawal AND epoch has ended → UNLOCKING
+  ///      - Checks strategy has pending withdrawal (lastWithdrawRequest > 0) AND epoch has ended → UNLOCKING
   ///      - Epoch ended = epochEndDate == 0 OR epochNumber > lastWithdrawRequest(this)
+  ///      - Uses lastWithdrawRequest instead of withdrawsRequests because the latter is not set
+  ///        on the apr0 path in IdleCreditVault (see _requestWithdrawApr0).
   ///
   ///      For all other states, returns internalState directly.
   function _state(Order calldata order) internal view returns (State, uint256) {
@@ -400,14 +402,13 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
         return _received >= _expectedOutput ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
       } else {
         address _strategy = $.strategy;
-        uint256 _withdrawAmount = IIdleCreditVault(_strategy).withdrawsRequests(address(this));
-        if (_withdrawAmount > 0) {
+        uint256 _lastRequest = IIdleCreditVault(_strategy).lastWithdrawRequest(address(this));
+        if (_lastRequest > 0) {
           if (
             IIdleCDOEpochVariant($.vault).epochEndDate() == 0
-              || IIdleCreditVault(_strategy).epochNumber()
-                > IIdleCreditVault(_strategy).lastWithdrawRequest(address(this))
+              || IIdleCreditVault(_strategy).epochNumber() > _lastRequest
           ) {
-            return (State.UNLOCKING, _withdrawAmount);
+            return (State.UNLOCKING, 0);
           }
         }
         return (State.PROCESSING, 0);
