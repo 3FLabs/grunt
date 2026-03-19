@@ -188,8 +188,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     bytes32 _orderId = order.toId(address(this));
     if (_orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
 
-    if ($.internalState != State.ACCEPTED) {
-      revert LibFundsErrors.InvalidState($.internalState);
+    State _internalState = $.internalState;
+    if (_internalState != State.ACCEPTED && _internalState != State.PENDING) {
+      revert LibFundsErrors.InvalidState(_internalState);
     }
 
     $.currentOrderId = bytes32(0);
