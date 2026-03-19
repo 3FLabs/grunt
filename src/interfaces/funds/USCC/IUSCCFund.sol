@@ -65,13 +65,10 @@ interface IUSCCFund is IFund {
 
   /// @notice Emitted when an order is manually resolved by an operator.
   /// @param orderId The unique identifier of the resolved order.
-  /// @param newOrderId The unique identifier of the new resolved order.
   /// @param newInput The new input amount set by the operator.
   /// @param newOutput The new output amount set by the operator.
   /// @param operator The address that resolved the order.
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
