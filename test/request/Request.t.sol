@@ -253,7 +253,7 @@ contract RequestTest is Test {
     asset.approve(address(request), ptAmount);
 
     // Mint
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Verify balances
@@ -281,7 +281,7 @@ contract RequestTest is Test {
     // Try to mint
     vm.prank(bridgeFacilitator);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
   }
 
   function test_mint_revertsWithNoAuthorization() public {
@@ -295,7 +295,7 @@ contract RequestTest is Test {
     // Should revert because no authorization (ptAmount = 0, so transfer of 0 succeeds but no tokens minted)
     // Actually it will try to transfer 0 and mint 0, which may or may not revert
     // Let's verify the behavior
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // No tokens should be minted
@@ -307,7 +307,7 @@ contract RequestTest is Test {
   /*                  MINT SLIPPAGE TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_mint_revertsWhenPtBelowMin() public {
+  function test_mint_revertsWhenPtAboveMax() public {
     address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 100_000e6;
@@ -319,9 +319,9 @@ contract RequestTest is Test {
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
 
-    // minPt exceeds authorized PT
+    // maxPt below authorized PT — broker caps deposit lower than authorized
     vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
-    request.mint(ptAmount + 1, ytAmount);
+    request.mint(ptAmount - 1, ytAmount);
     vm.stopPrank();
   }
 
@@ -361,7 +361,7 @@ contract RequestTest is Test {
     assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount);
   }
 
-  function test_mint_succeedsWithLowerMinimums() public {
+  function test_mint_succeedsWithRelaxedBounds() public {
     address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 100_000e6;
@@ -372,14 +372,15 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, ptAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
-    request.mint(ptAmount / 2, ytAmount / 2);
+    // Higher maxPt (more lenient cap) and lower minYt (more lenient floor) both succeed
+    request.mint(ptAmount * 2, ytAmount / 2);
     vm.stopPrank();
 
     assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount);
     assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount);
   }
 
-  function testFuzz_mint_slippageProtection(uint128 ptAuth, uint128 ytAuth, uint128 minPt, uint128 minYt) public {
+  function testFuzz_mint_slippageProtection(uint128 ptAuth, uint128 ytAuth, uint128 maxPt, uint128 minYt) public {
     vm.assume(ptAuth > 0 && ptAuth < type(uint128).max / 2);
     vm.assume(ytAuth > 0 && ytAuth < type(uint128).max / 2);
 
@@ -392,11 +393,11 @@ contract RequestTest is Test {
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAuth);
 
-    if (ptAuth < minPt || ytAuth < minYt) {
+    if (ptAuth > maxPt || ytAuth < minYt) {
       vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
-      request.mint(minPt, minYt);
+      request.mint(maxPt, minYt);
     } else {
-      request.mint(minPt, minYt);
+      request.mint(maxPt, minYt);
       assertEq(ptVault.balanceOf(bridgeFacilitator), ptAuth);
       assertEq(ytVault.balanceOf(bridgeFacilitator), ytAuth);
     }
@@ -468,7 +469,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Now pull funds (puller receives funds, no callback)
@@ -495,7 +496,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull partial funds - expect event with puller address and partial amount
@@ -537,7 +538,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -565,7 +566,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint(0, 0);
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with callback data
@@ -591,7 +592,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract that will revert
@@ -620,7 +621,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint(0, 0);
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with callback data - should revert
@@ -641,7 +642,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -669,7 +670,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint(0, 0);
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with empty data - callback should not be called
@@ -693,7 +694,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -721,7 +722,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint(0, 0);
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with different data types
@@ -759,7 +760,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -789,7 +790,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -818,7 +819,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -854,7 +855,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -903,7 +904,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Now set repaid - should emit with the balance
@@ -947,7 +948,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     vm.expectEmit(true, true, true, true, address(request));
@@ -969,7 +970,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds to simulate facilitator draining
@@ -992,7 +993,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Simulate partial frontrun: facilitator pulls half the funds
@@ -1030,7 +1031,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, depositAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), depositAmount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     if (pullAmount > 0) {
@@ -1085,7 +1086,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     assertEq(request.lastMintTimestamp(), uint40(block.timestamp));
@@ -1107,7 +1108,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint(0, 0);
+    timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     uint40 expectedAvailableAt = uint40(block.timestamp) + delay;
@@ -1133,7 +1134,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint(0, 0);
+    timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Warp past the timelock
@@ -1179,7 +1180,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint(0, 0);
+    timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     assertEq(timelockRequest.repaidAvailableAt(), uint40(block.timestamp) + delay);
@@ -1225,7 +1226,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(timelockRequest), amount);
-    timelockRequest.mint(0, 0);
+    timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     uint256 mintTime = block.timestamp;
@@ -1309,7 +1310,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, principal);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), principal);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     assertEq(ptVault.balanceOf(bridgeFacilitator), principal);
@@ -1361,14 +1362,14 @@ contract RequestTest is Test {
     asset.mint(bf1, 1_000_000e6);
     vm.startPrank(bf1);
     asset.approve(address(request), 1_000_000e6);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // BF 2 mints
     asset.mint(bf2, 500_000e6);
     vm.startPrank(bf2);
     asset.approve(address(request), 500_000e6);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Verify total supplies
@@ -1417,7 +1418,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, principal);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), principal);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1473,7 +1474,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, ptAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount);
@@ -1493,7 +1494,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, depositAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), depositAmount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     vm.prank(puller);
@@ -1518,7 +1519,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, principal);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), principal);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1573,7 +1574,7 @@ contract RequestTest is Test {
       asset.mint(bf, principal);
       vm.startPrank(bf);
       asset.approve(address(request), principal);
-      request.mint(0, 0);
+      request.mint(type(uint128).max, 0);
       vm.stopPrank();
     }
 
@@ -1614,7 +1615,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, 1_000_000e6);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), 1_000_000e6);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
 
     // Try to redeem before repaid
     vm.expectRevert();
@@ -1683,7 +1684,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint(0, 0);
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Fast forward past the deadline
@@ -1743,7 +1744,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint(0, 0);
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1797,7 +1798,7 @@ contract RequestTest is Test {
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    deadlineRequest.mint(0, 0);
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
   }
 
@@ -1842,7 +1843,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint(0, 0);
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds should work
@@ -1955,7 +1956,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint(0, 0);
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     vm.warp(deadline + 1);
