@@ -207,14 +207,26 @@ abstract contract VaultController is TokenController, IVaultController {
 
   /// @inheritdoc IVaultController
   /// @dev Uses `mulDiv` for asset calculation to favor the vault (rounds down assets received).
-  ///      Falls back to initial conversion logic when supply or assets are zero. The conversion
-  ///      rate reflects the current redemption value based on asset distribution.
+  ///      The conversion rate reflects the current redemption value based on asset distribution.
+  ///
+  ///      Falls back to initial conversion (PT 1:1, YT 0) when:
+  ///      - The token supply is zero (avoids division by zero), OR
+  ///      - The total assets are zero AND the request has NOT been repaid yet (pre-repayment estimate).
+  ///
+  ///      Once repaid, if assets are zero but supply is non-zero, `mulDiv` is used which correctly
+  ///      yields zero — allowing `burnAll` to succeed without reverting on a zero-balance `safeTransfer`.
+  ///      Previously, the initial conversion would return `ptShares` (1:1) even when no assets existed,
+  ///      causing the subsequent transfer to revert (CS-GRUNT-014).
   function convertToAssets(uint256 ptShares, uint256 ytShares) public view returns (uint256 pAssets, uint256 yAssets) {
     (uint256 totalPAssets, uint256 totalYAssets, uint256 totalPtSupply, uint256 totalYtSupply) = _assetsAndSupplies();
-    pAssets = _eitherIsZero(totalPAssets, totalPtSupply)
+    bool repaid = _canWithdraw();
+    // Use initial conversion only when supply is zero (div-by-zero guard) or when not yet repaid
+    // and assets are zero (pre-repayment 1:1 estimate). After repayment, zero assets with non-zero
+    // supply correctly yields zero via mulDiv, preventing burnAll from reverting on empty vaults.
+    pAssets = (totalPtSupply == 0 || (totalPAssets == 0 && !repaid))
       ? _initialConvertToAssets(ptShares, false)
       : ptShares.mulDiv(totalPAssets, totalPtSupply);
-    yAssets = _eitherIsZero(totalYAssets, totalYtSupply)
+    yAssets = (totalYtSupply == 0 || (totalYAssets == 0 && !repaid))
       ? _initialConvertToAssets(ytShares, true)
       : ytShares.mulDiv(totalYAssets, totalYtSupply);
   }
