@@ -1052,7 +1052,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // maxBalance matches balance exactly — should succeed
@@ -1071,7 +1071,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Malicious facilitator over-repays to inflate YT value
@@ -1097,7 +1097,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, ptAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds then "repay" with excess — facilitator is also a YT holder
@@ -1134,7 +1134,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Balance is exactly amount — both min and max match
@@ -1153,7 +1153,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, amount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Add excess — but type(uint256).max skips the check
@@ -1183,7 +1183,7 @@ contract RequestTest is Test {
     asset.mint(bridgeFacilitator, depositAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), depositAmount);
-    request.mint(0, 0);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     if (pullAmount > 0) {
