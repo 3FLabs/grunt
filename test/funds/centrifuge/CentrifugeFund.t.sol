@@ -795,28 +795,96 @@ contract CentrifugeFundTest is Test {
     fund.cancelRequest(order);
   }
 
-  function test_CancelRequest_RevertsWithPendingClaimableDeposit() public {
+  function test_CancelRequest_SucceedsWithPollutedClaimableDeposit() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
     _commitDeposit(order);
 
-    // Partial fill: 500 of 1000 shares fulfilled
-    vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
+    // Polluter fills a tiny deposit on behalf of the fund controller.
+    address attacker = makeAddr("attacker-deposit");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillDeposit(address(fund), pollution, pollution);
 
     vm.prank(owner);
-    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.cancelRequest(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after polluted claim");
+    assertTrue(vault._pendingCancelDeposit(address(fund)), "pending cancel on vault");
   }
 
-  function test_CancelRequest_RevertsWithPendingClaimableRedeem() public {
+  function test_CancelRequest_SucceedsWithPollutedClaimableRedeem() public {
     Order memory order = _redeemOrder(ONE, ONE);
     fund.create(order);
     _mintWrappedShare(address(this), order.input);
     wrappedShare.approve(address(fund), order.input);
     fund.commit(order);
 
-    // Partial fill: 500 of 1000 assets fulfilled
-    vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
+    // Polluter fills a tiny redeem on behalf of the fund controller.
+    address attacker = makeAddr("attacker-redeem");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillRedeem(address(fund), pollution, pollution);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after polluted claim");
+    assertTrue(vault._pendingCancelRedeem(address(fund)), "pending cancel on vault");
+  }
+
+  function test_CancelRequest_RevertsWithPendingClaimableWithoutPendingDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-deposit-no-pending");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    vault.fulfillDeposit(address(fund), order.input + pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.cancelRequest(order);
+  }
+
+  function test_CancelRequest_RevertsWithPendingClaimableWithoutPendingRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-redeem-no-pending");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    vault.fulfillRedeem(address(fund), order.output + pollution);
 
     vm.prank(owner);
     vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
@@ -1347,28 +1415,124 @@ contract CentrifugeFundTest is Test {
     fund.forceEnd(order);
   }
 
-  function test_ForceEnd_RevertsWithPendingClaimableDeposit() public {
+  function test_ForceEnd_SucceedsWithPendingClaimableDeposit() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
     _commitDeposit(order);
 
-    // Partial fill: 500 of 1000 shares fulfilled
+    // Partial fill: 500 of 1000 shares fulfilled — pending request still exists
     vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
 
     vm.prank(owner);
-    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended despite partial fill with pending request");
   }
 
-  function test_ForceEnd_RevertsWithPendingClaimableRedeem() public {
+  function test_ForceEnd_SucceedsWithPendingClaimableRedeem() public {
     Order memory order = _redeemOrder(ONE, ONE);
     fund.create(order);
     _mintWrappedShare(address(this), order.input);
     wrappedShare.approve(address(fund), order.input);
     fund.commit(order);
 
-    // Partial fill: 500 of 1000 assets fulfilled
+    // Partial fill: 500 of 1000 assets fulfilled — pending request still exists
     vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended despite partial fill with pending request");
+  }
+
+  function test_ForceEnd_SucceedsWithPollutedClaimableDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Polluter fills a tiny deposit on behalf of the fund controller.
+    address attacker = makeAddr("attacker-deposit");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillDeposit(address(fund), pollution, pollution);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended after polluted claim");
+  }
+
+  function test_ForceEnd_SucceedsWithPollutedClaimableRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Polluter fills a tiny redeem on behalf of the fund controller.
+    address attacker = makeAddr("attacker-redeem");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillRedeem(address(fund), pollution, pollution);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended after polluted claim");
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableWithoutPendingDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-deposit-no-pending");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    vault.fulfillDeposit(address(fund), order.input + pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableWithoutPendingRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-redeem-no-pending");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    vault.fulfillRedeem(address(fund), order.output + pollution);
 
     vm.prank(owner);
     vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
