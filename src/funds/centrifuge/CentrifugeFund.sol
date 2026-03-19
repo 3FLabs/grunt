@@ -277,11 +277,13 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     State _newState;
     if ($.internalState == State.RECOVERING) {
       bool _hasPendingRecover = _stateHasPendingRecover(order.mode, _vault);
-      _newState = (_hasPendingRecover || _hasPendingRequest) ? State.RECOVERING : State.ENDED;
+      bool _hasPending = _hasPendingRecover || _hasPendingRequest;
+      $.internalState = _hasPending ? State.RECOVERING : State.ENDED;
+      _newState = _hasPending ? State.PROCESSING : State.ENDED;
     } else {
       _newState = _hasPendingRequest ? State.PROCESSING : State.ENDED;
+      $.internalState = _newState;
     }
-    $.internalState = _newState;
 
     emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
 
@@ -324,12 +326,11 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
 
     bool _hasPendingRecover = _stateHasPendingRecover(order.mode, _vault);
-    State _newState = _hasPendingRecover ? State.RECOVERING : State.ENDED;
-    $.internalState = _newState;
+    $.internalState = _hasPendingRecover ? State.RECOVERING : State.ENDED;
 
     emit OrderRecovered(_currentOrderId, order.mode, _amount, order.receiver);
 
-    return (_newState, _amount);
+    return (_hasPendingRecover ? State.PROCESSING : State.ENDED, _amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -539,8 +540,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @dev Returns whether a cancellation request is still pending or has claimable assets.
-  ///      Used by `recover()` to decide whether the order stays in RECOVERING (partial claim)
-  ///      or transitions to ENDED (fully claimed).
+  ///      Used by `recover()` and `unlock()` to decide between returning PROCESSING (partial)
+  ///      and ENDED (fully claimed). Internally the order stays in RECOVERING until complete.
   ///      Checks both pending (not yet processed by pool) AND claimable (processed but not yet
   ///      claimed by us), because the pool may partially process a cancellation across epochs.
   /// @param _mode  The order mode (DEPOSIT or REDEEM).
