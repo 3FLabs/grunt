@@ -284,23 +284,42 @@ contract RequestTest is Test {
     request.mint(type(uint128).max, 0);
   }
 
-  function test_mint_revertsWithNoAuthorization() public {
+  function test_mint_noopWithNoAuthorization() public {
     address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
-    asset.mint(bridgeFacilitator, 1_000_000e6);
+    // Early return — no tokens minted, no state changes
+    vm.prank(bridgeFacilitator);
+    request.mint(type(uint128).max, 0);
 
+    assertEq(ptVault.balanceOf(bridgeFacilitator), 0);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), 0);
+  }
+
+  function test_mint_zeroAuthDoesNotBumpLastMintTimestamp() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    // Perform a real mint to set lastMintTimestamp
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+    asset.mint(bridgeFacilitator, ptAmount);
     vm.startPrank(bridgeFacilitator);
-    asset.approve(address(request), 1_000_000e6);
-
-    // Should revert because no authorization (ptAmount = 0, so transfer of 0 succeeds but no tokens minted)
-    // Actually it will try to transfer 0 and mint 0, which may or may not revert
-    // Let's verify the behavior
+    asset.approve(address(request), ptAmount);
     request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    // No tokens should be minted
-    assertEq(ptVault.balanceOf(bridgeFacilitator), 0);
-    assertEq(ytVault.balanceOf(bridgeFacilitator), 0);
+    uint40 mintTimestamp = request.lastMintTimestamp();
+    assertGt(mintTimestamp, 0);
+
+    // Warp forward — a griefing caller tries to bump the timestamp
+    vm.warp(block.timestamp + 1 days);
+    address griefer = makeAddr("griefer");
+    vm.prank(griefer);
+    request.mint(type(uint128).max, 0);
+
+    // lastMintTimestamp should NOT have changed
+    assertEq(request.lastMintTimestamp(), mintTimestamp, "zero-auth mint must not bump lastMintTimestamp");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

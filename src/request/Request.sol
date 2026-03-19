@@ -363,6 +363,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   function mint(uint128 maxPt, uint128 minYt) external {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
+    // Early return when no authorization — prevents griefing where a zero-authorized caller
+    // repeatedly calls mint to bump lastMintTimestamp and permanently delay setRepaid().
+    if (ptMintAuth == 0 && ytMintAuth == 0) return;
     if (ptMintAuth > maxPt || ytMintAuth < minYt) revert LibRequestErrors.SlippageExceeded();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
