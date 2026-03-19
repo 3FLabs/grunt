@@ -389,11 +389,11 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     // Revert if recoverable cancel assets exist (must be drained via recover() first)
     if (_internalState == State.RECOVERING) {
       if (order.mode == Mode.DEPOSIT) {
-        if (ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this)) > 0) {
+        if (ICentrifugeVault(_vault).claimableCancelDepositRequest(_PENDING_REQUEST, address(this)) > 0) {
           revert LibFundsErrors.PendingClaimableAssets();
         }
       } else {
-        if (ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this)) > 0) {
+        if (ICentrifugeVault(_vault).claimableCancelRedeemRequest(_PENDING_REQUEST, address(this)) > 0) {
           revert LibFundsErrors.PendingClaimableAssets();
         }
       }
@@ -508,8 +508,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
       if (_claimable > 0) return (State.UNLOCKING, _claimable);
 
       _claimable = order.mode == Mode.DEPOSIT
-        ? ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this))
-        : ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this));
+        ? ICentrifugeVault(_vault).claimableCancelDepositRequest(_PENDING_REQUEST, address(this))
+        : ICentrifugeVault(_vault).claimableCancelRedeemRequest(_PENDING_REQUEST, address(this));
 
       // Report PROCESSING while the Centrifuge pool hasn't fulfilled the cancel yet,
       // so callers don't attempt to claim before there's anything to recover.
@@ -541,12 +541,12 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @param _vault The Centrifuge vault address.
   function _stateHasPendingRecover(Mode _mode, address _vault) internal view returns (bool) {
     if (_mode == Mode.DEPOSIT) {
-      return ICentrifugeVault(_vault).pendingCancelDepositRequest(0, address(this))
-        || ICentrifugeVault(_vault).claimableCancelDepositRequest(0, address(this)) > 0;
+      return ICentrifugeVault(_vault).pendingCancelDepositRequest(_PENDING_REQUEST, address(this))
+        || ICentrifugeVault(_vault).claimableCancelDepositRequest(_PENDING_REQUEST, address(this)) > 0;
     }
 
-    return ICentrifugeVault(_vault).pendingCancelRedeemRequest(0, address(this))
-      || ICentrifugeVault(_vault).claimableCancelRedeemRequest(0, address(this)) > 0;
+    return ICentrifugeVault(_vault).pendingCancelRedeemRequest(_PENDING_REQUEST, address(this))
+      || ICentrifugeVault(_vault).claimableCancelRedeemRequest(_PENDING_REQUEST, address(this)) > 0;
   }
 
   /// @dev Reverts if the order owner is not the caller.
