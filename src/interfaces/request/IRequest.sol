@@ -76,9 +76,10 @@ interface IRequest is IRequestInteractions {
   function mintAuthorization(address account) external view returns (uint128 ptAmount, uint128 ytAmount);
 
   /// @notice Mints PT and YT tokens to the caller using their authorized amounts.
-  /// @param minPt The minimum PT amount the caller expects (reverts if authorized PT < minPt).
+  /// @param maxPt The maximum PT amount the caller accepts (reverts if authorized PT > maxPt).
+  ///             Pass type(uint128).max to skip the PT cap check.
   /// @param minYt The minimum YT amount the caller expects (reverts if authorized YT < minYt).
-  function mint(uint128 minPt, uint128 minYt) external;
+  function mint(uint128 maxPt, uint128 minYt) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     OFFER CONSUMPTION                      */

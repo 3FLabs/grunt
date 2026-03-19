@@ -346,19 +346,27 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @inheritdoc IRequest
   /// @dev The caller must have been previously authorized via `authorizeMinting()`. This function:
   ///      1. Reads the caller's authorized PT/YT amounts from storage
-  ///      2. Validates that amounts meet the caller's minimum expectations (slippage protection)
+  ///      2. Validates slippage: PT must not exceed maxPt (caps the deposit), YT must meet minYt (protects yield)
   ///      3. Transfers PT amount of underlying asset from caller to this contract
   ///      4. Mints the authorized PT and YT amounts to the caller
   ///      5. Clears the minting authorization (one-time use)
   ///
   ///      The caller must have approved this contract to spend the required asset amount.
   ///      Note: The authorization is consumed after minting (amounts reset to 0).
+  ///
+  ///      maxPt caps the deposit: if the consumer front-runs to increase ptMintAuth, the broker
+  ///      would deposit more than expected for the same yield. Pass type(uint128).max to skip.
+  ///      minYt protects yield: if the consumer front-runs to decrease ytMintAuth, the broker
+  ///      would receive less yield for their deposit.
   /// @custom:reverts If the request has been repaid or the deadline has passed
-  /// @custom:reverts SlippageExceeded if authorized amounts are below the caller's minimums
-  function mint(uint128 minPt, uint128 minYt) external {
+  /// @custom:reverts SlippageExceeded if authorized PT exceeds maxPt or authorized YT is below minYt
+  function mint(uint128 maxPt, uint128 minYt) external {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
-    if (ptMintAuth < minPt || ytMintAuth < minYt) revert LibRequestErrors.SlippageExceeded();
+    // Early return when no authorization — prevents griefing where a zero-authorized caller
+    // repeatedly calls mint to bump lastMintTimestamp and permanently delay setRepaid().
+    if (ptMintAuth == 0 && ytMintAuth == 0) return;
+    if (ptMintAuth > maxPt || ytMintAuth < minYt) revert LibRequestErrors.SlippageExceeded();
     msg.sender.updateMintAuth(0, 0);
     _asset().safeTransferFrom(msg.sender, address(this), ptMintAuth);
     _mint(msg.sender, ptMintAuth, ytMintAuth);

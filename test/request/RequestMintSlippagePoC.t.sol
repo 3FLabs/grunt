@@ -11,18 +11,23 @@ import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
 /// @title RequestMintSlippagePoCTest
 /// @notice Proof of Concept demonstrating that the mint slippage protection prevents the CS-I-12 attack.
 /// @dev Reference: ChainSecurity I-12 — MEDIUM: Facilitator can front-run mint() to zero YT allocation.
+///      Reference: CS-GRUNT-018 — Facilitator can front-run to increase PT (larger deposit, same yield).
 ///
-///      Attack sequence (without fix):
+///      Attack sequences (without fix):
+///        YT reduction attack:
 ///        1. Facilitator calls authorizeMinting(broker, 1000e6, 500e6)
-///           — broker sees 1000 PT + 500 YT authorization
 ///        2. BF approves the Request contract and submits mint() transaction
-///        3. Facilitator front-runs with authorizeMinting(broker, 1000e6, 0)
-///           — same PT, zero YT
+///        3. Facilitator front-runs with authorizeMinting(broker, 1000e6, 0) — same PT, zero YT
 ///        4. BF's mint() executes: transfers 1000 USDC, receives 1000 PT + 0 YT
-///        5. BF paid full amount but gets no yield token
 ///
-///      With the slippage protection fix, mint(minPt, minYt) reverts with SlippageExceeded
-///      if the authorized amounts have been tampered with below the broker's expectations.
+///        PT inflation attack (CS-GRUNT-018):
+///        1. Facilitator calls authorizeMinting(broker, 1000e6, 500e6)
+///        2. BF approves the Request contract and submits mint() transaction
+///        3. Facilitator front-runs with authorizeMinting(broker, 2000e6, 500e6) — doubled PT, same YT
+///        4. BF's mint() executes: transfers 2000 USDC, receives 2000 PT + 500 YT (overpaid for yield)
+///
+///      With the fix, mint(maxPt, minYt) reverts with SlippageExceeded if the authorized
+///      PT exceeds the broker's cap or the authorized YT falls below the broker's floor.
 contract RequestMintSlippagePoCTest is Test {
   RequestFactory public factory;
   Request public request;
@@ -54,10 +59,10 @@ contract RequestMintSlippagePoCTest is Test {
     ytVault = Vault(ytAddr);
   }
 
-  /// @notice Demonstrates the front-run attack scenario and that slippage protection blocks it.
+  /// @notice Demonstrates the YT reduction front-run attack scenario and that slippage protection blocks it.
   /// @dev The facilitator front-runs the broker's mint() by overwriting the YT authorization to zero.
   ///      Without the fix, the broker would lose their entire YT allocation.
-  ///      With the fix, mint(minPt, minYt) reverts with SlippageExceeded.
+  ///      With the fix, mint(maxPt, minYt) reverts with SlippageExceeded.
   function test_poc_facilitatorCannotFrontRunMintToZeroYT() public {
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 500_000e6;
@@ -92,10 +97,10 @@ contract RequestMintSlippagePoCTest is Test {
     assertEq(ytVault.balanceOf(bridgeFacilitator), 0, "No YT tokens should be minted");
   }
 
-  /// @notice Demonstrates that PT amount can also be front-run and is protected.
-  /// @dev Facilitator reduces PT authorization, so the broker would deposit less
-  ///      but the broker expected a certain PT amount.
-  function test_poc_facilitatorCannotFrontRunMintToReducePT() public {
+  /// @notice Demonstrates that PT inflation attack is now protected (CS-GRUNT-018).
+  /// @dev Facilitator increases PT authorization so the broker would deposit more than expected
+  ///      for the same yield. The maxPt cap prevents this.
+  function test_poc_facilitatorCannotFrontRunMintToIncreasePT() public {
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 500_000e6;
 
@@ -103,21 +108,21 @@ contract RequestMintSlippagePoCTest is Test {
     vm.prank(consumer);
     request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
-    asset.mint(bridgeFacilitator, ptAmount);
+    asset.mint(bridgeFacilitator, ptAmount * 2);
     vm.prank(bridgeFacilitator);
-    asset.approve(address(request), ptAmount);
+    asset.approve(address(request), ptAmount * 2);
 
-    // Facilitator front-runs by reducing PT
+    // Facilitator front-runs by doubling PT — broker would overpay for same yield
     vm.prank(consumer);
-    request.authorizeMinting(bridgeFacilitator, ptAmount / 2, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount * 2, ytAmount);
 
-    // BF's mint reverts because PT authorization (500k) < minPt (1M)
+    // BF's mint reverts because PT authorization (2M) > maxPt (1M)
     vm.prank(bridgeFacilitator);
     vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
     request.mint(ptAmount, ytAmount);
 
     // BF funds intact
-    assertEq(asset.balanceOf(bridgeFacilitator), ptAmount, "BF funds should be intact");
+    assertEq(asset.balanceOf(bridgeFacilitator), ptAmount * 2, "BF funds should be intact");
   }
 
   /// @notice Verifies that legitimate minting succeeds when authorization matches expectations.
@@ -143,30 +148,33 @@ contract RequestMintSlippagePoCTest is Test {
     assertEq(asset.balanceOf(bridgeFacilitator), 0, "BF should have spent all funds");
   }
 
-  /// @notice Verifies that a broker can set lower minimums to allow partial adjustments.
-  /// @dev A broker might accept a range of YT amounts, so minYt can be lower than authorized.
-  function test_poc_brokerCanAcceptHigherThanMinimum() public {
+  /// @notice Verifies that a broker can set relaxed bounds to allow partial adjustments.
+  /// @dev A broker might accept a range of YT amounts (minYt lower than authorized)
+  ///      and a range of PT amounts (maxPt higher than authorized).
+  function test_poc_brokerCanAcceptRelaxedBounds() public {
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 500_000e6;
+    uint128 maxPt = 1_200_000e6; // BF accepts up to 1.2M PT
     uint128 minYt = 400_000e6; // BF accepts anything >= 400k YT
 
     // Facilitator authorizes the full amount
     vm.prank(consumer);
     request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
-    // BF mints with a lower minimum — succeeds because 500k >= 400k
+    // BF mints with relaxed bounds — succeeds because 1M <= 1.2M and 500k >= 400k
     asset.mint(bridgeFacilitator, ptAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
-    request.mint(ptAmount, minYt);
+    request.mint(maxPt, minYt);
     vm.stopPrank();
 
     assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount, "Should receive full YT amount");
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount, "Should receive full PT amount");
   }
 
-  /// @notice Verifies zero minimums still work for backwards-compatible behavior.
-  /// @dev Callers who don't want slippage protection can pass (0, 0).
-  function test_poc_zeroMinimumsAllowAnyAuthorization() public {
+  /// @notice Verifies max PT / zero minYt still works for no-protection behavior.
+  /// @dev Callers who don't want slippage protection can pass (type(uint128).max, 0).
+  function test_poc_noProtectionWithMaxValues() public {
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 500_000e6;
 
@@ -176,7 +184,7 @@ contract RequestMintSlippagePoCTest is Test {
     asset.mint(bridgeFacilitator, ptAmount);
     vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
-    request.mint(0, 0); // No slippage protection
+    request.mint(type(uint128).max, 0); // No slippage protection
     vm.stopPrank();
 
     assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount, "PT should be minted");
