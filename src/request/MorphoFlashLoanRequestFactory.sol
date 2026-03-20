@@ -39,10 +39,11 @@ contract MorphoFlashLoanRequestFactory {
   /// @notice Emitted when a new MorphoFlashLoanRequest is created.
   /// @param flashLoanRequest The address of the newly deployed MorphoFlashLoanRequest proxy
   /// @param owner The owner of the flash loan request
+  /// @param executor The address granted EXECUTOR_ROLE
   /// @param facility The facility contract address
   /// @param asset The underlying asset token address
   event FlashLoanRequestCreated(
-    address indexed flashLoanRequest, address indexed owner, address facility, address asset
+    address indexed flashLoanRequest, address indexed owner, address executor, address facility, address asset
   );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -86,25 +87,26 @@ contract MorphoFlashLoanRequestFactory {
   /// @notice Creates a new MorphoFlashLoanRequest proxy.
   /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
   ///      1. Deploys MorphoFlashLoanRequest proxy pointing to FLASH_LOAN_REQUEST_BEACON
-  ///      2. Initializes the request with owner, facility, and asset
+  ///      2. Initializes the request with owner, executor, facility, and asset
   ///
-  ///      The owner becomes the controller and has exclusive access to execute.
+  ///      The owner manages scripts and can rescue tokens. The executor calls execute.
   ///      Emits a {FlashLoanRequestCreated} event.
-  /// @param owner_ The owner who can call execute on the flash loan request
+  /// @param owner_ The owner who can manage scripts and rescue tokens
+  /// @param executor The address granted EXECUTOR_ROLE to call execute
   /// @param facility The facility contract address
   /// @param asset The underlying asset token address
   /// @return flashLoanRequest The address of the newly deployed MorphoFlashLoanRequest proxy
-  function createFlashLoanRequest(address owner_, address facility, address asset)
+  function createFlashLoanRequest(address owner_, address executor, address facility, address asset)
     external
     returns (address flashLoanRequest)
   {
     flashLoanRequest = FLASH_LOAN_REQUEST_BEACON.deployERC1967BeaconProxy();
 
-    MorphoFlashLoanRequest(flashLoanRequest).initialize(owner_, facility, asset);
+    MorphoFlashLoanRequest(flashLoanRequest).initialize(owner_, executor, facility, asset);
 
     _isFlashLoanRequest[flashLoanRequest] = true;
 
-    emit FlashLoanRequestCreated(flashLoanRequest, owner_, facility, asset);
+    emit FlashLoanRequestCreated(flashLoanRequest, owner_, executor, facility, asset);
   }
 
   /// @notice Checks if an address is a MorphoFlashLoanRequest contract deployed by this factory.
