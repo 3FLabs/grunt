@@ -9,7 +9,7 @@ import {IFacilityIntents} from "../interfaces/facility/base/IFacilityIntents.sol
 import {IFacilityRequests} from "../interfaces/facility/base/IFacilityRequests.sol";
 import {IMorphoFlashLoanCallback} from "lib/morpho-blue/src/interfaces/IMorphoCallbacks.sol";
 import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
-import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -42,7 +42,7 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 contract MorphoFlashLoanRequest is
   IRequest,
   IMorphoFlashLoanCallback,
-  Ownable,
+  OwnableRoles,
   Initializable,
   ReentrancyGuardTransient
 {
@@ -69,6 +69,13 @@ contract MorphoFlashLoanRequest is
 
   /// @notice Thrown when a script is not whitelisted.
   error ScriptNotAllowed();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Role for executing flash loans.
+  uint256 internal constant EXECUTOR_ROLE = _ROLE_0;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -145,11 +152,13 @@ contract MorphoFlashLoanRequest is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the proxy instance.
-  /// @param owner_ The owner who can call execute.
+  /// @param owner_ The owner who can manage scripts and rescue tokens.
+  /// @param executor_ The address granted EXECUTOR_ROLE to call execute.
   /// @param facility_ The facility contract address.
   /// @param asset_ The underlying asset token address.
-  function initialize(address owner_, address facility_, address asset_) public initializer {
+  function initialize(address owner_, address executor_, address facility_, address asset_) public initializer {
     owner_.checkNotZero();
+    executor_.checkNotZero();
     facility_.checkContract();
     asset_.checkContract();
 
@@ -158,6 +167,7 @@ contract MorphoFlashLoanRequest is
     $.asset = asset_;
 
     _initializeOwner(owner_);
+    _grantRoles(executor_, EXECUTOR_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -165,8 +175,8 @@ contract MorphoFlashLoanRequest is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Executes an atomic flash-loan-backed request cycle on the facility.
-  /// @dev Only callable by the owner. Initiates a Morpho flash loan, sets this contract as
-  ///      the request on the facility, delegatecalls the whitelisted script, then unsets itself.
+  /// @dev Only callable by addresses with EXECUTOR_ROLE. Initiates a Morpho flash loan, sets this
+  ///      contract as the request on the facility, delegatecalls the whitelisted script, then unsets itself.
   /// @param flashLoanAmount The amount of asset to flash loan from Morpho.
   /// @param requestParams Parameters for the setRequest call (intent ID + guardian signatures).
   /// @param script The whitelisted script contract to delegatecall.
@@ -176,7 +186,7 @@ contract MorphoFlashLoanRequest is
     SetRequestParams calldata requestParams,
     address script,
     bytes calldata scriptPayload
-  ) external onlyOwner nonReentrant {
+  ) external onlyRoles(EXECUTOR_ROLE) nonReentrant {
     flashLoanAmount.checkNotZero();
     MORPHO.flashLoan(_storage().asset, flashLoanAmount, abi.encode(requestParams, script, scriptPayload));
   }
