@@ -235,7 +235,7 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     (bool isPaused,) = facility.facilityConfig();
 
-    if (timePassed > duration) {
+    if (timePassed >= duration) {
       assertFalse(isPaused, "Should not be paused after duration");
     } else {
       assertTrue(isPaused, "Should still be paused before duration");
