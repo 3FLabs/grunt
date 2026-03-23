@@ -14,6 +14,7 @@ import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../libs/common/LibCommonErrors.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
 /// @title PositionManagerLP
 /// @author 3F Protocol
@@ -27,6 +28,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   using LibOperations for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
   using LibView for uint256;
+  using EnumerableSetLib for EnumerableSetLib.AddressSet;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */
@@ -145,9 +147,14 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
-    // Process through withdrawal queue using the specified strategy
-    // checkLtv=false: burn amounts are proportional to total debt/collateral, no per-position LTV check needed
-    _storage.processWithdrawal(collateral, debt, strategy, false);
+    // Process through withdrawal queue using the specified strategy.
+    // When the withdrawal queue covers all whitelisted positions, burn amounts are proportional
+    // to total debt/collateral so per-position LTV is maintained by construction — skip the check.
+    // When the queue is a strict subset, some positions are excluded from the proportional
+    // distribution, so queue positions may bear a disproportionate share of the withdrawal
+    // and per-position LTV checks are required.
+    bool skipLtvCheck = _storage.withdrawalQueue.length == _storage.borrowModules.length();
+    _storage.processWithdrawal(collateral, debt, strategy, !skipLtvCheck);
 
     // Send collateral to caller
     if (collateral > 0) {
