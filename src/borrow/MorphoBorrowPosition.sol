@@ -495,10 +495,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   function availableLiquidity() external view override returns (uint256) {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
 
-    // Use expected (interest-accrued) market balances.
-    // Interest accrual increases both supply and borrow by the same amount,
-    // so liquidity stays unchanged. However, fee shares redirect a portion of supply,
-    // which can subtly affect the calculation. Using expected values is correct.
+    // Use expected (interest-accrued) market balances so that accrued
+    // interest is reflected in both totalSupplyAssets and totalBorrowAssets.
     (uint256 _totalSupplyAssets,, uint256 _totalBorrowAssets,) =
       MORPHO.expectedMarketBalances(_storage.marketParams, _storage.marketId);
     return _totalSupplyAssets - _totalBorrowAssets;
