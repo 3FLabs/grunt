@@ -195,7 +195,6 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
       uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, true);
-      if (sharesToBurn == 0) revert LibManagerErrors.ZeroShares();
       _burn(msg.sender, sharesToBurn);
       // Safe: sharesToBurn is capped by total supply which fits in uint128
       // forge-lint: disable-next-line(unsafe-typecast)
