@@ -111,7 +111,7 @@ contract LibFacilityStorageTest is Test {
   function testFuzz_checkDigest_revertOnReuse(bytes32 digest) public {
     harness.checkDigest(digest);
 
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.SwapDigestUsed.selector, digest));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DigestUsed.selector, digest));
     harness.checkDigest(digest);
   }
 

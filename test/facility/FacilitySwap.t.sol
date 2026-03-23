@@ -540,7 +540,7 @@ contract FacilitySwapTest is FacilityBaseTest {
 
     // Second swap with same digest should fail
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.SwapDigestUsed.selector, expectedDigest));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DigestUsed.selector, expectedDigest));
     facility.swap(params, signers, signatures);
   }
 

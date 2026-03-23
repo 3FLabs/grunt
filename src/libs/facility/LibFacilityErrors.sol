@@ -139,6 +139,14 @@ library LibFacilityErrors {
   error OrderNotEnded(uint256 id);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          DIGEST                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when a digest has already been consumed.
+  /// @param digest The consumed digest.
+  error DigestUsed(bytes32 digest);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           SWAP                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -156,10 +164,6 @@ library LibFacilityErrors {
 
   /// @notice Thrown when swap uses the same token on both sides.
   error SameTokenSwap();
-
-  /// @notice Thrown when a swap digest has already been used.
-  /// @param digest The used swap digest.
-  error SwapDigestUsed(bytes32 digest);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       SIGNATURES                           */
