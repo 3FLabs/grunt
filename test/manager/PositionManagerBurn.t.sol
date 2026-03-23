@@ -286,4 +286,109 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
 
     // Test passes if no revert - the capping logic handled the excess
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*            BURN WITH PARTIAL WITHDRAWAL QUEUE (3F-200)         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice When withdrawal queue == whitelist, burn skips per-position LTV check (full coverage).
+  function test_burn_fullQueue_skipsLtvCheck() public {
+    // Default setup: 2 borrow modules, withdrawal queue has both — LTV check is skipped
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 totalShares = positionManager.balanceOf(minter);
+    _mintDebt(minter, DEBT_AMOUNT);
+
+    // Should succeed — proportional burn across all positions, no LTV check needed
+    vm.prank(minter);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(totalShares / 2, WithdrawalStrategy.PROPORTIONAL);
+
+    assertGt(collateralReceived, 0);
+    assertGt(debtRepaid, 0);
+  }
+
+  /// @notice When withdrawal queue is a strict subset of the whitelist, burn enforces per-position LTV.
+  /// @dev This prevents a scenario where proportional withdrawal from a subset of positions could
+  ///      violate individual position LTV limits, since the total debt/collateral includes positions
+  ///      outside the queue.
+  function test_burn_partialQueue_enforcesLtvCheck() public {
+    // Deposit to position1 via the supply queue
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Rebalance: move half to position2
+    uint256 halfCollateral = COLLATERAL_AMOUNT / 2;
+    uint256 halfDebt = DEBT_AMOUNT / 2;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](4);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: halfDebt
+    });
+    ops[1] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: halfCollateral
+    });
+    ops[2] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: halfCollateral
+    });
+    ops[3] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: halfDebt
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: halfDebt, operations: ops});
+
+    _mintDebt(rebalancer, halfDebt);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), halfDebt);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Shrink withdrawal queue to only position1 — now it's a strict subset of the whitelist
+    address[] memory partialQueue = new address[](1);
+    partialQueue[0] = address(borrowPosition1);
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(partialQueue);
+
+    // Now burn: the proportional amounts are calculated from TOTAL collateral/debt (both positions),
+    // but only position1 is in the withdrawal queue. Without the LTV check, this could push
+    // position1's LTV beyond the limit since it bears the full withdrawal load.
+    uint256 totalShares = positionManager.balanceOf(minter);
+    // Burn a large portion to trigger the LTV violation on the single queued position
+    uint256 sharesToBurn = totalShares * 80 / 100;
+
+    _mintDebt(minter, DEBT_AMOUNT);
+
+    // Should revert because the proportional debt to repay (calculated from total debt across
+    // both positions) exceeds position1's actual debt — the queue only has position1 but the
+    // burn amount is proportional to the total including position2.
+    vm.prank(minter);
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
+  }
+
+  /// @notice A small proportional burn with partial queue succeeds when within LTV bounds.
+  function test_burn_partialQueue_smallBurnSucceeds() public {
+    // Deposit to position1 only (no debt, so LTV is not a concern)
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Shrink withdrawal queue to only position1
+    address[] memory partialQueue = new address[](1);
+    partialQueue[0] = address(borrowPosition1);
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(partialQueue);
+
+    // Small burn should succeed — no debt means no LTV concern
+    uint256 totalShares = positionManager.balanceOf(minter);
+    vm.prank(minter);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(totalShares / 10, WithdrawalStrategy.PROPORTIONAL);
+
+    assertGt(collateralReceived, 0);
+    assertEq(debtRepaid, 0);
+  }
 }
