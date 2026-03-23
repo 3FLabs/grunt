@@ -70,6 +70,9 @@ library LibManagerErrors {
   /// @notice Thrown when attempting to add a borrow module that is already whitelisted.
   error ModuleAlreadyAdded();
 
+  /// @notice Thrown when attempting to remove a borrow module that is not whitelisted.
+  error ModuleNotFound();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       REBALANCING                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

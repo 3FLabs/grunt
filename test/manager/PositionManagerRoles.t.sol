@@ -310,6 +310,15 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
   }
 
+  function test_removeBorrowModule_revertIfNotWhitelisted() public {
+    address notAModule = makeAddr("notAModule");
+    assertFalse(positionManager.isBorrowModule(notAModule));
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleNotFound.selector);
+    positionManager.removeBorrowModule(notAModule);
+  }
+
   function test_borrowModules_returnsWhitelistedModules() public view {
     address[] memory modules = positionManager.borrowModules();
     assertEq(modules.length, 2);

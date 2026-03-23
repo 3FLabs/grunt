@@ -73,7 +73,9 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
       if (_storage.withdrawalQueue[i] == module) revert LibManagerErrors.ModuleStillInQueue();
     }
 
-    _storage.borrowModules.remove(module);
+    if (!_storage.borrowModules.remove(module)) {
+      revert LibManagerErrors.ModuleNotFound();
+    }
     _storage.updateSnapshot();
     Ownable(module).transferOwnership(msg.sender);
     emit IPositionManagerAdmin.BorrowModuleRemoved(module);
