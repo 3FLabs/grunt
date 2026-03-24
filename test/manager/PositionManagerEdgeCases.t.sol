@@ -333,7 +333,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
   /// @notice Test that withdrawing 1 wei after donation still burns at least 1 share (roundUp)
   /// @dev After the roundUp fix for sharesToBurn, a 1-wei withdrawal rounds up to 1 share
   ///      instead of rounding down to 0. This prevents free (zero-cost) withdrawals.
-  function test_withdraw_revertOnZeroSharesAfterDonation() public {
+  function test_withdraw_burnsOneShareAfterDonation() public {
     // Step 1: Initial deposit with debt
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
@@ -363,7 +363,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*          SMALL ASSET DELTA REVERT (ZeroShares) TESTS           */
+  /*            SMALL ASSET DELTA (ZeroShares) TESTS                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice After oracle appreciation with debt, depositing 1 wei of collateral yields 0 shares
