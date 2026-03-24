@@ -142,7 +142,7 @@ library LibStorage {
   /// @param self The storage pointer to the FacilityStorageData struct.
   /// @param digest The digest to check and mark as used.
   function checkDigest(FacilityStorageData storage self, bytes32 digest) internal {
-    if (self.usedDigests[digest]) revert LibFacilityErrors.SwapDigestUsed(digest);
+    if (self.usedDigests[digest]) revert LibFacilityErrors.DigestUsed(digest);
     self.usedDigests[digest] = true;
   }
 
