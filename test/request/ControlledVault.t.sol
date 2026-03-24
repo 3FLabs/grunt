@@ -290,9 +290,42 @@ contract ControlledVaultTest is Test {
   }
 
   function test_maxWithdraw_whenUnlocked() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
     vaultController.setCanWithdraw(true);
-    assertEq(ptVault.maxWithdraw(address(0x1)), type(uint256).max);
-    assertEq(ytVault.maxWithdraw(address(0x1)), type(uint256).max);
+
+    // PT: 1:1 ratio, maxWithdraw = convertToAssets(balance) = 1000 ether
+    assertEq(ptVault.maxWithdraw(user), 1000 ether);
+    // YT: no yield, so maxWithdraw = 0
+    assertEq(ytVault.maxWithdraw(user), 0);
+    // Address with no shares returns 0
+    assertEq(ptVault.maxWithdraw(address(0xdead)), 0);
+    assertEq(ytVault.maxWithdraw(address(0xdead)), 0);
+  }
+
+  function test_maxWithdraw_whenUnlocked_withYield() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // Add 50 ether yield
+    asset.mint(address(vaultController), 50 ether);
+    vaultController.setCanWithdraw(true);
+
+    // PT: still 1:1, pAssets = min(1050, 1000) = 1000
+    assertEq(ptVault.maxWithdraw(user), 1000 ether);
+    // YT: yAssets = 1050 - 1000 = 50, user has 100 shares of 100 total = 50 ether
+    assertEq(ytVault.maxWithdraw(user), 50 ether);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -375,9 +408,39 @@ contract ControlledVaultTest is Test {
   }
 
   function test_maxRedeem_whenUnlocked() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
     vaultController.setCanWithdraw(true);
-    assertEq(ptVault.maxRedeem(address(0x1)), type(uint256).max);
-    assertEq(ytVault.maxRedeem(address(0x1)), type(uint256).max);
+
+    // maxRedeem = balanceOf(owner)
+    assertEq(ptVault.maxRedeem(user), 1000 ether);
+    assertEq(ytVault.maxRedeem(user), 100 ether);
+    // Address with no shares returns 0
+    assertEq(ptVault.maxRedeem(address(0xdead)), 0);
+    assertEq(ytVault.maxRedeem(address(0xdead)), 0);
+  }
+
+  function test_maxRedeem_whenUnlocked_withYield() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // Add 50 ether yield — share balances unchanged
+    asset.mint(address(vaultController), 50 ether);
+    vaultController.setCanWithdraw(true);
+
+    assertEq(ptVault.maxRedeem(user), 1000 ether);
+    assertEq(ytVault.maxRedeem(user), 100 ether);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
