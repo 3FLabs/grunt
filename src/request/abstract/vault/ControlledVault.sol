@@ -97,9 +97,10 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   }
 
   /// @inheritdoc IERC4626
-  /// @dev Returns max uint256 if withdrawals are enabled, 0 if locked. Actual limit is the user's balance.
-  function maxWithdraw(address) external view returns (uint256) {
-    return VaultController(_controller()).canWithdraw().ternary(type(uint256).max, 0);
+  /// @dev Returns the maximum assets the owner could withdraw. Zero when withdrawals are locked.
+  function maxWithdraw(address owner) external view returns (uint256) {
+    if (!VaultController(_controller()).canWithdraw()) return 0;
+    return convertToAssets(this.balanceOf(owner));
   }
 
   /// @inheritdoc IERC4626
@@ -116,9 +117,10 @@ abstract contract ControlledVault is ControlledToken, IERC4626 {
   }
 
   /// @inheritdoc IERC4626
-  /// @dev Returns max uint256 if redemptions are enabled, 0 if locked. Actual limit is the user's balance.
-  function maxRedeem(address) external view returns (uint256 maxShares) {
-    return VaultController(_controller()).canWithdraw().ternary(type(uint256).max, 0);
+  /// @dev Returns the maximum shares the owner could redeem. Zero when withdrawals are locked.
+  function maxRedeem(address owner) external view returns (uint256) {
+    if (!VaultController(_controller()).canWithdraw()) return 0;
+    return this.balanceOf(owner);
   }
 
   /// @inheritdoc IERC4626
