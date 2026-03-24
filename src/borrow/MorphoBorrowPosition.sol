@@ -172,10 +172,6 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     MarketParams memory _marketParams = _storage.marketParams;
 
-    // Accrue interest before reading market data for the health check.
-    // This ensures the debt calculation uses up-to-date totalBorrowAssets.
-    MORPHO.accrueInterest(_marketParams);
-
     // Withdraw collateral from Morpho to the owner (Position Manager)
     // This will revert if the position would become unhealthy
     MORPHO.withdrawCollateral(_marketParams, amount, address(this), msg.sender);
@@ -196,10 +192,6 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     MarketParams memory _marketParams = _storage.marketParams;
-
-    // Accrue interest before reading market data for the health check.
-    // This ensures the debt calculation uses up-to-date totalBorrowAssets.
-    MORPHO.accrueInterest(_marketParams);
 
     // Borrow from Morpho, sending borrowed assets to the owner (Position Manager)
     // This will revert if the position would become unhealthy or insufficient liquidity
