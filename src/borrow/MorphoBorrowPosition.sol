@@ -608,10 +608,13 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     pure
     returns (uint256)
   {
-    // Convert borrowed amount to collateral units: borrowed / (price * ltv / WAD / ORACLE_PRICE_SCALE)
-    // Rounds up to be conservative — requires slightly more collateral rather than less
+    // Invert _isHealthy's two sequential floors with two sequential ceilings:
+    //   _isHealthy: floor(floor(c * price / SCALE) * ltv / WAD) >= borrowed
+    //   Step 1: ceil(borrowed * WAD / ltv)         — minimum collateral value
+    //   Step 2: ceil(minValue * SCALE / price)     — minimum collateral units
     // Subtract existing collateral; floor at 0 if position is already sufficiently collateralized
-    return borrowed.mulDivUp(ORACLE_PRICE_SCALE, ltv.mulWad(price)).zeroFloorSub(collateral);
+    uint256 minCollateralValue = borrowed.mulDivUp(1e18, ltv);
+    return minCollateralValue.mulDivUp(ORACLE_PRICE_SCALE, price).zeroFloorSub(collateral);
   }
 
   /// @dev Computes the remaining borrow capacity for a given collateral, debt, liquidity, price, and ltv.

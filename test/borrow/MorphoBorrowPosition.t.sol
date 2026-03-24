@@ -2366,6 +2366,67 @@ contract MorphoBorrowPositionTest is Test {
     assertLe(freeCollat, theoreticalFree + 1, "Available collateral should be conservatively rounded");
   }
 
+  /// @notice Withdrawing availableCollateral(ltv) must not revert on the subsequent
+  ///         _isHealthy check. _requiredCollateral must use two sequential ceilings to
+  ///         properly invert _isHealthy's two sequential floors.
+  function test_AvailableCollateral_WithdrawMaxDoesNotRevertHealthCheck() public {
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Borrow 95% of max at SAFE_LTV to create a tight health boundary
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 borrowAmount = (maxBorrow * 95) / 100;
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    uint256 available = borrowPosition.availableCollateral(SAFE_LTV);
+
+    // Withdraw the full available amount — must not revert
+    vm.prank(positionManager);
+    borrowPosition.withdrawCollateral(available);
+
+    assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after withdrawing availableCollateral");
+    assertEq(borrowPosition.totalCollateral(), COLLATERAL_AMOUNT - available, "Collateral properly reduced");
+  }
+
+  /// @notice Fuzz: withdrawing availableCollateral(SAFE_LTV) never reverts across a range
+  ///         of borrow fractions and oracle prices.
+  function testFuzz_AvailableCollateral_WithdrawMaxDoesNotRevertHealthCheck(uint256 borrowFraction, uint256 pricePct)
+    public
+  {
+    // Borrow between 50% and 99% of max at SAFE_LTV
+    borrowFraction = bound(borrowFraction, 50, 99);
+    // Oracle price between 90% and 110% of default
+    pricePct = bound(pricePct, 90, 110);
+
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 borrowAmount = (maxBorrow * borrowFraction) / 100;
+    if (borrowAmount == 0) borrowAmount = 1;
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    // Shift oracle price
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * pricePct) / 100);
+
+    uint256 available = borrowPosition.availableCollateral(SAFE_LTV);
+    if (available == 0) return;
+
+    // Withdraw the full available amount — must not revert
+    vm.prank(positionManager);
+    borrowPosition.withdrawCollateral(available);
+
+    assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after withdrawing availableCollateral");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*              PRE-LIQUIDATION HEALTH CHECK TESTS                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -2830,7 +2891,9 @@ contract MorphoBorrowPositionTest is Test {
   ///         health check across a range of price drops and repay fractions. When collateral
   ///         is seized, withdrawCollateral internally checks _isHealthy — the two-ceil
   ///         inversion ensures this always passes. We replicate Morpho's exact formula post-tx.
-  function testFuzz_preLiquidate_SeizedAssetsMatchesMorphoTwoFloorHealthCheck(uint256 pricePct, uint256 repayFraction) public {
+  function testFuzz_preLiquidate_SeizedAssetsMatchesMorphoTwoFloorHealthCheck(uint256 pricePct, uint256 repayFraction)
+    public
+  {
     // Price between 50% and 84% (must be unhealthy at liquidation LTV 72%)
     pricePct = bound(pricePct, 50, 84);
     // Repay between 1% and 95% of shares (partial liquidation, not full)
