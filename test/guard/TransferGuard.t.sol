@@ -278,7 +278,7 @@ contract TransferGuardTest is Test {
 
     vm.warp(block.timestamp + timeElapsed);
 
-    if (timeElapsed <= duration) {
+    if (timeElapsed < duration) {
       assertTrue(guard.paused(token), "Should be paused within duration");
     } else {
       assertFalse(guard.paused(token), "Should not be paused after duration");

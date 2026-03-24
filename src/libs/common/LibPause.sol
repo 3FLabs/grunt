@@ -9,7 +9,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///
 ///      Pause states:
 ///      - Value of 0 (NOT_PAUSED): Not paused
-///      - Value > 0: Paused until block.timestamp > value
+///      - Value > 0: Paused until block.timestamp >= value
 ///      - Value of type(uint40).max (PERMANENT_PAUSE): Effectively permanent pause (~35,000 years)
 library LibPause {
   using FixedPointMathLib for uint256;
@@ -28,7 +28,7 @@ library LibPause {
   /// @param self The pause state value (pause-until timestamp).
   /// @return True if paused, false otherwise.
   function paused(uint40 self) internal view returns (bool) {
-    return block.timestamp <= self;
+    return block.timestamp < self;
   }
 
   /// @notice Returns a pause state for the given duration.
