@@ -2782,6 +2782,98 @@ contract MorphoBorrowPositionTest is Test {
     assertEq(borrowPosition.totalCollateral(), collateralAmount, "Collateral should be unchanged");
   }
 
+  // ── Seized Assets Rounding Matches Morpho's Two-Floor Health Check ─
+
+  /// @notice _computeSeizedAssets must use two sequential ceilings to invert Morpho's
+  ///         two sequential floors in _isHealthy: floor(collateral * price / SCALE) then
+  ///         floor(result * lltv / WAD). A single combined floor can be 1 unit too
+  ///         optimistic, making partial pre-liquidations revert on Morpho's health check.
+  function test_preLiquidate_SeizedAssetsMatchesMorphoTwoFloorHealthCheck() public {
+    // Use a price that triggers divergence between single-floor and two-floor rounding.
+    // At 83% of the default 1e36 price, the intermediate floor in Morpho's _isHealthy
+    // can produce a value 1 unit lower than the combined floor in the old code.
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(83);
+
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 borrowShares = uint256(pos.borrowShares);
+
+    // Repay a fraction that triggers the maxSeized path (not proportional).
+    // A small repayFraction means most debt remains, so the health check is tight.
+    uint256 sharesToRepay = (borrowShares * 5) / 100; // repay 5%
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    // Verify the pre-liquidation succeeded
+    assertGt(seized, 0, "Should seize some collateral");
+    assertGt(repaid, 0, "Should repay some debt");
+
+    // Verify position is healthy on Morpho after the operation
+    Position memory posAfter = morpho.position(marketId, address(borrowPosition));
+    if (uint256(posAfter.borrowShares) > 0) {
+      uint256 collateralPrice = oracle.price();
+      uint256 maxBorrow =
+        uint256(posAfter.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE).wMulDown(DEFAULT_LLTV);
+      Market memory mkt = morpho.market(marketId);
+      uint256 borrowed =
+        uint256(posAfter.borrowShares).toAssetsUp(uint256(mkt.totalBorrowAssets), uint256(mkt.totalBorrowShares));
+      assertGe(maxBorrow, borrowed, "Position must be healthy on Morpho after partial pre-liquidation");
+    }
+
+    assertEq(borrowPosition.totalCollateral(), collateralAmount - seized, "Collateral properly reduced");
+  }
+
+  /// @notice Fuzz: partial pre-liquidation via repaidShares never reverts due to Morpho's
+  ///         health check across a range of price drops and repay fractions. When collateral
+  ///         is seized, withdrawCollateral internally checks _isHealthy — the two-ceil
+  ///         inversion ensures this always passes. We replicate Morpho's exact formula post-tx.
+  function testFuzz_preLiquidate_SeizedAssetsMatchesMorphoTwoFloorHealthCheck(uint256 pricePct, uint256 repayFraction) public {
+    // Price between 50% and 84% (must be unhealthy at liquidation LTV 72%)
+    pricePct = bound(pricePct, 50, 84);
+    // Repay between 1% and 95% of shares (partial liquidation, not full)
+    repayFraction = bound(repayFraction, 1, 95);
+
+    _setupUnhealthyPosition(pricePct);
+
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 sharesToRepay = (uint256(pos.borrowShares) * repayFraction) / 100;
+    if (sharesToRepay == 0) sharesToRepay = 1;
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    // The call must not revert — if seized > 0, Morpho's withdrawCollateral
+    // runs _isHealthy and would revert on the rounding mismatch without the fix.
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    assertGt(repaid, 0, "Should repay some debt");
+    assertLe(seized, collateralBefore, "Seized should not exceed collateral");
+
+    // When collateral was seized, withdrawCollateral ran _isHealthy with post-repay
+    // state. Our test reads the identical post-tx state, so this replicates the exact
+    // check Morpho performed. When seized == 0 the position was too underwater to free
+    // any collateral — withdrawCollateral was skipped, so no health invariant applies.
+    if (seized > 0) {
+      Position memory posAfter = morpho.position(marketId, address(borrowPosition));
+      if (uint256(posAfter.borrowShares) > 0) {
+        uint256 collateralPrice = oracle.price();
+        // Morpho's _isHealthy: floor(floor(c * price / SCALE) * lltv / WAD) >= ceil(shares_to_assets)
+        uint256 maxBorrow =
+          uint256(posAfter.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE).wMulDown(DEFAULT_LLTV);
+        Market memory mkt = morpho.market(marketId);
+        uint256 borrowed =
+          uint256(posAfter.borrowShares).toAssetsUp(uint256(mkt.totalBorrowAssets), uint256(mkt.totalBorrowShares));
+        assertGe(maxBorrow, borrowed, "Position must be healthy on Morpho after collateral seizure");
+      }
+    }
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  COLLATERAL FOR BORROW TESTS                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

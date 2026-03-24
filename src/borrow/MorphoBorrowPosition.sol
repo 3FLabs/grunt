@@ -373,7 +373,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     } else {
       uint256 remainingDebt = remainingBorrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
       uint256 collateralPrice = IOracle(marketParams.oracle).price();
-      uint256 requiredCollateral = remainingDebt.mulDivUp(ORACLE_PRICE_SCALE, collateralPrice.mulWad(marketParams.lltv));
+      uint256 minCollateralValue = remainingDebt.mulDivUp(1e18, marketParams.lltv);
+      uint256 requiredCollateral = minCollateralValue.mulDivUp(ORACLE_PRICE_SCALE, collateralPrice);
       maxSeized = collateral.zeroFloorSub(requiredCollateral);
     }
 
