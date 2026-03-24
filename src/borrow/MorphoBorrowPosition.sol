@@ -484,8 +484,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     Position memory _pos = MORPHO.position(_storage.marketId, address(this));
 
     return _maxBorrow(
-      _pos.collateral,
-      uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares),
+      uint256(_pos.collateral),
+      uint256(_pos.borrowShares),
+      _totalBorrowAssets,
+      _totalBorrowShares,
       _totalSupplyAssets - _totalBorrowAssets,
       IOracle(_storage.marketParams.oracle).price(),
       _ltv
@@ -589,7 +591,9 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     // accounting for existing debt and capped at available market liquidity
     return _maxBorrow(
       uint256(_pos.collateral) + collateralAmount,
-      uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares),
+      uint256(_pos.borrowShares),
+      _totalBorrowAssets,
+      _totalBorrowShares,
       _totalSupplyAssets - _totalBorrowAssets,
       IOracle(_storage.marketParams.oracle).price(),
       ltv
@@ -619,26 +623,41 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
     return minCollateralValue.mulDivUp(ORACLE_PRICE_SCALE, price).zeroFloorSub(collateral);
   }
 
-  /// @dev Computes the remaining borrow capacity for a given collateral, debt, liquidity, price, and ltv.
-  ///      Formula: maxAdditionalBorrow = min((collateral * price / ORACLE_PRICE_SCALE * ltv) - borrowed, liquidity)
-  ///      The collateral is first quoted in borrow asset units, then scaled by the ltv to get the
-  ///      maximum allowable debt. The existing debt is subtracted (floored at 0 if over-utilized).
-  ///      The result is capped at available market liquidity since you cannot borrow more than exists.
+  /// @dev Computes the remaining borrow capacity in share space to match Morpho's rounding.
+  ///      Morpho's borrow() converts assets → shares via toSharesUp, then _isHealthy converts
+  ///      total shares → assets via toAssetsUp. Computing in share space avoids the round-trip
+  ///      inflation that can make the returned amount unborrowable.
+  ///      Steps:
+  ///        1. Compute max allowable debt matching _isHealthy's two sequential floors.
+  ///        2. Find max total borrow shares whose toAssetsUp <= max allowable debt.
+  ///        3. Subtract existing borrow shares to get max additional shares.
+  ///        4. Convert additional shares to assets (rounding down so toSharesUp stays within budget).
+  ///        5. Cap at available market liquidity.
   /// @param collateral The position's collateral (in collateral asset units).
-  /// @param borrowed The position's current debt (in borrow asset units).
+  /// @param borrowShares The position's current borrow shares.
+  /// @param totalBorrowAssets The market's total borrow assets.
+  /// @param totalBorrowShares The market's total borrow shares.
   /// @param liquidity The available market liquidity (in borrow asset units).
   /// @param price The oracle price of collateral denominated in borrow asset (ORACLE_PRICE_SCALE-scaled).
   /// @param ltv The loan-to-value ratio (WAD-scaled, 1e18 = 100%).
   /// @return The additional amount that can be borrowed (in borrow asset units).
-  function _maxBorrow(uint256 collateral, uint256 borrowed, uint256 liquidity, uint256 price, uint256 ltv)
-    internal
-    pure
-    returns (uint256)
-  {
-    // Quote collateral in borrow asset units, then apply ltv to get max allowable debt
-    // Subtract existing debt; floor at 0 if position is already over-utilized
-    // Cap at available market liquidity
-    return collateral.mulDiv(price, ORACLE_PRICE_SCALE).mulWad(ltv).zeroFloorSub(borrowed).min(liquidity);
+  function _maxBorrow(
+    uint256 collateral,
+    uint256 borrowShares,
+    uint256 totalBorrowAssets,
+    uint256 totalBorrowShares,
+    uint256 liquidity,
+    uint256 price,
+    uint256 ltv
+  ) internal pure returns (uint256) {
+    // Max allowable debt matching _isHealthy's two sequential floors
+    uint256 maxAllowableDebt = collateral.mulDiv(price, ORACLE_PRICE_SCALE).mulWad(ltv);
+    // Max total borrow shares whose toAssetsUp <= maxAllowableDebt
+    uint256 maxBorrowShares = maxAllowableDebt.toSharesDown(totalBorrowAssets, totalBorrowShares);
+    // Max additional shares this position can take on
+    uint256 additionalShares = maxBorrowShares.zeroFloorSub(borrowShares);
+    // Convert to max borrowable assets (toSharesUp on result <= additionalShares)
+    return additionalShares.toAssetsDown(totalBorrowAssets, totalBorrowShares).min(liquidity);
   }
 
   /// @dev Internal helper to determine if the position is healthy based on provided ltv and oracle.
