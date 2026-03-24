@@ -555,14 +555,16 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
 
     Position memory _pos = MORPHO.position(_storage.marketId, address(this));
 
-    // Compute how much total collateral is needed for (currentDebt + borrowAmount) at the given ltv,
-    // then subtract existing collateral to get the additional amount required
-    return _requiredCollateral(
-      uint256(_pos.collateral),
-      uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares) + borrowAmount,
-      IOracle(_storage.marketParams.oracle).price(),
-      ltv
-    );
+    // Simulate Morpho's share round-trip to predict the exact post-borrow debt that
+    // _isHealthy will see: borrow() converts assets → shares via toSharesUp, then
+    // _isHealthy converts total shares → assets via toAssetsUp. The double rounding
+    // can inflate actual debt beyond (currentDebt + borrowAmount).
+    uint256 newShares = borrowAmount.toSharesUp(_totalBorrowAssets, _totalBorrowShares);
+    uint256 postBorrowDebt = (uint256(_pos.borrowShares) + newShares)
+    .toAssetsUp(_totalBorrowAssets + borrowAmount, _totalBorrowShares + newShares);
+
+    return
+      _requiredCollateral(uint256(_pos.collateral), postBorrowDebt, IOracle(_storage.marketParams.oracle).price(), ltv);
   }
 
   /// @inheritdoc IBorrowPosition
