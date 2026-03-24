@@ -435,7 +435,9 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   /// @inheritdoc IBorrowPosition
   /// @dev Converts borrow shares to asset amount using SharesMathLib with expected (interest-accrued)
   ///      market totals from MorphoBalancesLib.
-  ///      Uses `toAssetsUp` to round up, which is conservative when calculating debt.
+  ///      Uses `toAssetsDown` to round down, ensuring repay(totalBorrowed()) never reverts.
+  ///      Morpho's repay() converts assets back to shares via toSharesDown; the round-trip
+  ///      toSharesDown(toAssetsDown(bs)) is guaranteed <= bs, avoiding underflow.
   ///      Accounts for accrued interest since the borrow shares represent a proportion
   ///      of the total market debt that grows over time.
   function totalBorrowed() external view override returns (uint256) {
@@ -449,7 +451,7 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
       MORPHO.expectedMarketBalances(_storage.marketParams, _marketId);
 
     // Convert borrow shares to assets using expected market totals
-    return uint256(_pos.borrowShares).toAssetsUp(_totalBorrowAssets, _totalBorrowShares);
+    return uint256(_pos.borrowShares).toAssetsDown(_totalBorrowAssets, _totalBorrowShares);
   }
 
   /// @inheritdoc IBorrowPosition

@@ -895,6 +895,63 @@ contract MorphoBorrowPositionTest is Test {
     borrowPosition.repay(borrowAmount);
   }
 
+  /// @notice repay(totalBorrowed()) must not revert after interest accrues. Interest
+  ///         creates a non-trivial share rate where toSharesDown(toAssetsUp(bs)) > bs
+  ///         would cause underflow. totalBorrowed() uses toAssetsDown so the round-trip
+  ///         toSharesDown(toAssetsDown(bs)) <= bs, avoiding the overflow.
+  function test_repay_TotalBorrowedDoesNotRevertAfterInterestAccrual() public {
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+    borrowPosition.borrow(LOAN_AMOUNT / 2);
+    vm.stopPrank();
+
+    // Advance time to accrue interest and create a non-trivial share rate
+    vm.warp(block.timestamp + 365 days);
+
+    uint256 totalBorrowed = borrowPosition.totalBorrowed();
+    assertGt(totalBorrowed, LOAN_AMOUNT / 2, "Interest should have accrued");
+
+    loanToken.setBalance(positionManager, totalBorrowed);
+    vm.startPrank(positionManager);
+    loanToken.approve(address(borrowPosition), totalBorrowed);
+    borrowPosition.repay(totalBorrowed);
+    vm.stopPrank();
+
+    // toAssetsDown may leave at most 1 dust share; its asset value rounds to 0
+    assertLe(borrowPosition.totalBorrowed(), 1, "Debt should be fully or near-fully repaid");
+  }
+
+  /// @notice Fuzz: repay(totalBorrowed()) never reverts across borrow amounts and time periods.
+  function testFuzz_repay_TotalBorrowedDoesNotRevert(uint256 borrowAmount, uint256 timePassed) public {
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, LOAN_AMOUNT / 2);
+    timePassed = bound(timePassed, 1 days, 365 days);
+
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    // Advance time to accrue interest
+    vm.warp(block.timestamp + timePassed);
+
+    uint256 totalBorrowed = borrowPosition.totalBorrowed();
+
+    loanToken.setBalance(positionManager, totalBorrowed);
+    vm.startPrank(positionManager);
+    loanToken.approve(address(borrowPosition), totalBorrowed);
+    borrowPosition.repay(totalBorrowed);
+    vm.stopPrank();
+
+    // toAssetsDown may leave at most 1 dust share; its asset value rounds to 0
+    assertLe(borrowPosition.totalBorrowed(), 1, "Debt should be fully or near-fully repaid");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   ASSET GETTER TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
