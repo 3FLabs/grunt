@@ -133,11 +133,15 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     uint256 _totalSupply = totalSupply();
     uint256 _totalCollateral = _storage.collateralAmount();
     uint256 _totalDebt = _storage.debtAmount();
+    uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
-    // Calculate proportional amounts to maintain average LTV
+    // Calculate proportional amounts to maintain average LTV.
+    // Include virtualShareOffset in the denominator so that virtual shares absorb their
+    // proportional fraction of collateral/debt, preventing extraction of donated assets
+    // that inflate totalAssets without minting shares.
     // Round down collateral (user gets less), round up debt (user repays more)
-    collateral = _totalCollateral.mulDiv(shares, _totalSupply);
-    debt = _totalDebt.mulDivUp(shares, _totalSupply);
+    collateral = _totalCollateral.mulDiv(shares, _totalSupply + virtualShareOffset_);
+    debt = _totalDebt.mulDivUp(shares, _totalSupply + virtualShareOffset_);
 
     // Burn shares first
     _burn(msg.sender, shares);
