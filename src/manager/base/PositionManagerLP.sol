@@ -190,6 +190,12 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
         // Safe: sharesToMint is capped by total supply which fits in uint128
         // forge-lint: disable-next-line(unsafe-typecast)
         sharesDelta = int256(sharesToMint);
+      } else {
+        // Shares rounded to zero: check pause since _beforeTokenTransfer won't run
+        address guard = _storage.transferGuard;
+        if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
+          revert CommonErrors.Paused();
+        }
       }
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
