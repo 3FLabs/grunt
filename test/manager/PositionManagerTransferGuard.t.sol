@@ -310,9 +310,46 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     positionManager.deposit(amount, amount);
   }
 
+  function test_deposit_blockedWhenPaused_zeroSharesDelta() public {
+    // Seed an initial deposit so totalSupply and totalAssets are non-zero
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Inflate totalAssets by raising the oracle price so each share is worth many assets.
+    // totalAssets ≈ 9_995_000e18 while totalSupply ≈ 5_000e18 → 1 wei of collateral
+    // adds ~1000 assets but convertToShares rounds down to 0.
+    oracle.setPrice(1000 * DEFAULT_ORACLE_PRICE);
+
+    // Pause the position manager
+    vm.prank(guardOwner);
+    guard.pause(address(positionManager));
+
+    // Deposit 1 wei of collateral (no debt) — sharesToMint rounds to 0
+    _mintCollateral(minter, 1);
+
+    vm.prank(minter);
+    vm.expectRevert(CommonErrors.Paused.selector);
+    positionManager.deposit(1, 0);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  NO GUARD TESTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deposit_allowedWhenNotPaused_zeroSharesDelta() public {
+    // Same setup as paused test but guard is NOT paused — should succeed
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(1000 * DEFAULT_ORACLE_PRICE);
+
+    _mintCollateral(minter, 1);
+
+    vm.prank(minter);
+    positionManager.deposit(1, 0);
+  }
 
   function test_deposit_allowedWhenNotPaused_zeroAssetsDelta() public {
     // Seed positions with an initial deposit
