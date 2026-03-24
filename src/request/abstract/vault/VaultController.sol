@@ -139,7 +139,8 @@ abstract contract VaultController is TokenController, IVaultController {
         _consumeAllowance(owner, caller, ptShares, ytShares);
       }
       _burn(owner, ptShares, ytShares);
-      _asset().safeTransfer(receiver, yAssets + pAssets);
+      uint256 totalAssets_ = yAssets + pAssets;
+      if (totalAssets_ > 0) _asset().safeTransfer(receiver, totalAssets_);
       if (pAssets > 0 || ptShares > 0) {
         ControlledVault(_ptToken())._emitWithdraw(caller, receiver, owner, pAssets, ptShares);
       }
