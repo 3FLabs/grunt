@@ -56,8 +56,12 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     (uint256 collateralReceived, uint256 debtRepaid) =
       positionManager.burn(totalShares, WithdrawalStrategy.PROPORTIONAL);
 
-    assertEq(collateralReceived, COLLATERAL_AMOUNT, "Should receive all collateral");
-    assertEq(debtRepaid, DEBT_AMOUNT, "Should repay all debt");
+    // Virtual shares absorb a dust fraction of collateral/debt.
+    // For 18-decimal tokens (virtualShareOffset=1), the locked amount is at most a few wei.
+    assertApproxEqAbs(
+      collateralReceived, COLLATERAL_AMOUNT, 10, "Should receive ~all collateral (minus virtual-share dust)"
+    );
+    assertApproxEqAbs(debtRepaid, DEBT_AMOUNT, 10, "Should repay ~all debt (minus virtual-share dust)");
     assertEq(positionManager.balanceOf(minter), 0, "All shares should be burned");
     assertEq(positionManager.totalSupply(), 0, "Total supply should be 0");
   }
@@ -74,7 +78,10 @@ contract PositionManagerBurnTest is PositionManagerBaseTest {
     (uint256 collateralReceived, uint256 debtRepaid) =
       positionManager.burn(totalShares, WithdrawalStrategy.PROPORTIONAL);
 
-    assertEq(collateralReceived, COLLATERAL_AMOUNT, "Should receive all collateral");
+    // Virtual shares absorb a dust fraction
+    assertApproxEqAbs(
+      collateralReceived, COLLATERAL_AMOUNT, 10, "Should receive ~all collateral (minus virtual-share dust)"
+    );
     assertEq(debtRepaid, 0, "No debt to repay");
   }
 

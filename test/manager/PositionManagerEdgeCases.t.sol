@@ -449,4 +449,85 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     assertEq(shares, 0, "Should return 0 shares for dust debt repayment");
     assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
   }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*       DIRECT MORPHO DONATION ATTACK TESTS       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Burn with virtual share offset prevents full extraction of donated collateral.
+  /// @dev An attacker donates collateral directly via Morpho.supplyCollateral() to inflate
+  ///      totalAssets. The fix ensures virtual shares absorb their proportional fraction so
+  ///      the burner cannot reclaim 100% of the inflated collateral.
+  function test_burn_virtualShareOffset_absorbsDonatedCollateral() public {
+    // Step 1: Normal deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    int256 sharesDelta = positionManager.deposit(COLLATERAL_AMOUNT, 0);
+    uint256 shares = uint256(sharesDelta);
+
+    // Step 2: Donate collateral directly through Morpho (bypassing the PM)
+    uint256 donationAmount = 1_000e18;
+    address attacker = makeAddr("attacker");
+    collateralToken.setBalance(attacker, donationAmount);
+    vm.startPrank(attacker);
+    collateralToken.approve(address(morpho), donationAmount);
+    morpho.supplyCollateral(marketParams1, donationAmount, address(borrowPosition1), "");
+    vm.stopPrank();
+
+    // Verify totalCollateral increased
+    uint256 totalCollateralAfterDonation = borrowPosition1.totalCollateral();
+    assertEq(totalCollateralAfterDonation, COLLATERAL_AMOUNT + donationAmount, "Collateral should include donation");
+
+    // Step 3: Burn all shares
+    _mintDebt(minter, 1e18); // In case any debt accrued
+    vm.prank(minter);
+    (uint256 collateralBack,) = positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL);
+
+    // Virtual shares should absorb a fraction of collateral, so the burner gets less than 100%
+    assertLt(
+      collateralBack, totalCollateralAfterDonation, "Should not get 100% of collateral - virtual shares hold a portion"
+    );
+
+    // The remaining collateral is locked by virtual shares in the borrow position
+    uint256 remaining = borrowPosition1.totalCollateral();
+    assertGt(remaining, 0, "Virtual shares should retain some collateral in the position");
+  }
+
+  /// @notice After a direct Morpho donation, burn retains the virtual-share fraction in the position.
+  /// @dev With 18-decimal tokens, virtualShareOffset=1, so the locked amount is tiny (proportional
+  ///      to 1/(totalSupply+1)). For tokens with fewer decimals the protection is stronger.
+  ///      This test verifies the invariant: burnAll cannot extract 100% of collateral.
+  function test_burn_directMorphoDonation_virtualSharesRetainFraction() public {
+    // Step 1: Normal deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    int256 sharesDelta = positionManager.deposit(COLLATERAL_AMOUNT, 0);
+    uint256 shares = uint256(sharesDelta);
+
+    // Step 2: Donate directly through Morpho to inflate collateral
+    uint256 donationAmount = 5_000e18;
+    address donor = makeAddr("donor");
+    collateralToken.setBalance(donor, donationAmount);
+    vm.startPrank(donor);
+    collateralToken.approve(address(morpho), donationAmount);
+    morpho.supplyCollateral(marketParams1, donationAmount, address(borrowPosition1), "");
+    vm.stopPrank();
+
+    uint256 totalCollateralBefore = borrowPosition1.totalCollateral();
+
+    // Step 3: Burn all shares
+    vm.prank(minter);
+    (uint256 collateralBack,) = positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL);
+
+    // Virtual shares retain their fraction: collateralBack < totalCollateral
+    assertLt(collateralBack, totalCollateralBefore, "Burn should not extract 100% - virtual shares retain a fraction");
+
+    // The locked amount equals totalCollateral * virtualShareOffset / (totalSupply + virtualShareOffset)
+    uint256 lockedCollateral = totalCollateralBefore - collateralBack;
+    assertGt(lockedCollateral, 0, "Some collateral must remain locked by virtual shares");
+
+    // Verify the locked collateral is still in the borrow position
+    uint256 remaining = borrowPosition1.totalCollateral();
+    assertEq(remaining, lockedCollateral, "Locked collateral should remain in the position");
+  }
 }
