@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
-import {Order} from "../funds/Order.sol";
+import {Order, State} from "../funds/Order.sol";
 import {LibTokenBalances} from "./LibTokenBalances.sol";
 import {LibFacilityErrors} from "./LibFacilityErrors.sol";
 import {IFacility} from "../../interfaces/facility/IFacility.sol";
@@ -14,6 +14,7 @@ import {LibChecks} from "../common/LibChecks.sol";
 import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
+import {IFund} from "../../interfaces/funds/IFund.sol";
 
 /// @dev Asset configuration for intents and swaps.
 /// @param asset Address of the asset.
@@ -142,6 +143,23 @@ library LibIntent {
     address _request = _self.request;
     if (_request != address(0) && !IRequest(_request).syncRepaidStatus()) {
       revert LibFacilityErrors.RequestNotRepaid(_request);
+    }
+  }
+
+  /// @notice Syncs the intent's order state with the fund when the fund reports ENDED.
+  /// @dev Queries IFund.state(order) and clears the stale order+fund binding when the fund
+  ///      has independently ended the order (e.g. via forceEnd). Does nothing if there is
+  ///      no active order or no fund.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  function syncEndedOrder(Intent storage _self, uint256 id) internal {
+    if (!_self.hasActiveOrder()) return;
+
+    address _fund = _self.fund;
+    if (_fund == address(0)) return;
+
+    if (IFund(_fund).state(_self.order) == State.ENDED) {
+      _self.removeOrderAndFund(id);
     }
   }
 
