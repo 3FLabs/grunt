@@ -22,6 +22,32 @@ contract MockScript {
   function run() external {}
 }
 
+/// @notice Contract that triggers an excess repay during the flash loan callback.
+///         Called by ExcessRepayScript via delegatecall → external call.
+contract ExcessRepayer {
+  MorphoFlashLoanRequest public target;
+  MockERC20 public token;
+  uint256 public amount;
+
+  constructor(MorphoFlashLoanRequest _target, MockERC20 _token, uint256 _amount) {
+    target = _target;
+    token = _token;
+    amount = _amount;
+    token.approve(address(_target), type(uint256).max);
+  }
+
+  function doRepay() external {
+    target.repay(amount);
+  }
+}
+
+/// @notice Script that calls ExcessRepayer.doRepay() during the flash loan callback.
+contract ExcessRepayScript {
+  function run(address repayer) external {
+    ExcessRepayer(repayer).doRepay();
+  }
+}
+
 /// @notice Contract that attempts to re-enter execute() when delegatecalled as a script.
 contract ReentrantAttacker {
   MorphoFlashLoanRequest public target;
@@ -742,6 +768,27 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     assertEq(debtToken.balanceOf(address(flashLoanRequest)), amount);
   }
 
+  function test_repay_revertsOnBalanceExceedsDebt() public {
+    uint256 flashAmount = 1_000e18;
+    uint256 excessAmount = 1_001e18;
+
+    // Deploy attacker that will call repay() with excess during the callback
+    ExcessRepayer repayer = new ExcessRepayer(flashLoanRequest, debtToken, excessAmount);
+    debtToken.setBalance(address(repayer), excessAmount);
+
+    ExcessRepayScript script = new ExcessRepayScript();
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(script), true);
+
+    vm.prank(executor);
+    vm.expectRevert(MorphoFlashLoanRequest.BalanceExceedsDebt.selector);
+    flashLoanRequest.execute(
+      flashAmount,
+      _defaultSetRequestParams(),
+      address(script),
+      abi.encodeCall(ExcessRepayScript.run, (address(repayer)))
+    );
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  K. VIEW FUNCTION TESTS                     */
@@ -751,7 +798,6 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     // rawDebt == 0 means _debt() == 0 means isRepaid == true
     assertTrue(flashLoanRequest.isRepaid());
   }
-
 
   function test_syncRepaidStatus_returnsTrueOutsideFlashLoan() public view {
     assertTrue(flashLoanRequest.syncRepaidStatus());
