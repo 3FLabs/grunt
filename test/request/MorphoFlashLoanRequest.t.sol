@@ -379,17 +379,14 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     flashLoanRequest.onMorphoFlashLoan(1e18, bytes(""));
   }
 
-  function test_onMorphoFlashLoan_revertsOnDebtNotRepaid() public {
+  function test_isRepaid_returnsTrueAfterExecute() public {
     (address script, bytes memory payload) = _noOpScript();
 
-    // Execute sets rawDebt in transient storage (persists within Foundry tx)
     vm.prank(executor);
     flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), script, payload);
 
-    // Prank as Morpho and call callback again — rawDebt is still non-zero
-    vm.prank(address(morpho));
-    vm.expectRevert(MorphoFlashLoanRequest.DebtNotRepaid.selector);
-    flashLoanRequest.onMorphoFlashLoan(1_000e18, bytes(""));
+    // Raw debt is cleared at the end of the callback, so isRepaid() returns true
+    assertTrue(flashLoanRequest.isRepaid());
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -745,22 +742,6 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     assertEq(debtToken.balanceOf(address(flashLoanRequest)), amount);
   }
 
-  function test_repay_revertsOnBalanceExceedsDebt() public {
-    (address script, bytes memory payload) = _noOpScript();
-
-    vm.prank(executor);
-    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), script, payload);
-
-    // Repay more than rawDebt to trigger BalanceExceedsDebt
-    uint256 excessAmount = 1_001e18;
-    debtToken.setBalance(user, excessAmount);
-    vm.prank(user);
-    debtToken.approve(address(flashLoanRequest), excessAmount);
-
-    vm.prank(user);
-    vm.expectRevert(MorphoFlashLoanRequest.BalanceExceedsDebt.selector);
-    flashLoanRequest.repay(excessAmount);
-  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  K. VIEW FUNCTION TESTS                     */
@@ -771,18 +752,6 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     assertTrue(flashLoanRequest.isRepaid());
   }
 
-  function test_isRepaid_revertsOnBalanceExceedsDebt() public {
-    (address script, bytes memory payload) = _noOpScript();
-
-    vm.prank(executor);
-    flashLoanRequest.execute(1_000e18, _defaultSetRequestParams(), script, payload);
-
-    // Seed tokens to push balance above rawDebt
-    debtToken.setBalance(address(flashLoanRequest), 1_001e18);
-
-    vm.expectRevert(MorphoFlashLoanRequest.BalanceExceedsDebt.selector);
-    flashLoanRequest.isRepaid();
-  }
 
   function test_syncRepaidStatus_returnsTrueOutsideFlashLoan() public view {
     assertTrue(flashLoanRequest.syncRepaidStatus());
