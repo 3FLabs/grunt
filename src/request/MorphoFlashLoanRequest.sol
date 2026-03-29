@@ -7,6 +7,7 @@ import {IRequestInteractions} from "../interfaces/request/IRequestInteractions.s
 import {IHasAsset} from "../interfaces/request/IHasAsset.sol";
 import {IFacilityIntents} from "../interfaces/facility/base/IFacilityIntents.sol";
 import {IFacilityRequests} from "../interfaces/facility/base/IFacilityRequests.sol";
+import {IERC20} from "../interfaces/integrations/IERC20.sol";
 import {IMorphoFlashLoanCallback} from "lib/morpho-blue/src/interfaces/IMorphoCallbacks.sol";
 import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
@@ -228,7 +229,7 @@ contract MorphoFlashLoanRequest is
     MorphoFlashLoanRequestStorage storage $ = _storage();
 
     // Set raw debt to full balance (flash loan + any pre-existing dust) — actual debt is rawDebt - assetBalance
-    _setRawDebt($.asset.balanceOf(address(this)));
+    _setRawDebt(IERC20($.asset).balanceOf(address(this)));
 
     (SetRequestParams memory params, address script, bytes memory scriptPayload) =
       abi.decode(data, (SetRequestParams, address, bytes));
@@ -294,7 +295,7 @@ contract MorphoFlashLoanRequest is
     $.asset.safeTransferFrom(msg.sender, address(this), amount);
 
     uint256 rawDebt = _getRawDebt();
-    if (rawDebt != 0 && $.asset.balanceOf(address(this)) > rawDebt) revert BalanceExceedsDebt();
+    if (rawDebt != 0 && IERC20($.asset).balanceOf(address(this)) > rawDebt) revert BalanceExceedsDebt();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -376,7 +377,7 @@ contract MorphoFlashLoanRequest is
   function _debt() internal view returns (uint256) {
     uint256 rawDebt = _getRawDebt();
     if (rawDebt == 0) return 0;
-    uint256 balance = _storage().asset.balanceOf(address(this));
+    uint256 balance = IERC20(_storage().asset).balanceOf(address(this));
     if (balance > rawDebt) revert BalanceExceedsDebt();
     return rawDebt - balance;
   }

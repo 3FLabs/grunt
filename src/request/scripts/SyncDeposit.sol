@@ -6,7 +6,7 @@ import {IFacilityIntents} from "../../interfaces/facility/base/IFacilityIntents.
 import {IFacilityPositionManager} from "../../interfaces/facility/base/IFacilityPositionManager.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {Mode} from "../../libs/funds/Order.sol";
-import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 
 /// @title SyncDeposit
 /// @notice Stateless script designed to be delegatecalled from MorphoFlashLoanRequest.
@@ -15,8 +15,6 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 ///      The share token is queried on-chain from the intent's fund.
 /// @author 3F Protocol
 contract SyncDeposit {
-  using SafeTransferLib for address;
-
   /// @notice Executes the synchronous deposit flow for a facility intent.
   /// @param facility The facility contract address.
   /// @param intentId The intent ID on the facility.
@@ -43,13 +41,13 @@ contract SyncDeposit {
     address shareToken = IFund(fund).share();
 
     // 4. Track shares before unlock
-    uint256 sharesBefore = shareToken.balanceOf(facility);
+    uint256 sharesBefore = IERC20(shareToken).balanceOf(facility);
 
     // 5. Unlock order (facility receives shares from fund)
     IFacilityFunds(facility).unlock(intentId);
 
     // 6. Deposit received shares into position manager
-    uint256 sharesReceived = shareToken.balanceOf(facility) - sharesBefore;
+    uint256 sharesReceived = IERC20(shareToken).balanceOf(facility) - sharesBefore;
     IFacilityPositionManager(facility).depositManager(intentId, sharesReceived, borrowAmount, useTarget);
   }
 }

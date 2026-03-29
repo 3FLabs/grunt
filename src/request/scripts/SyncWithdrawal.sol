@@ -6,7 +6,7 @@ import {IFacilityIntents} from "../../interfaces/facility/base/IFacilityIntents.
 import {IFacilityPositionManager} from "../../interfaces/facility/base/IFacilityPositionManager.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {Mode} from "../../libs/funds/Order.sol";
-import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 
 /// @title SyncWithdrawal
@@ -16,8 +16,6 @@ import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManager
 ///      The share token is queried on-chain from the intent's fund to measure actual collateral received.
 /// @author 3F Protocol
 contract SyncWithdrawal {
-  using SafeTransferLib for address;
-
   /// @notice Executes the synchronous withdrawal flow for a facility intent.
   /// @param facility The facility contract address.
   /// @param intentId The intent ID on the facility.
@@ -40,13 +38,13 @@ contract SyncWithdrawal {
     address shareToken = IFund(fund).share();
 
     // 1. Track collateral before withdrawal
-    uint256 collateralBefore = shareToken.balanceOf(facility);
+    uint256 collateralBefore = IERC20(shareToken).balanceOf(facility);
 
     // 2. Withdraw collateral from position manager (repay debt, get collateral back)
     IFacilityPositionManager(facility).withdrawManager(intentId, withdrawAmount, repayAmount, useTarget, strategy);
 
     // 3. Measure actual collateral received
-    uint256 collateralReceived = shareToken.balanceOf(facility) - collateralBefore;
+    uint256 collateralReceived = IERC20(shareToken).balanceOf(facility) - collateralBefore;
 
     // 4. Create redeem order using actual received collateral
     IFacilityFunds(facility).create(intentId, collateralReceived, minAssetsOut, Mode.REDEEM);

@@ -11,6 +11,7 @@ import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibAddress} from "./LibAddress.sol";
 import {LibChecks} from "../common/LibChecks.sol";
+import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
@@ -327,7 +328,7 @@ library LibIntent {
   /// @param token The token address to snapshot.
   /// @return snapshot The balance snapshot struct.
   function takeBalanceSnapshot(address token) internal view returns (BalanceSnapshot memory snapshot) {
-    snapshot = BalanceSnapshot({token: token, balance: token.balanceOf(address(this))});
+    snapshot = BalanceSnapshot({token: token, balance: IERC20(token).balanceOf(address(this))});
   }
 
   /// @notice Commits a balance snapshot by calculating the difference and updating accounting.
@@ -344,7 +345,7 @@ library LibIntent {
     address counterparty
   ) internal {
     unchecked {
-      uint256 currentBalance = snapshot.token.balanceOf(address(this));
+      uint256 currentBalance = IERC20(snapshot.token).balanceOf(address(this));
 
       if (currentBalance > snapshot.balance) {
         // Balance increased - record as received
