@@ -56,25 +56,25 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @notice Storage struct containing all persistent state for the ParetoFund contract.
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility.
   /// @param vault The IdleCDOEpochVariant proxy address.
+  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
+  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param wrappedShare The WrappedAsset contract that wraps the AA tranche token.
   /// @param asset The underlying asset of the vault (e.g. USDC).
   /// @param aaTranche The AA (senior) tranche token address.
   /// @param strategy The IdleCreditVault strategy contract address.
   /// @param currentOrderId The order ID of the current (or most recent) order.
-  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
-  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param depositReceived The actual AA tranche tokens received during commit() for a DEPOSIT order.
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct ParetoFundStorage {
     address vault;
+    State internalState;
+    bool hasResolvedAmounts;
     address wrappedShare;
     address asset;
     address aaTranche;
     address strategy;
     bytes32 currentOrderId;
-    State internalState;
-    bool hasResolvedAmounts;
     uint256 resolvedOutput;
     uint256 depositReceived;
     mapping(bytes32 => bool) endedOrders;
