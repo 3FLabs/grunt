@@ -254,6 +254,9 @@ contract MorphoFlashLoanRequest is
 
     // Approve Morpho to pull back the flash loaned amount
     $.asset.safeApproveWithRetry(address(MORPHO), assets);
+
+    // Clear raw debt so isRepaid() returns true within the same transaction
+    _setRawDebt(0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -270,6 +273,8 @@ contract MorphoFlashLoanRequest is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRequestInteractions
+  /// @dev Returns true when there is no outstanding flash loan debt. This includes the initial
+  ///      state before any loan is taken.
   function isRepaid() external view returns (bool) {
     return _debt() == 0;
   }
@@ -302,6 +307,8 @@ contract MorphoFlashLoanRequest is
   }
 
   /// @inheritdoc IRequest
+  /// @dev Equivalent to isRepaid() for this implementation — flash loans are atomic,
+  ///      so there is no async repayment to sync.
   function syncRepaidStatus() external view returns (bool) {
     return _debt() == 0;
   }
