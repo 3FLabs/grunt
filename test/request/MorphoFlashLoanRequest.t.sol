@@ -823,7 +823,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
 
   function test_isRepaid_revertsOnBalanceExceedsDebt() public {
     uint256 flashAmount = 1_000e18;
-    uint256 excessAmount = 1e18;
+    uint256 excessAmount = 1_001e18; // Must exceed rawDebt (== flashAmount) after pull() zeroes balance
 
     // Deploy checker that mints excess tokens then calls isRepaid() during the callback
     IsRepaidChecker checker = new IsRepaidChecker(flashLoanRequest, debtToken, excessAmount);
