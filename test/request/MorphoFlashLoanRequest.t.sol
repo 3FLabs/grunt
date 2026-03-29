@@ -23,7 +23,7 @@ contract MockScript {
 }
 
 /// @notice Contract that triggers an excess repay during the flash loan callback.
-///         Called by ExcessRepayScript via delegatecall → external call.
+///         Called by CallbackScript via delegatecall → external call.
 contract ExcessRepayer {
   MorphoFlashLoanRequest public target;
   MockERC20 public token;
@@ -41,10 +41,32 @@ contract ExcessRepayer {
   }
 }
 
-/// @notice Script that calls ExcessRepayer.doRepay() during the flash loan callback.
-contract ExcessRepayScript {
-  function run(address repayer) external {
+/// @notice Contract that seeds excess tokens then calls isRepaid() during the callback.
+contract IsRepaidChecker {
+  MorphoFlashLoanRequest public target;
+  MockERC20 public token;
+  uint256 public amount;
+
+  constructor(MorphoFlashLoanRequest _target, MockERC20 _token, uint256 _amount) {
+    target = _target;
+    token = _token;
+    amount = _amount;
+  }
+
+  function checkIsRepaid() external {
+    token.mint(address(target), amount);
+    target.isRepaid();
+  }
+}
+
+/// @notice Script that calls an external contract during the flash loan callback.
+contract CallbackScript {
+  function runRepay(address repayer) external {
     ExcessRepayer(repayer).doRepay();
+  }
+
+  function runIsRepaidCheck(address checker) external {
+    IsRepaidChecker(checker).checkIsRepaid();
   }
 }
 
@@ -776,7 +798,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     ExcessRepayer repayer = new ExcessRepayer(flashLoanRequest, debtToken, excessAmount);
     debtToken.setBalance(address(repayer), excessAmount);
 
-    ExcessRepayScript script = new ExcessRepayScript();
+    CallbackScript script = new CallbackScript();
     vm.prank(owner);
     flashLoanRequest.setScript(address(script), true);
 
@@ -786,7 +808,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       flashAmount,
       _defaultSetRequestParams(),
       address(script),
-      abi.encodeCall(ExcessRepayScript.run, (address(repayer)))
+      abi.encodeCall(CallbackScript.runRepay, (address(repayer)))
     );
   }
 
@@ -797,6 +819,27 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   function test_isRepaid_returnsTrueOutsideFlashLoan() public view {
     // rawDebt == 0 means _debt() == 0 means isRepaid == true
     assertTrue(flashLoanRequest.isRepaid());
+  }
+
+  function test_isRepaid_revertsOnBalanceExceedsDebt() public {
+    uint256 flashAmount = 1_000e18;
+    uint256 excessAmount = 1e18;
+
+    // Deploy checker that mints excess tokens then calls isRepaid() during the callback
+    IsRepaidChecker checker = new IsRepaidChecker(flashLoanRequest, debtToken, excessAmount);
+
+    CallbackScript script = new CallbackScript();
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(script), true);
+
+    vm.prank(executor);
+    vm.expectRevert(MorphoFlashLoanRequest.BalanceExceedsDebt.selector);
+    flashLoanRequest.execute(
+      flashAmount,
+      _defaultSetRequestParams(),
+      address(script),
+      abi.encodeCall(CallbackScript.runIsRepaidCheck, (address(checker)))
+    );
   }
 
   function test_syncRepaidStatus_returnsTrueOutsideFlashLoan() public view {
