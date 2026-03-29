@@ -233,11 +233,11 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
       // Burn wrapped AA from depositor (unwraps to AA tranche tokens held by this contract)
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
       // Request epoch-gated withdrawal: CDO burns AA tokens directly (no approval needed)
-      uint256 _wBefore = IIdleCreditVault($.strategy).withdrawsRequests(address(this));
+      uint256 _lwrBefore = IIdleCreditVault($.strategy).lastWithdrawRequest(address(this));
       IIdleCDOEpochVariant(_vault).requestWithdraw(order.input, _aaTranche);
       // Block instant withdrawals: if the CDO routed to the instant path,
-      // withdrawsRequests won't increase and the order would be stuck in PROCESSING.
-      if (IIdleCreditVault($.strategy).withdrawsRequests(address(this)) <= _wBefore) {
+      // lastWithdrawRequest won't change and the order would be stuck in PROCESSING.
+      if (IIdleCreditVault($.strategy).lastWithdrawRequest(address(this)) <= _lwrBefore) {
         revert LibFundsErrors.InstantWithdrawDetected();
       }
     }

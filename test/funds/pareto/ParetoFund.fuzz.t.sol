@@ -109,7 +109,7 @@ contract ParetoFundFuzzTest is Test {
     fund.commit(order);
 
     // Advance epoch
-    uint256 pendingAmount = strategy.withdrawsRequests(address(fund));
+    uint256 pendingAmount = strategy.totalClaimable(address(fund));
     cdo.fundUnderlying(pendingAmount);
     cdo.advanceEpoch();
 

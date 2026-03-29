@@ -6,11 +6,6 @@ pragma solidity ^0.8.20;
 /// @notice Minimal interface for the Pareto (Idle Finance) Credit Vault strategy contract.
 /// @dev Only includes view functions used by ParetoFund for withdrawal state detection.
 interface IIdleCreditVault {
-  /// @notice Returns the total amount of pending (epoch-gated) withdrawal requests for an address.
-  /// @param account The address to query.
-  /// @return The total pending withdrawal amount.
-  function withdrawsRequests(address account) external view returns (uint256);
-
   /// @notice Returns the epoch number in which the last withdrawal was requested for an address.
   /// @param account The address to query.
   /// @return The epoch number of the last withdrawal request.
