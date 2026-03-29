@@ -8,14 +8,18 @@ import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {MockFund} from "test/mock/facility/MockFund.sol";
+import {LibOrder} from "src/libs/funds/Order.sol";
 
 /// @title FacilityIntentsTest
 /// @notice Tests for intent creation, update, lock, and resolve operations
 contract FacilityIntentsTest is FacilityBaseTest {
   using LibClone for address;
+  using LibOrder for Order;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CREATE INTENT TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -440,6 +444,114 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidSignature.selector, guardian));
     facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_resolve_autoSyncsEndedOrder() public {
+    uint256 intentId = _createResolvingIntent();
+
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+
+    // Create a stale order and mark it as ENDED in mock fund state
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 500e18, Mode.DEPOSIT);
+    (Order memory order,) = facility.getOrder(intentId);
+    mockFund.setOrderState(order.toId(address(mockFund)), State.ENDED);
+
+    vm.prank(facilitator);
+    facility.resolve(intentId);
+
+    assertTrue(_isResolved(intentId), "Intent should be resolved after auto-sync");
+
+    (order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "Order should be cleared during auto-sync");
+
+    (,, address fund,) = facility.getIntent(intentId);
+    assertEq(fund, address(0), "Fund should be cleared during auto-sync");
+  }
+
+  function test_setFund_autoSyncsEndedOrder_differentFund() public {
+    uint256 intentId = _createResolvingIntent();
+    MockFund altFund = new MockFund(address(debtToken), address(collateralToken));
+
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 1 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    // Create a stale order and mark it as ENDED in the current fund
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 500e18, Mode.DEPOSIT);
+    (Order memory order,) = facility.getOrder(intentId);
+    mockFund.setOrderState(order.toId(address(mockFund)), State.ENDED);
+
+    // Re-bind to a different fund after auto-sync clears stale binding
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 2 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(altFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(altFund), deadline, signers, signatures);
+    }
+
+    (order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "Order should be cleared during auto-sync");
+
+    (, address fundAfter,,) = facility.getIntent(intentId);
+    assertEq(fundAfter, address(altFund), "Fund should be updated to the new address");
+  }
+
+  function test_setFund_autoSyncsEndedOrder_sameFund() public {
+    uint256 intentId = _createResolvingIntent();
+
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 1 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    // Create a stale order and mark it as ENDED in mock fund state
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 500e18, Mode.DEPOSIT);
+    (Order memory order,) = facility.getOrder(intentId);
+    mockFund.setOrderState(order.toId(address(mockFund)), State.ENDED);
+
+    // Expect two FundUpdated events: one for sync clearing, one for re-bind
+    vm.expectEmit(true, true, true, true);
+    emit IFacilityIntents.FundUpdated(intentId, address(0));
+    vm.expectEmit(true, true, true, true);
+    emit IFacilityIntents.FundUpdated(intentId, address(mockFund));
+
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 2 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    (order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "Order should be cleared during auto-sync");
+
+    (, address fund,,) = facility.getIntent(intentId);
+    assertEq(fund, address(mockFund), "Fund should be re-bound after auto-sync");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

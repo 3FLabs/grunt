@@ -1415,7 +1415,7 @@ contract CentrifugeFundTest is Test {
     fund.forceEnd(order);
   }
 
-  function test_ForceEnd_SucceedsWithPendingClaimableDeposit() public {
+  function test_ForceEnd_RevertsWithPendingClaimableDeposit_PendingRequest() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
     _commitDeposit(order);
@@ -1424,12 +1424,11 @@ contract CentrifugeFundTest is Test {
     vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
 
     vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.forceEnd(order);
-
-    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended despite partial fill with pending request");
   }
 
-  function test_ForceEnd_SucceedsWithPendingClaimableRedeem() public {
+  function test_ForceEnd_RevertsWithPendingClaimableRedeem_PendingRequest() public {
     Order memory order = _redeemOrder(ONE, ONE);
     fund.create(order);
     _mintWrappedShare(address(this), order.input);
@@ -1440,12 +1439,11 @@ contract CentrifugeFundTest is Test {
     vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
 
     vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.forceEnd(order);
-
-    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended despite partial fill with pending request");
   }
 
-  function test_ForceEnd_SucceedsWithPollutedClaimableDeposit() public {
+  function test_ForceEnd_RevertsWithPollutedClaimableDeposit() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
     _commitDeposit(order);
@@ -1464,12 +1462,11 @@ contract CentrifugeFundTest is Test {
     vault.partialFulfillDeposit(address(fund), pollution, pollution);
 
     vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.forceEnd(order);
-
-    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended after polluted claim");
   }
 
-  function test_ForceEnd_SucceedsWithPollutedClaimableRedeem() public {
+  function test_ForceEnd_RevertsWithPollutedClaimableRedeem() public {
     Order memory order = _redeemOrder(ONE, ONE);
     fund.create(order);
     _mintWrappedShare(address(this), order.input);
@@ -1490,9 +1487,56 @@ contract CentrifugeFundTest is Test {
     vault.partialFulfillRedeem(address(fund), pollution, pollution);
 
     vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.forceEnd(order);
+  }
 
-    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended after polluted claim");
+  function test_ForceEnd_RevertsWhenAttackerCreatesPendingDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Full fulfillment — claimable fills exist, no pending request
+    vault.fulfillDeposit(address(fund), ONE);
+
+    // Attacker creates a dust pending request to try to bypass the claimable check
+    address attacker = makeAddr("attacker-bypass-deposit");
+    uint256 dust = 1;
+    assetToken.mint(attacker, dust);
+    vm.prank(attacker);
+    assetToken.approve(address(vault), dust);
+    vm.prank(attacker);
+    vault.requestDeposit(dust, address(fund), attacker);
+
+    // forceEnd must still revert — the dust pending request does not bypass the check
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWhenAttackerCreatesPendingRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Full fulfillment — claimable fills exist, no pending request
+    vault.fulfillRedeem(address(fund), ONE);
+
+    // Attacker creates a dust pending request to try to bypass the claimable check
+    address attacker = makeAddr("attacker-bypass-redeem");
+    uint256 dust = 1;
+    shareToken.mint(attacker, dust);
+    vm.prank(attacker);
+    shareToken.approve(address(vault), dust);
+    vm.prank(attacker);
+    vault.requestRedeem(dust, address(fund), attacker);
+
+    // forceEnd must still revert — the dust pending request does not bypass the check
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
   }
 
   function test_ForceEnd_RevertsWithPendingClaimableWithoutPendingDeposit() public {
