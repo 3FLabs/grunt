@@ -24,10 +24,6 @@ uint256 constant VIRTUAL_ASSETS = 1;
 /// @custom:value 1,000,000,000,000,000,000
 uint256 constant WAD = 1e18;
 
-/// @dev Basis points precision (10000 = 100%).
-/// @custom:value 10,000
-uint256 constant BPS = 10_000;
-
 /// @dev Seconds in a year for management fee calculation.
 /// @custom:value 31,536,000 (365 days)
 uint256 constant SECONDS_PER_YEAR = 365 days;

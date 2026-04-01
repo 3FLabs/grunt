@@ -28,9 +28,16 @@ src/
 │   ├── base/                    # Admin, fees, shares, rebalancing
 │   └── rebalancer/              # Flash-loan based rebalancer
 ├── funds/                       # External asset wrappers
-│   ├── USCCFund.sol             # Superstate USCC integration
-│   ├── USCCFundFactory.sol      # Beacon proxy factory
-│   └── WrappedAsset.sol         # wUSCC wrapper token
+│   ├── centrifuge/
+│   │   ├── CentrifugeFund.sol       # Centrifuge ERC-7540 integration
+│   │   └── CentrifugeFundFactory.sol # Beacon proxy factory
+│   ├── pareto/
+│   │   ├── ParetoFund.sol           # Pareto (Idle Finance) CDO integration
+│   │   └── ParetoFundFactory.sol    # Beacon proxy factory
+│   ├── USCC/
+│   │   ├── USCCFund.sol             # Superstate USCC integration
+│   │   └── USCCFundFactory.sol      # Beacon proxy factory
+│   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.)
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
 │   └── MorphoBorrowPositionFactory.sol  # Beacon proxy factory
@@ -96,8 +103,14 @@ This section provides a consolidated view of all roles across contracts and how 
 | **Request** | Owner | Protocol Admin | Mark loan as repaid, authorize minting |
 | | Puller | Facility | Pull bridge loan funds, repay funds |
 | | Consumer | Protocol Admin | Consume signed offers |
-| **Fund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
+| **USCCFund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | | Operator | Operations Bot | Settle fund state after external operations |
+| **CentrifugeFund** | Owner | Protocol Admin | Cancel vault requests via `cancelRequest()` |
+| | Operator | Operations Bot | Cancel vault requests via `cancelRequest()` |
+| | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
+| **ParetoFund** | Owner | Protocol Admin | Resolve stuck orders |
+| | Operator | Operations Bot | Resolve stuck orders |
+| | Depositor | Facility | Create/cancel/commit/unlock orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
@@ -519,6 +532,54 @@ stateDiagram-v2
 1. `create(REDEEM)` - Initialize order
 2. `commit()` - Burn wUSCC, trigger off-chain redemption
 3. `unlock()` - Release USDC when settled (or `recover()` if failed)
+
+### Centrifuge ERC-7540 Integration
+
+`CentrifugeFund` wraps Centrifuge ERC-7540 async vaults. Shares are represented by WrappedAsset tokens wrapping the vault's share token.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern**: the stored `internalState` may differ from what `state()` returns, because `state()` queries the Centrifuge vault for claimable amounts to detect async transitions (e.g., PROCESSING → UNLOCKING).
+- All vault calls use **requestId = 0**, the Centrifuge convention for "the current request for this controller" (each controller has at most one active request).
+- Supports **partial fills**: Centrifuge processes requests across epochs, so `unlock()` / `recover()` can be called multiple times, returning to PROCESSING between partial claims.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order (validates slippage against current exchange rate)
+2. `commit()` - Pull assets, approve vault, call `requestDeposit()`
+3. *Wait for Centrifuge epoch processing*
+4. `unlock()` - Claim shares via `mint()`, wrap into WrappedAsset, send to receiver
+
+**Redeem Flow (WrappedShare → Asset):**
+1. `create(REDEEM)` - Initialize order
+2. `commit()` - Burn WrappedAsset (unwrap), approve share tokens, call `requestRedeem()`
+3. *Wait for Centrifuge epoch processing*
+4. `unlock()` - Claim assets via `withdraw()`, send to receiver
+
+**Recovery Flow (cancel a pending request):**
+1. `cancelRequest()` - Owner/operator submits cancellation to Centrifuge vault
+2. *Wait for Centrifuge to process the cancellation*
+3. `recover()` - Claim returned assets/shares, send to receiver
+
+### Pareto (Idle Finance) CDO Integration
+
+`ParetoFund` wraps an IdleCDOEpochVariant (the Pareto/Idle credit vault). Shares are represented by WrappedAsset tokens wrapping the AA (senior) tranche token.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern** (like Centrifuge): the stored `internalState` may differ from what `state()` returns, because `state()` queries the CDO and its strategy to detect async transitions (e.g., PROCESSING → UNLOCKING).
+- Deposits are **synchronous** — `depositAA()` succeeds or reverts atomically. No epoch wait is needed for deposits.
+- Withdrawals are **epoch-gated** — `requestWithdraw()` queues a withdrawal that completes after the CDO epoch ends, then `claimWithdrawRequest()` delivers the underlying assets.
+- **No recovery flow** — `recover()` always reverts with `RecoverNotSupported()`. Deposits are atomic (no stuck intermediate state) and withdrawals always complete after epoch processing.
+- `resolve()` allows the operator/owner to override input/output amounts for an order stuck in PROCESSING when received amounts differ from expected values.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order (validates Keyring wallet allowance)
+2. `commit()` - Pull assets, call `depositAA()` atomically — AA tranche tokens are received immediately
+3. `unlock()` - Wrap AA tranche tokens into WrappedAsset, send to receiver
+
+**Redeem Flow (WrappedShare → Asset):**
+1. `create(REDEEM)` - Initialize order
+2. `commit()` - Burn WrappedAsset (unwrap to AA tranche), call `requestWithdraw()` on CDO
+3. *Wait for CDO epoch to end*
+4. `unlock()` - Call `claimWithdrawRequest()`, send underlying assets to receiver
 
 ## Position Manager
 
@@ -970,6 +1031,8 @@ flowchart TB
 - `PositionManagerFactory` - Deploys PositionManager instances
 - `MorphoBorrowPositionFactory` - Deploys borrow positions
 - `USCCFundFactory` - Deploys USCC fund wrappers
+- `CentrifugeFundFactory` - Deploys Centrifuge ERC-7540 fund wrappers
+- `ParetoFundFactory` - Deploys Pareto CDO fund wrappers
 - `TransferGuardFactory` - Deploys transfer guards
 
 **Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.

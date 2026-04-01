@@ -2,18 +2,18 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {USCCFund} from "src/funds/USCCFund.sol";
-import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
+import {USCCFund} from "src/funds/USCC/USCCFund.sol";
+import {USCCFundFactory} from "src/funds/USCC/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "../mock/MockERC20.sol";
-import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
-import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
+import {MockERC20} from "../../mock/MockERC20.sol";
+import {MockAllowlist} from "../../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../../mock/funds/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
   using LibOrder for Order;
@@ -32,9 +32,7 @@ contract USCCFundTest is Test {
   event OrderRecovering(bytes32 indexed orderId);
   event OrderProcessing(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
   uint256 private constant ONE_USDC = 1e6;
 
@@ -212,6 +210,24 @@ contract USCCFundTest is Test {
     _commitDeposit(order);
 
     vm.expectRevert(LibFundsErrors.PendingOrder.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    _unlockDeposit(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    _unlockDeposit(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
     fund.create(order);
   }
 
@@ -778,23 +794,13 @@ contract USCCFundTest is Test {
     bytes32 orderId = order.toId(address(fund));
     uint256 newInput = order.input;
     uint256 newOutput = ONE_USDC / 2;
-    Order memory resolvedOrder = Order({
-      mode: order.mode,
-      owner: order.owner,
-      receiver: order.receiver,
-      input: newInput,
-      output: newOutput,
-      salt: order.salt
-    });
-    bytes32 resolvedOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, resolvedOrderId, newInput, newOutput, owner);
+    emit OrderResolved(orderId, newInput, newOutput, owner);
     fund.resolve(order, newInput, newOutput);
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "original processing");
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved empty");
 
     uscc.mint(address(fund), newOutput);
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "uses resolved output");

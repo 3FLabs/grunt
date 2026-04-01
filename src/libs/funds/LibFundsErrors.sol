@@ -22,6 +22,16 @@ library LibFundsErrors {
   /// @notice Thrown when trying to create an order while another is still pending.
   error PendingOrder();
 
+  /// @notice Thrown when a new order's computed ID collides with a previously ended order.
+  /// @param orderId The colliding order Id.
+  error OrderAlreadyExists(bytes32 orderId);
+
+  /// @notice Thrown when trying to cancel a request while partial fill assets are still claimable.
+  error PendingClaimableAssets();
+
+  /// @notice Thrown when the order output does not match the vault's current conversion rate.
+  error InvalidOutput();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      AUTHORIZATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -32,12 +42,27 @@ library LibFundsErrors {
   /// @notice Thrown when the order receiver does not match the caller (the owner).
   error InvalidReceiver();
 
+  /// @notice Thrown when the wrapped share's underlying token does not match the expected share token.
+  error InvalidUnderlyingAsset();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      INTEGRATIONS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when address(this) is not allowed by Superstate to deposit in USCC.
   error NotAllowedSuperstate();
+
+  /// @notice Thrown when the fund is not permissioned to operate with the vault.
+  error NotAllowedByFund();
+
+  /// @notice Thrown when the wrapped share contract is not permissioned on the vault's share token.
+  error WrappedShareNotPermissioned();
+
+  /// @notice Thrown when recover() is called on a fund that does not support recovery.
+  error RecoverNotSupported();
+
+  /// @notice Thrown when the CDO routes a withdrawal to the instant path instead of the normal epoch-gated queue.
+  error InstantWithdrawDetected();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
@@ -70,11 +95,4 @@ library LibFundsErrors {
   /// @param decimalsA The decimals of the first token.
   /// @param decimalsB The decimals of the second token.
   error DecimalsMismatch(uint256 decimalsA, uint256 decimalsB);
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    OUTPUT VALIDATION                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when the order output deviates too much from the oracle-derived expected output.
-  error InvalidOutput();
 }
