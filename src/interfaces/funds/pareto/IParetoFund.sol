@@ -47,13 +47,10 @@ interface IParetoFund is IFund {
 
   /// @notice Emitted when an order is manually resolved by an operator.
   /// @param orderId The unique identifier of the resolved order.
-  /// @param newOrderId The unique identifier of the new resolved order.
   /// @param input The new input amount set by the operator.
   /// @param output The new output amount set by the operator.
   /// @param caller The address that resolved the order.
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 input, uint256 output, address indexed caller
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 input, uint256 output, address indexed caller);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -90,12 +87,6 @@ interface IParetoFund is IFund {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Role for operator.
-  function OPERATOR_ROLE() external view returns (uint256);
-
-  /// @notice Role for depositor.
-  function DEPOSITOR_ROLE() external view returns (uint256);
 
   /// @notice The IdleCDOEpochVariant proxy address.
   function vault() external view returns (address);

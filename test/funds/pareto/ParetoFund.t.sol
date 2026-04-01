@@ -27,12 +27,14 @@ contract ParetoFundTest is Test {
   event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 input, uint256 output, address indexed caller
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 input, uint256 output, address indexed caller);
 
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_AA = 1e18;
+
+  // ParetoFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
 
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
@@ -92,7 +94,7 @@ contract ParetoFundTest is Test {
     assertEq(fund.asset(), address(usdc), "asset");
     assertEq(fund.share(), address(wrappedShare), "share");
     assertEq(fund.vault(), address(cdo), "vault");
-    assertEq(fund.rolesOf(address(this)), fund.DEPOSITOR_ROLE(), "depositor role");
+    assertEq(fund.rolesOf(address(this)), DEPOSITOR_ROLE, "depositor role");
     assertEq(uint256(fund.state(_depositOrder(ONE_USDC, ONE_AA))), uint256(State.EMPTY), "initial state");
   }
 
@@ -194,6 +196,26 @@ contract ParetoFundTest is Test {
     _commitDeposit(order);
 
     vm.expectRevert(LibFundsErrors.PendingOrder.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    _commitDeposit(order);
+    _fulfillDeposit(order);
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_AA * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    _fulfillDeposit(nextOrder);
+    fund.unlock(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
     fund.create(order);
   }
 
@@ -520,6 +542,33 @@ contract ParetoFundTest is Test {
     assertEq(aaTranche.allowance(address(fund), address(cdo)), 0, "approval cleared");
   }
 
+  function test_Commit_RevertsInstantWithdrawDetected() public {
+    // Deposit to get wrappedShares
+    _depositAndUnlock(ONE_USDC);
+
+    // Create a REDEEM order and approve wrapped shares
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order);
+    wrappedShare.approve(address(fund), order.input);
+
+    // Snapshot pre-commit state
+    uint256 aaBefore = aaTranche.balanceOf(address(fund));
+    uint256 wrappedBefore = wrappedShare.balanceOf(address(this));
+
+    // Simulate the CDO routing to the instant withdraw path
+    cdo.setSimulateInstantWithdraw(true);
+
+    vm.expectRevert(LibFundsErrors.InstantWithdrawDetected.selector);
+    fund.commit(order);
+
+    // Post-revert invariants: guard rolled back cleanly
+    assertEq(strategy.lastWithdrawRequest(address(fund)), 0, "no pending request recorded");
+    assertEq(strategy.withdrawsRequests(address(fund)), 0, "no withdrawsRequests recorded");
+    assertEq(aaTranche.balanceOf(address(fund)), aaBefore, "AA balance unchanged");
+    assertEq(wrappedShare.balanceOf(address(this)), wrappedBefore, "wrapped balance unchanged");
+    assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "order still ACCEPTED");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                             UNLOCK                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -677,20 +726,10 @@ contract ParetoFundTest is Test {
     _commitDeposit(order);
 
     bytes32 orderId = order.toId(address(fund));
-    // Compute the new order ID after resolve modifies input/output in memory
-    Order memory resolvedOrder = Order({
-      mode: order.mode,
-      owner: order.owner,
-      receiver: order.receiver,
-      input: ONE_USDC / 2,
-      output: ONE_AA / 2,
-      salt: order.salt
-    });
-    bytes32 newOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, newOrderId, ONE_USDC / 2, ONE_AA / 2, owner);
+    emit OrderResolved(orderId, ONE_USDC / 2, ONE_AA / 2, owner);
     fund.resolve(order, ONE_USDC / 2, ONE_AA / 2);
   }
 
@@ -737,9 +776,8 @@ contract ParetoFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
+    fund.grantRoles(operator, OPERATOR_ROLE);
 
     vm.prank(operator);
     fund.resolve(order, ONE_USDC, ONE_AA);
@@ -775,14 +813,10 @@ contract ParetoFundTest is Test {
     _commitDeposit(order);
 
     bytes32 orderId = order.toId(address(fund));
-    Order memory resolvedOrder = Order({
-      mode: order.mode, owner: order.owner, receiver: order.receiver, input: 0, output: ONE_AA, salt: order.salt
-    });
-    bytes32 newOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, newOrderId, 0, ONE_AA, owner);
+    emit OrderResolved(orderId, 0, ONE_AA, owner);
     fund.resolve(order, 0, ONE_AA);
   }
 
@@ -861,7 +895,7 @@ contract ParetoFundTest is Test {
 
   function test_MaxDeposit_ReturnsMax() public view {
     assertEq(fund.maxDeposit(address(this)), type(uint256).max, "max deposit");
-    assertEq(fund.maxDeposit(outsider), type(uint256).max, "max deposit outsider");
+    assertEq(fund.maxDeposit(outsider), 0, "non-depositor");
   }
 
   function test_MaxRedeem_ReturnsBalance() public {
@@ -870,6 +904,7 @@ contract ParetoFundTest is Test {
     _depositAndUnlock(ONE_USDC);
 
     assertEq(fund.maxRedeem(address(this)), ONE_AA, "has balance");
+    assertEq(fund.maxRedeem(outsider), 0, "non-depositor");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -977,6 +1012,110 @@ contract ParetoFundTest is Test {
     assertEq(usdc.balanceOf(address(this)), ONE_USDC, "usdc received");
   }
 
+  function test_StateMachine_FullRedeemApr0Lifecycle() public {
+    // Deposit first to get shares
+    _depositAndUnlock(ONE_USDC);
+
+    // Enable apr0 mode — withdrawsRequests will stay 0, only lastWithdrawRequest is set
+    cdo.setApr0Mode(true);
+
+    // Set epoch as running so withdrawal isn't immediately claimable
+    cdo.setEpochEndDate(block.timestamp + 1 days);
+
+    // Redeem lifecycle
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    assertEq(uint256(fund.state(order)), uint256(State.EMPTY), "empty");
+
+    fund.create(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "accepted");
+
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
+
+    // Verify withdrawsRequests is 0 (apr0 path skips it)
+    assertEq(strategy.withdrawsRequests(address(fund)), 0, "withdrawsRequests should be 0 in apr0 mode");
+    assertGt(strategy.lastWithdrawRequest(address(fund)), 0, "lastWithdrawRequest should be set");
+
+    _fulfillRedeem();
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC, "usdc received");
+  }
+
+  function test_State_RedeemApr0DynamicTransitions() public {
+    // First deposit
+    _depositAndUnlock(ONE_USDC);
+
+    // Enable apr0 mode
+    cdo.setApr0Mode(true);
+
+    // Now redeem
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Verify withdrawsRequests is 0 (apr0 path skips it)
+    assertEq(strategy.withdrawsRequests(address(fund)), 0, "withdrawsRequests should be 0 in apr0 mode");
+    assertGt(strategy.lastWithdrawRequest(address(fund)), 0, "lastWithdrawRequest should be set");
+
+    // Set epoch as running (epoch not ended yet)
+    cdo.setEpochEndDate(block.timestamp + 1 days);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing during epoch");
+
+    // Advance epoch to make withdrawal claimable
+    _fulfillRedeem();
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after epoch");
+  }
+
+  function test_StateMachine_ConsecutiveRedeems() public {
+    // First cycle: deposit → redeem → fulfill → unlock
+    _depositAndUnlock(ONE_USDC);
+
+    Order memory order1 = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order1);
+    wrappedShare.approve(address(fund), order1.input);
+    fund.commit(order1);
+    _fulfillRedeem();
+    fund.unlock(order1);
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC, "cycle 1: usdc received");
+
+    // Second cycle: deposit again → redeem → fulfill → unlock
+    // Exercises the lastWithdrawRequest guard when a prior request existed in an earlier epoch.
+    // Uses unique salts to avoid OrderAlreadyExists.
+    Order memory deposit2 = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: ONE_USDC,
+      output: ONE_AA,
+      salt: keccak256("deposit2")
+    });
+    fund.create(deposit2);
+    usdc.mint(address(this), ONE_USDC);
+    usdc.approve(address(fund), ONE_USDC);
+    fund.commit(deposit2);
+    fund.unlock(deposit2);
+
+    Order memory order2 = Order({
+      mode: Mode.REDEEM,
+      owner: address(this),
+      receiver: address(this),
+      input: ONE_AA,
+      output: ONE_USDC,
+      salt: keccak256("redeem2")
+    });
+    fund.create(order2);
+    wrappedShare.approve(address(fund), order2.input);
+    fund.commit(order2);
+    _fulfillRedeem();
+    fund.unlock(order2);
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC * 2, "cycle 2: cumulative usdc received");
+  }
+
   function test_StateMachine_MultipleOrders() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);
@@ -994,10 +1133,9 @@ contract ParetoFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_OperatorGrantable() public {
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
-    assertEq(fund.rolesOf(operator), operatorRole, "operator role");
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    assertEq(fund.rolesOf(operator), OPERATOR_ROLE, "operator role");
   }
 
   function test_Roles_OwnershipTransfer() public {
@@ -1138,7 +1276,7 @@ contract ParetoFundTest is Test {
   /// @dev For redeem: advances epoch and funds CDO with underlying.
   function _fulfillRedeem() internal {
     // Fund CDO with underlying for claim
-    uint256 pendingAmount = strategy.withdrawsRequests(address(fund));
+    uint256 pendingAmount = strategy.totalClaimable(address(fund));
     cdo.fundUnderlying(pendingAmount);
     // Advance epoch to make withdrawal claimable
     cdo.advanceEpoch();

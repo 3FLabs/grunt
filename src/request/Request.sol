@@ -193,7 +193,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     // else if deadline has passed, set repaid to true and emit the Repaid event
     if (block.timestamp >= req.repaymentDeadline) {
       req.repaid = true;
-      emit Repaid(_asset().balanceOf(address(this)));
+      emit Repaid(IERC20(_asset()).balanceOf(address(this)));
       return true;
     }
     // else return false
@@ -256,7 +256,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
         revert LibRequestErrors.MintToRepaidDelayNotElapsed(_availableAt);
       }
     }
-    uint256 balance = _asset().balanceOf(address(this));
+    uint256 balance = IERC20(_asset()).balanceOf(address(this));
     if (balance < minBalance) revert LibRequestErrors.InsufficientBalance(balance, minBalance);
     if (balance > maxBalance) revert LibRequestErrors.ExcessiveBalance(balance, maxBalance);
     req.repaid = true;

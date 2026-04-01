@@ -20,6 +20,9 @@ contract CentrifugeFundFuzzTest is Test {
 
   uint256 private constant ONE = 1e6;
 
+  // CentrifugeFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -51,6 +54,7 @@ contract CentrifugeFundFuzzTest is Test {
     fund = CentrifugeFund(fundAddr);
 
     vault.setPermissioned(address(fund), true);
+    vault.setPermissioned(address(wrappedShare), true);
     vm.prank(owner);
     wrappedShare.grantRoles(address(fund), ISSUER_ROLE);
     vm.prank(owner);
@@ -375,6 +379,8 @@ contract CentrifugeFundFuzzTest is Test {
 }
 
 contract CentrifugeFundInvariantTest is StdInvariant, Test {
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
 
@@ -409,19 +415,19 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
     fund = CentrifugeFund(fundAddr);
 
     vault.setPermissioned(address(fund), true);
+    vault.setPermissioned(address(wrappedShare), true);
 
     vm.prank(owner);
     wrappedShare.grantRoles(address(fund), ISSUER_ROLE);
     vm.prank(owner);
     wrappedShare.grantRoles(address(handler), SENDER_ROLE);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(address(handler), operatorRole);
+    fund.grantRoles(address(handler), OPERATOR_ROLE);
 
     handler.initialize(fund, assetToken, shareToken, wrappedShare, vault);
 
-    bytes4[] memory selectors = new bytes4[](11);
+    bytes4[] memory selectors = new bytes4[](13);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_commit.selector;
@@ -430,9 +436,11 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
     selectors[5] = handler.act_vaultFulfillRedeem.selector;
     selectors[6] = handler.act_vaultFulfillCancelDeposit.selector;
     selectors[7] = handler.act_vaultFulfillCancelRedeem.selector;
-    selectors[8] = handler.act_unlock.selector;
-    selectors[9] = handler.act_recover.selector;
-    selectors[10] = handler.act_cancel.selector;
+    selectors[8] = handler.act_vaultFulfillDepositAndCancelDeposit.selector;
+    selectors[9] = handler.act_vaultFulfillRedeemAndCancelRedeem.selector;
+    selectors[10] = handler.act_unlock.selector;
+    selectors[11] = handler.act_recover.selector;
+    selectors[12] = handler.act_cancel.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -482,13 +490,23 @@ contract CentrifugeFundInvariantTest is StdInvariant, Test {
 
     if (stage == State.RECOVERING) {
       if (order.mode == Mode.DEPOSIT) {
-        uint256 claimable = vault._claimableCancelDeposit(address(fund));
-        State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
-        assertEq(uint256(actual), uint256(expected), "recovering deposit");
+        uint256 claimableFulfilled = vault._claimableMint(address(fund));
+        if (claimableFulfilled > 0) {
+          assertEq(uint256(actual), uint256(State.UNLOCKING), "recovering deposit: fulfilled");
+        } else {
+          uint256 claimable = vault._claimableCancelDeposit(address(fund));
+          State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
+          assertEq(uint256(actual), uint256(expected), "recovering deposit");
+        }
       } else {
-        uint256 claimable = vault._claimableCancelRedeem(address(fund));
-        State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
-        assertEq(uint256(actual), uint256(expected), "recovering redeem");
+        uint256 claimableFulfilled = vault._claimableWithdraw(address(fund));
+        if (claimableFulfilled > 0) {
+          assertEq(uint256(actual), uint256(State.UNLOCKING), "recovering redeem: fulfilled");
+        } else {
+          uint256 claimable = vault._claimableCancelRedeem(address(fund));
+          State expected = claimable > 0 ? State.RECOVERING : State.PROCESSING;
+          assertEq(uint256(actual), uint256(expected), "recovering redeem");
+        }
       }
       return;
     }

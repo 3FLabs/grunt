@@ -116,7 +116,7 @@ contract ParetoFundHandler is Test {
 
   function act_cdoFulfillRedeem() external {
     // Fund CDO with underlying and advance epoch
-    uint256 pendingAmount = strategy.withdrawsRequests(address(fund));
+    uint256 pendingAmount = strategy.totalClaimable(address(fund));
     if (pendingAmount == 0) return;
     cdo.fundUnderlying(pendingAmount);
     cdo.advanceEpoch();

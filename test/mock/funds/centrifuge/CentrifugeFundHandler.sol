@@ -127,13 +127,40 @@ contract CentrifugeFundHandler is Test {
     vault.fulfillCancelRedeem(address(fund), amount);
   }
 
+  function act_vaultFulfillDepositAndCancelDeposit(uint96 sharesSeed) external {
+    if (!vault._pendingCancelDeposit(address(fund))) return;
+    uint256 pending = vault._pendingDeposits(address(fund));
+    if (pending == 0) return;
+    uint256 shares = _bound(uint256(sharesSeed), 0, pending);
+    vault.fulfillDepositAndCancelDeposit(address(fund), shares, pending - shares);
+  }
+
+  function act_vaultFulfillRedeemAndCancelRedeem(uint96 assetsSeed) external {
+    if (!vault._pendingCancelRedeem(address(fund))) return;
+    uint256 pending = vault._pendingRedeems(address(fund));
+    if (pending == 0) return;
+    uint256 assets = _bound(uint256(assetsSeed), 0, pending);
+    vault.fulfillRedeemAndCancelRedeem(address(fund), assets, pending - assets);
+  }
+
   function act_unlock() external {
+    State prevState = internalState;
     (State newState,) = fund.unlock(order);
-    internalState = newState;
+    // Return value PROCESSING during recovery means internal state stays RECOVERING
+    if (prevState == State.RECOVERING && newState == State.PROCESSING) {
+      internalState = State.RECOVERING;
+    } else {
+      internalState = newState;
+    }
   }
 
   function act_recover() external {
     (State newState,) = fund.recover(order);
-    internalState = newState;
+    // Return value PROCESSING means internal state stays RECOVERING
+    if (newState == State.PROCESSING) {
+      internalState = State.RECOVERING;
+    } else {
+      internalState = newState;
+    }
   }
 }

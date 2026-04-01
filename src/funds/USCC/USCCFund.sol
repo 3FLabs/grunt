@@ -185,6 +185,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
     // No pending state, always accepted or revert.
     bytes32 _orderId = order.toId(address(this));
+    if (_storage.endedOrders[_orderId]) revert LibFundsErrors.OrderAlreadyExists(_orderId);
     _storage.currentOrderId = _orderId;
     _storage.internalState = State.ACCEPTED;
     _storage.hasResolvedAmounts = false;
@@ -356,10 +357,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _storage.resolvedInput = input;
     _storage.resolvedOutput = output;
 
-    order.input = input;
-    order.output = output;
-
-    emit OrderResolved(_storage.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+    emit OrderResolved(_storage.currentOrderId, input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -385,12 +383,12 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   function maxDeposit(address account) external view override returns (uint256) {
-    return hasAllRoles(account, _DEPOSITOR_ROLE) ? USDC.balanceOf(account) : 0;
+    return hasAllRoles(account, _DEPOSITOR_ROLE) ? IERC20(USDC).balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return hasAllRoles(account, _DEPOSITOR_ROLE) ? WUSCC.balanceOf(account) : 0;
+    return hasAllRoles(account, _DEPOSITOR_ROLE) ? IERC20(WUSCC).balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
@@ -449,11 +447,11 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        _amount = USCC.balanceOf(address(this));
+        _amount = IERC20(USCC).balanceOf(address(this));
         return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we received USDC
-        _amount = USDC.balanceOf(address(this));
+        _amount = IERC20(USDC).balanceOf(address(this));
         return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       }
     }
@@ -462,11 +460,11 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
-        _amount = USDC.balanceOf(address(this));
+        _amount = IERC20(USDC).balanceOf(address(this));
         return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we can recover USCC
-        _amount = USCC.balanceOf(address(this));
+        _amount = IERC20(USCC).balanceOf(address(this));
         return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       }
     }

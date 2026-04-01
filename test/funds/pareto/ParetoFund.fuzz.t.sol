@@ -21,6 +21,9 @@ contract ParetoFundFuzzTest is Test {
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_AA = 1e18;
 
+  // ParetoFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -106,7 +109,7 @@ contract ParetoFundFuzzTest is Test {
     fund.commit(order);
 
     // Advance epoch
-    uint256 pendingAmount = strategy.withdrawsRequests(address(fund));
+    uint256 pendingAmount = strategy.totalClaimable(address(fund));
     cdo.fundUnderlying(pendingAmount);
     cdo.advanceEpoch();
 
@@ -246,6 +249,8 @@ contract ParetoFundFuzzTest is Test {
 }
 
 contract ParetoFundInvariantTest is StdInvariant, Test {
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
 
@@ -288,9 +293,8 @@ contract ParetoFundInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     wrappedShare.grantRoles(address(handler), SENDER_ROLE);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(address(handler), operatorRole);
+    fund.grantRoles(address(handler), OPERATOR_ROLE);
 
     handler.initialize(fund, usdc, aaTranche, wrappedShare, cdo, strategy);
 

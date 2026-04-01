@@ -22,6 +22,10 @@ library LibFundsErrors {
   /// @notice Thrown when trying to create an order while another is still pending.
   error PendingOrder();
 
+  /// @notice Thrown when a new order's computed ID collides with a previously ended order.
+  /// @param orderId The colliding order Id.
+  error OrderAlreadyExists(bytes32 orderId);
+
   /// @notice Thrown when trying to cancel a request while partial fill assets are still claimable.
   error PendingClaimableAssets();
 
@@ -51,8 +55,14 @@ library LibFundsErrors {
   /// @notice Thrown when the fund is not permissioned to operate with the vault.
   error NotAllowedByFund();
 
+  /// @notice Thrown when the wrapped share contract is not permissioned on the vault's share token.
+  error WrappedShareNotPermissioned();
+
   /// @notice Thrown when recover() is called on a fund that does not support recovery.
   error RecoverNotSupported();
+
+  /// @notice Thrown when the CDO routes a withdrawal to the instant path instead of the normal epoch-gated queue.
+  error InstantWithdrawDetected();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */

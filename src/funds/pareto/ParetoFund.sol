@@ -40,10 +40,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
-  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+  uint256 internal constant OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+  uint256 internal constant DEPOSITOR_ROLE = _ROLE_1;
 
   /// @notice Maximum allowed deviation between order output and current rate (in basis points).
   /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
@@ -56,25 +56,25 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @notice Storage struct containing all persistent state for the ParetoFund contract.
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility.
   /// @param vault The IdleCDOEpochVariant proxy address.
+  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
+  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param wrappedShare The WrappedAsset contract that wraps the AA tranche token.
   /// @param asset The underlying asset of the vault (e.g. USDC).
   /// @param aaTranche The AA (senior) tranche token address.
   /// @param strategy The IdleCreditVault strategy contract address.
   /// @param currentOrderId The order ID of the current (or most recent) order.
-  /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
-  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param depositReceived The actual AA tranche tokens received during commit() for a DEPOSIT order.
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct ParetoFundStorage {
     address vault;
+    State internalState;
+    bool hasResolvedAmounts;
     address wrappedShare;
     address asset;
     address aaTranche;
     address strategy;
     bytes32 currentOrderId;
-    State internalState;
-    bool hasResolvedAmounts;
     uint256 resolvedOutput;
     uint256 depositReceived;
     mapping(bytes32 => bool) endedOrders;
@@ -159,7 +159,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     // Slippage guard: reject if expected output deviates too far below the current rate.
     uint256 _virtualPrice = IIdleCDOEpochVariant($.vault).virtualPrice($.aaTranche);
     uint256 _expectedOutput =
-      order.mode == Mode.DEPOSIT ? order.input * 1e18 / _virtualPrice : order.input.mulDiv(_virtualPrice, 1e18);
+      order.mode == Mode.DEPOSIT ? order.input.mulDiv(1e18, _virtualPrice) : order.input.mulDiv(_virtualPrice, 1e18);
 
     if (order.output < _expectedOutput) {
       if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
@@ -168,6 +168,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     }
 
     bytes32 _orderId = order.toId(address(this));
+    if ($.endedOrders[_orderId]) revert LibFundsErrors.OrderAlreadyExists(_orderId);
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
     $.hasResolvedAmounts = false;
@@ -187,8 +188,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     bytes32 _orderId = order.toId(address(this));
     if (_orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
 
-    if ($.internalState != State.ACCEPTED) {
-      revert LibFundsErrors.InvalidState($.internalState);
+    State _internalState = $.internalState;
+    if (_internalState != State.ACCEPTED && _internalState != State.PENDING) {
+      revert LibFundsErrors.InvalidState(_internalState);
     }
 
     $.currentOrderId = bytes32(0);
@@ -230,10 +232,14 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     } else {
       // Burn wrapped AA from depositor (unwraps to AA tranche tokens held by this contract)
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
-      // Request epoch-gated withdrawal: CDO burns AA tokens, strategy tracks the request
-      _aaTranche.safeApproveWithRetry(_vault, order.input);
+      // Request epoch-gated withdrawal: CDO burns AA tokens directly (no approval needed)
+      uint256 _lwrBefore = IIdleCreditVault($.strategy).lastWithdrawRequest(address(this));
       IIdleCDOEpochVariant(_vault).requestWithdraw(order.input, _aaTranche);
-      _aaTranche.safeApproveWithRetry(_vault, 0);
+      // Block instant withdrawals: if the CDO routed to the instant path,
+      // lastWithdrawRequest won't change and the order would be stuck in PROCESSING.
+      if (IIdleCreditVault($.strategy).lastWithdrawRequest(address(this)) <= _lwrBefore) {
+        revert LibFundsErrors.InstantWithdrawDetected();
+      }
     }
 
     $.internalState = State.PROCESSING;
@@ -309,10 +315,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     $.hasResolvedAmounts = true;
     $.resolvedOutput = output;
 
-    order.input = input;
-    order.output = output;
-
-    emit OrderResolved($.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+    emit OrderResolved($.currentOrderId, input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -344,13 +347,13 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function maxDeposit(address) external pure override returns (uint256) {
-    return type(uint256).max;
+  function maxDeposit(address account) external view override returns (uint256) {
+    return hasAllRoles(account, DEPOSITOR_ROLE) ? type(uint256).max : 0;
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return IERC20(_paretoFundStorage().wrappedShare).balanceOf(account);
+    return hasAllRoles(account, DEPOSITOR_ROLE) ? IERC20(_paretoFundStorage().wrappedShare).balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
@@ -383,8 +386,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   ///      - Checks `depositReceived >= order.output` → UNLOCKING with depositReceived
   ///
   ///      For PROCESSING + REDEEM:
-  ///      - Checks strategy has pending withdrawal AND epoch has ended → UNLOCKING
+  ///      - Checks strategy has pending withdrawal (lastWithdrawRequest > 0) AND epoch has ended → UNLOCKING
   ///      - Epoch ended = epochEndDate == 0 OR epochNumber > lastWithdrawRequest(this)
+  ///      - Uses lastWithdrawRequest instead of withdrawsRequests because the latter is not set
+  ///        on the apr0 path in IdleCreditVault (see _requestWithdrawApr0).
   ///
   ///      For all other states, returns internalState directly.
   function _state(Order calldata order) internal view returns (State, uint256) {
@@ -399,14 +404,13 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
         return _received >= _expectedOutput ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
       } else {
         address _strategy = $.strategy;
-        uint256 _withdrawAmount = IIdleCreditVault(_strategy).withdrawsRequests(address(this));
-        if (_withdrawAmount > 0) {
+        uint256 _lastRequest = IIdleCreditVault(_strategy).lastWithdrawRequest(address(this));
+        if (_lastRequest > 0) {
           if (
             IIdleCDOEpochVariant($.vault).epochEndDate() == 0
-              || IIdleCreditVault(_strategy).epochNumber()
-                > IIdleCreditVault(_strategy).lastWithdrawRequest(address(this))
+              || IIdleCreditVault(_strategy).epochNumber() > _lastRequest
           ) {
-            return (State.UNLOCKING, _withdrawAmount);
+            return (State.UNLOCKING, 0);
           }
         }
         return (State.PROCESSING, 0);

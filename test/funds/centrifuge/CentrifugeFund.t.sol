@@ -28,8 +28,13 @@ contract CentrifugeFundTest is Test {
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
   event CancelRequestSubmitted(bytes32 indexed orderId);
+  event OrderForceEnded(bytes32 indexed orderId, address indexed operator);
 
   uint256 private constant ONE = 1e6;
+
+  // CentrifugeFund roles
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
 
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
@@ -70,6 +75,7 @@ contract CentrifugeFundTest is Test {
     fund = CentrifugeFund(fundAddress);
 
     vault.setPermissioned(address(fund), true);
+    vault.setPermissioned(address(wrappedShare), true);
 
     vm.prank(owner);
     wrappedShare.grantRoles(address(fund), ISSUER_ROLE);
@@ -87,7 +93,7 @@ contract CentrifugeFundTest is Test {
     assertEq(fund.asset(), address(assetToken), "asset");
     assertEq(fund.share(), address(wrappedShare), "share");
     assertEq(fund.vault(), address(vault), "vault");
-    assertEq(fund.rolesOf(address(this)), fund.DEPOSITOR_ROLE(), "depositor role");
+    assertEq(fund.rolesOf(address(this)), DEPOSITOR_ROLE, "depositor role");
     assertEq(uint256(fund.state(_depositOrder(ONE, ONE))), uint256(State.EMPTY), "initial state");
   }
 
@@ -194,10 +200,37 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+    vault.fulfillDeposit(address(fund), order.output);
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE * 2, ONE * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    vault.fulfillDeposit(address(fund), nextOrder.output);
+    fund.unlock(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
+    fund.create(order);
+  }
+
   function test_Create_RevertsNotPermissioned() public {
     vault.setPermissioned(address(fund), false);
     Order memory order = _depositOrder(ONE, ONE);
     vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsWrappedShareNotPermissioned() public {
+    vault.setPermissioned(address(wrappedShare), false);
+    Order memory order = _depositOrder(ONE, ONE);
+    vm.expectRevert(LibFundsErrors.WrappedShareNotPermissioned.selector);
     fund.create(order);
   }
 
@@ -375,6 +408,15 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
     vault.setPermissioned(address(fund), false);
     vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.commit(order);
+  }
+
+  function test_Commit_RevertsWrappedShareNotPermissioned() public {
+    vault.setPermissioned(address(wrappedShare), true);
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    vault.setPermissioned(address(wrappedShare), false);
+    vm.expectRevert(LibFundsErrors.WrappedShareNotPermissioned.selector);
     fund.commit(order);
   }
 
@@ -637,7 +679,7 @@ contract CentrifugeFundTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
 
     (State state, uint256 amount) = fund.recover(order);
-    assertEq(uint256(state), uint256(State.RECOVERING), "still recovering");
+    assertEq(uint256(state), uint256(State.PROCESSING), "still processing");
     assertEq(amount, halfAssets, "partial amount");
   }
 
@@ -659,7 +701,7 @@ contract CentrifugeFundTest is Test {
 
     (State state, uint256 amount) = fund.recover(order);
     // After claiming, there's still pendingCancelRedeem = true (flag from cancelRequest)
-    assertEq(uint256(state), uint256(State.RECOVERING), "still recovering");
+    assertEq(uint256(state), uint256(State.PROCESSING), "still processing");
     assertEq(amount, halfShares, "partial amount");
   }
 
@@ -747,35 +789,102 @@ contract CentrifugeFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
+    fund.grantRoles(operator, OPERATOR_ROLE);
     vm.prank(operator);
     fund.cancelRequest(order);
   }
 
-  function test_CancelRequest_RevertsWithPendingClaimableDeposit() public {
+  function test_CancelRequest_SucceedsWithPollutedClaimableDeposit() public {
     Order memory order = _depositOrder(ONE, ONE);
     fund.create(order);
     _commitDeposit(order);
 
-    // Partial fill: 500 of 1000 shares fulfilled
-    vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
+    // Polluter fills a tiny deposit on behalf of the fund controller.
+    address attacker = makeAddr("attacker-deposit");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillDeposit(address(fund), pollution, pollution);
 
     vm.prank(owner);
-    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
     fund.cancelRequest(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after polluted claim");
+    assertTrue(vault._pendingCancelDeposit(address(fund)), "pending cancel on vault");
   }
 
-  function test_CancelRequest_RevertsWithPendingClaimableRedeem() public {
+  function test_CancelRequest_SucceedsWithPollutedClaimableRedeem() public {
     Order memory order = _redeemOrder(ONE, ONE);
     fund.create(order);
     _mintWrappedShare(address(this), order.input);
     wrappedShare.approve(address(fund), order.input);
     fund.commit(order);
 
-    // Partial fill: 500 of 1000 assets fulfilled
-    vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
+    // Polluter fills a tiny redeem on behalf of the fund controller.
+    address attacker = makeAddr("attacker-redeem");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillRedeem(address(fund), pollution, pollution);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after polluted claim");
+    assertTrue(vault._pendingCancelRedeem(address(fund)), "pending cancel on vault");
+  }
+
+  function test_CancelRequest_RevertsWithPendingClaimableWithoutPendingDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-deposit-no-pending");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    vault.fulfillDeposit(address(fund), order.input + pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.cancelRequest(order);
+  }
+
+  function test_CancelRequest_RevertsWithPendingClaimableWithoutPendingRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-redeem-no-pending");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    vault.fulfillRedeem(address(fund), order.output + pollution);
 
     vm.prank(owner);
     vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
@@ -825,25 +934,39 @@ contract CentrifugeFundTest is Test {
   }
 
   function test_MaxDeposit_ReturnsMinOfBalanceAndVaultMax() public {
-    assetToken.mint(address(this), 100 * ONE);
+    address depositor = makeAddr("depositor");
+    vm.prank(owner);
+    fund.grantRoles(depositor, DEPOSITOR_ROLE);
+    vault.setPermissioned(depositor, true);
+    assetToken.mint(depositor, 100 * ONE);
 
     // Vault max is unlimited, so maxDeposit = balance
-    assertEq(fund.maxDeposit(address(this)), 100 * ONE, "balance limited");
+    assertEq(fund.maxDeposit(depositor), 100 * ONE, "balance limited");
 
     // Set vault max to less than balance
     vault.setMaxDeposit(50 * ONE);
-    assertEq(fund.maxDeposit(address(this)), 50 * ONE, "vault limited");
+    assertEq(fund.maxDeposit(depositor), 50 * ONE, "vault limited");
+
+    // Non-depositor returns 0
+    assertEq(fund.maxDeposit(outsider), 0, "non-depositor");
   }
 
   function test_MaxRedeem_ReturnsMinOfBalanceAndVaultMax() public {
-    _mintWrappedShare(address(this), 100 * ONE);
+    address depositor = makeAddr("depositor");
+    vm.prank(owner);
+    fund.grantRoles(depositor, DEPOSITOR_ROLE);
+    vault.setPermissioned(depositor, true);
+    _mintWrappedShare(depositor, 100 * ONE);
 
     // Vault max is unlimited, so maxRedeem = balance
-    assertEq(fund.maxRedeem(address(this)), 100 * ONE, "balance limited");
+    assertEq(fund.maxRedeem(depositor), 100 * ONE, "balance limited");
 
     // Set vault max to less than balance
     vault.setMaxRedeem(50 * ONE);
-    assertEq(fund.maxRedeem(address(this)), 50 * ONE, "vault limited");
+    assertEq(fund.maxRedeem(depositor), 50 * ONE, "vault limited");
+
+    // Non-depositor returns 0
+    assertEq(fund.maxRedeem(outsider), 0, "non-depositor");
   }
 
   function test_State_AllStates() public {
@@ -965,10 +1088,9 @@ contract CentrifugeFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_OperatorGrantable() public {
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
-    assertEq(fund.rolesOf(operator), operatorRole, "operator role");
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    assertEq(fund.rolesOf(operator), OPERATOR_ROLE, "operator role");
   }
 
   function test_Roles_OwnershipTransfer() public {
@@ -1017,6 +1139,480 @@ contract CentrifugeFundTest is Test {
     // state() checks endedOrders BEFORE currentOrderId, so archived orders return ENDED.
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "old order ENDED (archived)");
     assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  RECOVERY RACE CONDITION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_Unlock_DepositFulfilledDuringRecovery() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // cancelRequest passes (maxMint == 0 at this point)
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge fulfills the entire deposit despite the cancel
+    // (cancel arrived between approveDeposits and notifyDeposit)
+    vault.fulfillDepositAndCancelDeposit(address(fund), ONE, 0);
+
+    // state() should return UNLOCKING (fulfilled shares take priority)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking despite recovering");
+
+    // unlock() claims shares and transitions to ENDED (no cancel assets to recover)
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, ONE, "full shares claimed");
+    assertEq(wrappedShare.balanceOf(address(this)), ONE, "wShare minted");
+  }
+
+  function test_Unlock_DepositPartialFulfilledDuringRecovery() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge partially fulfills deposit AND returns remaining as cancel
+    uint256 halfShares = ONE / 2;
+    uint256 halfAssets = ONE / 2;
+    vault.fulfillDepositAndCancelDeposit(address(fund), halfShares, halfAssets);
+
+    // state() should return UNLOCKING (fulfilled shares first)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking first");
+
+    // unlock() claims shares, returns PROCESSING per IFund spec (cancel assets still pending)
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.PROCESSING), "still processing");
+    assertEq(amount, halfShares, "half shares claimed");
+    assertEq(wrappedShare.balanceOf(address(this)), halfShares, "wShare minted");
+
+    // Now state() returns RECOVERING (cancel assets claimable)
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering visible");
+
+    // recover() claims cancel assets and transitions to ENDED
+    (State finalState, uint256 recoveredAmount) = fund.recover(order);
+    assertEq(uint256(finalState), uint256(State.ENDED), "ended");
+    assertEq(recoveredAmount, halfAssets, "half assets recovered");
+    assertEq(assetToken.balanceOf(address(this)), halfAssets, "assets received");
+  }
+
+  function test_Unlock_RedeemFulfilledDuringRecovery() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge fulfills the entire redeem despite the cancel
+    vault.fulfillRedeemAndCancelRedeem(address(fund), ONE, 0);
+
+    // state() should return UNLOCKING
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking despite recovering");
+
+    // unlock() claims assets and transitions to ENDED
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, ONE, "full assets claimed");
+    assertEq(assetToken.balanceOf(address(this)), ONE, "assets received");
+  }
+
+  function test_Unlock_RedeemPartialFulfilledDuringRecovery() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Race: Centrifuge partially fulfills redeem AND returns remaining as cancel
+    uint256 halfAssets = ONE / 2;
+    uint256 halfShares = ONE / 2;
+    vault.fulfillRedeemAndCancelRedeem(address(fund), halfAssets, halfShares);
+
+    // state() should return UNLOCKING (fulfilled assets first)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking first");
+
+    // unlock() claims assets, returns PROCESSING per IFund spec (cancel shares still pending)
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.PROCESSING), "still processing");
+    assertEq(amount, halfAssets, "half assets claimed");
+    assertEq(assetToken.balanceOf(address(this)), halfAssets, "assets received");
+
+    // Now state() returns RECOVERING (cancel shares claimable)
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering visible");
+
+    // recover() claims cancel shares as wrapped shares and transitions to ENDED
+    (State finalState, uint256 recoveredAmount) = fund.recover(order);
+    assertEq(uint256(finalState), uint256(State.ENDED), "ended");
+    assertEq(recoveredAmount, halfShares, "half shares recovered");
+    assertEq(wrappedShare.balanceOf(address(this)), halfShares, "wShare recovered");
+  }
+
+  function test_State_RecoveringShowsUnlockingWhenFulfilled() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    // Before fulfillment: state shows PROCESSING (cancel not yet processed)
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before fulfillment");
+
+    // After race condition fulfillment: both maxMint and claimableCancelDeposit are set
+    vault.fulfillDepositAndCancelDeposit(address(fund), ONE / 2, ONE / 2);
+
+    // state() should return UNLOCKING (maxMint > 0 takes priority over RECOVERING)
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking not processing");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           FORCE END                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_ForceEnd_FromProcessing_Success() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_FromRecovering_Success() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_RevertsInvalidState_Empty() public {
+    Order memory order = _depositOrder(ONE, ONE);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.EMPTY));
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsInvalidState_Accepted() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsInvalidState_Ended() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+    vault.fulfillDeposit(address(fund), order.output);
+    fund.unlock(order);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ENDED));
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsInvalidOrder() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    Order memory wrongOrder = order;
+    wrongOrder.salt = keccak256("wrong");
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    fund.forceEnd(wrongOrder);
+  }
+
+  function test_ForceEnd_RevertsUnauthorized() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_OwnerCanCall() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_OperatorCanCall() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+
+    vm.prank(operator);
+    fund.forceEnd(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function test_ForceEnd_CanCreateNewOrderAfter() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+
+    // Create new order after forceEnd (ENDED → ACCEPTED)
+    Order memory nextOrder = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(this),
+      receiver: address(this),
+      input: ONE * 2,
+      output: ONE * 2,
+      salt: keccak256("second-order")
+    });
+    fund.create(nextOrder);
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_ForceEnd_EmitsEvent() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    bytes32 orderId = order.toId(address(fund));
+
+    vm.expectEmit(true, true, true, true);
+    emit OrderForceEnded(orderId, owner);
+
+    vm.prank(owner);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableDeposit_PendingRequest() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Partial fill: 500 of 1000 shares fulfilled — pending request still exists
+    vault.partialFulfillDeposit(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableRedeem_PendingRequest() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Partial fill: 500 of 1000 assets fulfilled — pending request still exists
+    vault.partialFulfillRedeem(address(fund), ONE / 2, ONE / 2);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPollutedClaimableDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Polluter fills a tiny deposit on behalf of the fund controller.
+    address attacker = makeAddr("attacker-deposit");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillDeposit(address(fund), pollution, pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPollutedClaimableRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Polluter fills a tiny redeem on behalf of the fund controller.
+    address attacker = makeAddr("attacker-redeem");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    // Process only the polluted request; the legitimate request remains pending.
+    vault.partialFulfillRedeem(address(fund), pollution, pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWhenAttackerCreatesPendingDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Full fulfillment — claimable fills exist, no pending request
+    vault.fulfillDeposit(address(fund), ONE);
+
+    // Attacker creates a dust pending request to try to bypass the claimable check
+    address attacker = makeAddr("attacker-bypass-deposit");
+    uint256 dust = 1;
+    assetToken.mint(attacker, dust);
+    vm.prank(attacker);
+    assetToken.approve(address(vault), dust);
+    vm.prank(attacker);
+    vault.requestDeposit(dust, address(fund), attacker);
+
+    // forceEnd must still revert — the dust pending request does not bypass the check
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWhenAttackerCreatesPendingRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Full fulfillment — claimable fills exist, no pending request
+    vault.fulfillRedeem(address(fund), ONE);
+
+    // Attacker creates a dust pending request to try to bypass the claimable check
+    address attacker = makeAddr("attacker-bypass-redeem");
+    uint256 dust = 1;
+    shareToken.mint(attacker, dust);
+    vm.prank(attacker);
+    shareToken.approve(address(vault), dust);
+    vm.prank(attacker);
+    vault.requestRedeem(dust, address(fund), attacker);
+
+    // forceEnd must still revert — the dust pending request does not bypass the check
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableWithoutPendingDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-deposit-no-pending");
+    uint256 pollution = 1;
+    assetToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    assetToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestDeposit(pollution, address(fund), attacker);
+
+    vault.fulfillDeposit(address(fund), order.input + pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingClaimableWithoutPendingRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Polluter adds a tiny request then the whole queue is fulfilled.
+    address attacker = makeAddr("attacker-redeem-no-pending");
+    uint256 pollution = 1;
+    shareToken.mint(attacker, pollution);
+    vm.prank(attacker);
+    shareToken.approve(address(vault), pollution);
+    vm.prank(attacker);
+    vault.requestRedeem(pollution, address(fund), attacker);
+
+    vault.fulfillRedeem(address(fund), order.output + pollution);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingRecoverableDeposit() public {
+    Order memory order = _depositOrder(ONE, ONE);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    vault.fulfillCancelDeposit(address(fund), order.input);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
+  }
+
+  function test_ForceEnd_RevertsWithPendingRecoverableRedeem() public {
+    Order memory order = _redeemOrder(ONE, ONE);
+    fund.create(order);
+    _mintWrappedShare(address(this), order.input);
+    wrappedShare.approve(address(fund), order.input);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.cancelRequest(order);
+
+    vault.fulfillCancelRedeem(address(fund), order.input);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.PendingClaimableAssets.selector);
+    fund.forceEnd(order);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

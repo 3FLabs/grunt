@@ -109,6 +109,9 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     // checks that the request is repaid
     _intent.checkRequestRepaid();
 
+    // sync stale ended orders
+    _intent.syncEndedOrder(id);
+
     // checks that the intent has no pending order
     _intent.checkNoPendingOrder(id);
 
@@ -140,6 +143,9 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     LibStorage.checkNotPaused();
     FacilityStorageData storage _facilityStorage = LibStorage.facilityStorage();
     Intent storage _intent = _facilityStorage.getIntent(id);
+
+    // sync stale ended orders
+    _intent.syncEndedOrder(id);
 
     // skip if the fund is already set to the same address
     if (_intent.fund == newFund) return;
