@@ -246,7 +246,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   /// @custom:reverts If the request has already been repaid or the deadline has passed
   /// @custom:reverts If the mint-to-repaid delay has not elapsed since the last mint/consume
   /// @custom:reverts If the current balance is below minBalance or above maxBalance
-  function setRepaid(uint256 minBalance, uint256 maxBalance) external onlyOwner {
+  function setRepaid(uint256 minBalance, uint256 maxBalance) external onlyOwner nonReentrant {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     RequestStorage storage req = _requestStorage();
     uint40 _lastMint = req.lastMintTimestamp;
@@ -366,7 +366,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      would receive less yield for their deposit.
   /// @custom:reverts If the request has been repaid or the deadline has passed
   /// @custom:reverts SlippageExceeded if authorized PT exceeds maxPt or authorized YT is below minYt
-  function mint(uint128 maxPt, uint128 minYt) external {
+  function mint(uint128 maxPt, uint128 minYt) external nonReentrant {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     (uint128 ptMintAuth, uint128 ytMintAuth) = msg.sender.mintAuth();
     // Early return when no authorization — prevents griefing where a zero-authorized caller
