@@ -8,7 +8,7 @@ import {Facility} from "src/facility/Facility.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
-import {TransferGuard} from "src/guard/TransferGuard.sol";
+import {TransferGuard} from "src/guard/base/TransferGuard.sol";
 
 // Interfaces
 import {IFacility} from "src/interfaces/facility/IFacility.sol";

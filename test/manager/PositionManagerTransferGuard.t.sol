@@ -2,8 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
-import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
+import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/base/TransferGuard.sol";
+import {TransferGuardFactory} from "src/guard/base/TransferGuardFactory.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {RebalancingData, RebalancingOperation} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";

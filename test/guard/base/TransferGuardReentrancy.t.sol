@@ -10,14 +10,14 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
-import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
-import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
-import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
+import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {TransferGuard, AddressStatus} from "src/guard/base/TransferGuard.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
-import {MaliciousBorrowModule} from "test/mock/guard/MaliciousBorrowModule.sol";
-import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
+import {MaliciousBorrowModule} from "test/mock/guard/base/MaliciousBorrowModule.sol";
+import {ReentrantBorrowModule} from "test/mock/guard/base/ReentrantBorrowModule.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardReentrancyTest

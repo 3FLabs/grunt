@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {ITransferGuard, AddressStatus} from "../interfaces/guard/ITransferGuard.sol";
-import {LibPause} from "../libs/common/LibPause.sol";
+import {ITransferGuard, AddressStatus} from "../../interfaces/guard/ITransferGuard.sol";
+import {LibPause} from "../../libs/common/LibPause.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
@@ -75,7 +75,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   bytes32 private constant _STORAGE_SLOT = 0xc6c8482afc451e8caac0099c996ccfb351ca947c4bbb65e7d1fc5f0e82e91c00;
 
   /// @dev Returns a pointer to the ERC-7201 namespaced storage struct.
-  function _storage() private pure returns (TransferGuardStorage storage $) {
+  function _storage() internal pure returns (TransferGuardStorage storage $) {
     assembly ("memory-safe") {
       $.slot := _STORAGE_SLOT
     }
@@ -117,7 +117,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc ITransferGuard
-  function canTransfer(address token, address from, address to, uint256 amount) external view returns (bool) {
+  function canTransfer(address token, address from, address to, uint256 amount) public view virtual returns (bool) {
     TransferGuardStorage storage $ = _storage();
     TokenConfig memory config = $.tokenConfig[token];
 

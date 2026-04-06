@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
+import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/base/TransferGuard.sol";
 import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";

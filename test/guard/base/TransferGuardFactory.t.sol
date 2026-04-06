@@ -2,8 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
-import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
+import {TransferGuardFactory} from "src/guard/base/TransferGuardFactory.sol";
+import {TransferGuard, AddressStatus} from "src/guard/base/TransferGuard.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
 /// @title TransferGuardFactoryTest

@@ -163,7 +163,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @dev Enforces transfer restrictions (excluding burns and mints):
   ///      - Transfers are allowed if the sender has SENDER_ROLE, OR
   ///      - Transfers are allowed if the receiver has RECEIVER_ROLE
-  function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+  function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override {
     if (from != address(0) && to != address(0) && !hasAnyRole(to, RECEIVER_ROLE) && !hasAnyRole(from, SENDER_ROLE)) {
       revert Unauthorized();
     }
