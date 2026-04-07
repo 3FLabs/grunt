@@ -162,7 +162,7 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
 
   /// @inheritdoc IWrappedAsset
   /// @dev Base implementation returns true. Override for compliance checks (e.g., Superstate allowlist).
-  function isAllowed(address, uint256) external view virtual returns (bool) {
+  function isAllowed(address, uint256) public view virtual returns (bool) {
     return true;
   }
 
@@ -177,8 +177,8 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
     if (from != address(0) && to != address(0) && !hasAnyRole(to, RECEIVER_ROLE) && !hasAnyRole(from, SENDER_ROLE)) {
       revert Unauthorized();
     }
-    if (from != address(0) && !this.isAllowed(from, amount)) revert Unauthorized();
-    if (to != address(0) && !this.isAllowed(to, amount)) revert Unauthorized();
+    if (from != address(0) && !isAllowed(from, amount)) revert Unauthorized();
+    if (to != address(0) && !isAllowed(to, amount)) revert Unauthorized();
     super._beforeTokenTransfer(from, to, amount);
   }
 }

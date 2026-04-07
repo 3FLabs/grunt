@@ -15,7 +15,7 @@ import {ISuperstateToken} from "../../interfaces/integrations/superstate/ISupers
 contract SuperstateRestrictedWrappedAsset is WrappedAsset {
   /// @dev Delegates to the Superstate token's allowlist check.
   ///      The `amount` parameter is unused — Superstate's allowlist is binary per address.
-  function isAllowed(address account, uint256) external view override returns (bool) {
+  function isAllowed(address account, uint256) public view override returns (bool) {
     return ISuperstateToken(_wrappedAssetStorage().underlying).isAllowed(account);
   }
 }
