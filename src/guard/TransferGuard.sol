@@ -133,39 +133,34 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     TransferGuardStorage storage $ = _storage();
     TokenConfig memory config = $.tokenConfig[token];
 
-    // Check pause status
     if (config.pausedUntil.paused()) return false;
 
-    // Mode-based checks
+    // Read each status at most once (skip storage read for address(0))
+    AddressStatus fromStatus = from != address(0) ? $.addressStatus[from] : AddressStatus.NONE;
+    AddressStatus toStatus = to != address(0) ? $.addressStatus[to] : AddressStatus.NONE;
+
+    // BLOCKLIST is always blocked in all modes
+    if (fromStatus == AddressStatus.BLOCKLIST || toStatus == AddressStatus.BLOCKLIST) return false;
+
+    // Mode-specific checks (statuses are NONE, WHITELIST, or NATIVE at this point)
     TokenMode mode = config.mode;
-    if (mode == TokenMode.BLOCKLIST || mode == TokenMode.WHITELIST) {
-      // BLOCKLIST / WHITELIST: check each non-null party
-      if (from != address(0) && !_isAllowed($, from, mode)) return false;
-      if (to != address(0) && !_isAllowed($, to, mode)) return false;
-    } else if (mode == TokenMode.NATIVE_ONLY) {
-      // NATIVE_ONLY: at least one party NATIVE, no BLOCKLIST
-      // Mints/burns bypass NATIVE requirement
-      if (from != address(0) && to != address(0)) {
-        // Regular transfer: need at least one NATIVE
-        if (!_hasNative($, from, to)) return false;
+    if (mode == TokenMode.WHITELIST) {
+      // NONE is blocked — only WHITELIST/NATIVE allowed
+      if (from != address(0) && fromStatus == AddressStatus.NONE) return false;
+      if (to != address(0) && toStatus == AddressStatus.NONE) return false;
+    } else if (mode >= TokenMode.NATIVE_ONLY) {
+      // NATIVE_ONLY & NATIVE_WHITELIST: regular transfers need at least one NATIVE party
+      if (from != address(0) && to != address(0) && fromStatus != AddressStatus.NATIVE
+        && toStatus != AddressStatus.NATIVE) {
+        return false;
       }
-      // No BLOCKLIST for any non-null party
-      if (from != address(0) && $.addressStatus[from] == AddressStatus.BLOCKLIST) return false;
-      if (to != address(0) && $.addressStatus[to] == AddressStatus.BLOCKLIST) return false;
-    } else {
-      // NATIVE_WHITELIST: all parties WHITELIST/NATIVE, at least one NATIVE
-      // Mints/burns bypass NATIVE requirement for the null party
-      if (from != address(0) && to != address(0)) {
-        // Regular transfer: need at least one NATIVE and both must be WHITELIST/NATIVE
-        if (!_hasNative($, from, to)) return false;
-        if (!_isWhitelistedOrNative($, from)) return false;
-        if (!_isWhitelistedOrNative($, to)) return false;
-      } else {
-        // Mint or burn: non-null party must be WHITELIST/NATIVE (NATIVE not required)
-        if (from != address(0) && !_isWhitelistedOrNative($, from)) return false;
-        if (to != address(0) && !_isWhitelistedOrNative($, to)) return false;
+      // NATIVE_WHITELIST additionally blocks NONE
+      if (mode == TokenMode.NATIVE_WHITELIST) {
+        if (from != address(0) && fromStatus == AddressStatus.NONE) return false;
+        if (to != address(0) && toStatus == AddressStatus.NONE) return false;
       }
     }
+    // BLOCKLIST mode: nothing more to check (BLOCKLIST already caught above)
 
     // Collateral asset isAllowed check
     if (config.checkCollateralAllowed) {
@@ -187,42 +182,6 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @return The token's transfer mode
   function tokenMode(address token) external view returns (TokenMode) {
     return _storage().tokenConfig[token].mode;
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    INTERNAL FUNCTIONS                      */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Checks if an address is allowed based on its status and token mode.
-  ///      Used for BLOCKLIST and WHITELIST modes.
-  /// @param $ The namespaced storage pointer
-  /// @param account The address to check
-  /// @param mode The token's transfer mode (BLOCKLIST or WHITELIST)
-  /// @return True if allowed, false otherwise
-  function _isAllowed(TransferGuardStorage storage $, address account, TokenMode mode) internal view returns (bool) {
-    AddressStatus status = $.addressStatus[account];
-
-    // BLOCKLIST is always blocked in all modes
-    if (status == AddressStatus.BLOCKLIST) return false;
-
-    // WHITELIST and NATIVE are always allowed in all modes
-    if (status == AddressStatus.WHITELIST || status == AddressStatus.NATIVE) return true;
-
-    // status == AddressStatus.NONE: depends on token mode
-    // In blocklist mode (default): NONE is allowed
-    // In whitelist mode: NONE is blocked
-    return mode == TokenMode.BLOCKLIST;
-  }
-
-  /// @dev Checks if at least one of two addresses has NATIVE status.
-  function _hasNative(TransferGuardStorage storage $, address a, address b) internal view returns (bool) {
-    return $.addressStatus[a] == AddressStatus.NATIVE || $.addressStatus[b] == AddressStatus.NATIVE;
-  }
-
-  /// @dev Checks if an address is WHITELIST or NATIVE.
-  function _isWhitelistedOrNative(TransferGuardStorage storage $, address account) internal view returns (bool) {
-    AddressStatus status = $.addressStatus[account];
-    return status == AddressStatus.WHITELIST || status == AddressStatus.NATIVE;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
