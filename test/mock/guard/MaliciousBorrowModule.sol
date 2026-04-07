@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
-import {TransferGuard} from "src/guard/base/TransferGuard.sol";
+import {TransferGuard} from "src/guard/TransferGuard.sol";
 
 /// @title MaliciousBorrowModule
 /// @notice A malicious borrow module that pauses the guard during withdrawCollateral

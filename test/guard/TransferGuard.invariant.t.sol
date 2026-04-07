@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {TransferGuard, TokenConfig} from "src/guard/base/TransferGuard.sol";
+import {TransferGuard, TokenConfig} from "src/guard/TransferGuard.sol";
 import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
-import {TransferGuardHandler} from "test/mock/guard/base/TransferGuardHandler.sol";
+import {TransferGuardHandler} from "test/mock/guard/TransferGuardHandler.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardInvariantTest

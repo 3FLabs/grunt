@@ -12,13 +12,13 @@ import {
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
-import {TransferGuard} from "src/guard/base/TransferGuard.sol";
+import {TransferGuard} from "src/guard/TransferGuard.sol";
 import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
-import {MaliciousBorrowModule} from "test/mock/guard/base/MaliciousBorrowModule.sol";
-import {ReentrantBorrowModule} from "test/mock/guard/base/ReentrantBorrowModule.sol";
+import {MaliciousBorrowModule} from "test/mock/guard/MaliciousBorrowModule.sol";
+import {ReentrantBorrowModule} from "test/mock/guard/ReentrantBorrowModule.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardReentrancyTest

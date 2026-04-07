@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
+import {TransferGuard} from "./TransferGuard.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
-/// @title TransferGuardFactoryBase
+/// @title TransferGuardFactory
 /// @author 3F Protocol
-/// @notice Abstract base for all TransferGuard factory contracts.
-/// @dev Encapsulates the beacon proxy deployment pattern shared by every guard factory:
-///      - One UpgradeableBeacon (set once in constructor by the child)
-///      - `createTransferGuard(owner)` deploys an ERC1967 beacon proxy, initializes it, and tracks it
-///      - `isTransferGuard(address)` view for deployment verification
+/// @notice Factory contract for deploying TransferGuard instances via beacon proxy pattern.
+/// @dev Architecture:
+///      - One beacon is deployed at construction time with the TransferGuard implementation
+///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
+///      - Each `createTransferGuard` call deploys an ERC1967 beacon proxy
 ///
-///      Child contracts only need to supply the beacon address via `super(beacon)` in their constructor.
-///      All guards are expected to expose `initialize(address owner)` with the same selector.
-abstract contract TransferGuardFactoryBase {
+///      Deployment Flow:
+///      1. Factory is deployed with an initial beacon owner
+///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
+///      3. Users call `createTransferGuard()` to deploy new TransferGuard instances
+///      4. Each transfer guard is initialized with its owner
+///
+///      Upgrade Flow:
+///      1. Beacon owner deploys new TransferGuard implementation contract
+///      2. Beacon owner calls `upgradeTo()` on the beacon
+///      3. All existing proxies immediately use the new implementation
+contract TransferGuardFactory {
   using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -45,16 +54,17 @@ abstract contract TransferGuardFactoryBase {
   /*                        CONSTRUCTOR                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @param beacon The pre-deployed UpgradeableBeacon address
-  constructor(address beacon) {
-    TRANSFER_GUARD_BEACON = beacon;
+  /// @notice Deploys the factory and creates the beacon contract with the TransferGuard implementation.
+  /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
+  constructor(address initialBeaconOwner) {
+    TRANSFER_GUARD_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new TransferGuard())));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      FACTORY METHODS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Creates a new guard proxy.
+  /// @notice Creates a new TransferGuard proxy.
   /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
   ///      1. Deploys guard proxy pointing to TRANSFER_GUARD_BEACON
   ///      2. Calls `initialize(owner)` on the proxy
@@ -63,10 +73,10 @@ abstract contract TransferGuardFactoryBase {
   ///      Emits a {TransferGuardCreated} event.
   /// @param owner The address that will own the guard
   /// @return transferGuard The address of the newly deployed guard proxy
-  function createTransferGuard(address owner) external virtual returns (address transferGuard) {
+  function createTransferGuard(address owner) external returns (address transferGuard) {
     transferGuard = TRANSFER_GUARD_BEACON.deployERC1967BeaconProxy();
 
-    _initializeGuard(transferGuard, owner);
+    TransferGuard(transferGuard).initialize(owner);
 
     _isTransferGuard[transferGuard] = true;
 
@@ -79,13 +89,4 @@ abstract contract TransferGuardFactoryBase {
   function isTransferGuard(address transferGuard) external view returns (bool) {
     return _isTransferGuard[transferGuard];
   }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        INTERNALS                            */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Initializes the freshly deployed guard proxy. Override to cast to the concrete type.
-  /// @param guard The guard proxy address
-  /// @param owner The owner to initialize with
-  function _initializeGuard(address guard, address owner) internal virtual;
 }

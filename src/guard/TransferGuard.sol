@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {ITransferGuard, AddressStatus, TokenMode} from "../../interfaces/guard/ITransferGuard.sol";
-import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
-import {IWrappedAsset} from "../../interfaces/funds/IWrappedAsset.sol";
-import {LibPause} from "../../libs/common/LibPause.sol";
+import {ITransferGuard, AddressStatus, TokenMode} from "../interfaces/guard/ITransferGuard.sol";
+import {IPositionManager} from "../interfaces/manager/IPositionManager.sol";
+import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
+import {LibPause} from "../libs/common/LibPause.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
