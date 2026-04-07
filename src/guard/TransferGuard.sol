@@ -202,10 +202,10 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   function _isAllowed(TransferGuardStorage storage $, address account, TokenMode mode) internal view returns (bool) {
     AddressStatus status = $.addressStatus[account];
 
-    // BLOCKLIST is always blocked in both modes
+    // BLOCKLIST is always blocked in all modes
     if (status == AddressStatus.BLOCKLIST) return false;
 
-    // WHITELIST and NATIVE are always allowed in both modes
+    // WHITELIST and NATIVE are always allowed in all modes
     if (status == AddressStatus.WHITELIST || status == AddressStatus.NATIVE) return true;
 
     // status == AddressStatus.NONE: depends on token mode
