@@ -9,6 +9,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {TransferGuard} from "src/guard/base/TransferGuard.sol";
+import {TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 
 // Interfaces
 import {IFacility} from "src/interfaces/facility/IFacility.sol";
@@ -283,7 +284,7 @@ contract FacilityBaseTest is Test {
 
     // Configure transfer guard (allow facility)
     vm.startPrank(owner);
-    transferGuard.setTokenConfig(address(positionManager), false, false); // blocklist mode
+    transferGuard.setTokenConfig(address(positionManager), false, TokenMode.BLOCKLIST, false); // blocklist mode
     vm.stopPrank();
 
     // Setup user approvals

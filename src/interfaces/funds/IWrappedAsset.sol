@@ -23,4 +23,11 @@ interface IWrappedAsset {
   /// @notice Returns the address of the underlying asset (the asset being wrapped).
   /// @return The underlying asset address.
   function underlying() external view returns (address);
+
+  /// @notice Checks if an address is allowed to hold or receive a given amount of the wrapped asset.
+  /// @dev Base implementation returns true. Override for compliance checks (e.g., Superstate allowlist).
+  /// @param account The address to check.
+  /// @param amount The amount being transferred.
+  /// @return True if the account is allowed, false otherwise.
+  function isAllowed(address account, uint256 amount) external view returns (bool);
 }

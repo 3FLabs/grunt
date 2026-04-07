@@ -2,7 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/base/TransferGuard.sol";
+import {TransferGuard, TokenConfig} from "src/guard/base/TransferGuard.sol";
+import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {TransferGuardFactory} from "src/guard/base/TransferGuardFactory.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
@@ -46,7 +47,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Configure guard for position manager (whitelist mode)
     vm.startPrank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, true);
+    guard.setTokenConfig(address(positionManager), false, TokenMode.WHITELIST, false);
     guard.setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
     guard.setAddressStatus(whitelistedUser, AddressStatus.WHITELIST);
     // Whitelist minter for deposits/withdrawals
@@ -136,7 +137,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   function test_transfer_allowedInBlocklistMode() public {
     // Switch to blocklist mode
     vm.prank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, false);
+    guard.setTokenConfig(address(positionManager), false, TokenMode.BLOCKLIST, false);
 
     // Mint shares to minter
     _mintCollateral(minter, COLLATERAL_AMOUNT);

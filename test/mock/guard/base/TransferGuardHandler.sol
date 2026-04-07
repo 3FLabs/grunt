@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {TransferGuard, TokenConfig} from "src/guard/base/TransferGuard.sol";
-import {AddressStatus} from "src/interfaces/guard/ITransferGuard.sol";
+import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 
 /// @title TransferGuardHandler
 /// @notice Invariant-test handler that drives state transitions on a TransferGuard
@@ -34,8 +34,8 @@ contract TransferGuardHandler is Test {
   /// @notice Mirror of whether a token is currently paused.
   mapping(address => bool) public ghostPaused;
 
-  /// @notice Mirror of whether a token is in whitelist mode.
-  mapping(address => bool) public ghostWhitelist;
+  /// @notice Mirror of the token's transfer mode.
+  mapping(address => TokenMode) public ghostMode;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                         */
@@ -84,10 +84,10 @@ contract TransferGuardHandler is Test {
 
   /// @notice Sets the address status of a randomly-selected account.
   /// @param accountSeed Seed used to pick an account from the fixed set.
-  /// @param statusSeed Seed used to pick a status (NONE=0, WHITELIST=1, BLOCKLIST=2).
+  /// @param statusSeed Seed used to pick a status (NONE=0, WHITELIST=1, BLOCKLIST=2, NATIVE=3).
   function act_setAddressStatus(uint256 accountSeed, uint256 statusSeed) external {
     address account = accounts[accountSeed % accounts.length];
-    AddressStatus status = AddressStatus(statusSeed % 3);
+    AddressStatus status = AddressStatus(statusSeed % 4);
 
     vm.prank(owner);
     guard.setAddressStatus(account, status);
@@ -98,15 +98,16 @@ contract TransferGuardHandler is Test {
   /// @notice Sets the full token configuration for a randomly-selected token.
   /// @param tokenSeed Seed used to pick a token from the fixed set.
   /// @param paused_ Whether the token should be paused (permanent pause when true).
-  /// @param whitelist_ Whether the token should use whitelist mode.
-  function act_setTokenConfig(uint256 tokenSeed, bool paused_, bool whitelist_) external {
+  /// @param modeSeed Seed used to pick a mode (BLOCKLIST=0, WHITELIST=1, NATIVE_ONLY=2, NATIVE_WHITELIST=3).
+  function act_setTokenConfig(uint256 tokenSeed, bool paused_, uint256 modeSeed) external {
     address token = tokens[tokenSeed % tokens.length];
+    TokenMode mode = TokenMode(modeSeed % 4);
 
     vm.prank(owner);
-    guard.setTokenConfig(token, paused_, whitelist_);
+    guard.setTokenConfig(token, paused_, mode, false);
 
     ghostPaused[token] = paused_;
-    ghostWhitelist[token] = whitelist_;
+    ghostMode[token] = mode;
   }
 
   /// @notice Pauses a randomly-selected token for a bounded duration.
@@ -141,7 +142,7 @@ contract TransferGuardHandler is Test {
 
     // Reconcile ghost pause state: any timed pause that has expired should be marked unpaused.
     for (uint256 i = 0; i < tokens.length; i++) {
-      (uint40 pausedUntil,) = guard.tokenConfig(tokens[i]);
+      (uint40 pausedUntil,,) = guard.tokenConfig(tokens[i]);
       if (pausedUntil != 0 && pausedUntil != type(uint40).max && block.timestamp > pausedUntil) {
         ghostPaused[tokens[i]] = false;
       }
@@ -153,8 +154,6 @@ contract TransferGuardHandler is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Permanently pauses a randomly-selected token.
-  /// @dev Unlike act_pauseFor (timed), this sets pausedUntil = type(uint40).max
-  ///      which cannot be recovered by time warping.
   /// @param tokenSeed Seed used to pick a token from the fixed set.
   function act_permanentPause(uint256 tokenSeed) external {
     address token = tokens[tokenSeed % tokens.length];
@@ -166,11 +165,10 @@ contract TransferGuardHandler is Test {
   }
 
   /// @notice Sets address status in batch for multiple accounts.
-  /// @dev Exercises the setAddressStatusBatch code path rather than single-address updates.
   /// @param statusSeed Seed for status selection.
   /// @param countSeed Seed for choosing how many accounts to update (2-3).
   function act_setAddressStatusBatch(uint256 statusSeed, uint256 countSeed) external {
-    AddressStatus status = AddressStatus(statusSeed % 3);
+    AddressStatus status = AddressStatus(statusSeed % 4);
     uint256 count = _bound(countSeed, 2, 3);
     if (count > accounts.length) count = accounts.length;
 
@@ -187,20 +185,22 @@ contract TransferGuardHandler is Test {
     }
   }
 
-  /// @notice Toggles whitelist mode for a randomly-selected token without changing pause state.
-  /// @dev Flips the whitelist flag via setTokenConfig, preserving the current pausedUntil.
+  /// @notice Cycles the token mode for a randomly-selected token without changing pause state.
   /// @param tokenSeed Seed used to pick a token from the fixed set.
-  function act_toggleWhitelistMode(uint256 tokenSeed) external {
+  function act_cycleTokenMode(uint256 tokenSeed) external {
     address token = tokens[tokenSeed % tokens.length];
 
-    (uint40 pausedUntil, bool currentWhitelist) = guard.tokenConfig(token);
+    (uint40 pausedUntil, TokenMode currentMode,) = guard.tokenConfig(token);
 
     // Determine if currently paused for setTokenConfig's bool param
     bool isPaused = pausedUntil != 0 && (pausedUntil == type(uint40).max || block.timestamp <= pausedUntil);
 
-    vm.prank(owner);
-    guard.setTokenConfig(token, isPaused, !currentWhitelist);
+    // Cycle to next mode
+    TokenMode nextMode = TokenMode((uint8(currentMode) + 1) % 4);
 
-    ghostWhitelist[token] = !currentWhitelist;
+    vm.prank(owner);
+    guard.setTokenConfig(token, isPaused, nextMode, false);
+
+    ghostMode[token] = nextMode;
   }
 }

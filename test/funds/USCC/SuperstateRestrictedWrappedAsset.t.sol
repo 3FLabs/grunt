@@ -240,6 +240,29 @@ contract SuperstateRestrictedWrappedAssetTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    isAllowed VIEW TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_IsAllowed_DelegatesToSuperstate() public {
+    SuperstateRestrictedWrappedAsset token = _deployProxy();
+
+    // User is on Superstate allowlist
+    assertTrue(token.isAllowed(user, 100), "allowed user");
+
+    // Remove from allowlist
+    allowlist.setAllowed(user, "USCC", false);
+    assertFalse(token.isAllowed(user, 100), "disallowed user");
+  }
+
+  function test_IsAllowed_AmountIgnored() public {
+    SuperstateRestrictedWrappedAsset token = _deployProxy();
+
+    // isAllowed should return the same result regardless of amount
+    assertTrue(token.isAllowed(user, 0), "zero amount");
+    assertTrue(token.isAllowed(user, type(uint256).max), "max amount");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      PROXY ISOLATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
