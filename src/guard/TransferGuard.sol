@@ -142,25 +142,25 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     // BLOCKLIST is always blocked in all modes
     if (fromStatus == AddressStatus.BLOCKLIST || toStatus == AddressStatus.BLOCKLIST) return false;
 
-    // Mode-specific checks (statuses are NONE, WHITELIST, or NATIVE at this point)
+    // Each mode is a combination of two properties:
+    //   noneBlocked:    WHITELIST, NATIVE_WHITELIST  — NONE status addresses are blocked
+    //   nativeRequired: NATIVE_ONLY, NATIVE_WHITELIST — regular transfers need at least one NATIVE party
     TokenMode mode = config.mode;
-    if (mode == TokenMode.WHITELIST) {
-      // NONE is blocked — only WHITELIST/NATIVE allowed
+    bool noneBlocked = mode == TokenMode.WHITELIST || mode == TokenMode.NATIVE_WHITELIST;
+    bool nativeRequired = mode >= TokenMode.NATIVE_ONLY;
+
+    if (noneBlocked) {
       if (from != address(0) && fromStatus == AddressStatus.NONE) return false;
       if (to != address(0) && toStatus == AddressStatus.NONE) return false;
-    } else if (mode >= TokenMode.NATIVE_ONLY) {
-      // NATIVE_ONLY & NATIVE_WHITELIST: regular transfers need at least one NATIVE party
-      if (from != address(0) && to != address(0) && fromStatus != AddressStatus.NATIVE
-        && toStatus != AddressStatus.NATIVE) {
-        return false;
-      }
-      // NATIVE_WHITELIST additionally blocks NONE
-      if (mode == TokenMode.NATIVE_WHITELIST) {
-        if (from != address(0) && fromStatus == AddressStatus.NONE) return false;
-        if (to != address(0) && toStatus == AddressStatus.NONE) return false;
-      }
     }
-    // BLOCKLIST mode: nothing more to check (BLOCKLIST already caught above)
+
+    // Mints/burns bypass the NATIVE requirement (address(0) party is exempt)
+    if (
+      nativeRequired && from != address(0) && to != address(0) && fromStatus != AddressStatus.NATIVE
+        && toStatus != AddressStatus.NATIVE
+    ) {
+      return false;
+    }
 
     // Collateral asset isAllowed check
     if (config.checkCollateralAllowed) {
