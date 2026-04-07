@@ -2,10 +2,12 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {SuperstateRestrictedWhitelistedPartyTransferGuardFactory} from
-  "src/guard/superstate/SuperstateRestrictedWhitelistedPartyTransferGuardFactory.sol";
-import {SuperstateRestrictedWhitelistedPartyTransferGuard} from
-  "src/guard/superstate/SuperstateRestrictedWhitelistedPartyTransferGuard.sol";
+import {
+  SuperstateRestrictedWhitelistedPartyTransferGuardFactory
+} from "src/guard/superstate/SuperstateRestrictedWhitelistedPartyTransferGuardFactory.sol";
+import {
+  SuperstateRestrictedWhitelistedPartyTransferGuard
+} from "src/guard/superstate/SuperstateRestrictedWhitelistedPartyTransferGuard.sol";
 
 import {MockSuperstateToken} from "test/mock/funds/MockSuperstateToken.sol";
 import {MockAllowlist} from "test/mock/funds/MockAllowlist.sol";
@@ -75,8 +77,7 @@ contract SuperstateRestrictedWhitelistedPartyTransferGuardFactoryTest is Test {
 
   function test_deployedGuard_fullyFunctional() public {
     address guard = factory.createTransferGuard(guardOwner);
-    SuperstateRestrictedWhitelistedPartyTransferGuard g =
-      SuperstateRestrictedWhitelistedPartyTransferGuard(guard);
+    SuperstateRestrictedWhitelistedPartyTransferGuard g = SuperstateRestrictedWhitelistedPartyTransferGuard(guard);
     address token = makeAddr("token");
     address facility = makeAddr("facility");
     address user = makeAddr("user");

@@ -44,12 +44,7 @@ contract SuperstateRestrictedWhitelistedPartyTransferGuard is WhitelistedPartyTr
   /// @dev Extends WhitelistedPartyTransferGuard's canTransfer with Superstate allowlist checks.
   ///      Both non-null parties must be on the Superstate allowlist in addition to passing
   ///      the whitelisted-party check (at least one party whitelisted in the guard).
-  function canTransfer(address token, address from, address to, uint256 amount)
-    public
-    view
-    override
-    returns (bool)
-  {
+  function canTransfer(address token, address from, address to, uint256 amount) public view override returns (bool) {
     // WhitelistedPartyTransferGuard checks (pause, one-party-whitelisted)
     if (!super.canTransfer(token, from, to, amount)) return false;
 

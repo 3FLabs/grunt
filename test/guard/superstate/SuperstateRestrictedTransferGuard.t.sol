@@ -172,11 +172,7 @@ contract SuperstateRestrictedTransferGuardTest is Test {
   /*                        FUZZ TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_superstateCheck_bothMustBeAllowed(
-    uint256 amount,
-    bool senderAllowed,
-    bool receiverAllowed
-  ) public {
+  function testFuzz_superstateCheck_bothMustBeAllowed(uint256 amount, bool senderAllowed, bool receiverAllowed) public {
     allowlist.setAllowed(alice, "USCC", senderAllowed);
     allowlist.setAllowed(bob, "USCC", receiverAllowed);
 

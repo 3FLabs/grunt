@@ -16,9 +16,9 @@ contract WhitelistedPartyTransferGuardFactory is TransferGuardFactoryBase {
   /// @notice Deploys the factory and creates the beacon with a WhitelistedPartyTransferGuard implementation.
   /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
   constructor(address initialBeaconOwner)
-    TransferGuardFactoryBase(
-      address(new UpgradeableBeacon(initialBeaconOwner, address(new WhitelistedPartyTransferGuard())))
-    )
+    TransferGuardFactoryBase(address(
+        new UpgradeableBeacon(initialBeaconOwner, address(new WhitelistedPartyTransferGuard()))
+      ))
   {}
 
   /// @inheritdoc TransferGuardFactoryBase

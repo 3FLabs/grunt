@@ -15,11 +15,9 @@ contract SuperstateRestrictedTransferGuardFactory is TransferGuardFactoryBase {
   /// @param initialBeaconOwner The address that will own the beacon
   /// @param superstateToken The Superstate token address for allowlist checks
   constructor(address initialBeaconOwner, address superstateToken)
-    TransferGuardFactoryBase(
-      address(
+    TransferGuardFactoryBase(address(
         new UpgradeableBeacon(initialBeaconOwner, address(new SuperstateRestrictedTransferGuard(superstateToken)))
-      )
-    )
+      ))
   {}
 
   /// @inheritdoc TransferGuardFactoryBase

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {SuperstateRestrictedWhitelistedPartyTransferGuard} from
-  "./SuperstateRestrictedWhitelistedPartyTransferGuard.sol";
+import {
+  SuperstateRestrictedWhitelistedPartyTransferGuard
+} from "./SuperstateRestrictedWhitelistedPartyTransferGuard.sol";
 import {TransferGuardFactoryBase} from "../TransferGuardFactoryBase.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
@@ -16,14 +17,11 @@ contract SuperstateRestrictedWhitelistedPartyTransferGuardFactory is TransferGua
   /// @param initialBeaconOwner The address that will own the beacon
   /// @param superstateToken The Superstate token address for allowlist checks
   constructor(address initialBeaconOwner, address superstateToken)
-    TransferGuardFactoryBase(
-      address(
+    TransferGuardFactoryBase(address(
         new UpgradeableBeacon(
-          initialBeaconOwner,
-          address(new SuperstateRestrictedWhitelistedPartyTransferGuard(superstateToken))
+          initialBeaconOwner, address(new SuperstateRestrictedWhitelistedPartyTransferGuard(superstateToken))
         )
-      )
-    )
+      ))
   {}
 
   /// @inheritdoc TransferGuardFactoryBase

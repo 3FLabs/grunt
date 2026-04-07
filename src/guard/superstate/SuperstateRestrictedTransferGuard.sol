@@ -46,12 +46,7 @@ contract SuperstateRestrictedTransferGuard is TransferGuard {
   /// @dev Extends the base TransferGuard's canTransfer with Superstate allowlist checks.
   ///      Both non-null parties must be on the Superstate allowlist in addition to passing
   ///      the base guard's checks (pause, blocklist/whitelist address status).
-  function canTransfer(address token, address from, address to, uint256 amount)
-    public
-    view
-    override
-    returns (bool)
-  {
+  function canTransfer(address token, address from, address to, uint256 amount) public view override returns (bool) {
     // Base TransferGuard checks (pause, address status)
     if (!super.canTransfer(token, from, to, amount)) return false;
 

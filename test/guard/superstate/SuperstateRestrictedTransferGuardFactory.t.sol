@@ -2,8 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {SuperstateRestrictedTransferGuardFactory} from
-  "src/guard/superstate/SuperstateRestrictedTransferGuardFactory.sol";
+import {
+  SuperstateRestrictedTransferGuardFactory
+} from "src/guard/superstate/SuperstateRestrictedTransferGuardFactory.sol";
 import {SuperstateRestrictedTransferGuard} from "src/guard/superstate/SuperstateRestrictedTransferGuard.sol";
 
 import {MockSuperstateToken} from "test/mock/funds/MockSuperstateToken.sol";
