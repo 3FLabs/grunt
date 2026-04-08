@@ -2,17 +2,17 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
-import {USCCFund} from "src/funds/USCCFund.sol";
+import {USCCFundFactory} from "src/funds/USCC/USCCFundFactory.sol";
+import {USCCFund} from "src/funds/USCC/USCCFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "../mock/MockERC20.sol";
-import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
-import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
+import {MockERC20} from "../../mock/MockERC20.sol";
+import {MockAllowlist} from "../../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../../mock/funds/MockSuperstateToken.sol";
 
 contract USCCFundFactoryTest is Test {
   event FactoryDeployed(address indexed usdc, address indexed uscc, address indexed wrappedAsset);
@@ -24,6 +24,9 @@ contract USCCFundFactoryTest is Test {
   MockSuperstateToken public uscc;
   MockAllowlist public allowlist;
   MockChainlinkOracle public oracle;
+
+  // USCCFund roles (matching internal constants)
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
 
   address public owner;
   address public depositor;
@@ -46,7 +49,7 @@ contract USCCFundFactoryTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
   }
@@ -83,7 +86,7 @@ contract USCCFundFactoryTest is Test {
   function test_Factory_ConfiguresRoles() public {
     address fundAddress = factory.createFund(owner, depositor, recipient, address(oracle));
     USCCFund fund = USCCFund(fundAddress);
-    assertEq(fund.rolesOf(depositor), fund.DEPOSITOR_ROLE(), "depositor");
+    assertEq(fund.rolesOf(depositor), DEPOSITOR_ROLE, "depositor");
   }
 
   function test_Factory_MultipleDeployments() public {
@@ -91,6 +94,23 @@ contract USCCFundFactoryTest is Test {
     address fundTwo = factory.createFund(owner, depositor, recipient, address(oracle));
 
     assertTrue(fundOne != fundTwo, "distinct funds");
+  }
+
+  function test_isFund_returnsTrueForDeployed() public {
+    address fundAddress = factory.createFund(owner, depositor, recipient, address(oracle));
+    assertTrue(factory.isFund(fundAddress));
+  }
+
+  function test_isFund_returnsFalseForUnknown() public view {
+    assertFalse(factory.isFund(address(0xdead)));
+  }
+
+  function test_isFund_tracksMultipleDeployments() public {
+    address fundOne = factory.createFund(owner, depositor, recipient, address(oracle));
+    address fundTwo = factory.createFund(owner, depositor, recipient, address(oracle));
+
+    assertTrue(factory.isFund(fundOne));
+    assertTrue(factory.isFund(fundTwo));
   }
 
   function test_Factory_RevertsInvalidContracts() public {

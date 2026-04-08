@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {
   RebalancingData,
   RebalancingOperation,
@@ -205,7 +206,7 @@ contract PositionManagerHandler is Test {
       debtToken.approve(address(positionManager), debt);
     }
 
-    try positionManager.withdraw(collateral, debt) {
+    try positionManager.withdraw(collateral, debt, WithdrawalStrategy.SEQUENTIAL) {
     // Success -- no ghost tracking needed for withdrawals.
     }
       catch {
@@ -249,7 +250,7 @@ contract PositionManagerHandler is Test {
     uint256 collBefore = positionManager.collateralAmountQuoted();
     uint256 debtBefore = positionManager.debtAmount();
 
-    try positionManager.burn(shares) {
+    try positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL) {
       // PM-3: Verify aggregate LTV did not increase after burn.
       // LTV = debt / quotedCollateral. Cross-multiply to avoid division:
       // debtAfter * collBefore > debtBefore * collAfter → LTV increased.
@@ -290,8 +291,8 @@ contract PositionManagerHandler is Test {
     address toPos = modules[toIdx];
 
     // Determine the max amount of available collateral to move.
-    (uint256 lltv,,) = positionManager.config();
-    uint256 available = IBorrowPosition(fromPos).availableCollateral(lltv);
+    (uint256 ltv,) = positionManager.config();
+    uint256 available = IBorrowPosition(fromPos).availableCollateral(ltv);
     if (available == 0) return;
 
     amount = _bound(amount, 1, available);
@@ -317,7 +318,7 @@ contract PositionManagerHandler is Test {
       uint256 totalAssetsAfter = positionManager.totalAssets();
       if (totalAssetsAfter < totalAssetsBefore && totalAssetsBefore > 0) {
         uint256 loss = totalAssetsBefore - totalAssetsAfter;
-        (, uint16 maxLoss,) = positionManager.config();
+        (uint16 maxLoss,,) = positionManager.rebalanceConfig();
         // loss * BPS > maxLoss * totalAssetsBefore → loss exceeded
         if (loss * 10_000 > uint256(maxLoss) * totalAssetsBefore) {
           rebalanceLossExceeded = true;
@@ -337,12 +338,12 @@ contract PositionManagerHandler is Test {
   }
 
   /// @notice Sets fee parameters on the PositionManager.
-  /// @dev Bounds management and performance fees to [0, 5000] (MAX_MANAGEMENT_FEE / MAX_PERFORMANCE_FEE).
+  /// @dev Bounds management fee to [0, 200] (MAX_MANAGEMENT_FEE = 2%) and performance fee to [0, 5000].
   ///      Sets a fee recipient if one is not already configured.
   /// @param mgmt Raw fuzz input for management fee (basis points).
   /// @param perf Raw fuzz input for performance fee (basis points).
   function act_setFees(uint256 mgmt, uint256 perf) external refreshFullLiquidation {
-    mgmt = _bound(mgmt, 0, 5000);
+    mgmt = _bound(mgmt, 0, 200);
     perf = _bound(perf, 0, 5000);
 
     (address currentRecipient,,,,) = positionManager.feeData();
@@ -385,7 +386,7 @@ contract PositionManagerHandler is Test {
     for (uint256 i = 0; i < modules.length; i++) {
       uint256 idx = (posIdx + i) % modules.length;
       MorphoBorrowPosition bp = MorphoBorrowPosition(modules[idx]);
-      (, uint128 liquidationLtv) = bp.ltvs();
+      uint128 liquidationLtv = bp.liquidationLtv();
 
       if (bp.totalCollateral() == 0 || bp.isHealthy(liquidationLtv)) continue;
 
@@ -423,22 +424,22 @@ contract PositionManagerHandler is Test {
     }
   }
 
-  /// @notice Changes the PositionManager's LLTV parameter.
+  /// @notice Changes the PositionManager's LTV parameter.
   /// @dev Bounds to [0.1e18, 0.95e18]. Affects available collateral calculations.
-  /// @param lltvSeed Raw fuzz input for the new LLTV.
-  function act_setLltv(uint256 lltvSeed) external refreshFullLiquidation {
-    uint256 newLltv = _bound(lltvSeed, 0.1e18, 0.95e18);
+  /// @param ltvSeed Raw fuzz input for the new LTV.
+  function act_setLtv(uint256 ltvSeed) external refreshFullLiquidation {
+    uint256 newLtv = _bound(ltvSeed, 0.1e18, 0.95e18);
     vm.prank(owner);
-    try positionManager.setLltv(newLltv) {} catch {}
+    try positionManager.setLtv(newLtv) {} catch {}
   }
 
-  /// @notice Changes the maxRebalanceLoss parameter.
+  /// @notice Changes the rebalance config (maxRebalanceLoss only, cooldown stays at 0).
   /// @dev Bounds to [0, 500] (0% to 5% in basis points).
   /// @param lossSeed Raw fuzz input for the new maxRebalanceLoss.
-  function act_setMaxRebalanceLoss(uint256 lossSeed) external refreshFullLiquidation {
+  function act_setRebalanceConfig(uint256 lossSeed) external refreshFullLiquidation {
     uint16 newLoss = uint16(_bound(lossSeed, 0, 500));
     vm.prank(owner);
-    try positionManager.setMaxRebalanceLoss(newLoss) {} catch {}
+    try positionManager.setRebalanceConfig(newLoss, 0) {} catch {}
   }
 
   /// @notice Supplies additional liquidity to a Morpho market (simulates external actor).

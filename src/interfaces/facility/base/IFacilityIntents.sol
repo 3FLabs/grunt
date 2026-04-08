@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IntentProperties, Asset} from "../../../libs/facility/LibIntent.sol";
 
@@ -91,12 +91,38 @@ interface IFacilityIntents {
   function setDepositCap(uint256 id, uint256 newDepositCap) external;
 
   /// @notice Sets a new fund address for a given intent ID.
+  /// @dev The EIP-712 digest is computed from `(id, newFund, deadline)` and is independent from
+  ///      swap digests and request digests. Smart contract wallet guardians must use implementations
+  ///      that bind their own address into EIP-1271 `isValidSignature` (e.g., Safe >= 1.3.0). Older SC
+  ///      wallets with faulty EIP-1271 fallbacks must not be used as quorum signers.
   /// @param id The intent ID.
   /// @param newFund The new fund address or address(0) to remove the fund.
-  function setFund(uint256 id, address newFund) external;
+  /// @param deadline Timestamp after which this approval is no longer valid.
+  /// @param signers Sorted guardian signer list.
+  /// @param signatures Signatures corresponding to each signer.
+  function setFund(
+    uint256 id,
+    address newFund,
+    uint256 deadline,
+    address[] calldata signers,
+    bytes[] calldata signatures
+  ) external;
 
   /// @notice Sets a new request address for a given intent ID.
+  /// @dev The EIP-712 digest is computed from `(id, newRequest, deadline)` and is independent from
+  ///      swap digests and fund digests. Smart contract wallet guardians must use implementations
+  ///      that bind their own address into EIP-1271 `isValidSignature` (e.g., Safe >= 1.3.0). Older SC
+  ///      wallets with faulty EIP-1271 fallbacks must not be used as quorum signers.
   /// @param id The intent ID.
   /// @param newRequest The new request address or address(0) to remove the request.
-  function setRequest(uint256 id, address newRequest) external;
+  /// @param deadline Timestamp after which this approval is no longer valid.
+  /// @param signers Sorted guardian signer list.
+  /// @param signatures Signatures corresponding to each signer.
+  function setRequest(
+    uint256 id,
+    address newRequest,
+    uint256 deadline,
+    address[] calldata signers,
+    bytes[] calldata signatures
+  ) external;
 }

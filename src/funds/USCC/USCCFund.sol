@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
@@ -7,15 +7,16 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
-import {IERC20} from "../interfaces/integrations/IERC20.sol";
-import {ISuperstateToken} from "../interfaces/integrations/superstate/ISuperstateToken.sol";
-import {IAllowlist} from "../interfaces/integrations/superstate/IAllowlist.sol";
-import {IFund} from "../interfaces/funds/IFund.sol";
-import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
-import {AggregatorV3Interface} from "../interfaces/integrations/AggregatorV3Interface.sol";
-import {Order, State, Mode, LibOrder} from "../libs/funds/Order.sol";
-import {LibFundsErrors} from "../libs/funds/LibFundsErrors.sol";
-import {LibChecks} from "../libs/common/LibChecks.sol";
+import {IERC20} from "../../interfaces/integrations/IERC20.sol";
+import {ISuperstateToken} from "../../interfaces/integrations/superstate/ISuperstateToken.sol";
+import {IFund} from "../../interfaces/funds/IFund.sol";
+import {IUSCCFund} from "../../interfaces/funds/USCC/IUSCCFund.sol";
+import {IWrappedAsset} from "../../interfaces/funds/IWrappedAsset.sol";
+import {AggregatorV3Interface} from "../../interfaces/integrations/AggregatorV3Interface.sol";
+import {Order, State, Mode, LibOrder} from "../../libs/funds/Order.sol";
+import {LibFundsErrors} from "../../libs/funds/LibFundsErrors.sol";
+import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {BPS} from "../../libs/Constants.sol";
 
 /// @title USCCFund
 /// @author 3F Protocol
@@ -28,7 +29,7 @@ import {LibChecks} from "../libs/common/LibChecks.sol";
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
 ///        on asset balances to determine state transitions.
-contract USCCFund is IFund, OwnableRoles, Initializable {
+contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
   using SafeCastLib for int256;
@@ -41,16 +42,20 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Role for operator.
-  uint256 public constant OPERATOR_ROLE = _ROLE_0;
+  uint256 internal constant _OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
-  uint256 public constant DEPOSITOR_ROLE = _ROLE_1;
+  uint256 internal constant _DEPOSITOR_ROLE = _ROLE_1;
 
   /// @dev USCC/USDC/wUSCC all have 6 decimals (same for the oracle).
   uint256 private constant _DECIMALS = 6;
 
   /// @dev Scaled unit for 6 decimals.
   uint256 private constant _SCALED_UNIT = 10 ** _DECIMALS;
+
+  /// @notice Maximum allowed negative deviation (in basis points) between the order output
+  ///         and the oracle-derived expected output. Orders with output below this threshold revert.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
@@ -84,67 +89,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     USDC = usdc;
     USCC = uscc;
     WUSCC = wuscc;
+
+    _disableInitializers();
   }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          EVENTS                            */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Emitted when a new order is created and accepted.
-  /// @param orderId The unique identifier of the order.
-  /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param owner The owner of the order.
-  /// @param receiver The receiver of the order output.
-  /// @param input The input amount for the order.
-  /// @param output The expected output amount for the order.
-  event OrderCreated(
-    bytes32 indexed orderId, Mode mode, address indexed owner, address indexed receiver, uint256 input, uint256 output
-  );
-
-  /// @notice Emitted when an order is committed and assets are transferred.
-  /// @param orderId The unique identifier of the order.
-  /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param amount The amount committed.
-  event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
-
-  /// @notice Emitted when an order is recovered and funds are returned.
-  /// @param orderId The unique identifier of the order.
-  /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param amount The amount recovered.
-  /// @param receiver The address receiving the recovered funds.
-  event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
-
-  /// @notice Emitted when an order is unlocked and completed successfully.
-  /// @param orderId The unique identifier of the order.
-  /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param amount The amount unlocked.
-  /// @param receiver The address receiving the unlocked funds.
-  event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
-
-  /// @notice Emitted when an order is canceled before commitment.
-  /// @param orderId The unique identifier of the order.
-  /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param owner The owner of the canceled order.
-  event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
-
-  /// @notice Emitted when the internal state is manually set to RECOVERING.
-  /// @param orderId The unique identifier of the order being recovered.
-  event OrderRecovering(bytes32 indexed orderId);
-
-  /// @notice Emitted when the oracle address is updated.
-  /// @param newOracle The new oracle address.
-  /// @param operator The address that updated the oracle.
-  event OracleUpdated(address indexed newOracle, address indexed operator);
-
-  /// @notice Emitted when an order is manually resolved by an operator.
-  /// @param orderId The unique identifier of the resolved order.
-  /// @param newOrderId The unique identifier of the new resolved order.
-  /// @param newInput The new input amount set by the operator.
-  /// @param newOutput The new output amount set by the operator.
-  /// @param operator The address that resolved the order.
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
-  );
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */
@@ -155,21 +102,21 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   ///      and accessed via a fixed storage slot to prevent collisions with inherited contracts.
   /// @param recipient The superstate address receiving USDC to mint USCC.
   /// @param currentOrderId The unique identifier of the current order.
-  /// @param currentOrder The current order (struct) being processed. We only handle one at a time.
   /// @param internalState The internal state of the current order.
+  /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param oracle The address of Chainlink USCC Oracle.
-  /// @param cachedBalance Cached USCC balance before processing to compute received amounts accurately.
-  /// @param resolvedOrder The manually resolved order (if any) to override input/output amounts.
+  /// @param resolvedInput The resolved input amount (if hasResolvedAmounts is true).
+  /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Mapping of ended order Ids to boolean (true if ended). To archive ended orders
   ///                    (since we only handle one at a time).
   struct UsccFundStorage {
     address recipient;
     bytes32 currentOrderId;
-    Order currentOrder;
     State internalState;
+    bool hasResolvedAmounts;
     address oracle;
-    uint256 cachedBalance;
-    Order resolvedOrder;
+    uint256 resolvedInput;
+    uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
 
@@ -193,30 +140,22 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Initializes the USCCFund contract with all required parameters.
-  /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
-  ///      The owner has admin control, while the depositor can execute orders.
-  /// @param owner_ The address that will own this contract and manage roles.
-  /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
-  /// @param recipient_ The superstate address receiving USDC to mint USCC.
-  /// @param oracle_ The address of Chainlink USCC Oracle.
-  function initialize(address owner_, address depositor_, address recipient_, address oracle_) public initializer {
+  /// @inheritdoc IUSCCFund
+  function initialize(address owner_, address depositor_, address recipient_, address oracle_)
+    public
+    override
+    initializer
+  {
     owner_.checkNotZero();
     recipient_.checkNotZero();
     depositor_.checkContract();
-    oracle_.checkContract();
 
-    // Ensure oracle has 6 decimals
-    if (AggregatorV3Interface(oracle_).decimals() != _DECIMALS) {
-      revert LibFundsErrors.InvalidOracle(oracle_);
-    }
+    _usccFundStorage().recipient = recipient_;
 
-    UsccFundStorage storage _storage = _usccFundStorage();
-    _storage.recipient = recipient_;
-    _storage.oracle = oracle_;
+    _setOracle(oracle_);
 
     _initializeOwner(owner_);
-    _setRoles(depositor_, DEPOSITOR_ROLE);
+    _setRoles(depositor_, _DEPOSITOR_ROLE);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -224,8 +163,9 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFund
-  function create(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
-    order.input.checkNotZero(); // no restrictions on output
+  function create(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State) {
+    order.input.checkNotZero();
+    _validateOutput(order);
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
     if (order.receiver != msg.sender) revert LibFundsErrors.InvalidReceiver();
 
@@ -234,7 +174,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
     // Check allowlist permissions for this contract to deposit in USCC
-    if (!IAllowlist(ISuperstateToken(USCC).allowlistV2()).isAddressAllowedForPrivateInstrument(address(this), "USCC")) {
+    if (!ISuperstateToken(USCC).isAllowed(address(this))) {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
 
@@ -245,11 +185,12 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
     // No pending state, always accepted or revert.
     bytes32 _orderId = order.toId(address(this));
+    if (_storage.endedOrders[_orderId]) revert LibFundsErrors.OrderAlreadyExists(_orderId);
     _storage.currentOrderId = _orderId;
-    _storage.currentOrder = order;
     _storage.internalState = State.ACCEPTED;
-    _storage.cachedBalance = 0;
-    delete _storage.resolvedOrder;
+    _storage.hasResolvedAmounts = false;
+    _storage.resolvedInput = 0;
+    _storage.resolvedOutput = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -257,7 +198,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function cancel(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State) {
+  function cancel(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -271,10 +212,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     }
 
     _storage.currentOrderId = bytes32(0);
-    delete _storage.currentOrder;
-    delete _storage.resolvedOrder;
     _storage.internalState = State.EMPTY;
-    _storage.cachedBalance = 0;
 
     emit OrderCanceled(_orderId, order.mode, order.owner);
 
@@ -283,13 +221,18 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial commits, always goes to PROCESSING.
-  function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function commit(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
     bytes32 _currentOrderId = _storage.currentOrderId;
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     if (_storage.internalState != State.ACCEPTED) revert LibFundsErrors.InvalidState(_storage.internalState);
+
+    // Check allowlist permissions for this contract to deposit in USCC
+    if (!ISuperstateToken(USCC).isAllowed(address(this))) {
+      revert LibFundsErrors.NotAllowedSuperstate();
+    }
 
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
@@ -300,10 +243,6 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       ISuperstateToken(USCC).offchainRedeem(order.input);
     }
 
-    // Snapshot balance before receiving minted uscc or recovered uscc
-    // We are not caching usdc balance as we don't have (in theory) stationary usdc holdings
-    _storage.cachedBalance = USCC.balanceOf(address(this));
-
     _storage.internalState = State.PROCESSING;
 
     emit OrderCommitted(_currentOrderId, order.mode, order.input);
@@ -313,7 +252,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED.
-  function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function recover(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -321,27 +260,26 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
-    if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_currentState);
 
     if (order.mode == Mode.DEPOSIT) {
-      USDC.safeTransfer(msg.sender, _amount);
+      USDC.safeTransfer(order.receiver, _amount);
     } else {
       // Mint wUSCC back to depositor (pulls USCC from this contract)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(order.receiver, _amount);
     }
 
     _storage.internalState = State.ENDED;
-    delete _storage.resolvedOrder;
 
-    emit OrderRecovered(_currentOrderId, order.mode, _amount, msg.sender);
+    emit OrderRecovered(_currentOrderId, order.mode, _amount, order.receiver);
 
     return (State.ENDED, _amount);
   }
 
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED.
-  function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
+  function unlock(Order calldata order) external override onlyRoles(_DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -349,21 +287,20 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
 
     (State _currentState, uint256 _amount) = _state(order);
-    if (_currentState != State.UNLOCKING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    if (_currentState != State.UNLOCKING) revert LibFundsErrors.InvalidState(_currentState);
 
     if (order.mode == Mode.DEPOSIT) {
       // Mint wUSCC to receiver (pulls USCC from this contract into wUSCC)
       USCC.safeApproveWithRetry(WUSCC, _amount);
-      IWrappedAsset(WUSCC).mint(msg.sender, _amount);
+      IWrappedAsset(WUSCC).mint(order.receiver, _amount);
     } else {
       // Transfer USDC to receiver (all the USDC held by the contract)
-      USDC.safeTransfer(msg.sender, _amount);
+      USDC.safeTransfer(order.receiver, _amount);
     }
 
     _storage.internalState = State.ENDED;
-    delete _storage.resolvedOrder;
 
-    emit OrderUnlocked(_currentOrderId, order.mode, _amount, msg.sender);
+    emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
 
     return (State.ENDED, _amount);
   }
@@ -372,50 +309,39 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /*                       ADMINISTRATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Sets the fund internal state to RECOVERING (if issues arise with Superstate).
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      This is an emergency function to signal that Superstate failed to process the order.
-  ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
-  ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
-  function recovering() external onlyOwnerOrRoles(OPERATOR_ROLE) {
+  /// @inheritdoc IUSCCFund
+  function recovering(bytes32 orderId) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
+    if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.RECOVERING;
 
     emit OrderRecovering(_storage.currentOrderId);
   }
 
-  /// @notice Sets the oracle address.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  /// @param oracle The new oracle address.
-  function setOracle(address oracle) external onlyOwnerOrRoles(OPERATOR_ROLE) {
-    oracle.checkContract();
-
-    // Ensure oracle decimals match USCC decimals
-    if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
-      revert LibFundsErrors.InvalidOracle(oracle);
-    }
-
+  /// @inheritdoc IUSCCFund
+  function cancelRecovering(bytes32 orderId) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     UsccFundStorage storage _storage = _usccFundStorage();
-    _storage.oracle = oracle;
+    if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
+    if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
+    _storage.internalState = State.PROCESSING;
 
-    emit OracleUpdated(oracle, msg.sender);
+    emit OrderProcessing(_storage.currentOrderId);
   }
 
-  /// @notice Resolves the current order by setting its input and output amounts.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
-  ///      differ from expected ones (e.g., due to unexpected conditions).
-  ///
-  ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id remains
-  ///      valid for `state/unlock/recover`, but the fund will use the resolved `input/output` amounts as
-  ///      the effective thresholds for PROCESSING/RECOVERING balance comparisons.
-  ///      It's possible to resolve multiple times if needed, always overriding the previous resolution.
-  ///
-  /// @param order The order to resolve (must match current order ID before resolution).
-  /// @param input The new input amount.
-  /// @param output The new output amount.
-  function resolve(Order memory order, uint256 input, uint256 output) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+  /// @notice Sets the oracle address.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
+  /// @param oracle The new oracle address.
+  function setOracle(address oracle) external onlyOwnerOrRoles(_OPERATOR_ROLE) {
+    _setOracle(oracle);
+  }
+
+  /// @inheritdoc IUSCCFund
+  function resolve(Order memory order, uint256 input, uint256 output)
+    external
+    override
+    onlyOwnerOrRoles(_OPERATOR_ROLE)
+  {
     UsccFundStorage storage _storage = _usccFundStorage();
     State _internalState = _storage.internalState;
     if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) {
@@ -425,12 +351,13 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     }
 
-    order.input = input;
-    order.output = output;
+    input.checkNotZero();
 
-    _storage.resolvedOrder = order;
+    _storage.hasResolvedAmounts = true;
+    _storage.resolvedInput = input;
+    _storage.resolvedOutput = output;
 
-    emit OrderResolved(_storage.currentOrderId, order.toId(address(this)), input, output, msg.sender);
+    emit OrderResolved(_storage.currentOrderId, input, output, msg.sender);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -443,7 +370,7 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  function share() external view returns (address) {
+  function share() external view override returns (address) {
     return WUSCC;
   }
 
@@ -451,31 +378,17 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
   ///      Validates the oracle round data is consistent and complete.
   function totalAssets() external view override returns (uint256) {
-    UsccFundStorage storage _storage = _usccFundStorage();
-
-    AggregatorV3Interface _oracle = AggregatorV3Interface(_storage.oracle);
-
-    // Fetch latest round data
-    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
-
-    // Validate latest round
-    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
-    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
-    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
-
-    uint256 _latestPrice = _answer.toUint256();
-
-    return WUSCC.totalSupply().mulDiv(_latestPrice, _SCALED_UNIT);
+    return WUSCC.totalSupply().mulDiv(_getOraclePrice(), _SCALED_UNIT);
   }
 
   /// @inheritdoc IFund
-  function maxDeposit(address) external pure override returns (uint256) {
-    return type(uint256).max;
+  function maxDeposit(address account) external view override returns (uint256) {
+    return hasAllRoles(account, _DEPOSITOR_ROLE) ? IERC20(USDC).balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
-    return WUSCC.balanceOf(account);
+    return hasAllRoles(account, _DEPOSITOR_ROLE) ? IERC20(WUSCC).balanceOf(account) : 0;
   }
 
   /// @inheritdoc IFund
@@ -525,20 +438,20 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
     uint256 _effectiveOutput = order.output;
 
     // If order resolved, use resolved amounts
-    if (_storage.resolvedOrder.owner != address(0)) {
-      _effectiveInput = _storage.resolvedOrder.input;
-      _effectiveOutput = _storage.resolvedOrder.output;
+    if (_storage.hasResolvedAmounts) {
+      _effectiveInput = _storage.resolvedInput;
+      _effectiveOutput = _storage.resolvedOutput;
     }
 
     if (_internalState == State.PROCESSING) {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we received USCC
-        _amount = USCC.balanceOf(address(this)).zeroFloorSub(_storage.cachedBalance);
+        _amount = IERC20(USCC).balanceOf(address(this));
         return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we received USDC
-        _amount = USDC.balanceOf(address(this));
+        _amount = IERC20(USDC).balanceOf(address(this));
         return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
       }
     }
@@ -547,16 +460,66 @@ contract USCCFund is IFund, OwnableRoles, Initializable {
       uint256 _amount;
       if (order.mode == Mode.DEPOSIT) {
         // Deposit: check if we can recover USDC
-        _amount = USDC.balanceOf(address(this));
+        _amount = IERC20(USDC).balanceOf(address(this));
         return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       } else {
         // Redeem: check if we can recover USCC
-        _amount = USCC.balanceOf(address(this)).zeroFloorSub(_storage.cachedBalance);
+        _amount = IERC20(USCC).balanceOf(address(this));
         return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
       }
     }
 
     return (_internalState, 0);
+  }
+
+  /// @dev Returns the validated oracle price for USCC/USD.
+  /// @return The latest oracle price as a uint256.
+  function _getOraclePrice() internal view returns (uint256) {
+    AggregatorV3Interface _oracle = AggregatorV3Interface(_usccFundStorage().oracle);
+
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
+
+    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
+    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
+    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
+
+    return _answer.toUint256();
+  }
+
+  /// @dev Validates that the order output is within acceptable deviation from the oracle-derived expected output.
+  ///      Reverts if the output deviates negatively by more than MAX_OUTPUT_DEVIATION basis points.
+  /// @param order The order to validate.
+  function _validateOutput(Order calldata order) internal view {
+    uint256 _price = _getOraclePrice();
+    uint256 _expectedOutput;
+
+    if (order.mode == Mode.DEPOSIT) {
+      // DEPOSIT: USDC → USCC, expected USCC = input * _SCALED_UNIT / price
+      _expectedOutput = order.input.mulDiv(_SCALED_UNIT, _price);
+    } else {
+      // REDEEM: wUSCC → USDC, expected USDC = input * price / _SCALED_UNIT
+      _expectedOutput = order.input.mulDiv(_price, _SCALED_UNIT);
+    }
+
+    if (order.output < _expectedOutput) {
+      if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
+        revert LibFundsErrors.InvalidOutput();
+      }
+    }
+  }
+
+  /// @dev Internal function to validate and set the oracle address.
+  /// @param oracle The oracle address to set.
+  function _setOracle(address oracle) private {
+    oracle.checkContract();
+
+    // Ensure oracle decimals match USCC decimals
+    if (AggregatorV3Interface(oracle).decimals() != _DECIMALS) {
+      revert LibFundsErrors.InvalidOracle(oracle);
+    }
+
+    _usccFundStorage().oracle = oracle;
+    emit OracleUpdated(oracle, msg.sender);
   }
 
   /// @dev Internal function to check that a token has the expected decimals (6).

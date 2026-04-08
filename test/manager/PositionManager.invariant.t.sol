@@ -25,6 +25,7 @@ import {PositionManagerHandler} from "test/mock/manager/PositionManagerHandler.s
 ///         then asserts global invariants after every call sequence.
 contract PositionManagerInvariantTest is StdInvariant, Test {
   using MarketParamsLib for MarketParams;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                          */
@@ -63,14 +64,14 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18;
-  uint128 constant BP_SAFE_LTV = 0.65e18;
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18;
-  uint256 constant POSITION_MANAGER_LLTV = 0.7e18;
+  uint128 constant BP_SAFE_LTV = 0.72e18;
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18;
+  uint256 constant POSITION_MANAGER_LTV = 0.7e18;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
   uint256 constant _ROLE_MINTER = 1 << 0;
   uint256 constant _ROLE_CURATOR = 1 << 1;
   uint256 constant _ROLE_REBALANCER = 1 << 2;
-  uint256 constant MAX_MANAGEMENT_FEE = 5000;
+  uint256 constant MAX_MANAGEMENT_FEE = 200;
   uint256 constant MAX_PERFORMANCE_FEE = 5000;
 
   /// @dev WrappedAsset roles (from OwnableRoles: _ROLE_1 = 1 << 1, _ROLE_2 = 1 << 2).
@@ -101,7 +102,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     collateralToken = WrappedAsset(proxy);
     vm.prank(owner);
-    collateralToken.initialize(owner, address(0), address(underlyingToken), "wCOLL", "Wrapped Collateral", 18);
+    collateralToken.initialize(owner, address(0), address(underlyingToken), "wCOLL", "Wrapped Collateral");
     vm.label(address(collateralToken), "CollateralToken");
 
     // ---- oracle & IRM ----
@@ -142,31 +143,30 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     marketId2 = marketParams2.id();
 
     // ---- deploy PositionManager (directly, not via factory) ----
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
         name: "Position Manager Shares",
         symbol: "PMS",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      POSITION_MANAGER_LLTV,
-      address(0)
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
     );
 
     // ---- deploy MorphoBorrowPositionFactory and create 2 borrow positions ----
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
 
-    address bp1 = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address bp1 =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition1 = MorphoBorrowPosition(bp1);
 
-    address bp2 = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address bp2 =
+      borrowPositionFactory.createBorrowPosition(marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
     // ---- add borrow modules & grant PM roles ----
@@ -234,8 +234,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     selectors[7] = PositionManagerHandler.act_preLiquidate.selector;
     selectors[8] = PositionManagerHandler.act_morphoLiquidate.selector;
     selectors[9] = PositionManagerHandler.act_accrueInterest.selector;
-    selectors[10] = PositionManagerHandler.act_setLltv.selector;
-    selectors[11] = PositionManagerHandler.act_setMaxRebalanceLoss.selector;
+    selectors[10] = PositionManagerHandler.act_setLtv.selector;
+    selectors[11] = PositionManagerHandler.act_setRebalanceConfig.selector;
     selectors[12] = PositionManagerHandler.act_supplyMorphoLiquidity.selector;
     // WrappedAsset actions
     selectors[13] = PositionManagerHandler.act_wrapped_asset_mint.selector;
@@ -273,47 +273,39 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   /*                        INVARIANTS                              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice PM-1: totalAssets equals quotedCollateral minus debt (floored at zero).
-  /// @dev This is the fundamental accounting identity of the PositionManager. totalAssets
-  ///      represents the net equity available to share holders after subtracting all outstanding
-  ///      debt from the quoted (oracle-priced) collateral. If debt exceeds quoted collateral
-  ///      the value is floored at zero rather than underflowing.
+  /// @notice PM-1: totalAssets equals the sum of per-position NAVs (each floored at zero).
+  /// @dev totalAssets is computed as sum(max(0, collateralQuoted_i - debt_i)) per position,
+  ///      NOT as max(0, totalCollateralQuoted - totalDebt). This isolates bad-debt positions
+  ///      so they don't drag down the NAV of healthy positions.
   function invariant_totalAssetsEquation() public view {
-    uint256 quotedCollateral = positionManager.collateralAmountQuoted();
-    uint256 debt = positionManager.debtAmount();
-    uint256 expected = quotedCollateral > debt ? quotedCollateral - debt : 0;
-    assertEq(positionManager.totalAssets(), expected, "PM-1: totalAssets != quotedCollateral - debt");
+    uint256 expected = _computePerPositionTotalAssets();
+    assertEq(positionManager.totalAssets(), expected, "PM-1: totalAssets != sum of per-position NAVs");
   }
 
-  /// @notice PM-2: No zero-share minting (virtual offset inflation-attack protection).
-  /// @dev The PositionManager uses VIRTUAL_SHARES (1e6) and VIRTUAL_ASSETS (1) offsets in its
-  ///      share conversion formula to prevent the classic ERC-4626 inflation attack where a
-  ///      first depositor manipulates the price-per-share. This invariant verifies that whenever
-  ///      shares exist, the virtual offset guarantees a meaningful share supply.
+  /// @notice PM-2: Share accounting consistency -- no shares without assets and vice versa.
+  /// @dev The PositionManager uses a virtual share offset (derived from debt asset decimals) and
+  ///      VIRTUAL_ASSETS (1) in its share conversion formula. For 18-decimal debt tokens, the
+  ///      offset is 1, which provides minimal inflation-attack protection. As documented in
+  ///      LibStorage, vault deployers should make an initial deposit of a non-trivial amount
+  ///      for 18-decimal tokens. This invariant validates that the share conversion formula
+  ///      remains consistent: depositing a meaningful amount (1e18) always yields shares.
   function invariant_noInflationAttack() public view {
     uint256 totalSupply = positionManager.totalSupply();
     uint256 totalAssets = positionManager.totalAssets();
 
-    if (totalSupply > 0) {
-      // The virtual offset (VIRTUAL_SHARES=1e6, VIRTUAL_ASSETS=1) ensures that
-      // convertToShares(1) should never return 0 when totalAssets > 0.
-      // totalSupply as a uint256 can never be negative; this assertion serves as a
-      // smoke-test that the share accounting remains consistent.
-      assertTrue(totalSupply >= 0, "PM-2: totalSupply should never be negative (it is uint)");
-    }
-
-    // Additional check: if there are assets, the share price should be reasonable.
+    // If there are assets and shares, verify that a meaningful deposit (1e18) yields shares.
+    // Using 1 wei is too strict for 18-decimal tokens where virtualShareOffset = 1, as
+    // integer division truncation makes (1 * (totalSupply + 1)) / (totalAssets + 1) = 0
+    // when totalAssets >> totalSupply (e.g. after oracle price changes or donations).
     if (totalAssets > 0 && totalSupply > 0) {
-      // shares per asset should be > 0 (no complete dilution).
-      // Using the virtual offset formula: shares = assets * (totalSupply + 1e6) / (totalAssets + 1)
-      // Even for 1 wei of assets this should produce > 0 shares.
-      uint256 sharesFor1 = (1 * (totalSupply + 1e6)) / (totalAssets + 1);
-      assertTrue(sharesFor1 > 0, "PM-2: 1 wei of assets yields 0 shares (inflation attack possible)");
+      uint256 offset = positionManager.virtualShareOffset();
+      uint256 sharesFor1e18 = (1e18 * (totalSupply + offset)) / (totalAssets + 1);
+      assertTrue(sharesFor1e18 > 0, "PM-2: 1e18 of assets yields 0 shares (inflation attack possible)");
     }
   }
 
   /// @notice PM-4: Fee parameters always stay within their maximum bounds.
-  /// @dev The PositionManager enforces MAX_MANAGEMENT_FEE (5000 bps = 50%) and
+  /// @dev The PositionManager enforces MAX_MANAGEMENT_FEE (200 bps = 2%) and
   ///      MAX_PERFORMANCE_FEE (5000 bps = 50%) during setFeeData(). This invariant
   ///      re-checks the stored values to ensure no path can bypass the validation.
   function invariant_feeBounds() public view {
@@ -371,8 +363,8 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
 
       if (borrowed == 0) {
         // A position with no debt is always healthy at any LTV.
-        (uint128 safeLtv,) = MorphoBorrowPosition(modules[i]).ltvs();
-        assertTrue(bp.isHealthy(safeLtv), "PM-7: debt-free position reported unhealthy");
+        uint128 bpSafeLtv = MorphoBorrowPosition(modules[i]).safeLtv();
+        assertTrue(bp.isHealthy(bpSafeLtv), "PM-7: debt-free position reported unhealthy");
       }
 
       if (collateral == 0) {
@@ -380,6 +372,18 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
         // (Morpho requires collateral to borrow).
         assertEq(borrowed, 0, "PM-7: debt without collateral");
       }
+    }
+  }
+
+  /// @notice PM-11: All whitelisted borrow modules have safeLtv >= PM LTV.
+  /// @dev This is enforced on-chain by addBorrowModule and setLtv. This invariant
+  ///      cross-validates that the property holds at all times during stateful fuzzing.
+  function invariant_moduleSafeLtvAbovePmLtv() public view {
+    (uint256 pmLtv,) = positionManager.config();
+    address[] memory modules = positionManager.borrowModules();
+    for (uint256 i = 0; i < modules.length; i++) {
+      uint128 moduleSafeLtv = IBorrowPosition(modules[i]).safeLtv();
+      assertGe(uint256(moduleSafeLtv), pmLtv, "PM-11: module safeLtv < PM LTV");
     }
   }
 
@@ -425,7 +429,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     address[] memory modules = positionManager.borrowModules();
     for (uint256 i = 0; i < modules.length; i++) {
       MorphoBorrowPosition bp = MorphoBorrowPosition(modules[i]);
-      (, uint128 liquidationLtv) = bp.ltvs();
+      uint128 liquidationLtv = bp.liquidationLtv();
 
       // Only test positions that have collateral and are healthy
       if (bp.totalCollateral() > 0 && bp.isHealthy(liquidationLtv)) {
@@ -440,13 +444,12 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   }
 
   /// @notice PM-10: Post-liquidation accounting consistency.
-  /// @dev After any pre-liquidation or Morpho liquidation, the fundamental accounting
-  ///      identity totalAssets = max(0, quotedCollateral - debt) must still hold.
+  /// @dev After any pre-liquidation or Morpho liquidation, totalAssets must still equal the
+  ///      sum of per-position NAVs (each floored at zero). This uses the same per-position
+  ///      calculation as totalAssets() itself, ensuring liquidation doesn't break accounting.
   function invariant_postLiquidationConsistency() public view {
     if (!handler.preLiquidationOccurred() && !handler.morphoLiquidationOccurred()) return;
-    uint256 quoted = positionManager.collateralAmountQuoted();
-    uint256 debt = positionManager.debtAmount();
-    uint256 expected = quoted > debt ? quoted - debt : 0;
+    uint256 expected = _computePerPositionTotalAssets();
     assertEq(positionManager.totalAssets(), expected, "PM-10: totalAssets broken after liquidation");
   }
 
@@ -459,5 +462,20 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     assertFalse(
       handler.unauthorizedCollateralSupplySucceeded(), "PM-11b: unauthorized Morpho collateral supply succeeded"
     );
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    INTERNAL HELPERS                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Replicates the per-position NAV calculation used by LibView.totalAssets().
+  ///      Each position's NAV is max(0, collateralQuoted - debt), then summed.
+  function _computePerPositionTotalAssets() internal view returns (uint256 total) {
+    address[] memory modules = positionManager.borrowModules();
+    for (uint256 i = 0; i < modules.length; i++) {
+      uint256 collateral = IBorrowPosition(modules[i]).totalCollateralQuoted();
+      uint256 debt = IBorrowPosition(modules[i]).totalBorrowed();
+      total += collateral > debt ? collateral - debt : 0;
+    }
   }
 }

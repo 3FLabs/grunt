@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {Request} from "./Request.sol";
 import {Vault} from "./Vault.sol";
@@ -105,6 +105,7 @@ contract RequestFactory {
   /// @param name The base name for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param repaymentDeadline The timestamp after which withdrawals are automatically enabled, regardless of repaid status
+  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(uint256)
   /// @return request The address of the newly deployed Request proxy
   /// @return ptToken The address of the newly deployed PT Token proxy
   /// @return ytToken The address of the newly deployed YT Token proxy
@@ -115,13 +116,15 @@ contract RequestFactory {
     address asset,
     string memory name,
     string memory symbol,
-    uint64 repaymentDeadline
+    uint64 repaymentDeadline,
+    uint40 mintToRepaidDelay
   ) external returns (address request, address ptToken, address ytToken) {
     request = REQUEST_BEACON.deployERC1967BeaconProxy();
     ptToken = PT_TOKEN_BEACON.deployERC1967BeaconProxy();
     ytToken = YT_TOKEN_BEACON.deployERC1967BeaconProxy();
 
-    Request(request).initialize(owner, puller, consumer, asset, ptToken, ytToken, name, symbol, repaymentDeadline);
+    Request(request)
+      .initialize(owner, puller, consumer, asset, ptToken, ytToken, name, symbol, repaymentDeadline, mintToRepaidDelay);
     Vault(ptToken).initialize(request);
     Vault(ytToken).initialize(request);
 

@@ -6,10 +6,12 @@ import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard
 import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title TransferGuardTest
 /// @notice Test suite for TransferGuard contract
 contract TransferGuardTest is Test {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -32,8 +34,8 @@ contract TransferGuardTest is Test {
   /*                          CONSTANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  uint256 constant COMPLIANCE_ROLE = 1 << 0;
-  uint256 constant PAUSER_ROLE = 1 << 1;
+  uint256 constant _COMPLIANCE_ROLE = 1 << 0;
+  uint256 constant _PAUSER_ROLE = 1 << 1;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -57,13 +59,13 @@ contract TransferGuardTest is Test {
     blockedUser = makeAddr("blockedUser");
 
     // Deploy guard
-    guard = new TransferGuard();
+    guard = TransferGuard(address(new TransferGuard()).clone());
     guard.initialize(owner);
 
     // Grant roles
     vm.startPrank(owner);
-    guard.grantRoles(compliance, COMPLIANCE_ROLE);
-    guard.grantRoles(pauser, PAUSER_ROLE);
+    guard.grantRoles(compliance, _COMPLIANCE_ROLE);
+    guard.grantRoles(pauser, _PAUSER_ROLE);
     vm.stopPrank();
 
     // Label contracts
@@ -239,10 +241,16 @@ contract TransferGuardTest is Test {
     assertTrue(guard.paused(token));
   }
 
-  function test_pauseFor_revertsOnZeroDuration() public {
+  function test_pauseFor_zeroDurationUnpauses() public {
+    // First pause
     vm.prank(pauser);
-    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    guard.pause(token);
+    assertTrue(guard.paused(token));
+
+    // pauseFor(0) unpauses
+    vm.prank(pauser);
     guard.pauseFor(token, 0);
+    assertFalse(guard.paused(token));
   }
 
   function test_pauseFor_revertsUnauthorized() public {
@@ -270,7 +278,7 @@ contract TransferGuardTest is Test {
 
     vm.warp(block.timestamp + timeElapsed);
 
-    if (timeElapsed <= duration) {
+    if (timeElapsed < duration) {
       assertTrue(guard.paused(token), "Should be paused within duration");
     } else {
       assertFalse(guard.paused(token), "Should not be paused after duration");

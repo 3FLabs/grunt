@@ -5,19 +5,22 @@ libs = ["lib"]
 # Exclude mock contracts, scripts, PreLiquidation lib, and bytecode helpers from coverage reports
 # This prevents double counting when using multi-compiler support
 no_match_coverage = "mock|\\.s\\.sol$|lib/pre-liquidation|PreLiquidationBytecode"
-# Enable auto-detection for multiple Solidity versions
-auto_detect_solc = true
+# Lock compiler version to avoid floating pragma
+solc_version = "0.8.34"
+auto_detect_solc = false
 # Ignore warnings from dependencies:
 # 2424: Natspec memory-safe-assembly special comment deprecated
 # 8429: Virtual modifiers deprecated
 ignored_error_codes = [2424, 8429]
 
 # Exclude invariant tests from default test runs (expensive, run separately)
-no_match_test = "^invariant"
+no_match_test = "^invariant|_Fork_"
 
 [profile.ci]
 optimizer = true
-optimizer_runs = 200
+optimizer_runs = 150
+# Run fork tests in CI (ETH_RPC_URL secret required)
+no_match_test = "^invariant"
 
 [profile.full]
 # Run all tests including invariant tests: FOUNDRY_PROFILE=full forge test
@@ -27,6 +30,9 @@ no_match_test = "^$"
 runs = 256
 depth = 64
 fail_on_revert = false
+
+[rpc_endpoints]
+mainnet = "${ETH_RPC_URL}"
 
 [fmt]
 tab_width = 2

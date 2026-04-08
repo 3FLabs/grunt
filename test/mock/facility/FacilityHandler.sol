@@ -12,6 +12,7 @@ import {SwapParams} from "src/interfaces/facility/base/IFacilitySwap.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
+import {MockRequest} from "test/mock/facility/MockRequest.sol";
 
 /// @title FacilityHandler
 /// @notice Handler contract for Facility invariant tests.
@@ -87,8 +88,14 @@ contract FacilityHandler is Test {
   /// @notice FAC-8: Set to true if a swap digest replay succeeds.
   bool public swapReplaySucceeded;
 
+  /// @notice FAC-4: Set to true if a deposit results in totalSupply exceeding depositCap.
+  bool public depositExceededCap;
+
   /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
   bool public facilityCurrentlyPaused;
+
+  /// @notice Mock request used for setRequest actions.
+  MockRequest public mockRequest;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                            */
@@ -96,6 +103,11 @@ contract FacilityHandler is Test {
 
   /// @dev EIP-712 typehash for SwapParams struct.
   bytes32 internal constant SWAP_PARAMS_TYPEHASH = 0x8b4e182587850acdf21dcf7a0f61b2fd7267c2cdf71d4692b57fb97237a29be3;
+
+  /// @dev EIP-712 typehash for setRequest params.
+  ///      Type string: "SetRequestParams(uint256 id,address newRequest,uint256 deadline)"
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH =
+    0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INIT FLAG                             */
@@ -144,6 +156,54 @@ contract FacilityHandler is Test {
     minter = minter_;
     guardianPk = guardianPk_;
     guardian = vm.addr(guardianPk_);
+
+    // Deploy mock request for setRequest actions
+    mockRequest = new MockRequest(address(debtToken_));
+  }
+
+  /// @notice Builds the EIP-712 domain separator used by the Facility.
+  function _domainSeparator() internal view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        keccak256("3F"),
+        keccak256("1"),
+        block.chainid,
+        address(facility)
+      )
+    );
+  }
+
+  /// @notice Computes the digest for setRequest approval.
+  function _getSetRequestDigest(uint256 id, address newRequest, uint256 deadline) internal view returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(
+        "\x19\x01", _domainSeparator(), keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))
+      )
+    );
+  }
+
+  /// @notice Signs setRequest data with the provided key.
+  function _signSetRequest(uint256 id, address newRequest, uint256 deadline, uint256 privateKey)
+    internal
+    view
+    returns (bytes memory)
+  {
+    bytes32 digest = _getSetRequestDigest(id, newRequest, deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Sets request through facilitator + guardian signature path.
+  function _setRequest(uint256 id, address newRequest) external {
+    uint256 deadline = block.timestamp + 1 hours;
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signatures[0] = _signSetRequest(id, newRequest, deadline, guardianPk);
+
+    vm.prank(facilitator);
+    facility.setRequest(id, newRequest, deadline, signers, signatures);
   }
 
   /// @notice Initializes dependency-graph references (oracle, morpho, marketParams).
@@ -267,6 +327,12 @@ contract FacilityHandler is Test {
         depositNotOneToOne = true;
       }
 
+      // FAC-4: Verify deposit did not push supply above cap
+      (IntentProperties memory propsAfter,,,) = facility.getIntent(id);
+      if (facility.totalSupply(id) > propsAfter.depositCap) {
+        depositExceededCap = true;
+      }
+
       userDeposits[id][depositor] += amount;
       intentDepositors[id].push(depositor);
     } catch {
@@ -306,6 +372,24 @@ contract FacilityHandler is Test {
     } catch {
       return;
     }
+  }
+
+  /// @notice Reverts a user's deposit via the compliance role.
+  /// @dev Picks a random depositing intent and a random user, then calls revertDeposit.
+  ///      Updates ghost state accordingly.
+  /// @param intentSeed Seed for selecting an intent.
+  /// @param userSeed Seed for selecting a user.
+  function act_revertDeposit(uint256 intentSeed, uint256 userSeed) external {
+    uint256[] memory depositingIds = _getIntentsByState(0);
+    if (depositingIds.length == 0) return;
+
+    uint256 id = depositingIds[intentSeed % depositingIds.length];
+    address who = users[userSeed % users.length];
+
+    vm.prank(owner);
+    try facility.revertDeposit(id, who, who) {
+      userDeposits[id][who] = 0;
+    } catch {}
   }
 
   /// @notice Locks a DEPOSITING intent, transitioning it to RESOLVING.
@@ -486,33 +570,69 @@ contract FacilityHandler is Test {
     }
   }
 
+  /*                 REQUEST TIMELOCK ACTIONS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Sets a request on a RESOLVING intent.
+  /// @param intentSeed Seed for selecting an intent.
+  function act_setRequest(uint256 intentSeed) external {
+    uint256[] memory resolvingIds = _getIntentsByState(1);
+    if (resolvingIds.length == 0) return;
+
+    uint256 id = resolvingIds[intentSeed % resolvingIds.length];
+
+    // Mark any existing request as repaid so replacement is allowed
+    mockRequest.setRepaid(true);
+
+    try this._setRequest(id, address(mockRequest)) {}
+    catch {
+      return;
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    FACILITATOR ACTIONS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Updates the deposit cap of a DEPOSITING intent.
+  /// @dev Allows setting cap below current totalSupply (which is valid on-chain).
+  ///      This exercises the scenario where totalSupply > depositCap after a cap reduction.
+  /// @param intentSeed Seed for selecting an intent.
+  /// @param capSeed Seed for fuzzing the new deposit cap.
+  function act_updateDepositCap(uint256 intentSeed, uint256 capSeed) external {
+    uint256[] memory depositingIds = _getIntentsByState(0);
+    if (depositingIds.length == 0) return;
+
+    uint256 id = depositingIds[intentSeed % depositingIds.length];
+    uint256 newCap = bound(capSeed, 0, 10_000_000e18);
+
+    vm.prank(facilitator);
+    try facility.setDepositCap(id, newCap) {}
+    catch {
+      return;
+    }
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 DEPENDENCY-GRAPH ACTIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Pauses the Facility (permanent or timed).
-  /// @dev 50/50 chance of permanent vs timed pause. Uses owner (who has PAUSER_ROLE equiv).
+  /// @dev 50/50 chance of permanent vs timed pause. Uses owner (who has COMPLIANCE_ROLE equiv).
   /// @param durationSeed Seed for choosing pause type and duration.
   function act_pauseFacility(uint256 durationSeed) external {
     bool permanent = durationSeed % 2 == 0;
-    if (permanent) {
-      vm.prank(owner);
-      try facility.pause() {
-        facilityCurrentlyPaused = true;
-      } catch {}
-    } else {
-      uint256 duration = _bound(durationSeed, 1, 30 days);
-      vm.prank(owner);
-      try facility.pauseFor(duration) {
-        facilityCurrentlyPaused = true;
-      } catch {}
-    }
+    uint256 duration = permanent ? type(uint256).max : _bound(durationSeed, 1, 30 days);
+    vm.prank(owner);
+    try facility.pauseFor(duration) {
+      facilityCurrentlyPaused = true;
+    } catch {}
   }
 
   /// @notice Unpauses the Facility to allow operations to resume.
   function act_unpauseFacility() external {
     vm.prank(owner);
-    try facility.unpause() {
+    try facility.pauseFor(0) {
       facilityCurrentlyPaused = false;
     } catch {}
   }
@@ -692,8 +812,8 @@ contract FacilityHandler is Test {
     return keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-        keccak256("3Facility"),
-        keccak256("1.0.0"),
+        keccak256("3F"),
+        keccak256("1"),
         block.chainid,
         address(facility)
       )

@@ -10,13 +10,17 @@ import {RebalancingData, RebalancingOperation} from "src/interfaces/manager/base
 contract ReentrantBorrowModule is IBorrowPosition {
   PositionManager public positionManager;
   address public rebalancer;
+  address public collateralAsset_;
+  address public borrowAsset_;
   bool public shouldReenter;
   bool public reentryAttempted;
   bool public reentrySucceeded;
 
-  constructor(address _positionManager, address _rebalancer) {
+  constructor(address _positionManager, address _rebalancer, address _collateralAsset, address _borrowAsset) {
     positionManager = PositionManager(_positionManager);
     rebalancer = _rebalancer;
+    collateralAsset_ = _collateralAsset;
+    borrowAsset_ = _borrowAsset;
   }
 
   function setShouldReenter(bool _shouldReenter) external {
@@ -41,12 +45,20 @@ contract ReentrantBorrowModule is IBorrowPosition {
   function borrow(uint256) external override {}
   function repay(uint256) external override {}
 
-  function borrowAsset() external pure override returns (address) {
-    return address(0);
+  function owner() external view returns (address) {
+    return address(positionManager);
   }
 
-  function collateralAsset() external pure override returns (address) {
-    return address(0);
+  function borrowAsset() external view override returns (address) {
+    return borrowAsset_;
+  }
+
+  function collateralAsset() external view override returns (address) {
+    return collateralAsset_;
+  }
+
+  function safeLtv() external pure override returns (uint128) {
+    return uint128(1e18);
   }
 
   function totalBorrowed() external pure override returns (uint256) {
@@ -74,6 +86,14 @@ contract ReentrantBorrowModule is IBorrowPosition {
   }
 
   function availableCollateral(uint256) external pure override returns (uint256) {
+    return 0;
+  }
+
+  function collateralForBorrow(uint256, uint256) external pure override returns (uint256) {
+    return 0;
+  }
+
+  function borrowForCollateral(uint256, uint256) external pure override returns (uint256) {
     return 0;
   }
 }

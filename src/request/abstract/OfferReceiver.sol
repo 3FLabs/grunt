@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {SignatureCheckerLib} from "lib/solady/src/utils/SignatureCheckerLib.sol";
@@ -9,10 +9,10 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title OfferReceiver
 /// @author 3F Protocol
-/// @notice Abstract contract for validating and consuming cryptographically signed prime broker offers.
+/// @notice Abstract contract for validating and consuming cryptographically signed bridge facilitator offers.
 /// @dev Implements EIP-712 typed data hashing and signature verification (EIP-712/EIP-1271).
 ///      Manages nonces to prevent replay attacks and enable offer cancellation. Contracts inheriting
-///      from this can validate offers before processing funds from prime brokers.
+///      from this can validate offers before processing funds from bridge facilitators.
 ///
 ///      Key Features:
 ///      - **EIP-712 Signatures**: Type-safe structured data signing for EOAs
@@ -124,7 +124,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /// @param signature The cryptographic signature (EIP-712 or EIP-1271)
   /// @custom:reverts AddressZero if maker is zero address
   /// @custom:reverts AmountZero if amount or expectedReturn is zero
-  /// @custom:reverts OfferExpired if block.timestamp >= offer.expiration
+  /// @custom:reverts OfferExpired if block.timestamp > offer.expiration
   /// @custom:reverts InvalidNonce if offer.nonce <= stored nonce for maker
   /// @custom:reverts InvalidSignature if signature verification fails
   function _validateOffer(Offer calldata offer, bytes calldata signature) internal {
@@ -134,7 +134,7 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
     offer.expectedReturn.checkNotZero();
 
     // Check offer has not expired
-    if (offer.expiration <= block.timestamp) revert LibRequestErrors.OfferExpired();
+    if (offer.expiration < block.timestamp) revert LibRequestErrors.OfferExpired();
 
     // Ensure offer nonce is fresh (greater than stored nonce)
     if (nonce(offer.maker) >= offer.nonce) revert LibRequestErrors.InvalidNonce();

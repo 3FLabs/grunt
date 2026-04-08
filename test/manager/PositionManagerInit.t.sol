@@ -2,11 +2,16 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
+import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerInitTest
 /// @notice Tests for PositionManager initialization and view functions
 contract PositionManagerInitTest is PositionManagerBaseTest {
+  using LibClone for address;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     INITIALIZATION TESTS                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -15,7 +20,7 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     assertEq(positionManager.name(), "Position Manager Shares");
     assertEq(positionManager.symbol(), "PMS");
     assertEq(positionManager.decimals(), 18);
-    assertEq(_lltv(), POSITION_MANAGER_LLTV);
+    assertEq(_ltv(), POSITION_MANAGER_LTV);
   }
 
   function test_supplyQueue() public view {
@@ -97,6 +102,44 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     assertEq(positionManager.debtAmount(), DEBT_AMOUNT);
+  }
+
+  function test_initialize_withRebalanceConfig() public {
+    PositionManager pm = PositionManager(address(new PositionManager()).clone());
+    pm.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "PM with Rebalance",
+        symbol: "PMR",
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      100, // maxRebalanceLoss = 1%
+      300 // rebalanceCooldown = 300s
+    );
+    (uint16 maxLoss, uint40 cooldown,) = pm.rebalanceConfig();
+    assertEq(maxLoss, 100);
+    assertEq(cooldown, 300);
+  }
+
+  function testFuzz_virtualShareOffset(uint8 decimals_) public {
+    MockERC20 token = new MockERC20("TKN", "TKN", decimals_);
+    PositionManager pm = PositionManager(address(new PositionManager()).clone());
+    pm.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", collateralAsset: address(collateralToken), debtAsset: address(token)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+    uint256 expectedOffset = decimals_ >= 18 ? 1 : 10 ** (18 - uint256(decimals_));
+    assertEq(pm.virtualShareOffset(), expectedOffset);
+    assertEq(pm.decimals(), 18);
   }
 
   function test_collateralAmountQuoted() public {

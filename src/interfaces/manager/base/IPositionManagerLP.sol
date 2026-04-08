@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
+
+import {WithdrawalStrategy} from "./IPositionManagerAdmin.sol";
 
 /// @title IPositionManagerLP
 /// @author 3F Protocol
@@ -53,25 +55,27 @@ interface IPositionManagerLP {
   function deposit(uint256 collateral, uint256 debt) external returns (int256 shares);
 
   /// @notice Withdraws collateral and repays debt across the aggregated borrow positions.
-  /// @dev Iterates through the withdrawal queue. Repays debt first, then withdraws collateral.
-  ///      - If withdrawing collateral without full debt repayment, checks available collateral based on LLTV
-  ///      - Reverts with InsufficientAvailableCollateral if attempting to withdraw locked collateral
-  ///      - Accrues fees before the operation
-  ///      - Burns shares based on the net value change
+  /// @dev Processes through the withdrawal queue using the specified strategy:
+  ///      - SEQUENTIAL: drains positions one-by-one (repay debt → withdraw collateral per position)
+  ///      - PROPORTIONAL: distributes repayment and withdrawal proportionally across all positions
+  ///      Reverts with InsufficientAvailableCollateral if attempting to withdraw locked collateral.
+  ///      Accrues fees before the operation. Burns shares based on the net value change.
   /// @param collateral The total amount of collateral to withdraw (sent to caller)
   /// @param debt The total amount of debt to repay (pulled from caller)
+  /// @param strategy The withdrawal strategy to use (SEQUENTIAL or PROPORTIONAL)
   /// @return shares Positive if shares minted, negative if shares burned
-  function withdraw(uint256 collateral, uint256 debt) external returns (int256 shares);
+  function withdraw(uint256 collateral, uint256 debt, WithdrawalStrategy strategy) external returns (int256 shares);
 
-  /// @notice Burns shares by repaying debt and withdrawing collateral proportionally.
+  /// @notice Burns shares by repaying debt and withdrawing collateral.
   /// @dev This function calculates the proportional amount of debt to repay and collateral
   ///      to withdraw based on the shares being burned, then executes these operations across
-  ///      all configured IBorrowPosition contracts. Uses the withdrawal queue for ordering.
-  ///      - Debt is repaid first to unlock collateral
-  ///      - Collateral is withdrawn proportionally after debt repayment
-  ///      - Caller receives collateral, caller provides debt repayment
+  ///      the withdrawal queue using the specified strategy:
+  ///      - SEQUENTIAL: drains positions one-by-one
+  ///      - PROPORTIONAL: distributes proportionally across all positions
+  ///      Caller receives collateral, caller provides debt repayment.
   /// @param shares The amount of shares to burn
+  /// @param strategy The withdrawal strategy to use (SEQUENTIAL or PROPORTIONAL)
   /// @return collateral The total amount of collateral withdrawn
   /// @return debt The total amount of debt that needs to be repaid (pulled from caller)
-  function burn(uint256 shares) external returns (uint256 collateral, uint256 debt);
+  function burn(uint256 shares, WithdrawalStrategy strategy) external returns (uint256 collateral, uint256 debt);
 }

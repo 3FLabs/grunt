@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {ControlledVault} from "./abstract/vault/ControlledVault.sol";
 import {ControlledToken} from "./abstract/tokens/ControlledToken.sol";
@@ -73,6 +73,7 @@ contract Vault is ControlledVault, Initializable {
   /// @param isYt True to create a Yield Token vault, false for a Principal Token vault
   constructor(bool isYt) {
     _IS_YT = isYt;
+    _disableInitializers();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -11,41 +11,41 @@ import {LibPause} from "src/libs/common/LibPause.sol";
 /// @notice Tests for Facility pause functionality
 contract FacilityPauseTest is FacilityBaseTest {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        PAUSE TESTS                         */
+  /*                    PERMANENT PAUSE TESTS                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_pause_byOwner() public {
+  function test_pauseFor_permanent_byOwner() public {
     vm.prank(owner);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, type(uint40).max, "Should be permanent pause");
   }
 
-  function test_pause_byPauser() public {
+  function test_pauseFor_permanent_byPauser() public {
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
-    (bool isPaused,) = facility.paused();
+    (bool isPaused,) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
   }
 
-  function test_pause_emitsEvent() public {
+  function test_pauseFor_permanent_emitsEvent() public {
     vm.prank(owner);
     vm.expectEmit(false, false, false, true);
     emit IFacility.FacilityPausedSet(type(uint40).max);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
   }
 
-  function test_pause_revertWhenNotAuthorized() public {
+  function test_pauseFor_revertWhenNotAuthorized() public {
     vm.prank(user);
     vm.expectRevert(); // Unauthorized
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      PAUSE FOR TESTS                       */
+  /*                    TIMED PAUSE TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_pauseFor_byOwner() public {
@@ -54,7 +54,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.pauseFor(duration);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match duration");
   }
@@ -65,7 +65,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(pauser);
     facility.pauseFor(duration);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match");
   }
@@ -80,7 +80,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     facility.pauseFor(duration);
   }
 
-  function test_pauseFor_revertWhenNotAuthorized() public {
+  function test_pauseFor_timed_revertWhenNotAuthorized() public {
     vm.prank(user);
     vm.expectRevert(); // Unauthorized
     facility.pauseFor(1 hours);
@@ -93,45 +93,45 @@ contract FacilityPauseTest is FacilityBaseTest {
   function test_unpause_byOwner() public {
     // First pause
     vm.prank(owner);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     // Then unpause
     vm.prank(owner);
-    facility.unpause();
+    facility.pauseFor(0);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertFalse(isPaused, "Should not be paused");
     assertEq(pausedUntil, 0, "PausedUntil should be 0");
   }
 
   function test_unpause_byPauser() public {
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(pauser);
-    facility.unpause();
+    facility.pauseFor(0);
 
-    (bool isPaused,) = facility.paused();
+    (bool isPaused,) = facility.facilityConfig();
     assertFalse(isPaused, "Should not be paused");
   }
 
   function test_unpause_emitsEvent() public {
     vm.prank(owner);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(owner);
     vm.expectEmit(false, false, false, true);
     emit IFacility.FacilityPausedSet(0);
-    facility.unpause();
+    facility.pauseFor(0);
   }
 
   function test_unpause_revertWhenNotAuthorized() public {
     vm.prank(owner);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(user);
     vm.expectRevert(); // Unauthorized
-    facility.unpause();
+    facility.pauseFor(0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -143,7 +143,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     _depositToPM(user, DEFAULT_AMOUNT);
 
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(user);
     vm.expectRevert(LibCommonErrors.Paused.selector);
@@ -158,7 +158,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     facility.deposit(intentId, DEFAULT_AMOUNT);
 
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(user);
     vm.expectRevert(LibCommonErrors.Paused.selector);
@@ -174,7 +174,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     facility.resolve(intentId);
 
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(user);
     vm.expectRevert(LibCommonErrors.Paused.selector);
@@ -183,7 +183,7 @@ contract FacilityPauseTest is FacilityBaseTest {
 
   function test_createIntent_revertsWhenPaused() public {
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     vm.prank(owner);
     vm.expectRevert(LibCommonErrors.Paused.selector);
@@ -196,11 +196,11 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     // Pause
     vm.prank(pauser);
-    facility.pause();
+    facility.pauseFor(type(uint256).max);
 
     // Unpause
     vm.prank(pauser);
-    facility.unpause();
+    facility.pauseFor(0);
 
     // Operations should work now
     vm.prank(user);
@@ -219,7 +219,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.pauseFor(duration);
 
-    (bool isPaused, uint40 pausedUntil) = facility.paused();
+    (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
     assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match");
   }
@@ -233,9 +233,9 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     vm.warp(block.timestamp + timePassed);
 
-    (bool isPaused,) = facility.paused();
+    (bool isPaused,) = facility.facilityConfig();
 
-    if (timePassed > duration) {
+    if (timePassed >= duration) {
       assertFalse(isPaused, "Should not be paused after duration");
     } else {
       assertTrue(isPaused, "Should still be paused before duration");
@@ -248,16 +248,16 @@ contract FacilityPauseTest is FacilityBaseTest {
     for (uint256 i = 0; i < cycles; i++) {
       // Pause
       vm.prank(owner);
-      facility.pause();
+      facility.pauseFor(type(uint256).max);
 
-      (bool isPaused,) = facility.paused();
+      (bool isPaused,) = facility.facilityConfig();
       assertTrue(isPaused, "Should be paused");
 
       // Unpause
       vm.prank(owner);
-      facility.unpause();
+      facility.pauseFor(0);
 
-      (isPaused,) = facility.paused();
+      (isPaused,) = facility.facilityConfig();
       assertFalse(isPaused, "Should not be paused");
     }
   }

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {SupplyQueueEntry} from "../../interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
 import {LibExecutor} from "./LibExecutor.sol";
 import {LibManagerErrors} from "./LibManagerErrors.sol";
@@ -16,41 +17,62 @@ library LibOperations {
   using FixedPointMathLib for uint256;
   using LibExecutor for address;
 
-  /// @dev Processes deposit through the supply queue.
-  ///      Reverts with {LibManagerErrors.InsufficientBorrowCapacity} if the requested debt cannot be borrowed.
-  /// @param _storage The position manager storage data
-  /// @param collateral The amount of collateral to deposit
-  /// @param debt The amount of debt to borrow
+  /// @dev Processes a deposit by iterating through the supply queue, supplying collateral and borrowing
+  ///      debt from each position while respecting the position manager's target LTV.
+  ///
+  ///      For each position in the supply queue (until all debt is fulfilled):
+  ///        1. Determine the maximum borrow: min(available liquidity, entry.maxBorrow, remainingDebt).
+  ///        2. Ask the position how much additional collateral is needed to borrow that amount at the
+  ///           target LTV, accounting for any existing collateral/debt in the position.
+  ///        3. If the required collateral exceeds what's available, reduce the borrow amount to what
+  ///           the remaining collateral can support at the target LTV.
+  ///        4. Supply the collateral (if any) and execute the borrow.
+  ///
+  ///      After the loop, any leftover collateral (not needed for borrowing) is deposited into the
+  ///      first supply queue position as idle collateral.
+  ///
+  ///      Reverts with {LibManagerErrors.InsufficientBorrowCapacity} if the requested debt cannot
+  ///      be fully borrowed across all positions in the queue.
+  /// @param _storage The position manager storage data.
+  /// @param collateral The total amount of collateral to deposit.
+  /// @param debt The total amount of debt to borrow.
   function processDeposit(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) internal {
     unchecked {
-
       uint256 remainingCollateral = collateral;
       uint256 remainingDebt = debt;
       uint256 queueLength = _storage.supplyQueue.length;
+
+      // Cache the target LTV set by the position manager owner
+      uint256 ltv = _storage.ltv;
 
       for (uint256 i = 0; i < queueLength && remainingDebt > 0; i++) {
         SupplyQueueEntry memory entry = _storage.supplyQueue[i];
         address position = entry.position;
 
-        // Calculate how much we can borrow from this position
-        uint256 availableLiquidity = IBorrowPosition(position).availableLiquidity();
-        uint256 toBorrow = availableLiquidity.min(uint256(entry.maxBorrow)).min(remainingDebt);
+        // Cap the borrow at available liquidity, the per-entry max, and the remaining debt
+        uint256 toBorrow =
+          IBorrowPosition(position).availableLiquidity().min(uint256(entry.maxBorrow)).min(remainingDebt);
 
-        if (toBorrow == 0) {
-          continue;
+        if (toBorrow == 0) continue;
+
+        // Determine how much collateral this position needs to borrow `toBorrow` at the target LTV.
+        // Returns 0 if the position already has enough excess collateral from prior deposits.
+        uint256 collateralNeeded = IBorrowPosition(position).collateralForBorrow(toBorrow, ltv);
+
+        // If we don't have enough collateral, reduce the borrow to what our remaining collateral allows
+        if (collateralNeeded > remainingCollateral) {
+          toBorrow = IBorrowPosition(position).borrowForCollateral(remainingCollateral, ltv);
+          if (toBorrow == 0) continue;
+          collateralNeeded = remainingCollateral;
         }
 
-        // Calculate proportional collateral
-        // If we're borrowing X% of remaining debt, we supply X% of remaining collateral
-        uint256 collateralToSupply = remainingCollateral.mulDiv(toBorrow, remainingDebt);
-
-        // Supply collateral first (if any)
-        if (collateralToSupply > 0) {
-          position.supply(_storage.metadata.collateralAsset, collateralToSupply);
-          remainingCollateral -= collateralToSupply;
+        // Supply collateral to the position (via LibExecutor which handles approval)
+        if (collateralNeeded > 0) {
+          position.supply(_storage.metadata.collateralAsset, collateralNeeded);
+          remainingCollateral -= collateralNeeded;
         }
 
-        // Then borrow
+        // Execute the borrow
         position.borrow(toBorrow);
         remainingDebt -= toBorrow;
       }
@@ -58,18 +80,41 @@ library LibOperations {
       // If we couldn't borrow all the requested debt, revert
       if (remainingDebt > 0) revert LibManagerErrors.InsufficientBorrowCapacity();
 
-      // Note: remainingCollateral is guaranteed to be 0 here due to proportional math.
-      // When toBorrow == remainingDebt (final iteration), collateralToSupply = remainingCollateral.
+      // Deposit any leftover collateral (not needed for borrowing) into the first position.
+      // This keeps all collateral productively deployed rather than idle in the PositionManager.
+      if (remainingCollateral > 0) {
+        _storage.supplyQueue[0].position.supply(_storage.metadata.collateralAsset, remainingCollateral);
+      }
     }
   }
 
-  /// @dev Processes withdrawal through the withdrawal queue.
+  /// @dev Processes withdrawal through the withdrawal queue using the specified strategy.
+  /// @param _storage The position manager storage data
+  /// @param collateral The amount of collateral to withdraw
+  /// @param debt The amount of debt to repay
+  /// @param strategy The withdrawal strategy (SEQUENTIAL or PROPORTIONAL)
+  function processWithdrawal(
+    PositionManagerStorageData storage _storage,
+    uint256 collateral,
+    uint256 debt,
+    WithdrawalStrategy strategy,
+    bool checkLtv
+  ) internal {
+    if (strategy == WithdrawalStrategy.SEQUENTIAL) {
+      _withdrawSequential(_storage, collateral, debt);
+    } else {
+      _withdrawProportional(_storage, collateral, debt, checkLtv);
+    }
+  }
+
+  /// @dev Withdraws sequentially through the withdrawal queue, draining positions one-by-one.
+  ///      For each position: repays as much debt as possible, then withdraws available collateral.
   ///      Reverts with {LibManagerErrors.ExcessDebtRepay} if the requested debt cannot be fully repaid.
   ///      Reverts with {LibManagerErrors.InsufficientAvailableCollateral} if the requested collateral cannot be withdrawn.
   /// @param _storage The position manager storage data
   /// @param collateral The amount of collateral to withdraw
   /// @param debt The amount of debt to repay
-  function processWithdrawal(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) internal {
+  function _withdrawSequential(PositionManagerStorageData storage _storage, uint256 collateral, uint256 debt) private {
     unchecked {
       uint256 remainingDebt = debt;
       uint256 remainingCollateral = collateral;
@@ -92,7 +137,7 @@ library LibOperations {
 
         // Then withdraw collateral
         if (remainingCollateral > 0) {
-          uint256 toWithdraw = IBorrowPosition(position).availableCollateral(_storage.lltv).min(remainingCollateral);
+          uint256 toWithdraw = IBorrowPosition(position).availableCollateral(_storage.ltv).min(remainingCollateral);
           if (toWithdraw > 0) {
             position.withdraw(toWithdraw);
             remainingCollateral -= toWithdraw;
@@ -108,46 +153,68 @@ library LibOperations {
     }
   }
 
-  /// @dev Processes burn by repaying debt and withdrawing collateral proportionally from each position.
-  ///      This maintains the average LTV across all positions.
+  /// @dev Withdraws proportionally across all positions in the withdrawal queue.
+  ///      Uses a two-pass approach: first builds cumulative debt/collateral arrays,
+  ///      then distributes repayment and withdrawal using a running cumulative algorithm
+  ///      (similar to Bresenham's line algorithm) that guarantees no position is over-repaid and zero dust.
+  ///      Because debtToRepay <= queueTotalDebt, each step's allocation is mathematically bounded by debts[i].
   /// @param _storage The position manager storage data
   /// @param collateralToWithdraw Total collateral to withdraw
   /// @param debtToRepay Total debt to repay
-  /// @param totalCollateral Total collateral across all positions
-  /// @param totalDebt Total debt across all positions
-  function processBurn(
+  function _withdrawProportional(
     PositionManagerStorageData storage _storage,
     uint256 collateralToWithdraw,
     uint256 debtToRepay,
-    uint256 totalCollateral,
-    uint256 totalDebt
-  ) internal {
+    bool checkLtv
+  ) private {
     unchecked {
-      uint256 remainingCollateral = collateralToWithdraw;
-      uint256 remainingDebt = debtToRepay;
-      uint256 queueLength = _storage.withdrawalQueue.length;
+      address[] memory queue = _storage.withdrawalQueue;
+      uint256 queueLength = queue.length;
+
+      // Cache storage values to avoid stack-too-deep
+      uint256 ltv = _storage.ltv;
+      address debtAsset = _storage.metadata.debtAsset;
+
+      // Pass 1: build cumulative debt and collateral arrays
+      uint256[] memory cumDebts = new uint256[](queueLength);
+      uint256[] memory cumCollaterals = new uint256[](queueLength);
 
       for (uint256 i = 0; i < queueLength; i++) {
-        address position = _storage.withdrawalQueue[i];
-        uint256 positionDebt = IBorrowPosition(position).totalBorrowed();
-        uint256 positionCollateral = IBorrowPosition(position).totalCollateral();
+        cumDebts[i] = (i > 0 ? cumDebts[i - 1] : 0) + IBorrowPosition(queue[i]).totalBorrowed();
+        cumCollaterals[i] = (i > 0 ? cumCollaterals[i - 1] : 0) + IBorrowPosition(queue[i]).totalCollateral();
+      }
 
-        // Repay proportionally
-        if (remainingDebt > 0 && positionDebt > 0 && totalDebt > 0) {
-          uint256 toRepay = debtToRepay.mulDiv(positionDebt, totalDebt);
-          if (toRepay > 0) {
-            position.repay(_storage.metadata.debtAsset, toRepay);
-            remainingDebt -= toRepay;
-          }
+      // Queue totals are the last cumulative values
+      uint256 lastIdx = queueLength - 1;
+      if (debtToRepay > cumDebts[lastIdx]) revert LibManagerErrors.ExcessDebtRepay();
+      if (collateralToWithdraw > cumCollaterals[lastIdx]) revert LibManagerErrors.InsufficientAvailableCollateral();
+
+      // Pass 2: cumulative proportional distribution
+      // Each position's allocation = target_cumulative(i) - target_cumulative(i-1), which is
+      // guaranteed to never exceed the position's actual debt/collateral.
+      uint256 prevRepaid;
+      uint256 prevWithdrawn;
+
+      for (uint256 i = 0; i < queueLength; i++) {
+        if (debtToRepay > 0) {
+          uint256 targetRepaid = cumDebts[i].mulDiv(debtToRepay, cumDebts[lastIdx]);
+          uint256 toRepay = targetRepaid - prevRepaid;
+          if (toRepay > 0) queue[i].repay(debtAsset, toRepay);
+          prevRepaid = targetRepaid;
         }
 
-        // Withdraw proportionally
-        if (remainingCollateral > 0 && positionCollateral > 0 && totalCollateral > 0) {
-          uint256 toWithdraw = collateralToWithdraw.mulDiv(positionCollateral, totalCollateral);
+        if (collateralToWithdraw > 0) {
+          uint256 targetWithdrawn = cumCollaterals[i].mulDiv(collateralToWithdraw, cumCollaterals[lastIdx]);
+          uint256 toWithdraw = targetWithdrawn - prevWithdrawn;
           if (toWithdraw > 0) {
-            position.withdraw(toWithdraw);
-            remainingCollateral -= toWithdraw;
+            // When checkLtv is true (withdrawals), verify the position can release this collateral
+            // while respecting the storage LTV. Burns skip this check since amounts are proportional.
+            if (checkLtv && toWithdraw > IBorrowPosition(queue[i]).availableCollateral(ltv)) {
+              revert LibManagerErrors.InsufficientAvailableCollateral();
+            }
+            queue[i].withdraw(toWithdraw);
           }
+          prevWithdrawn = targetWithdrawn;
         }
       }
     }

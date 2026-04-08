@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -7,6 +7,7 @@ import {FacilityRoles} from "./FacilityRoles.sol";
 
 import {IFacilityPositionManager} from "src/interfaces/facility/base/IFacilityPositionManager.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibIntent, Intent, Asset, BalanceSnapshot} from "src/libs/facility/LibIntent.sol";
 import {LibStorage, FacilityStorageData} from "src/libs/facility/LibStorage.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
@@ -42,7 +43,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory collateralSnapshot,
       BalanceSnapshot memory debtSnapshot,
       BalanceSnapshot memory sharesSnapshot
-    ) = _intialPmParameters(id, useTarget);
+    ) = _initialPmParameters(id, useTarget);
 
     if (depositAmount > 0) {
       // if we have non null collateral, approve the position manager to pull it
@@ -64,12 +65,13 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @inheritdoc IFacilityPositionManager
   /// @dev Withdraws collateral from the position manager and repays debt.
   ///      The intent must be in resolving state and have enough debt to repay.
-  function withdrawManager(uint256 id, uint256 withdrawAmount, uint256 repayAmount, bool useTarget)
-    external
-    override
-    nonReentrant
-    onlyRoles(FACILITATOR_ROLE)
-  {
+  function withdrawManager(
+    uint256 id,
+    uint256 withdrawAmount,
+    uint256 repayAmount,
+    bool useTarget,
+    WithdrawalStrategy strategy
+  ) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
     // getting the initial parameters
     (
       Intent storage _intent,
@@ -79,7 +81,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory collateralSnapshot,
       BalanceSnapshot memory debtSnapshot,
       BalanceSnapshot memory sharesSnapshot
-    ) = _intialPmParameters(id, useTarget);
+    ) = _initialPmParameters(id, useTarget);
 
     if (repayAmount > 0) {
       // if we have non null debt, approve the position manager to pull it
@@ -87,7 +89,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     }
 
     // repay the debt and withdraw the collateral
-    IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount);
+    IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount, strategy);
 
     if (repayAmount > 0) {
       // reset approval to 0
@@ -101,7 +103,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @inheritdoc IFacilityPositionManager
   /// @dev Burns position manager shares by sending debt to the position manager and receiving collateral back.
   ///      The intent must be in resolving state and have enough debt to repay.
-  function burnManager(uint256 id, uint256 shares, bool useTarget)
+  function burnManager(uint256 id, uint256 shares, bool useTarget, WithdrawalStrategy strategy)
     external
     override
     nonReentrant
@@ -116,13 +118,13 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
       BalanceSnapshot memory collateralSnapshot,
       BalanceSnapshot memory debtSnapshot,
       BalanceSnapshot memory sharesSnapshot
-    ) = _intialPmParameters(id, useTarget);
+    ) = _initialPmParameters(id, useTarget);
 
     // give infinite approval of the debt asset to the position manager
     _debtAsset.safeApproveWithRetry(_positionManager, type(uint256).max);
 
     // burn the shares by sending debt to the position manager and receiving collateral back
-    IPositionManager(_positionManager).burn(shares);
+    IPositionManager(_positionManager).burn(shares, strategy);
 
     // commit snapshots to record the balance changes
     _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
@@ -138,6 +140,8 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @notice Gets the initial parameters related to a position manager for a given intent.
   /// @dev Retrieves the resolving intent and reads either the targetAsset or depositAsset as the selected asset,
   ///      checks if it is a position manager, then fetches the related collateral and debt assets from the manager.
+  ///      Reverts with `InvalidPositionManagerAssets()` if collateralAsset, debtAsset, or positionManager overlap,
+  ///      preventing snapshot-based double-counting attacks (CS-GRUNT-062).
   /// @param id The intent id.
   /// @param useTarget If true, use the targetAsset; otherwise, use the depositAsset.
   /// @return _intent Storage pointer to the retrieved intent struct.
@@ -147,7 +151,7 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @return collateralSnapshot Snapshot of the collateral asset balance before the operation.
   /// @return debtSnapshot Snapshot of the debt asset balance before the operation.
   /// @return sharesSnapshot Snapshot of the shares balance before the operation.
-  function _intialPmParameters(uint256 id, bool useTarget)
+  function _initialPmParameters(uint256 id, bool useTarget)
     private
     view
     returns (
@@ -174,6 +178,15 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     positionManager = _selected.asset;
     // get the position manager assets
     (collateralAsset, debtAsset) = IPositionManager(positionManager).assets();
+
+    // if (collateralAsset == debtAsset || collateralAsset == positionManager || debtAsset == positionManager)
+    //   revert LibFacilityErrors.InvalidPositionManagerAssets();
+    assembly ("memory-safe") {
+      if or(eq(collateralAsset, debtAsset), or(eq(collateralAsset, positionManager), eq(debtAsset, positionManager))) {
+        mstore(0, 0x62e437a4) // LibFacilityErrors.InvalidPositionManagerAssets()
+        revert(0x1c, 0x04)
+      }
+    }
 
     // take snapshots before the operation
     collateralSnapshot = LibIntent.takeBalanceSnapshot(collateralAsset);

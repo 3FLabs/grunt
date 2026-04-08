@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {Offer} from "./IOfferReceiver.sol";
 import {IRequestInteractions} from "./IRequestInteractions.sol";
@@ -27,16 +27,39 @@ interface IRequest is IRequestInteractions {
   /// @param ytAmount The amount of YT tokens authorized to mint
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
 
+  /// @notice Emitted when the mint-to-repaid delay is updated.
+  /// @param mintToRepaidDelay The new delay duration (seconds).
+  event MintToRepaidDelaySet(uint40 mintToRepaidDelay);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Marks the request as repaid, enabling withdrawals and redemptions.
-  function setRepaid() external;
+  /// @param minBalance The minimum asset balance the contract must hold; reverts if below.
+  /// @param maxBalance The maximum asset balance the contract must hold; reverts if above.
+  ///                   Pass type(uint256).max to skip the upper bound check.
+  function setRepaid(uint256 minBalance, uint256 maxBalance) external;
 
   /// @notice Syncs the repaid status after the repayment deadline has passed.
   /// @return repaid Whether the request is now marked as repaid
   function syncRepaidStatus() external returns (bool repaid);
+
+  /// @notice Returns the timestamp of the last mint() or consume() call.
+  /// @return The last mint timestamp (0 if no minting has occurred).
+  function lastMintTimestamp() external view returns (uint40);
+
+  /// @notice Returns the mint-to-repaid delay duration.
+  /// @return The minimum delay (seconds) between the last mint/consume and setRepaid(uint256).
+  function mintToRepaidDelay() external view returns (uint40);
+
+  /// @notice Returns the earliest timestamp at which setRepaid(uint256) can be called.
+  /// @return The timestamp at which setRepaid(uint256) becomes available (0 if no minting has occurred).
+  function repaidAvailableAt() external view returns (uint40);
+
+  /// @notice Sets the mint-to-repaid delay duration.
+  /// @param mintToRepaidDelay_ The new delay (seconds).
+  function setMintToRepaidDelay(uint40 mintToRepaidDelay_) external;
 
   /// @notice Authorizes an address to mint a specific amount of PT and YT tokens.
   /// @param to The address to authorize for minting
@@ -55,7 +78,10 @@ interface IRequest is IRequestInteractions {
   function mintAuthorization(address account) external view returns (uint128 ptAmount, uint128 ytAmount);
 
   /// @notice Mints PT and YT tokens to the caller using their authorized amounts.
-  function mint() external;
+  /// @param maxPt The maximum PT amount the caller accepts (reverts if authorized PT > maxPt).
+  ///             Pass type(uint128).max to skip the PT cap check.
+  /// @param minYt The minimum YT amount the caller expects (reverts if authorized YT < minYt).
+  function mint(uint128 maxPt, uint128 minYt) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     OFFER CONSUMPTION                      */

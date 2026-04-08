@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {
   RebalancingData,
   RebalancingOperation,
@@ -214,7 +215,8 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     uint256 collateralBefore = positionManager.collateralAmount();
 
     vm.prank(minter);
-    (uint256 collateralReceived, uint256 debtRepaid) = positionManager.burn(sharesToBurn);
+    (uint256 collateralReceived, uint256 debtRepaid) =
+      positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
 
     // Should receive proportional amounts (but less than original due to liquidation loss)
     assertGt(collateralReceived, 0, "Should receive some collateral");
@@ -300,6 +302,6 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     // Trying to withdraw should fail (no available collateral)
     vm.prank(minter);
     vm.expectRevert(LibManagerErrors.InsufficientAvailableCollateral.selector);
-    positionManager.withdraw(1, 0);
+    positionManager.withdraw(1, 0, WithdrawalStrategy.SEQUENTIAL);
   }
 }

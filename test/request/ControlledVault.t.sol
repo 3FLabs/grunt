@@ -260,15 +260,72 @@ contract ControlledVaultTest is Test {
     assertEq(asset.balanceOf(user), 100 ether);
   }
 
+  function test_withdrawYT_zeroAssetsWhenNoYield() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // totalYAssets = 0 (no yield), totalYtSupply = 100 ether
+    assertEq(ytVault.totalAssets(), 0);
+    assertGt(ytVault.totalSupply(), 0);
+
+    vaultController.setCanWithdraw(true);
+
+    // yt.withdraw(0) must succeed (not revert due to type(uint256).max initial conversion)
+    vm.prank(user);
+    uint256 shares = ytVault.withdraw(0, user, user);
+
+    assertEq(shares, 0);
+    assertEq(ytVault.balanceOf(user), 100 ether);
+    assertEq(asset.balanceOf(user), 0);
+  }
+
   function test_maxWithdraw() public view {
     assertEq(ptVault.maxWithdraw(address(0x1)), 0);
     assertEq(ytVault.maxWithdraw(address(0x1)), 0);
   }
 
   function test_maxWithdraw_whenUnlocked() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
     vaultController.setCanWithdraw(true);
-    assertEq(ptVault.maxWithdraw(address(0x1)), type(uint256).max);
-    assertEq(ytVault.maxWithdraw(address(0x1)), type(uint256).max);
+
+    // PT: 1:1 ratio, maxWithdraw = convertToAssets(balance) = 1000 ether
+    assertEq(ptVault.maxWithdraw(user), 1000 ether);
+    // YT: no yield, so maxWithdraw = 0
+    assertEq(ytVault.maxWithdraw(user), 0);
+    // Address with no shares returns 0
+    assertEq(ptVault.maxWithdraw(address(0xdead)), 0);
+    assertEq(ytVault.maxWithdraw(address(0xdead)), 0);
+  }
+
+  function test_maxWithdraw_whenUnlocked_withYield() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // Add 50 ether yield
+    asset.mint(address(vaultController), 50 ether);
+    vaultController.setCanWithdraw(true);
+
+    // PT: still 1:1, pAssets = min(1050, 1000) = 1000
+    assertEq(ptVault.maxWithdraw(user), 1000 ether);
+    // YT: yAssets = 1050 - 1000 = 50, user has 100 shares of 100 total = 50 ether
+    assertEq(ytVault.maxWithdraw(user), 50 ether);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -351,9 +408,39 @@ contract ControlledVaultTest is Test {
   }
 
   function test_maxRedeem_whenUnlocked() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
     vaultController.setCanWithdraw(true);
-    assertEq(ptVault.maxRedeem(address(0x1)), type(uint256).max);
-    assertEq(ytVault.maxRedeem(address(0x1)), type(uint256).max);
+
+    // maxRedeem = balanceOf(owner)
+    assertEq(ptVault.maxRedeem(user), 1000 ether);
+    assertEq(ytVault.maxRedeem(user), 100 ether);
+    // Address with no shares returns 0
+    assertEq(ptVault.maxRedeem(address(0xdead)), 0);
+    assertEq(ytVault.maxRedeem(address(0xdead)), 0);
+  }
+
+  function test_maxRedeem_whenUnlocked_withYield() public {
+    address user = address(0x1);
+    asset.mint(user, 1000 ether);
+
+    vm.startPrank(user);
+    asset.approve(address(vaultController), 1000 ether);
+    vaultController.deposit(user, 1000 ether, 100 ether);
+    vm.stopPrank();
+
+    // Add 50 ether yield — share balances unchanged
+    asset.mint(address(vaultController), 50 ether);
+    vaultController.setCanWithdraw(true);
+
+    assertEq(ptVault.maxRedeem(user), 1000 ether);
+    assertEq(ytVault.maxRedeem(user), 100 ether);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -726,7 +813,12 @@ contract ControlledVaultTest is Test {
   /*                   COVERAGE IMPROVEMENT                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_previewDeposit() public {
+  function test_previewDeposit_alwaysReturnsZero() public {
+    // Before any deposits
+    assertEq(ptVault.previewDeposit(100 ether), 0);
+    assertEq(ytVault.previewDeposit(100 ether), 0);
+
+    // After deposits (should still return 0 since deposit() always reverts)
     address user = address(0x1);
     asset.mint(user, 1000 ether);
 
@@ -735,18 +827,21 @@ contract ControlledVaultTest is Test {
     vaultController.deposit(user, 1000 ether, 100 ether);
     vm.stopPrank();
 
-    // PT: 1:1 ratio
-    assertEq(ptVault.previewDeposit(100 ether), 100 ether);
-    // YT: 0 assets backing 100 shares -> type(uint256).max
-    assertEq(ytVault.previewDeposit(100 ether), type(uint256).max);
+    assertEq(ptVault.previewDeposit(100 ether), 0);
+    assertEq(ytVault.previewDeposit(100 ether), 0);
 
-    // Add yield and test again
+    // After yield accrual (should still return 0)
     asset.mint(address(vaultController), 50 ether);
-    assertEq(ptVault.previewDeposit(100 ether), 100 ether);
-    assertEq(ytVault.previewDeposit(50 ether), 100 ether); // 50 assets -> 100 shares (2:1)
+    assertEq(ptVault.previewDeposit(100 ether), 0);
+    assertEq(ytVault.previewDeposit(50 ether), 0);
   }
 
-  function test_previewMint() public {
+  function test_previewMint_alwaysReturnsZero() public {
+    // Before any deposits
+    assertEq(ptVault.previewMint(100 ether), 0);
+    assertEq(ytVault.previewMint(100 ether), 0);
+
+    // After deposits (should still return 0 since mint() always reverts)
     address user = address(0x1);
     asset.mint(user, 1000 ether);
 
@@ -755,15 +850,13 @@ contract ControlledVaultTest is Test {
     vaultController.deposit(user, 1000 ether, 100 ether);
     vm.stopPrank();
 
-    // PT: 1:1 ratio
-    assertEq(ptVault.previewMint(100 ether), 100 ether);
-    // YT: 0 assets backing shares -> 0 assets required
+    assertEq(ptVault.previewMint(100 ether), 0);
     assertEq(ytVault.previewMint(100 ether), 0);
 
-    // Add yield and test again
+    // After yield accrual (should still return 0)
     asset.mint(address(vaultController), 50 ether);
-    assertEq(ptVault.previewMint(100 ether), 100 ether);
-    assertEq(ytVault.previewMint(100 ether), 50 ether); // 100 shares -> 50 assets
+    assertEq(ptVault.previewMint(100 ether), 0);
+    assertEq(ytVault.previewMint(100 ether), 0);
   }
 
   function test_previewWithdraw() public {

@@ -3,21 +3,25 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {USCCFund} from "src/funds/USCCFund.sol";
-import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
+import {USCCFund} from "src/funds/USCC/USCCFund.sol";
+import {USCCFundFactory} from "src/funds/USCC/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Order, Mode, State} from "src/libs/funds/Order.sol";
+import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
-import {MockERC20} from "../mock/MockERC20.sol";
-import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
-import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
-import {USCCFundHandler} from "test/mock/funds/USCCFundHandler.sol";
+import {MockERC20} from "../../mock/MockERC20.sol";
+import {MockAllowlist} from "../../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../../mock/funds/MockSuperstateToken.sol";
+import {USCCFundHandler} from "test/mock/funds/USCC/USCCFundHandler.sol";
 
 contract USCCFundFuzzTest is Test {
+  using LibOrder for Order;
   uint256 private constant ONE_USDC = 1e6;
+
+  // USCCFund roles (matching internal constants)
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
 
   // WrappedAsset roles (matching internal constants)
   uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
@@ -50,7 +54,7 @@ contract USCCFundFuzzTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
@@ -64,19 +68,13 @@ contract USCCFundFuzzTest is Test {
     wuscc.grantRoles(address(this), WUSCC_SENDER_ROLE);
   }
 
-  function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(
-    uint96 input,
-    uint96 output,
-    uint96 preExistingUscc,
-    uint96 receivedUscc
-  ) public {
+  function testFuzz_DepositUnlock_SucceedsWhenReceivedGteOutput(uint96 input, uint96 output, uint96 receivedUscc)
+    public
+  {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
-    uint256 preExistingAmount = uint256(preExistingUscc);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
-
-    if (preExistingAmount > 0) uscc.mint(address(fund), preExistingAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
     fund.create(order);
@@ -92,26 +90,17 @@ contract USCCFundFuzzTest is Test {
     fund.unlock(order);
 
     assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
-    // USCC is now held by wUSCC contract after unlock (not fund)
     assertEq(uscc.balanceOf(address(wuscc)), receivedAmount, "uscc in wuscc");
-    assertEq(uscc.balanceOf(address(fund)), preExistingAmount, "fund pre-existing uscc");
+    assertEq(uscc.balanceOf(address(fund)), 0, "fund uscc cleared");
     assertEq(usdc.balanceOf(recipient), inputAmount, "usdc recipient");
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
   }
 
-  function testFuzz_DepositUnlock_RevertsWhenReceivedLtOutput(
-    uint96 input,
-    uint96 output,
-    uint96 preExistingUscc,
-    uint96 receivedUscc
-  ) public {
+  function testFuzz_DepositUnlock_RevertsWhenReceivedLtOutput(uint96 input, uint96 output, uint96 receivedUscc) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
-    uint256 preExistingAmount = uint256(preExistingUscc);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 receivedAmount = bound(uint256(receivedUscc), 0, outputAmount - 1);
-
-    if (preExistingAmount > 0) uscc.mint(address(fund), preExistingAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
     fund.create(order);
@@ -133,7 +122,7 @@ contract USCCFundFuzzTest is Test {
   {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 returnedAmount = bound(uint256(returnedUsdc), inputAmount, maxAmount);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -144,7 +133,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     usdc.mint(address(fund), returnedAmount);
 
@@ -162,7 +151,7 @@ contract USCCFundFuzzTest is Test {
   {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 returnedAmount = bound(uint256(returnedUsdc), 0, inputAmount - 1);
 
     Order memory order = _depositOrder(inputAmount, outputAmount);
@@ -173,20 +162,20 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     if (returnedAmount > 0) usdc.mint(address(fund), returnedAmount);
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.recover(order);
   }
 
   function testFuzz_ArchivedEndedOrderRemainsEndedAfterNewOrder(uint96 input, uint96 output, uint96 nextInput) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount - 1);
-    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 nextInputAmount = bound(uint256(nextInput), 1, maxAmount);
     if (nextInputAmount == inputAmount) {
       nextInputAmount = inputAmount + 1;
@@ -202,7 +191,8 @@ contract USCCFundFuzzTest is Test {
     uscc.mint(address(fund), outputAmount);
     fund.unlock(order);
 
-    Order memory nextOrder = _depositOrder(nextInputAmount, outputAmount);
+    uint256 nextOutputAmount = bound(uint256(output), _minValidOutput(nextInputAmount), maxAmount);
+    Order memory nextOrder = _depositOrder(nextInputAmount, nextOutputAmount);
     fund.create(nextOrder);
 
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "archived order ended");
@@ -212,7 +202,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_RedeemUnlock_SucceedsWhenUsdcOutGteOutput(uint96 input, uint96 output, uint96 usdcOut) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 0, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 usdcOutAmount = bound(uint256(usdcOut), outputAmount, maxAmount);
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -238,7 +228,7 @@ contract USCCFundFuzzTest is Test {
   function testFuzz_RedeemUnlock_RevertsWhenUsdcOutLtOutput(uint96 input, uint96 output, uint96 usdcOut) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = bound(uint256(output), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 usdcOutAmount = bound(uint256(usdcOut), 0, outputAmount - 1);
 
     Order memory order = _redeemOrder(inputAmount, outputAmount);
@@ -265,7 +255,7 @@ contract USCCFundFuzzTest is Test {
   ) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 returnedAmount = bound(uint256(returnedUscc), inputAmount, maxAmount);
 
@@ -286,7 +276,7 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     // Superstate returns USCC to fund
     uscc.mint(address(fund), returnedAmount);
@@ -309,7 +299,7 @@ contract USCCFundFuzzTest is Test {
   ) public {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
-    uint256 outputAmount = uint256(output);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
     uint256 preExistingAmount = uint256(preExistingUscc);
     uint256 returnedAmount = bound(uint256(returnedUscc), 0, inputAmount - 1);
 
@@ -330,13 +320,13 @@ contract USCCFundFuzzTest is Test {
     fund.commit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     if (returnedAmount > 0) uscc.mint(address(fund), returnedAmount);
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
 
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.recover(order);
   }
 
@@ -350,14 +340,15 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _depositOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _depositOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     usdc.mint(address(this), inputAmount);
     usdc.approve(address(fund), inputAmount);
     fund.commit(original);
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -402,7 +393,8 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _depositOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _depositOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     usdc.mint(address(this), inputAmount);
@@ -410,9 +402,9 @@ contract USCCFundFuzzTest is Test {
     fund.commit(original);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(original.toId(address(fund)));
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -428,7 +420,7 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    State expectedState = newInput == 0 ? State.RECOVERING : State.PROCESSING;
+    State expectedState = State.PROCESSING;
     assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
     assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
@@ -457,14 +449,15 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _redeemOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _redeemOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     _mintWuscc(address(this), inputAmount);
     wuscc.approve(address(fund), inputAmount);
     fund.commit(original);
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -509,7 +502,8 @@ contract USCCFundFuzzTest is Test {
     uint256 maxAmount = type(uint96).max;
     uint256 inputAmount = bound(uint256(input), 1, maxAmount);
 
-    Order memory original = _redeemOrder(inputAmount, bound(uint256(initialOutput), 0, maxAmount));
+    Order memory original =
+      _redeemOrder(inputAmount, bound(uint256(initialOutput), _minValidOutput(inputAmount), maxAmount));
     fund.create(original);
 
     _mintWuscc(address(this), inputAmount);
@@ -517,9 +511,9 @@ contract USCCFundFuzzTest is Test {
     fund.commit(original);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(original.toId(address(fund)));
 
-    uint256 newInput = bound(uint256(resolvedInput), 0, maxAmount);
+    uint256 newInput = bound(uint256(resolvedInput), 1, maxAmount);
     uint256 newOutput = bound(uint256(resolvedOutput), 0, maxAmount);
     vm.assume(newInput != original.input || newOutput != original.output);
 
@@ -535,7 +529,7 @@ contract USCCFundFuzzTest is Test {
       salt: original.salt
     });
 
-    State expectedState = newInput == 0 ? State.RECOVERING : State.PROCESSING;
+    State expectedState = State.PROCESSING;
     assertEq(uint256(fund.state(original)), uint256(expectedState), "original state");
     assertEq(uint256(fund.state(resolved)), uint256(State.EMPTY), "resolved empty");
 
@@ -554,6 +548,77 @@ contract USCCFundFuzzTest is Test {
     assertEq(uscc.balanceOf(address(wuscc)), returnedAmount, "uscc in wuscc");
     assertEq(uscc.balanceOf(address(fund)), 0, "fund has no uscc");
     assertEq(uint256(fund.state(original)), uint256(State.ENDED), "ended");
+  }
+
+  function testFuzz_CancelRecovering_ThenUnlock_Deposit(uint96 input, uint96 output, uint96 receivedUscc) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
+    uint256 receivedAmount = bound(uint256(receivedUscc), outputAmount, maxAmount);
+
+    Order memory order = _depositOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    usdc.mint(address(this), inputAmount);
+    usdc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    // Superstate delivers output USCC despite recovering state
+    if (receivedAmount > 0) uscc.mint(address(fund), receivedAmount);
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering(order.toId(address(fund)));
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+
+    assertEq(wuscc.balanceOf(address(this)), receivedAmount, "wuscc minted");
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  function testFuzz_CancelRecovering_ThenUnlock_Redeem(uint96 input, uint96 output, uint96 usdcOut) public {
+    uint256 maxAmount = type(uint96).max;
+    uint256 inputAmount = bound(uint256(input), 1, maxAmount);
+    uint256 outputAmount = bound(uint256(output), _minValidOutput(inputAmount), maxAmount);
+    uint256 usdcOutAmount = bound(uint256(usdcOut), outputAmount, maxAmount);
+
+    Order memory order = _redeemOrder(inputAmount, outputAmount);
+    fund.create(order);
+
+    _mintWuscc(address(this), inputAmount);
+    wuscc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    // Superstate delivers output USDC despite recovering state
+    if (usdcOutAmount > 0) usdc.mint(address(fund), usdcOutAmount);
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering(order.toId(address(fund)));
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+
+    assertEq(usdc.balanceOf(address(this)), usdcOutAmount, "usdc received");
+    assertEq(usdc.balanceOf(address(fund)), 0, "fund usdc cleared");
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+  }
+
+  /// @dev Minimum valid output for a given input (within MAX_OUTPUT_DEVIATION of oracle-expected output).
+  ///      With oracle price = 1:1, expected output = input, so min = input * 9500 / 10000.
+  function _minValidOutput(uint256 input) internal pure returns (uint256) {
+    return input - (input * 500 / 10000);
   }
 
   function _depositOrder(uint256 input, uint256 output) internal view returns (Order memory) {
@@ -591,6 +656,9 @@ contract USCCFundFuzzTest is Test {
 contract USCCFundInvariantTest is StdInvariant, Test {
   uint256 private constant ONE_USDC = 1e6;
 
+  // USCCFund roles (matching internal constants)
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+
   // WrappedAsset roles (matching internal constants)
   uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
   uint256 private constant WUSCC_SENDER_ROLE = 1 << 1;
@@ -624,7 +692,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     handler = new USCCFundHandler();
 
@@ -640,23 +708,23 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     wuscc.grantRoles(address(handler), WUSCC_SENDER_ROLE);
 
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(address(handler), operatorRole);
+    fund.grantRoles(address(handler), OPERATOR_ROLE);
 
     handler.initialize(fund, usdc, uscc, wuscc, recipient);
 
-    bytes4[] memory selectors = new bytes4[](10);
+    bytes4[] memory selectors = new bytes4[](11);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_commit.selector;
     selectors[3] = handler.act_setRecovering.selector;
-    selectors[4] = handler.act_resolve.selector;
-    selectors[5] = handler.act_superstateMintUscc.selector;
-    selectors[6] = handler.act_superstateMintUsdc.selector;
-    selectors[7] = handler.act_unlock.selector;
-    selectors[8] = handler.act_recover.selector;
-    selectors[9] = handler.act_cancel.selector;
+    selectors[4] = handler.act_cancelRecovering.selector;
+    selectors[5] = handler.act_resolve.selector;
+    selectors[6] = handler.act_superstateMintUscc.selector;
+    selectors[7] = handler.act_superstateMintUsdc.selector;
+    selectors[8] = handler.act_unlock.selector;
+    selectors[9] = handler.act_recover.selector;
+    selectors[10] = handler.act_cancel.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -699,15 +767,13 @@ contract USCCFundInvariantTest is StdInvariant, Test {
       return;
     }
 
-    uint256 cachedUsccBalance = handler.cachedUsccBalance();
     uint256 effectiveInput = handler.effectiveInput();
     uint256 effectiveOutput = handler.effectiveOutput();
 
     if (stage == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
         uint256 currentUscc = uscc.balanceOf(address(fund));
-        uint256 delta = currentUscc >= cachedUsccBalance ? currentUscc - cachedUsccBalance : 0;
-        State expected = delta >= effectiveOutput ? State.UNLOCKING : State.PROCESSING;
+        State expected = currentUscc >= effectiveOutput ? State.UNLOCKING : State.PROCESSING;
         assertEq(uint256(actual), uint256(expected), "processing deposit");
       } else {
         uint256 currentUsdc = usdc.balanceOf(address(fund));
@@ -724,8 +790,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
         assertEq(uint256(actual), uint256(expected), "recovering deposit");
       } else {
         uint256 currentUscc = uscc.balanceOf(address(fund));
-        uint256 delta = currentUscc >= cachedUsccBalance ? currentUscc - cachedUsccBalance : 0;
-        State expected = delta >= effectiveInput ? State.RECOVERING : State.PROCESSING;
+        State expected = currentUscc >= effectiveInput ? State.RECOVERING : State.PROCESSING;
         assertEq(uint256(actual), uint256(expected), "recovering redeem");
       }
       return;

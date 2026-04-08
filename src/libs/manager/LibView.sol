@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {PositionManagerStorageData} from "./LibStorage.sol";
-import {VIRTUAL_SHARES, VIRTUAL_ASSETS} from "./LibConstants.sol";
+import {VIRTUAL_ASSETS} from "./LibConstants.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
@@ -21,11 +21,8 @@ library LibView {
   function collateralAmount(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       amount += IBorrowPosition(modules[i]).totalCollateral();
-      unchecked {
-        ++i;
-      }
     }
   }
 
@@ -35,11 +32,8 @@ library LibView {
   function collateralAmountQuoted(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       amount += IBorrowPosition(modules[i]).totalCollateralQuoted();
-      unchecked {
-        ++i;
-      }
     }
   }
 
@@ -49,31 +43,43 @@ library LibView {
   function debtAmount(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
-    for (uint256 i = 0; i < modulesLength;) {
+    for (uint256 i = 0; i < modulesLength; ++i) {
       amount += IBorrowPosition(modules[i]).totalBorrowed();
-      unchecked {
-        ++i;
-      }
     }
   }
 
-  /// @dev Returns the total assets (quoted collateral minus debt).
+  /// @dev Returns the total assets as the sum of per-position NAVs, treating bad-debt positions as zero.
+  ///      Each position's NAV is computed as collateralQuoted.zeroFloorSub(debt), ensuring positions
+  ///      with bad debt do not reduce the overall NAV.
   /// @param ps The position manager storage data
-  /// @return The total assets value
-  function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256) {
-    return collateralAmountQuoted(ps).zeroFloorSub(debtAmount(ps));
+  /// @return amount The total assets value
+  function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
+    address[] memory modules = ps.borrowModules.values();
+    uint256 modulesLength = modules.length;
+    for (uint256 i = 0; i < modulesLength; ++i) {
+      uint256 collateral = IBorrowPosition(modules[i]).totalCollateralQuoted();
+      uint256 debt = IBorrowPosition(modules[i]).totalBorrowed();
+      amount += collateral.zeroFloorSub(debt);
+    }
   }
 
   /// @dev Converts assets to shares using virtual offset for inflation attack protection.
   /// @param assets The amount of assets to convert
   /// @param _totalSupply The current total supply of shares
   /// @param _totalAssets The current total assets
+  /// @param virtualShareOffset_ The virtual shares offset (10^(18 - debtAsset.decimals())), stored per-vault
+  /// @param roundUp If true, rounds up the result (use when burning shares); if false, rounds down (use when minting)
   /// @return shares The equivalent amount of shares
-  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets)
-    internal
-    pure
-    returns (uint256 shares)
-  {
-    return assets.mulDiv(_totalSupply + VIRTUAL_SHARES, _totalAssets + VIRTUAL_ASSETS);
+  function convertToShares(
+    uint256 assets,
+    uint256 _totalSupply,
+    uint256 _totalAssets,
+    uint256 virtualShareOffset_,
+    bool roundUp
+  ) internal pure returns (uint256 shares) {
+    if (roundUp) {
+      return assets.mulDivUp(_totalSupply + virtualShareOffset_, _totalAssets + VIRTUAL_ASSETS);
+    }
+    return assets.mulDiv(_totalSupply + virtualShareOffset_, _totalAssets + VIRTUAL_ASSETS);
   }
 }

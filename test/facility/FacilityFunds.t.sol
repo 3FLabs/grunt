@@ -25,7 +25,7 @@ contract FacilityFundsTest is FacilityBaseTest {
 
     // Set fund for the intent
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
   }
 
   /// @notice Creates an intent with debtToken deposits for testing DEPOSIT mode fund operations
@@ -46,7 +46,7 @@ contract FacilityFundsTest is FacilityBaseTest {
 
     // Set fund for the intent
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
   }
 
   /// @notice Supplies tokens to the mock fund for testing (for unlock/recover output)
@@ -148,12 +148,44 @@ contract FacilityFundsTest is FacilityBaseTest {
 
     // Set fund while still in depositing phase
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
 
     // Still in depositing phase - should revert
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.NotResolving.selector, intentId));
     facility.create(intentId, 500e18, 450e18, Mode.DEPOSIT);
+  }
+
+  /*´:°•:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+  /*                        CREATE RECOVERY TESTS                 */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_create_afterSetFundRecovery() public {
+    uint256 intentId = _createIntentWithFund(1000e18);
+
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 450e18, Mode.DEPOSIT);
+
+    (Order memory order, bytes32 orderId) = facility.getOrder(intentId);
+    mockFund.setOrderState(orderId, State.ENDED);
+
+    // Rebind fund to recover from stale ended order using fresh deadline to avoid SwapDigestUsed.
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 2 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    // Order can be created again after recovery
+    vm.prank(facilitator);
+    facility.create(intentId, 300e18, 270e18, Mode.DEPOSIT);
+
+    (Order memory recreatedOrder,) = facility.getOrder(intentId);
+    assertEq(recreatedOrder.input, 300e18, "Order should be recreated");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

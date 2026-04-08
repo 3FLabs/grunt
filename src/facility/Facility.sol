@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import {Multicallable} from "lib/solady/src/utils/Multicallable.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 
 import {FacilitySwap} from "./base/FacilitySwap.sol";
@@ -36,14 +35,18 @@ contract Facility is
   FacilityPositionManager,
   FacilityFunds,
   FacilityIntents,
-  Multicallable,
   Initializable
 {
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
   using LibChecks for address;
+  using LibChecks for uint256;
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibPause for uint40;
+
+  constructor() {
+    _disableInitializers();
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
@@ -67,7 +70,7 @@ contract Facility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function paused() external view override returns (bool isPaused, uint40 pausedUntil) {
+  function facilityConfig() external view override returns (bool isPaused, uint40 pausedUntil) {
     pausedUntil = LibStorage.facilityStorage().pausedUntil;
     isPaused = pausedUntil.paused();
   }
@@ -77,6 +80,7 @@ contract Facility is
     external
     view
     override
+    nonReadReentrant
     returns (address[] memory tokens, uint256[] memory amounts)
   {
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
@@ -110,22 +114,10 @@ contract Facility is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacility
-  function pause() external override onlyOwnerOrRoles(PAUSER_ROLE) {
-    LibStorage.facilityStorage().pausedUntil = LibPause.PERMANENT_PAUSE;
-    emit FacilityPausedSet(LibPause.PERMANENT_PAUSE);
-  }
-
-  /// @inheritdoc IFacility
-  function pauseFor(uint256 duration) external override onlyOwnerOrRoles(PAUSER_ROLE) {
+  function pauseFor(uint256 duration) external override onlyOwnerOrRoles(COMPLIANCE_ROLE) {
     uint40 pauseUntil = LibPause.pauseFor(duration);
     LibStorage.facilityStorage().pausedUntil = pauseUntil;
     emit FacilityPausedSet(pauseUntil);
-  }
-
-  /// @inheritdoc IFacility
-  function unpause() external override onlyOwnerOrRoles(PAUSER_ROLE) {
-    LibStorage.facilityStorage().pausedUntil = LibPause.NOT_PAUSED;
-    emit FacilityPausedSet(LibPause.NOT_PAUSED);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -185,7 +177,7 @@ contract Facility is
       revert LibFacilityErrors.IntentTransfersLocked(id);
     }
 
-    (,, address guard) = IPositionManager(_intent.properties.guardKey).config();
+    (, address guard) = IPositionManager(_intent.properties.guardKey).config();
     if (guard != address(0)) {
       if (!ITransferGuard(guard).canTransfer(_intent.properties.guardKey, from, to, amount)) {
         revert LibFacilityErrors.TransferBlocked(guard, from, to, amount);
@@ -195,7 +187,11 @@ contract Facility is
     if (from == address(0) && to != address(0)) {
       _intent.totalSupply += amount;
     } else if (from != address(0) && to == address(0)) {
-      _intent.totalSupply -= amount;
+      // when burning, we can assume that total supply is always greater or equal to amount
+      // or the subsequent burn will revert because the user doesn't have enough shares
+      unchecked {
+        _intent.totalSupply -= amount;
+      }
     }
   }
 
@@ -205,8 +201,8 @@ contract Facility is
 
   /// @dev Returns the EIP-712 domain name and version.
   function _domainNameAndVersion() internal pure override returns (string memory name_, string memory version) {
-    name_ = "3Facility";
-    version = "1.0.0";
+    name_ = "3F";
+    version = "1";
   }
 
   /// @dev Returns whether the domain name and version may change.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @title Constants
 /// @author 3F Protocol
@@ -25,3 +25,7 @@ pragma solidity ^0.8.20;
 ///
 /// @custom:value 2^128 - 1 = 340,282,366,920,938,463,463,374,607,431,768,211,455
 uint256 constant MAX_128_BITS = 0xffffffffffffffffffffffffffffffff;
+
+/// @dev Basis points precision (10000 = 100%).
+/// @custom:value 10,000
+uint256 constant BPS = 10_000;

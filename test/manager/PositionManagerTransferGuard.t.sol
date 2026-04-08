@@ -5,6 +5,7 @@ import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
 import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {RebalancingData, RebalancingOperation} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
@@ -72,7 +73,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_setTransferGuard() public view {
-    (,, address guard_) = positionManager.config();
+    (, address guard_) = positionManager.config();
     assertEq(guard_, address(guard));
   }
 
@@ -86,7 +87,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setTransferGuard(address(0));
 
-    (,, address guard_) = positionManager.config();
+    (, address guard_) = positionManager.config();
     assertEq(guard_, address(0));
   }
 
@@ -217,7 +218,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     debtToken.approve(address(positionManager), type(uint256).max);
 
     vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
-    positionManager.burn(shares);
+    positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL);
     vm.stopPrank();
   }
 
@@ -287,9 +288,102 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     );
   }
 
+  function test_deposit_blockedWhenPaused_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit so borrow positions have collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Pause the position manager
+    vm.prank(guardOwner);
+    guard.pause(address(positionManager));
+
+    // Attempt a deposit where collateral == debt (zero net asset change)
+    // This bypassed the pause before the fix because _settleShares returned 0
+    // and _beforeTokenTransfer was never invoked.
+    uint256 amount = 1000e18;
+    _mintCollateral(minter, amount);
+    _mintDebt(minter, amount);
+
+    vm.prank(minter);
+    vm.expectRevert(CommonErrors.Paused.selector);
+    positionManager.deposit(amount, amount);
+  }
+
+  function test_deposit_blockedWhenPaused_zeroSharesDelta() public {
+    // Seed an initial deposit so totalSupply and totalAssets are non-zero
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Inflate totalAssets by raising the oracle price so each share is worth many assets.
+    // totalAssets ≈ 9_995_000e18 while totalSupply ≈ 5_000e18 → 1 wei of collateral
+    // adds ~1000 assets but convertToShares rounds down to 0.
+    oracle.setPrice(1000 * DEFAULT_ORACLE_PRICE);
+
+    // Pause the position manager
+    vm.prank(guardOwner);
+    guard.pause(address(positionManager));
+
+    // Deposit 1 wei of collateral (no debt) — sharesToMint rounds to 0
+    _mintCollateral(minter, 1);
+
+    vm.prank(minter);
+    vm.expectRevert(CommonErrors.Paused.selector);
+    positionManager.deposit(1, 0);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  NO GUARD TESTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deposit_allowedWhenNotPaused_zeroSharesDelta() public {
+    // Same setup as paused test but guard is NOT paused — should succeed
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(1000 * DEFAULT_ORACLE_PRICE);
+
+    _mintCollateral(minter, 1);
+
+    vm.prank(minter);
+    positionManager.deposit(1, 0);
+  }
+
+  function test_deposit_allowedWhenNotPaused_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Guard is set but NOT paused — zero-delta deposit should succeed
+    uint256 amount = 1000e18;
+    _mintCollateral(minter, amount);
+    _mintDebt(minter, amount);
+
+    vm.prank(minter);
+    positionManager.deposit(amount, amount);
+  }
+
+  function test_deposit_allowedWhenNoGuard_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Disable guard
+    vm.prank(owner);
+    positionManager.setTransferGuard(address(0));
+
+    // Zero-delta deposit should succeed when no guard is set
+    uint256 amount = 1000e18;
+    _mintCollateral(minter, amount);
+    _mintDebt(minter, amount);
+
+    vm.prank(minter);
+    positionManager.deposit(amount, amount);
+  }
 
   function test_transfer_allowedWithNoGuard() public {
     // Disable guard

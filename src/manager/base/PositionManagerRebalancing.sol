@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {
   IPositionManagerRebalancing,
@@ -15,7 +15,7 @@ import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../libs/common/LibCommonErrors.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibView} from "../../libs/manager/LibView.sol";
-import {BPS} from "../../libs/manager/LibConstants.sol";
+import {BPS} from "../../libs/Constants.sol";
 import {LibExecutor} from "../../libs/manager/LibExecutor.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
@@ -34,7 +34,7 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerRebalancing
-  /// @dev Reverts with {LibManagerErrors.Paused} if the contract is paused.
+  /// @dev Reverts with {LibCommonErrors.Paused} if the contract is paused.
   ///      Reverts with {LibManagerErrors.RebalanceLossExceedsMax} if total assets decrease exceeds maxRebalanceLoss.
   ///      Protected by nonReentrant to prevent malicious modules from manipulating
   ///      guard state (pause/unpause) mid-transaction via callbacks.
@@ -47,6 +47,20 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     returns (uint256 collateralExcess, uint256 debtExcess)
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+
+    // Enforce cooldown between consecutive rebalance calls
+    uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
+    uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
+    if (cooldown > 0 && lastRebalance > 0) {
+      // Safe: block.timestamp fits in uint40 for ~35,000 years
+      // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
+      // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
+      // to avoid uint40 overflow when cooldown is large.
+      // forge-lint: disable-next-line(unsafe-typecast)
+      if (uint40(block.timestamp) - lastRebalance < cooldown) {
+        revert LibManagerErrors.RebalanceCooldownNotElapsed();
+      }
+    }
 
     // Check if paused via transfer guard
     address guard = _storage.transferGuard;
@@ -68,15 +82,19 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     }
 
     uint256 opsLength = data.operations.length;
-    for (uint256 i = 0; i < opsLength;) {
+    for (uint256 i = 0; i < opsLength; ++i) {
       _dispatchRebalancingOperation(data.operations[i], _collateralAsset, _debtAsset);
-      unchecked {
-        ++i;
-      }
     }
 
     collateralExcess = _collateralAsset.safeTransferAll(receiver);
     debtExcess = _debtAsset.safeTransferAll(receiver);
+
+    // Record rebalance timestamp for cooldown enforcement
+    // Safe: block.timestamp fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _storage.rebalanceConfig.lastRebalanceTimestamp = uint40(block.timestamp);
+
+    emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
 
     // Update snapshot to post-rebalance state
     uint256 totalAssetsAfter = _storage.totalAssets();
@@ -87,7 +105,7 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
       uint256 loss = totalAssetsBefore - totalAssetsAfter;
       // loss * BPS / totalAssetsBefore > maxRebalanceLoss
       // Rearranged to avoid division: loss * BPS > maxRebalanceLoss * totalAssetsBefore
-      if (loss * BPS > uint256(_storage.maxRebalanceLoss) * totalAssetsBefore) {
+      if (loss * BPS > uint256(_storage.rebalanceConfig.maxRebalanceLoss) * totalAssetsBefore) {
         revert LibManagerErrors.RebalanceLossExceedsMax();
       }
     }

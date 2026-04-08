@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -17,12 +17,12 @@ library LibExecutor {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Internal helper to safely approve a position contract for a token transfer before an operation.
-  /// @dev This function is defined to reduce contract code size by centralizing approval logic, as SafeTransferLib.safeApprove can be verbose if inlined multiple times.
+  /// @dev This function is defined to reduce contract code size by centralizing approval logic, as SafeTransferLib.safeApproveWithRetry can be verbose if inlined multiple times.
   /// @param position The address of the contract that will be approved to spend the token.
   /// @param token The address of the ERC20 token to be approved.
   /// @param amount The amount of tokens to approve.
   function _approvesBefore(address position, address token, uint256 amount) private {
-    token.safeApprove(position, amount);
+    token.safeApproveWithRetry(position, amount);
   }
 
   /// @notice Internal helper to reset approval to zero for a position contract after an operation.

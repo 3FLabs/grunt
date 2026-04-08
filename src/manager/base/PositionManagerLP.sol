@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManagerLP} from "../../interfaces/manager/base/IPositionManagerLP.sol";
+import {ITransferGuard} from "../../interfaces/guard/ITransferGuard.sol";
+import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerBase} from "./PositionManagerBase.sol";
 import {PositionManagerStorageData} from "../../libs/manager/LibStorage.sol";
 import {LibStorage} from "../../libs/manager/LibStorage.sol";
@@ -12,6 +14,7 @@ import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../libs/common/LibCommonErrors.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
 /// @title PositionManagerLP
 /// @author 3F Protocol
@@ -25,13 +28,14 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   using LibOperations for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
   using LibView for uint256;
+  using EnumerableSetLib for EnumerableSetLib.AddressSet;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        OPERATIONS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if both collateral and debt are zero.
   ///      Reverts with {LibManagerErrors.EmptySupplyQueue} if debt is zero but collateral > 0 and supply queue is empty.
   function deposit(uint256 collateral, uint256 debt)
     external
@@ -76,8 +80,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   }
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if both collateral and debt are zero.
-  function withdraw(uint256 collateral, uint256 debt)
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if both collateral and debt are zero.
+  function withdraw(uint256 collateral, uint256 debt, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
@@ -96,8 +100,9 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
-    // Process withdrawals through withdrawal queue
-    _storage.processWithdrawal(collateral, debt);
+    // Process withdrawals through withdrawal queue using the specified strategy
+    // checkLtv=true: proportional withdrawals must respect per-position LTV bounds
+    _storage.processWithdrawal(collateral, debt, strategy, true);
 
     // Send collateral to caller
     if (collateral > 0) {
@@ -111,8 +116,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   }
 
   /// @inheritdoc IPositionManagerLP
-  /// @dev Reverts with {LibManagerErrors.ZeroAmount} if shares is zero.
-  function burn(uint256 shares)
+  /// @dev Reverts with {LibCommonErrors.AmountZero} if shares is zero.
+  function burn(uint256 shares, WithdrawalStrategy strategy)
     external
     onlyRoles(MINTER_ROLE)
     nonReentrant
@@ -128,11 +133,15 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     uint256 _totalSupply = totalSupply();
     uint256 _totalCollateral = _storage.collateralAmount();
     uint256 _totalDebt = _storage.debtAmount();
+    uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
-    // Calculate proportional amounts to maintain average LTV
+    // Calculate proportional amounts to maintain average LTV.
+    // Include virtualShareOffset in the denominator so that virtual shares absorb their
+    // proportional fraction of collateral/debt, preventing extraction of donated assets
+    // that inflate totalAssets without minting shares.
     // Round down collateral (user gets less), round up debt (user repays more)
-    collateral = _totalCollateral.mulDiv(shares, _totalSupply);
-    debt = _totalDebt.mulDivUp(shares, _totalSupply);
+    collateral = _totalCollateral.mulDiv(shares, _totalSupply + virtualShareOffset_);
+    debt = _totalDebt.mulDivUp(shares, _totalSupply + virtualShareOffset_);
 
     // Burn shares first
     _burn(msg.sender, shares);
@@ -142,8 +151,14 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
-    // Process burn through withdrawal queue - withdraws/repays proportionally on each position
-    _storage.processBurn(collateral, debt, _totalCollateral, _totalDebt);
+    // Process through withdrawal queue using the specified strategy.
+    // When the withdrawal queue covers all whitelisted positions, burn amounts are proportional
+    // to total debt/collateral so per-position LTV is maintained by construction — skip the check.
+    // When the queue is a strict subset, some positions are excluded from the proportional
+    // distribution, so queue positions may bear a disproportionate share of the withdrawal
+    // and per-position LTV checks are required.
+    bool skipLtvCheck = _storage.withdrawalQueue.length == _storage.borrowModules.length();
+    _storage.processWithdrawal(collateral, debt, strategy, !skipLtvCheck);
 
     // Send collateral to caller
     if (collateral > 0) {
@@ -168,27 +183,40 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     uint256 totalAssetsAfter = _storage.totalAssets();
+    uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
     if (totalAssetsAfter > totalAssetsBefore) {
       // Assets increased: mint shares to caller
       uint256 assetsAdded = totalAssetsAfter - totalAssetsBefore;
-      uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore);
-      if (sharesToMint == 0) revert LibManagerErrors.ZeroShares();
-      _mint(msg.sender, sharesToMint);
-      // Safe: sharesToMint is capped by total supply which fits in uint128
-      // forge-lint: disable-next-line(unsafe-typecast)
-      sharesDelta = int256(sharesToMint);
+      uint256 sharesToMint = assetsAdded.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, false);
+      if (sharesToMint > 0) {
+        _mint(msg.sender, sharesToMint);
+        // Safe: sharesToMint is capped by total supply which fits in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
+        sharesDelta = int256(sharesToMint);
+      } else {
+        // Shares rounded to zero: check pause since _beforeTokenTransfer won't run
+        address guard = _storage.transferGuard;
+        if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
+          revert CommonErrors.Paused();
+        }
+      }
     } else if (totalAssetsAfter < totalAssetsBefore) {
       // Assets decreased: burn shares from caller
       uint256 assetsRemoved = totalAssetsBefore - totalAssetsAfter;
-      uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore);
-      if (sharesToBurn == 0) revert LibManagerErrors.ZeroShares();
+      uint256 sharesToBurn = assetsRemoved.convertToShares(_totalSupply, totalAssetsBefore, virtualShareOffset_, true);
       _burn(msg.sender, sharesToBurn);
       // Safe: sharesToBurn is capped by total supply which fits in uint128
       // forge-lint: disable-next-line(unsafe-typecast)
       sharesDelta = -int256(sharesToBurn);
+    } else {
+      // Assets unchanged: no mint/burn needed, but check pause since _beforeTokenTransfer won't run
+      address guard = _storage.transferGuard;
+      if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
+        revert CommonErrors.Paused();
+      }
     }
-    // If equal, sharesDelta remains 0
+    // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
 
     // Update snapshot for performance fees
     _storage.updateSnapshot();

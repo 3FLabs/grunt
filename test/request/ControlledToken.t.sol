@@ -67,7 +67,6 @@ contract ControlledTokenTest is Test {
   ) public {
     vm.assume(from != address(0));
     vm.assume(to != address(0));
-    vm.assume(from != to);
 
     tokenController.mint(from, ptMint, ytMint);
 
@@ -85,11 +84,15 @@ contract ControlledTokenTest is Test {
     assertEq(result, success);
 
     if (success) {
-      assertEq(ptToken.balanceOf(from), ptMint - ptTransfer);
-      assertEq(ptToken.balanceOf(to), ptTransfer);
+      if (from == to) {
+        assertEq(ptToken.balanceOf(from), ptMint);
+      } else {
+        assertEq(ptToken.balanceOf(from), ptMint - ptTransfer);
+        assertEq(ptToken.balanceOf(to), ptTransfer);
+      }
     } else {
       assertEq(ptToken.balanceOf(from), ptMint);
-      assertEq(ptToken.balanceOf(to), 0);
+      if (from != to) assertEq(ptToken.balanceOf(to), 0);
       success = true;
     }
 
@@ -105,11 +108,15 @@ contract ControlledTokenTest is Test {
     assertEq(result, success);
 
     if (success) {
-      assertEq(ytToken.balanceOf(from), ytMint - ytTransfer);
-      assertEq(ytToken.balanceOf(to), ytTransfer);
+      if (from == to) {
+        assertEq(ytToken.balanceOf(from), ytMint);
+      } else {
+        assertEq(ytToken.balanceOf(from), ytMint - ytTransfer);
+        assertEq(ytToken.balanceOf(to), ytTransfer);
+      }
     } else {
       assertEq(ytToken.balanceOf(from), ytMint);
-      assertEq(ytToken.balanceOf(to), 0);
+      if (from != to) assertEq(ytToken.balanceOf(to), 0);
     }
   }
 
@@ -129,6 +136,29 @@ contract ControlledTokenTest is Test {
     emit Approval(owner, spender, 200 ether);
     result = ytToken.approve(spender, 200 ether);
     assertTrue(result);
+    assertEq(ytToken.allowance(owner, spender), 200 ether);
+  }
+
+  function test_approve_preservesSiblingAllowance() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    // Approve PT for 100 ether
+    vm.prank(owner);
+    ptToken.approve(spender, 100 ether);
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+    assertEq(ytToken.allowance(owner, spender), 0);
+
+    // Approve YT for 200 ether — PT allowance must be preserved
+    vm.prank(owner);
+    ytToken.approve(spender, 200 ether);
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+    assertEq(ytToken.allowance(owner, spender), 200 ether);
+
+    // Update PT allowance — YT allowance must be preserved
+    vm.prank(owner);
+    ptToken.approve(spender, 50 ether);
+    assertEq(ptToken.allowance(owner, spender), 50 ether);
     assertEq(ytToken.allowance(owner, spender), 200 ether);
   }
 
@@ -328,6 +358,7 @@ contract ControlledTokenTest is Test {
     vm.assume(spender != address(0));
     vm.assume(recipient != address(0));
     vm.assume(owner != spender);
+    vm.assume(owner != recipient);
 
     tokenController.mint(owner, ptMint, ytMint);
 
@@ -370,9 +401,38 @@ contract ControlledTokenTest is Test {
 
     tokenController.mint(owner, 100 ether, 200 ether);
 
+    // Self-transfers are allowed per ERC-20 standard (no-op for balances)
     vm.prank(owner);
-    vm.expectRevert(LibRequestErrors.TransferToSelf.selector);
-    ptToken.transfer(owner, 50 ether);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Transfer(owner, owner, 50 ether);
+    bool result = ptToken.transfer(owner, 50 ether);
+    assertTrue(result);
+    assertEq(ptToken.balanceOf(owner), 100 ether);
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Transfer(owner, owner, 75 ether);
+    result = ytToken.transfer(owner, 75 ether);
+    assertTrue(result);
+    assertEq(ytToken.balanceOf(owner), 200 ether);
+  }
+
+  function test_transferToZeroAddress() public {
+    address owner = address(1);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    ptToken.transfer(address(0), 50 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    ytToken.transfer(address(0), 50 ether);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    tokenController.transferBatch(address(0), 50 ether, 50 ether);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

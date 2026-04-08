@@ -9,7 +9,15 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
+import {LibBorrowErrors} from "../../src/libs/borrow/LibBorrowErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
+import {MockBorrowPosition} from "test/mock/borrow/MockBorrowPosition.sol";
+import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
+import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerRolesTest
 /// @notice Tests for PositionManager admin functions and role-based access control
@@ -50,36 +58,47 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     assertEq(newQueue[0], address(borrowPosition2));
   }
 
-  function test_setLltv_onlyOwner() public {
-    uint256 newLltv = 0.6e18;
+  function test_setLtv_onlyOwner() public {
+    uint256 newLtv = 0.6e18;
 
     vm.prank(user);
     vm.expectRevert();
-    positionManager.setLltv(newLltv);
+    positionManager.setLtv(newLtv);
 
     vm.prank(owner);
-    positionManager.setLltv(newLltv);
+    positionManager.setLtv(newLtv);
 
-    assertEq(_lltv(), newLltv);
+    assertEq(_ltv(), newLtv);
   }
 
-  function test_setLltv_revertOnZero() public {
+  function test_setLtv_revertOnZero() public {
     vm.prank(owner);
-    vm.expectRevert(CommonErrors.InvalidLltv.selector);
-    positionManager.setLltv(0);
+    vm.expectRevert(CommonErrors.InvalidLtv.selector);
+    positionManager.setLtv(0);
   }
 
-  function test_setLltv_revertOnGreaterThanWad() public {
+  function test_setLtv_revertOnGreaterThanWad() public {
     vm.prank(owner);
-    vm.expectRevert(CommonErrors.InvalidLltv.selector);
-    positionManager.setLltv(1e18 + 1);
+    // With borrow modules present, the safeLtv check fires first; without modules, InvalidLtv fires via setLtv
+    vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
+    positionManager.setLtv(1e18 + 1);
   }
 
-  function test_setLltv_allowsMaxWad() public {
-    vm.prank(owner);
-    positionManager.setLltv(1e18);
+  function test_setLtv_allowsMaxWad() public {
+    // First remove all borrow modules so no safeLtv constraint
+    // Clear queues first
+    vm.prank(curator);
+    positionManager.setSupplyQueue(new SupplyQueueEntry[](0));
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(new address[](0));
 
-    assertEq(_lltv(), 1e18);
+    vm.startPrank(owner);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+    positionManager.removeBorrowModule(address(borrowPosition2));
+    positionManager.setLtv(1e18);
+    vm.stopPrank();
+
+    assertEq(_ltv(), 1e18);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -87,7 +106,9 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_addBorrowModule_onlyOwner() public {
-    address newModule = makeAddr("newModule");
+    // Create a valid borrow module for the success case
+    address newModule =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
 
     vm.prank(user);
     vm.expectRevert();
@@ -97,6 +118,115 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.addBorrowModule(newModule);
 
     assertTrue(positionManager.isBorrowModule(newModule));
+  }
+
+  function test_addBorrowModule_revertWhen_CollateralAssetMismatch() public {
+    // Create a module with wrong collateral asset
+    MockERC20 wrongCollateral = new MockERC20("Wrong", "WRG", 18);
+
+    // Create a Morpho market with wrong collateral
+    MarketParams memory wrongParams = MarketParams({
+      loanToken: address(debtToken),
+      collateralToken: address(wrongCollateral),
+      oracle: address(oracle),
+      irm: address(irm),
+      lltv: DEFAULT_LLTV
+    });
+    vm.prank(owner);
+    morpho.createMarket(wrongParams);
+
+    // Asset check now fires during initialize() in createBorrowPosition
+    vm.expectRevert(
+      abi.encodeWithSelector(LibBorrowErrors.AssetMismatch.selector, address(collateralToken), address(wrongCollateral))
+    );
+    borrowPositionFactory.createBorrowPosition(
+      MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
+  }
+
+  function test_addBorrowModule_revertWhen_DebtAssetMismatch() public {
+    // Create a module with wrong debt asset
+    MockERC20 wrongDebt = new MockERC20("Wrong", "WRG", 18);
+
+    // Create a Morpho market with wrong debt
+    MarketParams memory wrongParams = MarketParams({
+      loanToken: address(wrongDebt),
+      collateralToken: address(collateralToken),
+      oracle: address(oracle),
+      irm: address(irm),
+      lltv: DEFAULT_LLTV
+    });
+    vm.prank(owner);
+    morpho.createMarket(wrongParams);
+
+    // Asset check now fires during initialize() in createBorrowPosition
+    vm.expectRevert(
+      abi.encodeWithSelector(LibBorrowErrors.AssetMismatch.selector, address(debtToken), address(wrongDebt))
+    );
+    borrowPositionFactory.createBorrowPosition(
+      MarketParamsLib.id(wrongParams), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
+    );
+  }
+
+  function test_addBorrowModule_revertWhen_InvalidOwner() public {
+    // Create a second PositionManager with the same assets so initialize() passes
+    PositionManager otherPM = PositionManager(LibClone.clone(address(new PositionManager())));
+    otherPM.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "Other PM", symbol: "OPM", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+
+    // Create a module owned by the other PM
+    address wrongModule =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(otherPM), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
+
+    // Adding to the first PM fails because the module's owner is otherPM
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.InvalidModuleOwner.selector);
+    positionManager.addBorrowModule(wrongModule);
+  }
+
+  function test_addBorrowModule_revertWhen_ModuleAlreadyAdded() public {
+    // borrowPosition1 is already whitelisted in setUp
+    assertTrue(positionManager.isBorrowModule(address(borrowPosition1)));
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleAlreadyAdded.selector);
+    positionManager.addBorrowModule(address(borrowPosition1));
+  }
+
+  function test_addBorrowModule_revertWhen_SafeLtvTooLow() public {
+    // Create a module with safeLtv < PM LTV
+    uint128 lowSafeLtv = uint128(POSITION_MANAGER_LTV) - 1;
+    uint128 liquidationLtv = uint128(POSITION_MANAGER_LTV) + 0.01e18;
+    address wrongModule =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), lowSafeLtv, liquidationLtv);
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
+    positionManager.addBorrowModule(wrongModule);
+  }
+
+  function test_setLtv_revertWhen_ExceedsModuleSafeLtv() public {
+    // Current BP_SAFE_LTV = 0.72e18, try to set PM LTV above it
+    uint256 tooHighLtv = uint256(BP_SAFE_LTV) + 1;
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleSafeLtvTooLow.selector);
+    positionManager.setLtv(tooHighLtv);
+  }
+
+  function test_setLtv_succeedsWhenEqualToModuleSafeLtv() public {
+    vm.prank(owner);
+    positionManager.setLtv(uint256(BP_SAFE_LTV));
+
+    assertEq(_ltv(), uint256(BP_SAFE_LTV));
   }
 
   function test_removeBorrowModule_onlyOwner() public {
@@ -124,6 +254,7 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     positionManager.removeBorrowModule(address(borrowPosition1));
 
     assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
+    assertEq(borrowPosition1.owner(), owner);
   }
 
   function test_removeBorrowModule_revertIfInSupplyQueue() public {
@@ -179,6 +310,15 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
     assertFalse(positionManager.isBorrowModule(address(borrowPosition1)));
   }
 
+  function test_removeBorrowModule_revertIfNotWhitelisted() public {
+    address notAModule = makeAddr("notAModule");
+    assertFalse(positionManager.isBorrowModule(notAModule));
+
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.ModuleNotFound.selector);
+    positionManager.removeBorrowModule(notAModule);
+  }
+
   function test_borrowModules_returnsWhitelistedModules() public view {
     address[] memory modules = positionManager.borrowModules();
     assertEq(modules.length, 2);
@@ -215,6 +355,26 @@ contract PositionManagerRolesTest is PositionManagerBaseTest {
 
     vm.prank(curator);
     vm.expectRevert(LibManagerErrors.UnauthorizedPosition.selector);
+    positionManager.setWithdrawalQueue(queue);
+  }
+
+  function test_setSupplyQueue_revertOnDuplicateEntry() public {
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](2);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    queue[1] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: 1000e18});
+
+    vm.prank(curator);
+    vm.expectRevert(LibManagerErrors.DuplicateQueueEntry.selector);
+    positionManager.setSupplyQueue(queue);
+  }
+
+  function test_setWithdrawalQueue_revertOnDuplicateEntry() public {
+    address[] memory queue = new address[](2);
+    queue[0] = address(borrowPosition1);
+    queue[1] = address(borrowPosition1);
+
+    vm.prank(curator);
+    vm.expectRevert(LibManagerErrors.DuplicateQueueEntry.selector);
     positionManager.setWithdrawalQueue(queue);
   }
 

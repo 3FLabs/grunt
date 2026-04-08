@@ -28,9 +28,16 @@ src/
 │   ├── base/                    # Admin, fees, shares, rebalancing
 │   └── rebalancer/              # Flash-loan based rebalancer
 ├── funds/                       # External asset wrappers
-│   ├── USCCFund.sol             # Superstate USCC integration
-│   ├── USCCFundFactory.sol      # Beacon proxy factory
-│   └── WrappedAsset.sol         # wUSCC wrapper token
+│   ├── centrifuge/
+│   │   ├── CentrifugeFund.sol       # Centrifuge ERC-7540 integration
+│   │   └── CentrifugeFundFactory.sol # Beacon proxy factory
+│   ├── pareto/
+│   │   ├── ParetoFund.sol           # Pareto (Idle Finance) CDO integration
+│   │   └── ParetoFundFactory.sol    # Beacon proxy factory
+│   ├── USCC/
+│   │   ├── USCCFund.sol             # Superstate USCC integration
+│   │   └── USCCFundFactory.sol      # Beacon proxy factory
+│   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.)
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
 │   └── MorphoBorrowPositionFactory.sol  # Beacon proxy factory
@@ -92,12 +99,18 @@ This section provides a consolidated view of all roles across contracts and how 
 | **Facility** | Owner | Protocol Admin | Create intents, update target asset, set descriptor |
 | | Facilitator | Operations Bot | Create intents, lock, resolve, set caps, set fund/request, all fund/request/PM/swap operations |
 | | Guardian | Signers (EOA) | Sign swap authorizations (multi-sig for quorum) |
-| | Pauser | Emergency Admin | Pause/unpause facility |
+| | Compliance | Emergency Admin / Compliance Bot | Pause/unpause facility, revert deposits |
 | **Request** | Owner | Protocol Admin | Mark loan as repaid, authorize minting |
 | | Puller | Facility | Pull bridge loan funds, repay funds |
 | | Consumer | Protocol Admin | Consume signed offers |
-| **Fund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
-| | Settler | Operations Bot | Settle fund state after external operations |
+| **USCCFund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
+| | Operator | Operations Bot | Settle fund state after external operations |
+| **CentrifugeFund** | Owner | Protocol Admin | Cancel vault requests via `cancelRequest()` |
+| | Operator | Operations Bot | Cancel vault requests via `cancelRequest()` |
+| | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
+| **ParetoFund** | Owner | Protocol Admin | Resolve stuck orders |
+| | Operator | Operations Bot | Resolve stuck orders |
+| | Depositor | Facility | Create/cancel/commit/unlock orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
@@ -116,7 +129,7 @@ flowchart TB
         FO[Owner]
         FF[Facilitator]
         FG[Guardian]
-        FP[Pauser]
+        FC[Compliance]
     end
 
     subgraph Users["Users"]
@@ -130,7 +143,7 @@ flowchart TB
 
     subgraph Fund["Fund Contract"]
         FDep[Depositor: Facility]
-        FSet[Settler: Bot]
+        FSet[Operator: Bot]
     end
 
     subgraph PM["Position Manager"]
@@ -151,8 +164,8 @@ flowchart TB
     %% Guardian operations
     FG -->|sign swaps| Facility
 
-    %% Pauser operations
-    FP -->|pause/unpause| Facility
+    %% Compliance operations
+    FC -->|pauseFor<br/>revertDeposit| Facility
 
     %% User operations
     LP -->|deposit<br/>withdraw<br/>claim| Facility
@@ -193,6 +206,8 @@ stateDiagram-v2
             • deposit() [any user]
             • withdraw() [owner/operator]
             • setDepositCap() [facilitator]
+            • setFund() [facilitator]
+            • setRequest() [facilitator]
             • updateTarget() [owner]
         end note
     }
@@ -237,8 +252,8 @@ stateDiagram-v2
 | `updateTarget` | Owner | DEPOSITING | - |
 | `setDepositCap` | Facilitator | DEPOSITING | - |
 | `lock` | Facilitator | DEPOSITING | - |
-| `setFund` | Facilitator | RESOLVING | No active order |
-| `setRequest` | Facilitator | RESOLVING | Request repaid (if previously set) |
+| `setFund` | Facilitator | Any | No active order |
+| `setRequest` | Facilitator | Any | Request repaid (if previously set) |
 | `resolve` | Facilitator | RESOLVING | No active order, request repaid |
 | `deposit` | Any | DEPOSITING | Within deposit cap |
 | `withdraw` | Owner/Operator | DEPOSITING | Sufficient balance |
@@ -254,6 +269,8 @@ stateDiagram-v2
 | `withdrawManager` | Facilitator | RESOLVING | Asset is PositionManager |
 | `burnManager` | Facilitator | RESOLVING | Asset is PositionManager |
 | `swap` | Facilitator | RESOLVING | Valid signatures, quorum met |
+| `revertDeposit` | Owner/Compliance | DEPOSITING | Deposit asset balance >= totalSupply; only owner can set receiver != from |
+| `pauseFor` | Owner/Compliance | Any | duration=0 to unpause |
 
 ## Facility
 
@@ -302,6 +319,7 @@ stateDiagram-v2
 |-------|----------|-------------|
 | Depositing | `deposit(id, amount)` | Deposit asset, receive LP tokens 1:1 |
 | Depositing | `withdraw(id, from, receiver, amount)` | Burn LP tokens, receive asset 1:1 |
+| Depositing | `revertDeposit(id, from, receiver)` | Owner/Compliance force-withdraws a user's full deposit. Only owner can set receiver != from |
 | Resolved | `claim(id, from, receiver, shares)` | Burn LP tokens, receive proportional share of all accumulated tokens. Returns `(tokens[], amounts[])` for easy tracking of claimed assets |
 
 ### View Functions
@@ -325,8 +343,9 @@ The facilitator role can:
 
 | Role | Permission |
 |------|------------|
-| Owner | Create intents, update target, set descriptor |
+| Owner | Create intents, update target, set descriptor, revert deposits (custom receiver) |
 | Facilitator | Lock, resolve, set caps, attach fund/request, execute operations |
+| Compliance | Pause/unpause facility, revert deposits |
 
 ## Request Contract
 
@@ -442,7 +461,7 @@ After funding is complete:
 2. **Callback**: If `data.length > 0`, invokes `onPullFunds(amount, data)` on the puller
 3. **Utilization**: Puller uses funds for intended purpose
 4. **Repayment**: Transfer assets back via `repay(amount)` or direct transfer
-5. **Enable Redemptions**: Owner calls `setRepaid()` or wait for `repaymentDeadline`
+5. **Enable Redemptions**: Owner calls `setRepaid(uint256 minBalance)` or wait for `repaymentDeadline`
 
 **Puller Callback Interface**:
 
@@ -514,6 +533,54 @@ stateDiagram-v2
 2. `commit()` - Burn wUSCC, trigger off-chain redemption
 3. `unlock()` - Release USDC when settled (or `recover()` if failed)
 
+### Centrifuge ERC-7540 Integration
+
+`CentrifugeFund` wraps Centrifuge ERC-7540 async vaults. Shares are represented by WrappedAsset tokens wrapping the vault's share token.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern**: the stored `internalState` may differ from what `state()` returns, because `state()` queries the Centrifuge vault for claimable amounts to detect async transitions (e.g., PROCESSING → UNLOCKING).
+- All vault calls use **requestId = 0**, the Centrifuge convention for "the current request for this controller" (each controller has at most one active request).
+- Supports **partial fills**: Centrifuge processes requests across epochs, so `unlock()` / `recover()` can be called multiple times, returning to PROCESSING between partial claims.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order (validates slippage against current exchange rate)
+2. `commit()` - Pull assets, approve vault, call `requestDeposit()`
+3. *Wait for Centrifuge epoch processing*
+4. `unlock()` - Claim shares via `mint()`, wrap into WrappedAsset, send to receiver
+
+**Redeem Flow (WrappedShare → Asset):**
+1. `create(REDEEM)` - Initialize order
+2. `commit()` - Burn WrappedAsset (unwrap), approve share tokens, call `requestRedeem()`
+3. *Wait for Centrifuge epoch processing*
+4. `unlock()` - Claim assets via `withdraw()`, send to receiver
+
+**Recovery Flow (cancel a pending request):**
+1. `cancelRequest()` - Owner/operator submits cancellation to Centrifuge vault
+2. *Wait for Centrifuge to process the cancellation*
+3. `recover()` - Claim returned assets/shares, send to receiver
+
+### Pareto (Idle Finance) CDO Integration
+
+`ParetoFund` wraps an IdleCDOEpochVariant (the Pareto/Idle credit vault). Shares are represented by WrappedAsset tokens wrapping the AA (senior) tranche token.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern** (like Centrifuge): the stored `internalState` may differ from what `state()` returns, because `state()` queries the CDO and its strategy to detect async transitions (e.g., PROCESSING → UNLOCKING).
+- Deposits are **synchronous** — `depositAA()` succeeds or reverts atomically. No epoch wait is needed for deposits.
+- Withdrawals are **epoch-gated** — `requestWithdraw()` queues a withdrawal that completes after the CDO epoch ends, then `claimWithdrawRequest()` delivers the underlying assets.
+- **No recovery flow** — `recover()` always reverts with `RecoverNotSupported()`. Deposits are atomic (no stuck intermediate state) and withdrawals always complete after epoch processing.
+- `resolve()` allows the operator/owner to override input/output amounts for an order stuck in PROCESSING when received amounts differ from expected values.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order (validates Keyring wallet allowance)
+2. `commit()` - Pull assets, call `depositAA()` atomically — AA tranche tokens are received immediately
+3. `unlock()` - Wrap AA tranche tokens into WrappedAsset, send to receiver
+
+**Redeem Flow (WrappedShare → Asset):**
+1. `create(REDEEM)` - Initialize order
+2. `commit()` - Burn WrappedAsset (unwrap to AA tranche), call `requestWithdraw()` on CDO
+3. *Wait for CDO epoch to end*
+4. `unlock()` - Call `claimWithdrawRequest()`, send underlying assets to receiver
+
 ## Position Manager
 
 The `PositionManager` aggregates multiple `IBorrowPosition` contracts into a single vault with ERC20 share-based accounting.
@@ -569,7 +636,7 @@ assets = shares × (totalAssets + 1) / (totalSupply + 1e6)
 
 ### Deposit
 
-Deposits collateral and borrows debt across positions in the supply queue.
+Deposits collateral and borrows debt across positions in the supply queue, respecting the position manager's target LTV.
 
 ```solidity
 function deposit(uint256 collateral, uint256 debt) external returns (int256 shares);
@@ -579,20 +646,28 @@ function deposit(uint256 collateral, uint256 debt) external returns (int256 shar
 1. Pull collateral from caller
 2. If `debt == 0`: supply all collateral to first position
 3. If `debt > 0`: iterate through supply queue:
-   - For each position, borrow up to `min(availableLiquidity, maxBorrow, remainingDebt)`
-   - Supply collateral proportionally: `collateral × (amountBorrowed / totalDebt)`
-4. Transfer borrowed debt to caller
-5. Mint/burn shares based on total assets change
+   - For each position, calculate the initial borrow: `min(availableLiquidity, maxBorrow, remainingDebt)`
+   - Query the position for required collateral at the target LTV via `collateralForBorrow(toBorrow, ltv)`
+   - If not enough collateral remains, reduce the borrow to what the remaining collateral supports via `borrowForCollateral(remainingCollateral, ltv)`
+   - Supply collateral and execute borrow
+4. Deposit any leftover collateral (not needed for borrowing) into the first supply queue position
+5. Transfer borrowed debt to caller
+6. Mint/burn shares based on total assets change
+
+**LTV Enforcement:** Each position is individually constrained to the target LTV. The `collateralForBorrow` and `borrowForCollateral` functions account for the position's existing collateral and debt, so positions with excess collateral may not need additional collateral for new borrows.
 
 **Example:**
 ```
 Supply Queue: [(PositionA, maxBorrow=1000), (PositionB, maxBorrow=2000)]
-Deposit: collateral=1500, debt=2000
+Deposit: collateral=1500, debt=2000, ltv=70%
 
-Position A: available=800, maxBorrow=1000 → borrows 800, collateral=600
-Position B: remaining=1200, available=5000, maxBorrow=2000 → borrows 1200, collateral=900
+Position A: available=800 → collateralForBorrow(800, 0.7) = 1143 → supplies 1143, borrows 800
+Position B: remaining collateral=357 → borrowForCollateral(357, 0.7) = 250 → supplies 357, borrows 250
+Remaining debt = 2000 - 800 - 250 = 950 → reverts InsufficientBorrowCapacity
 
-Result: 1500 collateral supplied, 2000 debt borrowed
+With enough collateral (e.g., 3000):
+Position A: borrows 800, needs 1143 collateral
+Position B: borrows 1200, needs 1714 collateral → total 2857, leftover 143 → first position
 ```
 
 ### Withdraw
@@ -774,6 +849,8 @@ function initialize(
 | `maxBorrow(lltv)` | Maximum borrowable at given LLTV |
 | `availableLiquidity()` | Available liquidity in market |
 | `availableCollateral(lltv)` | Withdrawable collateral while maintaining health |
+| `collateralForBorrow(amount, ltv)` | Additional collateral needed to borrow `amount` at `ltv` |
+| `borrowForCollateral(amount, ltv)` | Additional borrow capacity from supplying `amount` at `ltv` |
 
 ### Health Factor & Pre-Liquidation
 
@@ -954,6 +1031,8 @@ flowchart TB
 - `PositionManagerFactory` - Deploys PositionManager instances
 - `MorphoBorrowPositionFactory` - Deploys borrow positions
 - `USCCFundFactory` - Deploys USCC fund wrappers
+- `CentrifugeFundFactory` - Deploys Centrifuge ERC-7540 fund wrappers
+- `ParetoFundFactory` - Deploys Pareto CDO fund wrappers
 - `TransferGuardFactory` - Deploys transfer guards
 
 **Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.
@@ -964,7 +1043,7 @@ flowchart TB
 |-----------|---------|
 | **Virtual Share Offset** | Prevents first-depositor inflation attacks in PositionManager |
 | **Conservative Rounding** | Debt rounds up, collateral rounds down to protect vaults |
-| **LLTV Enforcement** | Withdrawals check available collateral to maintain position health |
+| **LTV Enforcement** | Deposits and withdrawals respect the target LTV per position |
 | **Fee Accrual Ordering** | Fees always accrued before operations for fair accounting |
 | **Role-Based Access** | Operations restricted to specific roles via OwnableRoles |
 | **Reentrancy Guards** | `ReentrancyGuardTransient` on all state-changing operations |

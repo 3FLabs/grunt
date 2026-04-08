@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-/// @notice Prime Broker Offer structure for lending assets to the protocol.
-/// @param maker The address of the prime broker providing the funds
+/// @notice Bridge Facilitator Offer structure for lending assets to the protocol.
+/// @param maker The address of the bridge facilitator providing the funds
 /// @param amount The principal amount to lend (in asset terms)
 /// @param expectedReturn The absolute return expected (principal + expectedReturn will be repaid)
 /// @param nonce Sequential number for offer management and cancellation (must be > stored nonce)
@@ -19,7 +19,7 @@ struct Offer {
 
 /// @title IOfferReceiver
 /// @author 3F Protocol
-/// @notice Interface for validating and consuming cryptographically signed prime broker offers.
+/// @notice Interface for validating and consuming cryptographically signed bridge facilitator offers.
 interface IOfferReceiver {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */

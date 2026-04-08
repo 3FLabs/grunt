@@ -5,6 +5,7 @@ import {LibStorage, PositionManagerStorageData} from "src/libs/manager/LibStorag
 import {LibOperations} from "src/libs/manager/LibOperations.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Harness contract to expose internal LibOperations functions for testing
@@ -23,15 +24,8 @@ contract LibOperationsHarness {
   }
 
   /// @dev Expose processWithdrawal
-  function processWithdrawal(uint256 collateral, uint256 debt) external {
-    LibStorage.positionManagerStorage().processWithdrawal(collateral, debt);
-  }
-
-  /// @dev Expose processBurn
-  function processBurn(uint256 collateralToWithdraw, uint256 debtToRepay, uint256 totalCollateral, uint256 totalDebt)
-    external
-  {
-    LibStorage.positionManagerStorage().processBurn(collateralToWithdraw, debtToRepay, totalCollateral, totalDebt);
+  function processWithdrawal(uint256 collateral, uint256 debt, WithdrawalStrategy strategy, bool checkLtv) external {
+    LibStorage.positionManagerStorage().processWithdrawal(collateral, debt, strategy, checkLtv);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -39,24 +33,19 @@ contract LibOperationsHarness {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Set metadata
-  function setMetadata(
-    string calldata name,
-    string calldata symbol,
-    uint8 decimals,
-    address collateralAsset,
-    address debtAsset
-  ) external {
+  function setMetadata(string calldata name, string calldata symbol, address collateralAsset, address debtAsset)
+    external
+  {
     PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     ps.metadata.name = name;
     ps.metadata.symbol = symbol;
-    ps.metadata.decimals = decimals;
     ps.metadata.collateralAsset = collateralAsset;
     ps.metadata.debtAsset = debtAsset;
   }
 
-  /// @dev Set lltv
-  function setLltv(uint64 lltv) external {
-    LibStorage.positionManagerStorage().lltv = lltv;
+  /// @dev Set ltv
+  function setLtv(uint64 ltv) external {
+    LibStorage.positionManagerStorage().ltv = ltv;
   }
 
   /// @dev Add supply queue entry

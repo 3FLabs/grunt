@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {EnumerableMapLib} from "lib/solady/src/utils/EnumerableMapLib.sol";
-import {Order} from "../funds/Order.sol";
+import {Order, State} from "../funds/Order.sol";
 import {LibTokenBalances} from "./LibTokenBalances.sol";
 import {LibFacilityErrors} from "./LibFacilityErrors.sol";
 import {IFacility} from "../../interfaces/facility/IFacility.sol";
@@ -11,9 +11,11 @@ import {IPositionManager} from "../../interfaces/manager/IPositionManager.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibAddress} from "./LibAddress.sol";
 import {LibChecks} from "../common/LibChecks.sol";
+import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
+import {IFund} from "../../interfaces/funds/IFund.sol";
 
 /// @dev Asset configuration for intents and swaps.
 /// @param asset Address of the asset.
@@ -28,7 +30,7 @@ struct Asset {
 /// @param targetAsset Target asset or position manager for the intent.
 /// @param depositCap Maximum amount that can be deposited into the intent.
 /// @param guardKey Guard key address associated with intent authorization.
-/// @param resolveStart Earliest timestamp when the intent can be resolved.
+/// @param resolveStart Timestamp at which the deposit phase ends and the resolving phase begins.
 /// @param quorum Quorum threshold required for guard approvals.
 /// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
 struct IntentProperties {
@@ -142,6 +144,23 @@ library LibIntent {
     address _request = _self.request;
     if (_request != address(0) && !IRequest(_request).syncRepaidStatus()) {
       revert LibFacilityErrors.RequestNotRepaid(_request);
+    }
+  }
+
+  /// @notice Syncs the intent's order state with the fund when the fund reports ENDED.
+  /// @dev Queries IFund.state(order) and clears the stale order+fund binding when the fund
+  ///      has independently ended the order (e.g. via forceEnd). Does nothing if there is
+  ///      no active order or no fund.
+  /// @param _self The intent storage reference.
+  /// @param id The intent ID.
+  function syncEndedOrder(Intent storage _self, uint256 id) internal {
+    if (!_self.hasActiveOrder()) return;
+
+    address _fund = _self.fund;
+    if (_fund == address(0)) return;
+
+    if (IFund(_fund).state(_self.order) == State.ENDED) {
+      _self.removeOrderAndFund(id);
     }
   }
 
@@ -260,7 +279,8 @@ library LibIntent {
   }
 
   /// @notice Transfers tokens from the intent to a recipient and updates accounting.
-  /// @dev Performs a safe transfer and then records the transfer in intent accounting.
+  /// @dev Updates intent accounting before performing the transfer (checks-effects-interactions)
+  ///      to prevent read-only reentrancy via token callbacks observing inconsistent state.
   ///      Emits TokenSent on success.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
@@ -268,8 +288,8 @@ library LibIntent {
   /// @param to The recipient address.
   /// @param amount The amount to transfer.
   function transferTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
-    token.safeTransfer(to, amount);
     _transferredTokenTo(_self, id, token, to, amount);
+    token.safeTransfer(to, amount);
   }
 
   /// @notice Records that tokens were received by the intent without performing the transfer.
@@ -308,8 +328,7 @@ library LibIntent {
   /// @param token The token address to snapshot.
   /// @return snapshot The balance snapshot struct.
   function takeBalanceSnapshot(address token) internal view returns (BalanceSnapshot memory snapshot) {
-    uint256 balance = token.balanceOf(address(this));
-    snapshot = BalanceSnapshot({token: token, balance: balance});
+    snapshot = BalanceSnapshot({token: token, balance: IERC20(token).balanceOf(address(this))});
   }
 
   /// @notice Commits a balance snapshot by calculating the difference and updating accounting.
@@ -325,16 +344,18 @@ library LibIntent {
     BalanceSnapshot memory snapshot,
     address counterparty
   ) internal {
-    uint256 currentBalance = snapshot.token.balanceOf(address(this));
+    unchecked {
+      uint256 currentBalance = IERC20(snapshot.token).balanceOf(address(this));
 
-    if (currentBalance > snapshot.balance) {
-      // Balance increased - record as received
-      uint256 amount = currentBalance - snapshot.balance;
-      _receivedTokenFrom(_self, id, snapshot.token, counterparty, amount);
-    } else if (currentBalance < snapshot.balance) {
-      // Balance decreased - record as sent
-      uint256 amount = snapshot.balance - currentBalance;
-      _transferredTokenTo(_self, id, snapshot.token, counterparty, amount);
+      if (currentBalance > snapshot.balance) {
+        // Balance increased - record as received
+        uint256 amount = currentBalance - snapshot.balance;
+        _receivedTokenFrom(_self, id, snapshot.token, counterparty, amount);
+      } else if (currentBalance < snapshot.balance) {
+        // Balance decreased - record as sent
+        uint256 amount = snapshot.balance - currentBalance;
+        _transferredTokenTo(_self, id, snapshot.token, counterparty, amount);
+      }
     }
   }
 

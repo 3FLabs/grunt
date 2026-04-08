@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {
   RebalancingData,
   RebalancingOperation,
@@ -22,6 +23,7 @@ import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
 import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerBaseTest
 /// @notice Base test contract with setup and helpers for PositionManager tests
@@ -29,6 +31,7 @@ contract PositionManagerBaseTest is Test {
   using MarketParamsLib for MarketParams;
   using MathLib for uint256;
   using SharesMathLib for uint256;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
@@ -69,9 +72,9 @@ contract PositionManagerBaseTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   uint256 constant DEFAULT_LLTV = 0.8e18; // 80% LLTV (Morpho market)
-  uint128 constant BP_SAFE_LTV = 0.65e18; // 65% safe LTV for borrow positions
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18; // 72% liquidation LTV for borrow positions
-  uint256 constant POSITION_MANAGER_LLTV = 0.7e18; // 70% LLTV for available collateral
+  uint128 constant BP_SAFE_LTV = 0.72e18; // 72% safe LTV for borrow positions (must be >= PM LTV)
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18; // 78% liquidation LTV for borrow positions
+  uint256 constant POSITION_MANAGER_LTV = 0.7e18; // 70% LTV for available collateral
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36; // 1:1 price
   uint256 constant COLLATERAL_AMOUNT = 10_000e18;
@@ -144,18 +147,19 @@ contract PositionManagerBaseTest is Test {
     marketId2 = marketParams2.id();
 
     // Deploy PositionManager
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
         name: "Position Manager Shares",
         symbol: "PMS",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      POSITION_MANAGER_LLTV,
-      address(0)
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
     );
 
     // Grant minter role
@@ -163,16 +167,14 @@ contract PositionManagerBaseTest is Test {
     positionManager.grantRoles(minter, _ROLE_MINTER);
 
     // Deploy MorphoBorrowPositionFactory and create positions
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
 
-    address bp1 = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address bp1 =
+      borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition1 = MorphoBorrowPosition(bp1);
 
-    address bp2 = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    address bp2 =
+      borrowPositionFactory.createBorrowPosition(marketId2, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition2 = MorphoBorrowPosition(bp2);
 
     // Setup borrow modules whitelist and grant curator/rebalancer roles
@@ -236,14 +238,24 @@ contract PositionManagerBaseTest is Test {
   /*                 CONSOLIDATED VIEW HELPERS                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function _lltv() internal view returns (uint256) {
-    (uint256 lltv_,,) = positionManager.config();
-    return lltv_;
+  function _ltv() internal view returns (uint256) {
+    (uint256 ltv_,) = positionManager.config();
+    return ltv_;
   }
 
   function _maxRebalanceLoss() internal view returns (uint16) {
-    (, uint16 maxRebalanceLoss_,) = positionManager.config();
+    (uint16 maxRebalanceLoss_,,) = positionManager.rebalanceConfig();
     return maxRebalanceLoss_;
+  }
+
+  function _rebalanceCooldown() internal view returns (uint40) {
+    (, uint40 rebalanceCooldown_,) = positionManager.rebalanceConfig();
+    return rebalanceCooldown_;
+  }
+
+  function _lastRebalanceTimestamp() internal view returns (uint40) {
+    (,, uint40 lastRebalanceTimestamp_) = positionManager.rebalanceConfig();
+    return lastRebalanceTimestamp_;
   }
 
   function _lastTotalAssets() internal view returns (uint256) {

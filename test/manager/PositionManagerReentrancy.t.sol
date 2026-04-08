@@ -4,14 +4,17 @@ pragma solidity ^0.8.20;
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {ReentrantMinter} from "../mock/manager/ReentrantMinter.sol";
 import {ReentrantCollateral} from "../mock/manager/ReentrantCollateral.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title PositionManagerReentrancyTest
 /// @notice Tests reentrancy protection for PositionManager
 contract PositionManagerReentrancyTest is PositionManagerBaseTest {
+  using LibClone for address;
   ReentrantMinter public attacker;
   ReentrantCollateral public reentrantCollateral;
   PositionManager public reentrantPm;
@@ -24,18 +27,19 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     vm.label(address(reentrantCollateral), "ReentrantCollateral");
 
     // Deploy new position manager with reentrant collateral
-    reentrantPm = new PositionManager();
+    reentrantPm = PositionManager(address(new PositionManager()).clone());
     reentrantPm.initialize(
       owner,
       PositionManagerMetadata({
         name: "Reentrant PM",
         symbol: "RPM",
-        decimals: 18,
         collateralAsset: address(reentrantCollateral),
         debtAsset: address(debtToken)
       }),
-      POSITION_MANAGER_LLTV,
-      address(0)
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
     );
 
     // Deploy attacker
@@ -69,18 +73,16 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
   function test_reentrancy_depositWithDebtBlocksReentrantDeposit() public {
     // Create a version where debt token is reentrant instead
     ReentrantCollateral reentrantDebt = new ReentrantCollateral();
-    PositionManager pm2 = new PositionManager();
+    PositionManager pm2 = PositionManager(address(new PositionManager()).clone());
     pm2.initialize(
       owner,
       PositionManagerMetadata({
-        name: "PM2",
-        symbol: "PM2",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(reentrantDebt)
+        name: "PM2", symbol: "PM2", collateralAsset: address(collateralToken), debtAsset: address(reentrantDebt)
       }),
-      POSITION_MANAGER_LLTV,
-      address(0)
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
     );
 
     ReentrantMinter attacker2 = new ReentrantMinter(pm2);
@@ -120,9 +122,9 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     vm.startPrank(minter);
     positionManager.deposit(50e18, 20e18);
 
-    positionManager.withdraw(5e18, 5e18);
-    positionManager.withdraw(5e18, 5e18);
-    positionManager.withdraw(5e18, 5e18);
+    positionManager.withdraw(5e18, 5e18, WithdrawalStrategy.SEQUENTIAL);
+    positionManager.withdraw(5e18, 5e18, WithdrawalStrategy.SEQUENTIAL);
+    positionManager.withdraw(5e18, 5e18, WithdrawalStrategy.SEQUENTIAL);
     vm.stopPrank();
   }
 
@@ -137,9 +139,9 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     uint256 shares = positionManager.balanceOf(minter);
     require(shares > 3e18, "Need enough shares");
 
-    positionManager.burn(1e18);
-    positionManager.burn(1e18);
-    positionManager.burn(1e18);
+    positionManager.burn(1e18, WithdrawalStrategy.PROPORTIONAL);
+    positionManager.burn(1e18, WithdrawalStrategy.PROPORTIONAL);
+    positionManager.burn(1e18, WithdrawalStrategy.PROPORTIONAL);
     vm.stopPrank();
   }
 
@@ -154,7 +156,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     positionManager.deposit(20e18, 10e18);
 
     // Withdraw
-    positionManager.withdraw(5e18, 2e18);
+    positionManager.withdraw(5e18, 2e18, WithdrawalStrategy.SEQUENTIAL);
 
     // Deposit again
     positionManager.deposit(10e18, 5e18);
@@ -162,11 +164,11 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     // Burn
     uint256 shares = positionManager.balanceOf(minter);
     if (shares > 1e18) {
-      positionManager.burn(1e18);
+      positionManager.burn(1e18, WithdrawalStrategy.PROPORTIONAL);
     }
 
     // Withdraw again
-    positionManager.withdraw(3e18, 2e18);
+    positionManager.withdraw(3e18, 2e18, WithdrawalStrategy.SEQUENTIAL);
 
     vm.stopPrank();
   }
@@ -215,7 +217,7 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     uint256 shares = positionManager.balanceOf(minter);
     uint256 withdrawOps = numOps > 5 ? 5 : numOps;
     for (uint8 i = 0; i < withdrawOps && shares > 1e18; i++) {
-      positionManager.withdraw(1e18, 0);
+      positionManager.withdraw(1e18, 0, WithdrawalStrategy.SEQUENTIAL);
       shares = positionManager.balanceOf(minter);
     }
 
@@ -232,13 +234,13 @@ contract PositionManagerReentrancyTest is PositionManagerBaseTest {
     // Each operation should complete and reset the guard
     positionManager.deposit(10e18, 0);
     positionManager.deposit(10e18, 5e18);
-    positionManager.withdraw(5e18, 2e18);
+    positionManager.withdraw(5e18, 2e18, WithdrawalStrategy.SEQUENTIAL);
 
     uint256 shares = positionManager.balanceOf(minter);
-    positionManager.burn(shares / 4);
+    positionManager.burn(shares / 4, WithdrawalStrategy.PROPORTIONAL);
 
     positionManager.deposit(5e18, 0);
-    positionManager.withdraw(2e18, 0);
+    positionManager.withdraw(2e18, 0, WithdrawalStrategy.SEQUENTIAL);
 
     vm.stopPrank();
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {TokenController} from "./TokenController.sol";
 import {IERC20} from "../../../interfaces/integrations/IERC20.sol";
@@ -69,6 +69,9 @@ abstract contract ControlledToken is IERC20 {
   }
 
   /// @inheritdoc IERC20
+  /// @dev NOTE FOR INTEGRATORS: Allowances are internally stored as uint128. Approving any
+  ///      amount >= 2^128 produces an infinite allowance (type(uint256).max) that is never
+  ///      consumed on transfers. Only values below 2^128 behave as finite, decreasing allowances.
   function approve(address spender, uint256 amount) external returns (bool) {
     return TokenController(_controller())._approve(msg.sender, spender, amount, _isYtToken());
   }

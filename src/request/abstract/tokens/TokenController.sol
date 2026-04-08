@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {LibTokenController} from "../../../libs/request/LibTokenController.sol";
 import {ControlledToken} from "./ControlledToken.sol";
@@ -9,6 +9,7 @@ import {LibAllowance} from "../../../libs/request/LibAllowance.sol";
 import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
 import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../../libs/common/LibCommonErrors.sol";
+import {LibChecks} from "../../../libs/common/LibChecks.sol";
 
 /// @title TokenController
 /// @author 3F Protocol
@@ -20,6 +21,7 @@ abstract contract TokenController is ITokenController {
   using LibTokenController for address;
   using SafeCastLib for uint256;
   using LibAllowance for uint128;
+  using LibChecks for address;
   using FixedPointMathLib for bool;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -66,15 +68,17 @@ abstract contract TokenController is ITokenController {
   /// @return success Always returns true if the transfer succeeds (reverts on failure)
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
-    if (from == to) revert LibRequestErrors.TransferToSelf();
-    // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
+    to.checkNotZero();
+    // casting to 'uint128' is safe because [The balance is checked if higher than a 128 bit number]
     // forge-lint: disable-next-item(unsafe-typecast)
     unchecked {
       (uint128 ptBalanceSender, uint128 ytBalanceSender) = from.balances();
-      (uint128 ptBalanceReceiver, uint128 ytBalanceReceiver) = to.balances();
       if (pt > ptBalanceSender || yt > ytBalanceSender) revert CommonErrors.InsufficientBalance();
-      from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
-      to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
+      if (from != to) {
+        (uint128 ptBalanceReceiver, uint128 ytBalanceReceiver) = to.balances();
+        from.updateBalances(ptBalanceSender - uint128(pt), ytBalanceSender - uint128(yt));
+        to.updateBalances(ptBalanceReceiver + uint128(pt), ytBalanceReceiver + uint128(yt));
+      }
       if (pt > 0) ControlledToken(_ptToken())._emitTransfer(from, to, pt);
       if (yt > 0) ControlledToken(_ytToken())._emitTransfer(from, to, yt);
       return true;
@@ -85,6 +89,11 @@ abstract contract TokenController is ITokenController {
   ///      Caps allowances at type(uint128).max if a higher value is provided. Emits Approval events
   ///      for each token if the allowance changes. The normalized allowance (type(uint256).max for
   ///      uint128 max) is emitted in the event.
+  ///
+  ///      NOTE FOR INTEGRATORS: Any value in the range [type(uint128).max, type(uint256).max] is
+  ///      stored as type(uint128).max (infinite allowance). The `allowance` view then normalizes
+  ///      type(uint128).max back to type(uint256).max. As a result, approving any value >= 2^128
+  ///      produces an infinite allowance that is never consumed on transfers.
   /// @param from The address granting the allowance (token owner)
   /// @param spender The address receiving the allowance
   /// @param pt The PT token allowance amount to set
@@ -204,6 +213,10 @@ abstract contract TokenController is ITokenController {
   /// @inheritdoc ITokenController
   /// @dev Returns type(uint256).max if the stored allowance is type(uint128).max (infinite allowance).
   ///      This provides EIP-20 compatibility where infinite allowance is represented as uint256 max.
+  ///
+  ///      NOTE FOR INTEGRATORS: Because `_setAllowance` clamps values to type(uint128).max, any
+  ///      approval with amount >= 2^128 will read back as type(uint256).max (infinite). Only
+  ///      values below 2^128 behave as finite, decreasing allowances.
   function allowance(address owner, address spender, bool yt) external view returns (uint256 result) {
     result = LibTokenController.allowance(owner, spender, yt);
     if (result == type(uint128).max) result = type(uint256).max;
@@ -238,7 +251,8 @@ abstract contract TokenController is ITokenController {
 
   /// @inheritdoc ITokenController
   /// @dev More gas efficient than calling approve on both tokens separately. Amounts exceeding
-  ///      type(uint128).max are capped at that value for storage.
+  ///      type(uint128).max are capped at that value for storage, producing an infinite allowance.
+  ///      See `_setAllowance` for details on the clamping behavior.
   function approveBatch(address spender, uint256 ptAmount, uint256 ytAmount) public virtual returns (bool) {
     return _setAllowance(msg.sender, spender, ptAmount, ytAmount);
   }
@@ -273,6 +287,7 @@ abstract contract TokenController is ITokenController {
   /// @dev Internal approve function called by individual token contracts (PT or YT).
   ///      This function is called by ControlledToken.approve. The `yt` parameter determines
   ///      which token (PT or YT) allowance is being set while the other is set to 0.
+  ///      Delegates to `_setAllowance` which clamps values >= type(uint128).max to infinite.
   /// @param from The address granting the allowance (token owner)
   /// @param spender The address receiving the allowance
   /// @param amount The allowance amount to set (for the specific token type)
@@ -281,8 +296,9 @@ abstract contract TokenController is ITokenController {
   /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   function _approve(address from, address spender, uint256 amount, bool yt) public virtual returns (bool) {
     _checkToken(yt);
-    uint256 ptAmount = yt.ternary(0, amount);
-    uint256 ytAmount = yt.ternary(amount, 0);
+    (uint128 existingPt, uint128 existingYt) = from.allowances(spender);
+    uint256 ptAmount = yt.ternary(uint256(existingPt), amount);
+    uint256 ytAmount = yt.ternary(amount, uint256(existingYt));
     return _setAllowance(from, spender, ptAmount, ytAmount);
   }
 }

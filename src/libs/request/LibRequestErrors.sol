@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @title LibRequestErrors
 /// @author 3F Protocol
@@ -9,8 +9,18 @@ library LibRequestErrors {
   /*                       REPAYMENT                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
+  /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid(uint256)`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
+
+  /// @notice Thrown when `setRepaid` is called but the contract balance is below the caller-specified minimum.
+  /// @param balance The current asset balance of the contract.
+  /// @param minBalance The minimum balance required by the caller.
+  error InsufficientBalance(uint256 balance, uint256 minBalance);
+
+  /// @notice Thrown when `setRepaid` is called but the contract balance exceeds the caller-specified maximum.
+  /// @param balance The current asset balance of the contract.
+  /// @param maxBalance The maximum balance allowed by the caller.
+  error ExcessiveBalance(uint256 balance, uint256 maxBalance);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    OFFER VALIDATION                        */
@@ -45,11 +55,11 @@ library LibRequestErrors {
   /*                    TOKEN OPERATIONS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Thrown when the minter's authorized PT or YT amounts fall below their specified minimums.
+  error SlippageExceeded();
+
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();
-
-  /// @notice Thrown when attempting to transfer tokens to the same address.
-  error TransferToSelf();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    VAULT OPERATIONS                        */
@@ -60,4 +70,15 @@ library LibRequestErrors {
 
   /// @notice Thrown when attempting to directly mint shares via deposit() or mint().
   error CannotMintShares();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    TIMELOCK OPERATIONS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when setRepaid(uint256) is called before the mint-to-repaid delay has elapsed since the last mint/consume.
+  /// @param availableAt Earliest timestamp when setRepaid(uint256) is allowed.
+  error MintToRepaidDelayNotElapsed(uint40 availableAt);
+
+  /// @notice Thrown when the repayment deadline is not within the valid range during initialization.
+  error InvalidRepaymentDeadline();
 }

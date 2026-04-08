@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {Id} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 
@@ -17,6 +17,14 @@ library LibBorrowErrors {
 
   /// @notice Thrown when attempting to initialize with a market that doesn't exist in Morpho.
   error MarketNotCreated();
+
+  /// @notice Thrown when the Morpho market's collateral or loan token does not match the PositionManager's expected assets.
+  /// @param expected The expected asset address from the PositionManager.
+  /// @param actual The actual asset address from the Morpho market.
+  error AssetMismatch(address expected, address actual);
+
+  /// @notice Thrown when the borrow amount is greater than the available liquidity.
+  error InsufficientLiquidity();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        COLLATERAL                          */
@@ -52,6 +60,9 @@ library LibBorrowErrors {
 
   /// @notice Thrown when the input parameters are inconsistent (e.g., both seizedAssets and repaidShares are non-zero).
   error InconsistentInput();
+
+  /// @notice Thrown when preLiquidate is called with a borrower other than the contract itself.
+  error InvalidBorrower();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      AUTHORIZATION                         */

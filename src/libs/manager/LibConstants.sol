@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @title LibConstants
 /// @author 3F Protocol
@@ -11,11 +11,6 @@ pragma solidity ^0.8.20;
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                     SHARE CALCULATIONS                      */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-/// @dev Virtual offset for share calculation to prevent inflation attacks.
-///      Using 1e6 as offset (similar to MetaMorpho's approach with decimalsOffset).
-/// @custom:value 1,000,000
-uint256 constant VIRTUAL_SHARES = 1e6;
 
 /// @dev Virtual assets offset for share calculation.
 /// @custom:value 1
@@ -29,10 +24,6 @@ uint256 constant VIRTUAL_ASSETS = 1;
 /// @custom:value 1,000,000,000,000,000,000
 uint256 constant WAD = 1e18;
 
-/// @dev Basis points precision (10000 = 100%).
-/// @custom:value 10,000
-uint256 constant BPS = 10_000;
-
 /// @dev Seconds in a year for management fee calculation.
 /// @custom:value 31,536,000 (365 days)
 uint256 constant SECONDS_PER_YEAR = 365 days;
@@ -41,13 +32,17 @@ uint256 constant SECONDS_PER_YEAR = 365 days;
 /*                        FEE LIMITS                          */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Maximum management fee: 50% per year (5000 basis points).
-/// @custom:value 5,000
-uint256 constant MAX_MANAGEMENT_FEE = 5000;
+/// @dev Maximum management fee: 2% per year (200 basis points).
+/// @custom:value 200
+uint256 constant MAX_MANAGEMENT_FEE = 200;
 
 /// @dev Maximum performance fee: 50% (5000 basis points).
 /// @custom:value 5,000
 uint256 constant MAX_PERFORMANCE_FEE = 5000;
+
+/// @dev Maximum rebalance loss: 10% (1000 basis points).
+/// @custom:value 1,000
+uint256 constant MAX_REBALANCE_LOSS = 1000;
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                         STORAGE                            */

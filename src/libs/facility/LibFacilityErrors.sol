@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @title LibFacilityErrors
 /// @author 3F Protocol
@@ -76,6 +76,11 @@ library LibFacilityErrors {
   /// @param asset The asset address that is not a position manager.
   error AssetNotPositionManager(address asset);
 
+  /// @notice Thrown when a position manager reports invalid asset configuration.
+  /// @dev Reverts if collateralAsset == debtAsset, collateralAsset == positionManager,
+  ///      or debtAsset == positionManager, preventing snapshot double-counting attacks.
+  error InvalidPositionManagerAssets();
+
   /// @notice Thrown when an amount differs from the expected value.
   /// @param expected The expected amount.
   /// @param actual The actual amount.
@@ -134,6 +139,14 @@ library LibFacilityErrors {
   error OrderNotEnded(uint256 id);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          DIGEST                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when a digest has already been consumed.
+  /// @param digest The consumed digest.
+  error DigestUsed(bytes32 digest);
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           SWAP                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -143,15 +156,14 @@ library LibFacilityErrors {
   /// @notice Thrown when the swap deadline has passed.
   error SwapExpired();
 
+  /// @notice Thrown when the signature deadline has passed (setFund/setRequest).
+  error DeadlineExpired();
+
   /// @notice Thrown when swap amounts are zero.
   error InvalidSwapAmount();
 
   /// @notice Thrown when swap uses the same token on both sides.
   error SameTokenSwap();
-
-  /// @notice Thrown when a swap digest has already been used.
-  /// @param digest The used swap digest.
-  error SwapDigestUsed(bytes32 digest);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       SIGNATURES                           */

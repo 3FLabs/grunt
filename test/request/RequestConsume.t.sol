@@ -53,8 +53,9 @@ contract RequestConsumeTest is Test {
 
     // Create request via factory with far future deadline
     vm.prank(owner);
-    (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+    (address reqAddr, address ptAddr, address ytAddr) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(block.timestamp + 90 days), 0
+    );
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -157,7 +158,7 @@ contract RequestConsumeTest is Test {
 
     // Set as repaid first
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     Offer memory offer = _createOffer(address(callback), offerAmount, 100_000e6, 1, block.timestamp + 1 days, true);
     bytes memory signature = _signOffer(offer);
@@ -436,7 +437,7 @@ contract RequestConsumeTest is Test {
 
     // 4. Mark as repaid
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     // 5. Callback contract redeems its PT/YT tokens
     vm.startPrank(address(callback));
@@ -453,7 +454,7 @@ contract RequestConsumeTest is Test {
   function test_integration_mixedFunding() public {
     // Test mixing consume() and authorizeMinting() funding methods
 
-    // 1. First, use consume() for one prime broker
+    // 1. First, use consume() for one bridge facilitator
     uint256 consumeAmount = 500_000e6;
     uint256 consumeReturn = 50_000e6;
 
@@ -467,7 +468,7 @@ contract RequestConsumeTest is Test {
     vm.prank(owner);
     request.consume(offer, signature, consumeAmount);
 
-    // 2. Then use authorizeMinting() for another prime broker
+    // 2. Then use authorizeMinting() for another bridge facilitator
     address broker2 = makeAddr("broker2");
     uint256 mintAmount = 500_000e6;
     uint256 mintYield = 50_000e6;
@@ -478,7 +479,7 @@ contract RequestConsumeTest is Test {
     asset.mint(broker2, mintAmount);
     vm.startPrank(broker2);
     asset.approve(address(request), mintAmount);
-    request.mint();
+    request.mint(uint128(mintAmount), uint128(mintYield));
     vm.stopPrank();
 
     // 3. Verify totals
@@ -495,7 +496,7 @@ contract RequestConsumeTest is Test {
     asset.transfer(address(request), consumeAmount + mintAmount + consumeReturn + mintYield);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     // Both can redeem fully
     vm.prank(address(callback));
@@ -585,6 +586,27 @@ contract RequestConsumeTest is Test {
 
     // Verify nonce was NOT burned
     assertEq(request.nonce(address(callback)), 0, "Nonce should not be consumed on revert");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              MINT TIMESTAMP TESTS                             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_consume_updatesLastMintTimestamp() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    Offer memory offer = _createOffer(address(callback), offerAmount, expectedReturn, 1, block.timestamp + 1 days, true);
+    bytes memory signature = _signOffer(offer);
+
+    asset.mint(address(callback), offerAmount);
+
+    assertEq(request.lastMintTimestamp(), 0, "lastMintTimestamp should be 0 before consume");
+
+    vm.prank(owner);
+    request.consume(offer, signature, offerAmount);
+
+    assertEq(request.lastMintTimestamp(), uint40(block.timestamp), "lastMintTimestamp should be updated after consume");
   }
 }
 

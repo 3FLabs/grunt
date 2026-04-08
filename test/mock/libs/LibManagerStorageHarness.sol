@@ -16,9 +16,9 @@ contract LibManagerStorageHarness {
   /*                    LibStorage FUNCTIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Expose setLltv
-  function setLltv(uint256 lltv_) external {
-    LibStorage.positionManagerStorage().setLltv(lltv_);
+  /// @dev Expose setLtv
+  function setLtv(uint256 ltv_) external {
+    LibStorage.positionManagerStorage().setLtv(ltv_);
   }
 
   /// @dev Expose updateSnapshot
@@ -51,17 +51,23 @@ contract LibManagerStorageHarness {
   }
 
   /// @dev Expose convertToShares (pure function)
-  function convertToShares(uint256 assets, uint256 _totalSupply, uint256 _totalAssets) external pure returns (uint256) {
-    return LibView.convertToShares(assets, _totalSupply, _totalAssets);
+  function convertToShares(
+    uint256 assets,
+    uint256 _totalSupply,
+    uint256 _totalAssets,
+    uint256 virtualShareOffset_,
+    bool roundUp
+  ) external pure returns (uint256) {
+    return LibView.convertToShares(assets, _totalSupply, _totalAssets, virtualShareOffset_, roundUp);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      TEST HELPERS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Get lltv value
-  function getLltv() external view returns (uint64) {
-    return LibStorage.positionManagerStorage().lltv;
+  /// @dev Get ltv value
+  function getLtv() external view returns (uint64) {
+    return LibStorage.positionManagerStorage().ltv;
   }
 
   /// @dev Get lastTotalAssets value
@@ -85,17 +91,12 @@ contract LibManagerStorageHarness {
   }
 
   /// @dev Set metadata
-  function setMetadata(
-    string calldata name,
-    string calldata symbol,
-    uint8 decimals,
-    address collateralAsset,
-    address debtAsset
-  ) external {
+  function setMetadata(string calldata name, string calldata symbol, address collateralAsset, address debtAsset)
+    external
+  {
     PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
     ps.metadata.name = name;
     ps.metadata.symbol = symbol;
-    ps.metadata.decimals = decimals;
     ps.metadata.collateralAsset = collateralAsset;
     ps.metadata.debtAsset = debtAsset;
   }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManager, SupplyQueueEntry} from "../interfaces/manager/IPositionManager.sol";
 import {IPositionManagerAdmin} from "../interfaces/manager/base/IPositionManagerAdmin.sol";
@@ -7,13 +7,19 @@ import {ITransferGuard} from "../interfaces/guard/ITransferGuard.sol";
 import {PositionManagerLP} from "./base/PositionManagerLP.sol";
 import {PositionManagerAdmin} from "./base/PositionManagerAdmin.sol";
 import {PositionManagerRebalancing} from "./base/PositionManagerRebalancing.sol";
-import {FeeData, PositionManagerMetadata, PositionManagerStorageData} from "../libs/manager/LibStorage.sol";
+import {
+  FeeData,
+  PositionManagerMetadata,
+  PositionManagerStorageData,
+  RebalanceConfig
+} from "../libs/manager/LibStorage.sol";
 import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title PositionManager
 /// @author 3F Protocol
@@ -31,29 +37,48 @@ contract PositionManager is
   using LibStorage for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
 
+  constructor() {
+    _disableInitializers();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the PositionManager.
   /// @param owner_ The owner of the contract
-  /// @param metadata_ The metadata containing name, symbol, decimals, collateral and debt assets
-  /// @param lltv_ The LLTV for available collateral calculation (WAD precision)
+  /// @param metadata_ The metadata containing name, symbol, collateral and debt assets
+  /// @param ltv_ The LTV for available collateral calculation (WAD precision)
   /// @param transferGuard_ The initial transfer guard address (address(0) to disable)
-  function initialize(address owner_, PositionManagerMetadata memory metadata_, uint256 lltv_, address transferGuard_)
-    external
-    initializer
-  {
+  /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%)
+  /// @param rebalanceCooldown_ The cooldown period in seconds between rebalance calls (0 = disabled)
+  function initialize(
+    address owner_,
+    PositionManagerMetadata memory metadata_,
+    uint256 ltv_,
+    address transferGuard_,
+    uint16 maxRebalanceLoss_,
+    uint40 rebalanceCooldown_
+  ) external initializer {
     _initializeOwner(owner_);
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     _storage.metadata = metadata_;
-    _storage.setLltv(lltv_);
+    _storage.setLtv(ltv_);
+    // Compute virtual share offset from debt asset decimals for inflation attack protection.
+    // Uses zeroFloorSub to safely handle tokens with >18 decimals (offset becomes 10^0 = 1).
+    // Safe: max exponent is 18, so 10^18 = 1e18 fits in uint64 (max ~1.8e19)
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _storage.virtualShareOffset =
+      uint64(10 ** FixedPointMathLib.zeroFloorSub(18, ERC20(metadata_.debtAsset).decimals()));
     // Safe: block.timestamp fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
     _storage.lastFeeAccrualTimestamp = uint40(block.timestamp);
     if (transferGuard_ != address(0)) {
       _storage.transferGuard = transferGuard_;
       emit IPositionManagerAdmin.TransferGuardSet(transferGuard_);
+    }
+    if (maxRebalanceLoss_ > 0 || rebalanceCooldown_ > 0) {
+      _storage.setRebalanceConfig(maxRebalanceLoss_, rebalanceCooldown_);
     }
   }
 
@@ -69,11 +94,6 @@ contract PositionManager is
   /// @inheritdoc ERC20
   function symbol() public view override returns (string memory) {
     return LibStorage.positionManagerStorage().metadata.symbol;
-  }
-
-  /// @inheritdoc ERC20
-  function decimals() public view override returns (uint8) {
-    return LibStorage.positionManagerStorage().metadata.decimals;
   }
 
   /// @inheritdoc IPositionManager
@@ -145,11 +165,36 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function config() public view returns (uint256 lltv, uint16 maxRebalanceLoss, address transferGuard) {
+  function pendingFees()
+    public
+    view
+    returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
+  {
+    return _pendingFees();
+  }
+
+  /// @inheritdoc IPositionManager
+  function virtualShareOffset() public view returns (uint256) {
+    return LibStorage.positionManagerStorage().virtualShareOffset;
+  }
+
+  /// @inheritdoc IPositionManager
+  function config() public view returns (uint256 ltv, address transferGuard) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    lltv = _storage.lltv;
-    maxRebalanceLoss = _storage.maxRebalanceLoss;
+    ltv = _storage.ltv;
     transferGuard = _storage.transferGuard;
+  }
+
+  /// @inheritdoc IPositionManager
+  function rebalanceConfig()
+    public
+    view
+    returns (uint16 maxRebalanceLoss, uint40 rebalanceCooldown, uint40 lastRebalanceTimestamp)
+  {
+    RebalanceConfig storage rc = LibStorage.positionManagerStorage().rebalanceConfig;
+    maxRebalanceLoss = rc.maxRebalanceLoss;
+    rebalanceCooldown = rc.rebalanceCooldown;
+    lastRebalanceTimestamp = rc.lastRebalanceTimestamp;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

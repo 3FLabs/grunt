@@ -36,7 +36,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
 
     // Set max rebalance loss to allow some flexibility
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(1000); // 10%
+    positionManager.setRebalanceConfig(1000, 0); // 10% loss, no cooldown
 
     // Label contract
     vm.label(address(morphoRebalancer), "MorphoRebalancer");
@@ -86,7 +86,7 @@ contract MorphoRebalancerTest is PositionManagerBaseTest {
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit MorphoRebalancer.Rebalanced(address(positionManager), debtToMove, 0);
+    emit MorphoRebalancer.MorphoRebalanced(address(positionManager), debtToMove, 0, 0);
     morphoRebalancer.rebalance(positionManager, data, owner);
   }
 

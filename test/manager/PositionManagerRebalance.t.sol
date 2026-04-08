@@ -9,6 +9,7 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {IPositionManagerAdmin} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {IPositionManagerRebalancing} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerRebalanceTest
@@ -64,6 +65,68 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     // Check balances moved
     assertApproxEqRel(borrowPosition1.totalCollateral(), collateralToMove, 0.01e18);
     assertApproxEqRel(borrowPosition2.totalCollateral(), collateralToMove, 0.01e18);
+  }
+
+  function test_rebalance_emitsRebalancedEvent() public {
+    // Setup: deposit collateral and borrow in position 1
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Rebalance: move half to position 2
+    uint256 collateralToMove = COLLATERAL_AMOUNT / 2;
+    uint256 debtToMove = DEBT_AMOUNT / 2;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](4);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: debtToMove
+    });
+    ops[1] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToMove
+    });
+    ops[2] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: collateralToMove
+    });
+    ops[3] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: debtToMove
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
+
+    _mintDebt(rebalancer, debtToMove);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), debtToMove);
+
+    vm.expectEmit(true, false, false, true);
+    emit IPositionManagerRebalancing.Rebalanced(rebalancer, 0, debtToMove, 0, debtToMove);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_emitsRebalancedEventWithExcess() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Provide more collateral than needed — only supply half
+    uint256 excessCollateral = 1000e18;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: excessCollateral / 2
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: excessCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, excessCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), excessCollateral);
+
+    vm.expectEmit(true, false, false, true);
+    emit IPositionManagerRebalancing.Rebalanced(rebalancer, excessCollateral, 0, excessCollateral / 2, 0);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
   }
 
   function test_rebalance_accruesFeesAndUpdatesSnapshot() public {
@@ -160,28 +223,41 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
   /*                MAX REBALANCE LOSS TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setMaxRebalanceLoss() public {
+  function test_setRebalanceConfig_maxLoss() public {
     uint16 maxLoss = 100; // 1%
 
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(maxLoss);
+    positionManager.setRebalanceConfig(maxLoss, 0);
 
     assertEq(_maxRebalanceLoss(), maxLoss, "Max rebalance loss should be set");
   }
 
-  function test_setMaxRebalanceLoss_emitsEvent() public {
+  function test_setRebalanceConfig_emitsEvent() public {
     uint16 maxLoss = 100; // 1%
+    uint40 cooldown = 1 hours;
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit IPositionManagerAdmin.MaxRebalanceLossSet(maxLoss);
-    positionManager.setMaxRebalanceLoss(maxLoss);
+    emit IPositionManagerAdmin.RebalanceConfigSet(maxLoss, cooldown);
+    positionManager.setRebalanceConfig(maxLoss, cooldown);
   }
 
-  function test_setMaxRebalanceLoss_onlyOwner() public {
+  function test_setRebalanceConfig_onlyOwner() public {
     vm.prank(minter);
     vm.expectRevert();
-    positionManager.setMaxRebalanceLoss(100);
+    positionManager.setRebalanceConfig(100, 0);
+  }
+
+  function test_setRebalanceConfig_revertWhenMaxLossExceedsMax() public {
+    vm.prank(owner);
+    vm.expectRevert(LibManagerErrors.MaxRebalanceLossExceedsMax.selector);
+    positionManager.setRebalanceConfig(1001, 0); // 10.01% > 10% cap
+  }
+
+  function test_setRebalanceConfig_allowsExactMax() public {
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(1000, 0); // 10% = cap
+    assertEq(_maxRebalanceLoss(), 1000, "Max rebalance loss should be set to cap");
   }
 
   function test_rebalance_revertOnExcessiveLoss() public {
@@ -192,7 +268,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Set max rebalance loss to 1% (100 BPS)
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(100);
+    positionManager.setRebalanceConfig(100, 0);
 
     // Try to withdraw 5% of collateral (causing 5% loss in totalAssets)
     uint256 collateralToWithdraw = COLLATERAL_AMOUNT * 5 / 100;
@@ -217,7 +293,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Set max rebalance loss to 5% (500 BPS)
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(500);
+    positionManager.setRebalanceConfig(500, 0);
 
     // Withdraw 4% of collateral (within 5% threshold)
     uint256 collateralToWithdraw = COLLATERAL_AMOUNT * 4 / 100;
@@ -247,7 +323,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Set max rebalance loss to exactly 5% (500 BPS)
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(500);
+    positionManager.setRebalanceConfig(500, 0);
 
     // Withdraw exactly 5% of collateral (at the exact threshold)
     uint256 collateralToWithdraw = COLLATERAL_AMOUNT * 5 / 100;
@@ -272,7 +348,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Set max rebalance loss to 0 (no loss allowed)
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(0);
+    positionManager.setRebalanceConfig(0, 0);
 
     // Supply more collateral (increases totalAssets)
     uint256 additionalCollateral = 1000e18;
@@ -304,7 +380,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Set max rebalance loss to 0 (no loss allowed)
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(0);
+    positionManager.setRebalanceConfig(0, 0);
 
     // Try to withdraw even 1 wei (should revert)
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);
@@ -325,7 +401,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
   function testFuzz_rebalance_lossThresholdEnforced(uint16 maxLossPercent, uint8 actualLossPercent) public {
     // Bound inputs
-    maxLossPercent = uint16(bound(maxLossPercent, 0, 10000)); // 0-100%
+    maxLossPercent = uint16(bound(maxLossPercent, 0, 1000)); // 0-10% (capped by MAX_REBALANCE_LOSS)
     actualLossPercent = uint8(bound(actualLossPercent, 1, 99)); // 1-99%
 
     // Setup: deposit collateral
@@ -335,7 +411,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Set max rebalance loss
     vm.prank(owner);
-    positionManager.setMaxRebalanceLoss(maxLossPercent);
+    positionManager.setRebalanceConfig(maxLossPercent, 0);
 
     // Calculate collateral to withdraw based on actual loss percent
     uint256 collateralToWithdraw = COLLATERAL_AMOUNT * actualLossPercent / 100;
@@ -522,6 +598,217 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
 
     // Should always revert for unauthorized positions
     vm.expectRevert(LibManagerErrors.UnauthorizedPosition.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              REBALANCE COOLDOWN TESTS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setRebalanceConfig_cooldown() public {
+    uint40 cooldown = 1 hours;
+
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(0, cooldown);
+
+    assertEq(_rebalanceCooldown(), cooldown, "Rebalance cooldown should be set");
+  }
+
+  function test_rebalanceCooldown_defaultIsZero() public view {
+    assertEq(_rebalanceCooldown(), 0, "Default rebalance cooldown should be 0");
+  }
+
+  function test_rebalance_revertOnCooldownNotElapsed() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown to 1 hour
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(0, uint40(1 hours));
+
+    // First rebalance: supply some collateral (should succeed)
+    uint256 additionalCollateral = 1000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Second rebalance immediately: should revert
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+    data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    vm.expectRevert(LibManagerErrors.RebalanceCooldownNotElapsed.selector);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+  }
+
+  function test_rebalance_succeedsAfterCooldownElapsed() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown to 1 hour
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(0, uint40(1 hours));
+
+    // First rebalance
+    uint256 additionalCollateral = 1000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Advance time past cooldown
+    vm.warp(block.timestamp + 1 hours + 1);
+
+    // Second rebalance should succeed
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+    data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    assertEq(
+      borrowPosition1.totalCollateral(),
+      COLLATERAL_AMOUNT + additionalCollateral * 2,
+      "Both supplies should have gone through"
+    );
+  }
+
+  function test_rebalance_noCooldownByDefault() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Perform two consecutive rebalances with no cooldown set (default 0)
+    uint256 additionalCollateral = 500e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+
+    for (uint256 i = 0; i < 2; i++) {
+      ops[0] = RebalancingOperation({
+        position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+      });
+      RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+      _mintCollateral(rebalancer, additionalCollateral);
+      vm.startPrank(rebalancer);
+      collateralToken.approve(address(positionManager), additionalCollateral);
+      positionManager.rebalance(data, rebalancer);
+      vm.stopPrank();
+    }
+
+    assertEq(
+      borrowPosition1.totalCollateral(),
+      COLLATERAL_AMOUNT + additionalCollateral * 2,
+      "Both supplies should succeed with no cooldown"
+    );
+  }
+
+  function test_rebalance_cooldownDisabledAfterSetting() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown, then disable it
+    vm.startPrank(owner);
+    positionManager.setRebalanceConfig(0, uint40(1 hours));
+    positionManager.setRebalanceConfig(0, 0);
+    vm.stopPrank();
+
+    // Perform two consecutive rebalances
+    uint256 additionalCollateral = 500e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+
+    for (uint256 i = 0; i < 2; i++) {
+      ops[0] = RebalancingOperation({
+        position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+      });
+      RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+      _mintCollateral(rebalancer, additionalCollateral);
+      vm.startPrank(rebalancer);
+      collateralToken.approve(address(positionManager), additionalCollateral);
+      positionManager.rebalance(data, rebalancer);
+      vm.stopPrank();
+    }
+
+    assertEq(
+      borrowPosition1.totalCollateral(),
+      COLLATERAL_AMOUNT + additionalCollateral * 2,
+      "Both supplies should succeed after cooldown disabled"
+    );
+  }
+
+  function test_rebalance_revertAtExactCooldownBoundary() public {
+    // Setup: deposit collateral
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    // Set cooldown to 1 hour
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(0, uint40(1 hours));
+
+    // First rebalance
+    uint256 additionalCollateral = 1000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Advance time to exactly 1 second before cooldown expires
+    vm.warp(block.timestamp + 1 hours - 1);
+
+    // Should still revert
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.SUPPLY, amount: additionalCollateral
+    });
+    data = RebalancingData({collateral: additionalCollateral, debt: 0, operations: ops});
+
+    _mintCollateral(rebalancer, additionalCollateral);
+    vm.startPrank(rebalancer);
+    collateralToken.approve(address(positionManager), additionalCollateral);
+    vm.expectRevert(LibManagerErrors.RebalanceCooldownNotElapsed.selector);
     positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
   }

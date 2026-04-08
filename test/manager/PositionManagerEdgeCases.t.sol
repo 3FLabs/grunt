@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerEdgeCasesTest
@@ -116,7 +117,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Attacker burns all their shares
     _mintDebt(attacker, 1e18); // In case any debt was accrued
     vm.prank(attacker);
-    (uint256 attackerCollateralBack,) = positionManager.burn(attackerSharesBefore);
+    (uint256 attackerCollateralBack,) = positionManager.burn(attackerSharesBefore, WithdrawalStrategy.PROPORTIONAL);
 
     // Attacker should get back approximately what they deposited (1 wei), not the donation
     // Due to virtual offset, attacker's profit is bounded
@@ -178,7 +179,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Immediately burn all shares
     _mintDebt(minter, depositDebt * 2); // Extra for any rounding
     vm.prank(minter);
-    (uint256 collateralBack, uint256 debtToPay) = positionManager.burn(sharesUint);
+    (uint256 collateralBack, uint256 debtToPay) = positionManager.burn(sharesUint, WithdrawalStrategy.PROPORTIONAL);
 
     // Should get back almost all collateral (minus tiny rounding)
     // Allow 0.01% loss for rounding
@@ -251,7 +252,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     // Now each burns their shares - should get back fair amounts
     for (uint256 i = 0; i < 5; i++) {
       vm.prank(depositors[i]);
-      (uint256 collateralBack,) = positionManager.burn(shares[i]);
+      (uint256 collateralBack,) = positionManager.burn(shares[i], WithdrawalStrategy.PROPORTIONAL);
 
       // Should get back close to what they deposited
       assertApproxEqRel(collateralBack, depositAmount, 0.05e18, "Should get back ~100% of deposit");
@@ -273,7 +274,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     uint256 sharesUint = uint256(shares);
 
     vm.prank(minter);
-    (uint256 collateralBack,) = positionManager.burn(sharesUint);
+    (uint256 collateralBack,) = positionManager.burn(sharesUint, WithdrawalStrategy.PROPORTIONAL);
 
     // Should get back at least 99.99% of deposit (0.01% max loss to rounding)
     assertGe(collateralBack, depositAmount * 9999 / 10000, "Should preserve at least 99.99% of value");
@@ -286,11 +287,11 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
   /*                    ZERO SHARES TESTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Test ZeroShares revert when minting results in 0 shares due to donation attack
-  /// @dev Covers line 325: if (sharesToMint == 0) revert ZeroShares()
-  /// By donating assets directly to inflate totalAssets without minting shares,
-  /// a tiny deposit can result in 0 shares due to rounding.
-  function test_deposit_revertOnZeroSharesAfterDonation() public {
+  /// @notice After a donation inflates totalAssets, a tiny deposit yields 0 shares (micro-donation)
+  /// @dev By donating assets directly to inflate totalAssets without minting shares,
+  /// a tiny deposit results in 0 shares due to rounding. The deposit succeeds but
+  /// the caller gets no shares.
+  function test_deposit_zeroSharesAfterDonation() public {
     // Step 1: Initial small deposit to establish some shares
     uint256 initialDeposit = 1e6; // Small deposit
     _mintCollateral(minter, initialDeposit);
@@ -299,6 +300,7 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
 
     uint256 totalSupplyBefore = positionManager.totalSupply();
     uint256 totalAssetsBefore = positionManager.totalAssets();
+    uint256 sharesBefore = positionManager.balanceOf(minter);
 
     // Step 2: Donate massive amount directly to borrow position (bypassing PositionManager)
     // This inflates totalAssets without minting shares
@@ -317,23 +319,27 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
       positionManager.totalAssets(), totalAssetsBefore + donationAmount / 2, "Total assets should have increased"
     );
 
-    // Step 3: Try to deposit just 1 wei - should result in 0 shares and revert
+    // Step 3: Deposit 1 wei — yields 0 shares (micro-donation)
     // shares = 1 * (totalSupply + 1e6) / (totalAssets + 1)
     // With totalAssets ≈ 1e30 and totalSupply ≈ 1e6, shares ≈ 0
     _mintCollateral(minter, 1);
 
     vm.prank(minter);
-    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
-    positionManager.deposit(1, 0);
+    int256 shares = positionManager.deposit(1, 0);
+    assertEq(shares, 0, "Should return 0 shares for dust deposit after donation");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
   }
 
-  /// @notice Test ZeroShares revert when burning results in 0 shares due to donation attack
-  /// @dev Covers line 334: if (sharesToBurn == 0) revert ZeroShares()
-  function test_withdraw_revertOnZeroSharesAfterDonation() public {
+  /// @notice Test that withdrawing 1 wei after donation still burns at least 1 share (roundUp)
+  /// @dev After the roundUp fix for sharesToBurn, a 1-wei withdrawal rounds up to 1 share
+  ///      instead of rounding down to 0. This prevents free (zero-cost) withdrawals.
+  function test_withdraw_burnsOneShareAfterDonation() public {
     // Step 1: Initial deposit with debt
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 sharesBefore = positionManager.balanceOf(minter);
 
     // Step 2: Donate massive amount to inflate totalAssets
     uint256 donationAmount = 1e30;
@@ -345,10 +351,183 @@ contract PositionManagerEdgeCasesTest is PositionManagerBaseTest {
     borrowPosition1.supplyCollateral(donationAmount);
     vm.stopPrank();
 
-    // Step 3: Try to withdraw just 1 wei of collateral
-    // The asset change is tiny relative to totalAssets, so shares calculation rounds to 0
+    // Step 3: Withdraw 1 wei of collateral.
+    // With roundUp, sharesToBurn rounds up to 1 instead of 0, so the withdraw succeeds
+    // and the caller pays at least 1 share for the 1-wei withdrawal.
     vm.prank(minter);
-    vm.expectRevert(LibManagerErrors.ZeroShares.selector);
-    positionManager.withdraw(1, 0);
+    int256 sharesDelta = positionManager.withdraw(1, 0, WithdrawalStrategy.SEQUENTIAL);
+
+    // sharesDelta should be -1 (burned 1 share via roundUp)
+    assertEq(sharesDelta, -1, "Should burn exactly 1 share due to roundUp");
+    assertEq(positionManager.balanceOf(minter), sharesBefore - 1, "Should have 1 less share");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*            SMALL ASSET DELTA (ZeroShares) TESTS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice After oracle appreciation with debt, depositing 1 wei of collateral yields 0 shares
+  ///         because the asset delta is too small relative to the totalAssets/totalSupply ratio.
+  ///         The deposit succeeds (no revert) but the caller gets 0 shares — a micro-donation.
+  function test_deposit_zeroShares_smallCollateralAfterPriceAppreciation() public {
+    // 1. Initial deposit with debt at 1:1 price
+    //    totalAssets = collateral_quoted - debt = 10_000e18 - 5_000e18 = 5_000e18
+    //    totalSupply ≈ 5_000e18
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 totalSupplyBefore = positionManager.totalSupply();
+    uint256 sharesBefore = positionManager.balanceOf(minter);
+
+    // 2. Oracle price doubles
+    //    totalAssets = 10_000e18 * 2 - 5_000e18 = 15_000e18
+    //    totalAssets / totalSupply ≈ 3
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    uint256 totalAssetsAfter = positionManager.totalAssets();
+    assertGt(totalAssetsAfter, totalSupplyBefore * 2, "totalAssets should be > 2x totalSupply");
+
+    // 3. Deposit 1 wei of collateral → asset delta = 2 (1 wei * 2x price)
+    //    convertToShares(2, ~5_000e18, ~15_000e18, 1, false) → rounds to 0
+    //    No revert — sharesDelta returned as 0
+    _mintCollateral(minter, 1);
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(1, 0);
+    assertEq(shares, 0, "Should return 0 shares for dust deposit");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
+  }
+
+  /// @notice A balanced deposit (collateral ≈ debt in value) that results in a tiny positive
+  ///         asset delta due to rounding yields 0 shares without reverting.
+  ///         The caller's collateral and debt are still processed — a micro-donation.
+  function test_deposit_zeroShares_balancedDepositWithDustDelta() public {
+    // 1. Initial deposit to establish the vault
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    uint256 sharesBefore = positionManager.balanceOf(minter);
+
+    // 2. Increase oracle price so totalAssets >> totalSupply
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 100);
+
+    // 3. Balanced deposit: supply collateral and borrow debt of equal value.
+    //    At 100x price, 1 collateral token = 100 debt tokens in value.
+    //    If we deposit 1e18 collateral and borrow 100e18 debt, the net should be ~0.
+    //    But Morpho's rounding can make collateralQuoted - debt = a few wei.
+    //    We intentionally create a 1-wei surplus to show the 0-shares result.
+    uint256 depositCollateral = 1e18;
+    uint256 depositDebt = 100e18 - 1; // Net delta ≈ +1 wei in asset terms
+
+    _mintCollateral(minter, depositCollateral);
+    vm.prank(minter);
+    int256 shares = positionManager.deposit(depositCollateral, depositDebt);
+    assertEq(shares, 0, "Should return 0 shares for balanced dust deposit");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
+  }
+
+  /// @notice After oracle appreciation, repaying 1 wei of debt via withdraw yields 0 shares.
+  ///         The debt is still repaid but the caller gets no new shares — a micro-donation.
+  function test_withdraw_zeroShares_smallDebtRepaymentAfterPriceAppreciation() public {
+    // 1. Initial deposit with debt at 1:1 price
+    //    totalAssets = 10_000e18 - 5_000e18 = 5_000e18, totalSupply ≈ 5_000e18
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 sharesBefore = positionManager.balanceOf(minter);
+
+    // 2. Oracle price doubles → totalAssets ≈ 15_000e18, totalSupply ≈ 5_000e18 (ratio ≈ 3)
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+
+    // 3. Repay 1 wei of debt → totalAssets increases by 1 wei
+    //    Since assets increased, _settleShares uses the minting branch (roundDown)
+    //    convertToShares(1, ~5_000e18, ~15_000e18, 1, false) → rounds to 0
+    //    No revert — sharesDelta returned as 0
+    vm.prank(minter);
+    int256 shares = positionManager.withdraw(0, 1, WithdrawalStrategy.SEQUENTIAL);
+    assertEq(shares, 0, "Should return 0 shares for dust debt repayment");
+    assertEq(positionManager.balanceOf(minter), sharesBefore, "Balance should be unchanged");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*       DIRECT MORPHO DONATION ATTACK TESTS       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Burn with virtual share offset prevents full extraction of donated collateral.
+  /// @dev An attacker donates collateral directly via Morpho.supplyCollateral() to inflate
+  ///      totalAssets. The fix ensures virtual shares absorb their proportional fraction so
+  ///      the burner cannot reclaim 100% of the inflated collateral.
+  function test_burn_virtualShareOffset_absorbsDonatedCollateral() public {
+    // Step 1: Normal deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    int256 sharesDelta = positionManager.deposit(COLLATERAL_AMOUNT, 0);
+    uint256 shares = uint256(sharesDelta);
+
+    // Step 2: Donate collateral directly through Morpho (bypassing the PM)
+    uint256 donationAmount = 1_000e18;
+    address attacker = makeAddr("attacker");
+    collateralToken.setBalance(attacker, donationAmount);
+    vm.startPrank(attacker);
+    collateralToken.approve(address(morpho), donationAmount);
+    morpho.supplyCollateral(marketParams1, donationAmount, address(borrowPosition1), "");
+    vm.stopPrank();
+
+    // Verify totalCollateral increased
+    uint256 totalCollateralAfterDonation = borrowPosition1.totalCollateral();
+    assertEq(totalCollateralAfterDonation, COLLATERAL_AMOUNT + donationAmount, "Collateral should include donation");
+
+    // Step 3: Burn all shares
+    _mintDebt(minter, 1e18); // In case any debt accrued
+    vm.prank(minter);
+    (uint256 collateralBack,) = positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL);
+
+    // Virtual shares should absorb a fraction of collateral, so the burner gets less than 100%
+    assertLt(
+      collateralBack, totalCollateralAfterDonation, "Should not get 100% of collateral - virtual shares hold a portion"
+    );
+
+    // The remaining collateral is locked by virtual shares in the borrow position
+    uint256 remaining = borrowPosition1.totalCollateral();
+    assertGt(remaining, 0, "Virtual shares should retain some collateral in the position");
+  }
+
+  /// @notice After a direct Morpho donation, burn retains the virtual-share fraction in the position.
+  /// @dev With 18-decimal tokens, virtualShareOffset=1, so the locked amount is tiny (proportional
+  ///      to 1/(totalSupply+1)). For tokens with fewer decimals the protection is stronger.
+  ///      This test verifies the invariant: burnAll cannot extract 100% of collateral.
+  function test_burn_directMorphoDonation_virtualSharesRetainFraction() public {
+    // Step 1: Normal deposit
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    int256 sharesDelta = positionManager.deposit(COLLATERAL_AMOUNT, 0);
+    uint256 shares = uint256(sharesDelta);
+
+    // Step 2: Donate directly through Morpho to inflate collateral
+    uint256 donationAmount = 5_000e18;
+    address donor = makeAddr("donor");
+    collateralToken.setBalance(donor, donationAmount);
+    vm.startPrank(donor);
+    collateralToken.approve(address(morpho), donationAmount);
+    morpho.supplyCollateral(marketParams1, donationAmount, address(borrowPosition1), "");
+    vm.stopPrank();
+
+    uint256 totalCollateralBefore = borrowPosition1.totalCollateral();
+
+    // Step 3: Burn all shares
+    vm.prank(minter);
+    (uint256 collateralBack,) = positionManager.burn(shares, WithdrawalStrategy.PROPORTIONAL);
+
+    // Virtual shares retain their fraction: collateralBack < totalCollateral
+    assertLt(collateralBack, totalCollateralBefore, "Burn should not extract 100% - virtual shares retain a fraction");
+
+    // The locked amount equals totalCollateral * virtualShareOffset / (totalSupply + virtualShareOffset)
+    uint256 lockedCollateral = totalCollateralBefore - collateralBack;
+    assertGt(lockedCollateral, 0, "Some collateral must remain locked by virtual shares");
+
+    // Verify the locked collateral is still in the borrow position
+    uint256 remaining = borrowPosition1.totalCollateral();
+    assertEq(remaining, lockedCollateral, "Locked collateral should remain in the position");
   }
 }

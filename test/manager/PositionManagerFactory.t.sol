@@ -31,7 +31,7 @@ contract PositionManagerFactoryTest is Test {
   /*                          CONSTANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  uint256 constant DEFAULT_LLTV = 0.7e18; // 70% LLTV
+  uint256 constant DEFAULT_LTV = 0.7e18; // 70% LTV
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                             */
@@ -42,7 +42,7 @@ contract PositionManagerFactoryTest is Test {
     address indexed owner,
     address indexed collateralAsset,
     address debtAsset,
-    uint256 lltv,
+    uint256 ltv,
     address transferGuard
   );
 
@@ -100,7 +100,7 @@ contract PositionManagerFactoryTest is Test {
       positionManagerOwner,
       address(collateralToken),
       address(debtToken),
-      DEFAULT_LLTV,
+      DEFAULT_LTV,
       address(0)
     );
 
@@ -109,12 +109,13 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Test Position Manager",
         symbol: "TPM",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
-      address(0)
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
     );
   }
 
@@ -124,12 +125,13 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Position Manager 1",
         symbol: "PM1",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
-      address(0)
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
     );
 
     address pm2 = factory.createPositionManager(
@@ -137,12 +139,13 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Position Manager 2",
         symbol: "PM2",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
       0.6e18,
-      address(0)
+      address(0),
+      0,
+      0
     );
 
     assertTrue(pm1 != pm2, "Each deployment should create a unique address");
@@ -159,15 +162,64 @@ contract PositionManagerFactoryTest is Test {
       PositionManagerMetadata({
         name: "Test Position Manager",
         symbol: "TPM",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
-      address(0)
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
     );
 
     assertTrue(positionManager != address(0), "Anyone should be able to create position manager");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  DEPLOYMENT TRACKING TESTS                 */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isPositionManager_returnsTrueForDeployed() public {
+    address pm = factory.createPositionManager(
+      positionManagerOwner,
+      PositionManagerMetadata({
+        name: "Test PM", symbol: "TPM", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
+    );
+    assertTrue(factory.isPositionManager(pm));
+  }
+
+  function test_isPositionManager_returnsFalseForUnknown() public view {
+    assertFalse(factory.isPositionManager(address(0xdead)));
+  }
+
+  function test_isPositionManager_tracksMultipleDeployments() public {
+    address pm1 = factory.createPositionManager(
+      positionManagerOwner,
+      PositionManagerMetadata({
+        name: "PM1", symbol: "PM1", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
+    );
+    address pm2 = factory.createPositionManager(
+      user,
+      PositionManagerMetadata({
+        name: "PM2", symbol: "PM2", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
+    );
+
+    assertTrue(factory.isPositionManager(pm1));
+    assertTrue(factory.isPositionManager(pm2));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -197,27 +249,23 @@ contract PositionManagerFactoryTest is Test {
     address pm1 = factory.createPositionManager(
       positionManagerOwner,
       PositionManagerMetadata({
-        name: "PM1",
-        symbol: "PM1",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: "PM1", symbol: "PM1", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
-      address(0)
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
     );
 
     address pm2 = factory.createPositionManager(
       user,
       PositionManagerMetadata({
-        name: "PM2",
-        symbol: "PM2",
-        decimals: 18,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: "PM2", symbol: "PM2", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
-      DEFAULT_LLTV,
-      address(0)
+      DEFAULT_LTV,
+      address(0),
+      0,
+      0
     );
 
     // Verify both work before upgrade
@@ -244,33 +292,30 @@ contract PositionManagerFactoryTest is Test {
     address owner,
     string memory name,
     string memory symbol,
-    uint8 decimals,
-    uint256 lltv,
+    uint256 ltv,
     address transferGuard
   ) public {
     vm.assume(owner != address(0));
-    lltv = bound(lltv, 1, 1e18); // LLTV must be > 0 and <= 100%
+    ltv = bound(ltv, 1, 1e18); // LTV must be > 0 and <= 100%
 
     address positionManager = factory.createPositionManager(
       owner,
       PositionManagerMetadata({
-        name: name,
-        symbol: symbol,
-        decimals: decimals,
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
+        name: name, symbol: symbol, collateralAsset: address(collateralToken), debtAsset: address(debtToken)
       }),
-      lltv,
-      transferGuard
+      ltv,
+      transferGuard,
+      0,
+      0
     );
 
     PositionManager pm = PositionManager(positionManager);
     assertEq(pm.owner(), owner);
     assertEq(pm.name(), name);
     assertEq(pm.symbol(), symbol);
-    assertEq(pm.decimals(), decimals);
-    (uint256 lltv_,, address transferGuard_) = pm.config();
-    assertEq(lltv_, lltv);
+    assertEq(pm.decimals(), 18);
+    (uint256 ltv_, address transferGuard_) = pm.config();
+    assertEq(ltv_, ltv);
     assertEq(transferGuard_, transferGuard);
   }
 }

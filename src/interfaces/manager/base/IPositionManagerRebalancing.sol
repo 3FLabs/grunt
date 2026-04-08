@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @notice Enumeration of rebalancing operation types that can be performed on borrow positions.
 enum RebalancingOperationType {
@@ -38,6 +38,20 @@ struct RebalancingData {
 /// @notice Interface for rebalancing operations of the PositionManager contract.
 /// @dev Allows redistribution of collateral and debt across borrow positions without minting/burning shares.
 interface IPositionManagerRebalancing {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          EVENTS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Emitted after a successful rebalance with input and excess data.
+  /// @param receiver The address that received excess collateral and debt.
+  /// @param collateralSent The collateral asset amount pulled from the caller.
+  /// @param debtSent The debt asset amount pulled from the caller.
+  /// @param collateralExcess The excess collateral asset returned to the receiver.
+  /// @param debtExcess The excess debt asset returned to the receiver.
+  event Rebalanced(
+    address indexed receiver, uint256 collateralSent, uint256 debtSent, uint256 collateralExcess, uint256 debtExcess
+  );
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       REBALANCING                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

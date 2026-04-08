@@ -14,6 +14,7 @@ import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {MathLib} from "lib/morpho-blue/src/libraries/MathLib.sol";
 import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title MorphoBorrowPositionTest
 /// @notice Comprehensive test suite for MorphoBorrowPosition contract
@@ -21,6 +22,7 @@ contract MorphoBorrowPositionTest is Test {
   using MarketParamsLib for MarketParams;
   using MathLib for uint256;
   using SharesMathLib for uint256;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
@@ -69,16 +71,20 @@ contract MorphoBorrowPositionTest is Test {
 
   // MorphoBorrowPosition errors
   error AddressZero();
+  error InvalidContract(address addr);
   error InvalidMarketId(Id marketId);
   error MarketNotCreated();
   error AmountZero();
   error InsufficientCollateral();
   error PositionHealthy();
-  error InvalidLltv();
+  error InvalidLtv();
   error LiquidationLtvExceedsMarketLltv(uint128 liquidationLtv, uint256 marketLltv);
   error SafeLtvNotLessThanLiquidationLtv(uint128 safeLtv, uint128 liquidationLtv);
   error InconsistentInput();
+  error InvalidBorrower();
+  error AssetMismatch(address expected, address actual);
   error NotMorpho();
+  error InsufficientLiquidity();
 
   // Solady Initializable errors
   error InvalidInitialization();
@@ -135,10 +141,14 @@ contract MorphoBorrowPositionTest is Test {
     morpho.createMarket(marketParams);
     marketId = marketParams.id();
 
+    // Mock PositionManager.assets() to return expected collateral and debt assets
+    vm.mockCall(
+      positionManager, abi.encodeWithSignature("assets()"), abi.encode(address(collateralToken), address(loanToken))
+    );
+
     // Deploy factory and create MorphoBorrowPosition via factory (using beacon proxy)
-    factory = new MorphoBorrowPositionFactory(owner);
-    address borrowPositionAddress =
-      factory.createBorrowPosition(morpho, marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    factory = new MorphoBorrowPositionFactory(owner, morpho);
+    address borrowPositionAddress = factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
     borrowPosition = MorphoBorrowPosition(borrowPositionAddress);
 
     // Setup approvals for position manager
@@ -189,157 +199,194 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*               FACTORY DEPLOYMENT TRACKING TESTS             */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_isBorrowPosition_returnsTrueForDeployed() public view {
+    assertTrue(factory.isBorrowPosition(address(borrowPosition)));
+  }
+
+  function test_isBorrowPosition_returnsFalseForUnknown() public view {
+    assertFalse(factory.isBorrowPosition(address(0xdead)));
+  }
+
+  function test_isBorrowPosition_tracksMultipleDeployments() public {
+    address bp2 = factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+
+    assertTrue(factory.isBorrowPosition(address(borrowPosition)));
+    assertTrue(factory.isBorrowPosition(bp2));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   INITIALIZATION TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_initialize_Success() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
     assertEq(address(newPosition.borrowAsset()), address(loanToken), "Borrow asset mismatch");
     assertEq(address(newPosition.collateralAsset()), address(collateralToken), "Collateral asset mismatch");
     assertEq(Id.unwrap(newPosition.marketId()), Id.unwrap(marketId), "Market ID mismatch");
     assertEq(newPosition.owner(), positionManager, "Owner not set correctly");
-    (uint128 posLtv, uint128 liqLtv) = newPosition.ltvs();
-    assertEq(posLtv, SAFE_LTV, "Safe LTV mismatch");
-    assertEq(liqLtv, LIQUIDATION_LTV, "Liquidation LTV mismatch");
+    assertEq(newPosition.safeLtv(), SAFE_LTV, "Safe LTV mismatch");
+    assertEq(newPosition.liquidationLtv(), LIQUIDATION_LTV, "Liquidation LTV mismatch");
   }
 
-  function test_initialize_RevertWhen_MorphoIsZero() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-
-    vm.expectRevert(AddressZero.selector);
-    newPosition.initialize(IMorpho(address(0)), marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+  function test_constructor_RevertWhen_MorphoIsZero() public {
+    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0)));
+    new MorphoBorrowPosition(IMorpho(address(0)));
   }
 
   function test_initialize_RevertWhen_MarketIdIsZero() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
     Id zeroMarketId = Id.wrap(bytes32(0));
 
     vm.expectRevert(abi.encodeWithSelector(InvalidMarketId.selector, zeroMarketId));
-    newPosition.initialize(morpho, zeroMarketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    newPosition.initialize(zeroMarketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
   }
 
   function test_initialize_RevertWhen_MarketNotCreated() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
     // Create a non-existent market ID
     Id fakeMarketId = Id.wrap(keccak256("nonexistent"));
 
     vm.expectRevert(MarketNotCreated.selector);
-    newPosition.initialize(morpho, fakeMarketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    newPosition.initialize(fakeMarketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
   }
 
   function test_initialize_CanOnlyBeCalledOnce() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
     vm.expectRevert(InvalidInitialization.selector);
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
   }
 
   function test_initialize_SetsMarketParams() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
     assertEq(newPosition.borrowAsset(), marketParams.loanToken, "Loan token mismatch");
     assertEq(newPosition.collateralAsset(), marketParams.collateralToken, "Collateral token mismatch");
   }
 
   function test_initialize_RevertWhen_LiquidationLtvIsZero() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
-    vm.expectRevert(InvalidLltv.selector);
-    newPosition.initialize(morpho, marketId, positionManager, 0, 0);
+    vm.expectRevert(InvalidLtv.selector);
+    newPosition.initialize(marketId, positionManager, 0, 0);
   }
 
   function test_initialize_RevertWhen_SafeLtvIsZero() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
-    vm.expectRevert(InvalidLltv.selector);
-    newPosition.initialize(morpho, marketId, positionManager, 0, LIQUIDATION_LTV);
+    vm.expectRevert(InvalidLtv.selector);
+    newPosition.initialize(marketId, positionManager, 0, LIQUIDATION_LTV);
   }
 
   function test_initialize_RevertWhen_LiquidationLtvExceedsWad() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
-    vm.expectRevert(InvalidLltv.selector);
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, uint128(1e18 + 1));
+    vm.expectRevert(InvalidLtv.selector);
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, uint128(1e18 + 1));
   }
 
   function test_initialize_RevertWhen_SafeLtvNotLessThanLiquidationLtv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
     // Safe LTV equal to liquidation LTV should revert
     vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, LIQUIDATION_LTV, LIQUIDATION_LTV));
-    newPosition.initialize(morpho, marketId, positionManager, LIQUIDATION_LTV, LIQUIDATION_LTV);
+    newPosition.initialize(marketId, positionManager, LIQUIDATION_LTV, LIQUIDATION_LTV);
   }
 
   function test_initialize_RevertWhen_SafeLtvGreaterThanLiquidationLtv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
     // Safe LTV greater than liquidation LTV should revert
     uint128 higherSafeLtv = LIQUIDATION_LTV + 1;
     vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, higherSafeLtv, LIQUIDATION_LTV));
-    newPosition.initialize(morpho, marketId, positionManager, higherSafeLtv, LIQUIDATION_LTV);
+    newPosition.initialize(marketId, positionManager, higherSafeLtv, LIQUIDATION_LTV);
   }
 
   function test_initialize_AcceptsMarketLltv() public {
     // Liquidation LTV can be at most equal to market LLTV
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
     uint128 posLtv = uint128(DEFAULT_LLTV) - 1;
-    newPosition.initialize(morpho, marketId, positionManager, posLtv, uint128(DEFAULT_LLTV));
-    (uint128 storedPosLtv, uint128 storedLiqLtv) = newPosition.ltvs();
-    assertEq(storedPosLtv, posLtv, "Safe LTV should be set correctly");
-    assertEq(storedLiqLtv, uint128(DEFAULT_LLTV), "Liquidation LTV should equal market LLTV");
+    newPosition.initialize(marketId, positionManager, posLtv, uint128(DEFAULT_LLTV));
+    assertEq(newPosition.safeLtv(), posLtv, "Safe LTV should be set correctly");
+    assertEq(newPosition.liquidationLtv(), uint128(DEFAULT_LLTV), "Liquidation LTV should equal market LLTV");
   }
 
   function test_initialize_RevertWhen_LiquidationLtvExceedsMarketLltv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
     // Try to set liquidation LTV higher than market LLTV
     uint128 exceedingLltv = uint128(DEFAULT_LLTV) + 1;
     vm.expectRevert(abi.encodeWithSelector(LiquidationLtvExceedsMarketLltv.selector, exceedingLltv, DEFAULT_LLTV));
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, exceedingLltv);
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, exceedingLltv);
   }
 
   function test_initialize_RevertWhen_LiquidationLtvIsWadButMarketLltvIsLower() public {
     // This test verifies that even WAD (100%) is rejected if market LLTV is lower
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
     vm.expectRevert(abi.encodeWithSelector(LiquidationLtvExceedsMarketLltv.selector, 1e18, DEFAULT_LLTV));
-    newPosition.initialize(morpho, marketId, positionManager, SAFE_LTV, uint128(1e18));
+    newPosition.initialize(marketId, positionManager, SAFE_LTV, uint128(1e18));
   }
 
   function test_initialize_AcceptsLtvsBelowMarketLltv() public {
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
     uint128 lowerSafeLtv = uint128(DEFAULT_LLTV / 4);
     uint128 lowerLiquidationLtv = uint128(DEFAULT_LLTV / 2);
-    newPosition.initialize(morpho, marketId, positionManager, lowerSafeLtv, lowerLiquidationLtv);
-    (uint128 storedPosLtv, uint128 storedLiqLtv) = newPosition.ltvs();
-    assertEq(storedPosLtv, lowerSafeLtv, "Safe LTV should be set to lower value");
-    assertEq(storedLiqLtv, lowerLiquidationLtv, "Liquidation LTV should be set to lower value");
+    newPosition.initialize(marketId, positionManager, lowerSafeLtv, lowerLiquidationLtv);
+    assertEq(newPosition.safeLtv(), lowerSafeLtv, "Safe LTV should be set to lower value");
+    assertEq(newPosition.liquidationLtv(), lowerLiquidationLtv, "Liquidation LTV should be set to lower value");
   }
 
   function testFuzz_initialize_LtvValidation(uint128 safeLtv_, uint128 liquidationLtv_) public {
     safeLtv_ = uint128(bound(safeLtv_, 1, uint128(1e18) - 1));
     liquidationLtv_ = uint128(bound(liquidationLtv_, 1, 1e18));
 
-    MorphoBorrowPosition newPosition = new MorphoBorrowPosition();
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
 
     if (safeLtv_ >= liquidationLtv_) {
       vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, safeLtv_, liquidationLtv_));
-      newPosition.initialize(morpho, marketId, positionManager, safeLtv_, liquidationLtv_);
+      newPosition.initialize(marketId, positionManager, safeLtv_, liquidationLtv_);
     } else if (liquidationLtv_ > DEFAULT_LLTV) {
       vm.expectRevert(abi.encodeWithSelector(LiquidationLtvExceedsMarketLltv.selector, liquidationLtv_, DEFAULT_LLTV));
-      newPosition.initialize(morpho, marketId, positionManager, safeLtv_, liquidationLtv_);
+      newPosition.initialize(marketId, positionManager, safeLtv_, liquidationLtv_);
     } else {
-      newPosition.initialize(morpho, marketId, positionManager, safeLtv_, liquidationLtv_);
-      (uint128 storedPosLtv, uint128 storedLiqLtv) = newPosition.ltvs();
-      assertEq(storedPosLtv, safeLtv_, "Safe LTV should be set correctly");
-      assertEq(storedLiqLtv, liquidationLtv_, "Liquidation LTV should be set correctly");
+      newPosition.initialize(marketId, positionManager, safeLtv_, liquidationLtv_);
+      assertEq(newPosition.safeLtv(), safeLtv_, "Safe LTV should be set correctly");
+      assertEq(newPosition.liquidationLtv(), liquidationLtv_, "Liquidation LTV should be set correctly");
     }
+  }
+
+  function test_initialize_RevertWhen_CollateralAssetMismatch() public {
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+
+    // Mock PositionManager.assets() to return a different collateral token
+    address wrongCollateral = makeAddr("wrongCollateral");
+    address mockPM = makeAddr("mockPM");
+    vm.mockCall(mockPM, abi.encodeWithSignature("assets()"), abi.encode(wrongCollateral, address(loanToken)));
+
+    vm.expectRevert(abi.encodeWithSelector(AssetMismatch.selector, wrongCollateral, address(collateralToken)));
+    newPosition.initialize(marketId, mockPM, SAFE_LTV, LIQUIDATION_LTV);
+  }
+
+  function test_initialize_RevertWhen_DebtAssetMismatch() public {
+    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+
+    // Mock PositionManager.assets() to return a different loan token
+    address wrongDebt = makeAddr("wrongDebt");
+    address mockPM = makeAddr("mockPM2");
+    vm.mockCall(mockPM, abi.encodeWithSignature("assets()"), abi.encode(address(collateralToken), wrongDebt));
+
+    vm.expectRevert(abi.encodeWithSelector(AssetMismatch.selector, wrongDebt, address(loanToken)));
+    newPosition.initialize(marketId, mockPM, SAFE_LTV, LIQUIDATION_LTV);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -846,6 +893,63 @@ contract MorphoBorrowPositionTest is Test {
     vm.prank(positionManager);
     vm.expectRevert(TransferFromFailed.selector);
     borrowPosition.repay(borrowAmount);
+  }
+
+  /// @notice repay(totalBorrowed()) must not revert after interest accrues. Interest
+  ///         creates a non-trivial share rate where toSharesDown(toAssetsUp(bs)) > bs
+  ///         would cause underflow. totalBorrowed() uses toAssetsDown so the round-trip
+  ///         toSharesDown(toAssetsDown(bs)) <= bs, avoiding the overflow.
+  function test_repay_TotalBorrowedDoesNotRevertAfterInterestAccrual() public {
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+    borrowPosition.borrow(LOAN_AMOUNT / 2);
+    vm.stopPrank();
+
+    // Advance time to accrue interest and create a non-trivial share rate
+    vm.warp(block.timestamp + 365 days);
+
+    uint256 totalBorrowed = borrowPosition.totalBorrowed();
+    assertGt(totalBorrowed, LOAN_AMOUNT / 2, "Interest should have accrued");
+
+    loanToken.setBalance(positionManager, totalBorrowed);
+    vm.startPrank(positionManager);
+    loanToken.approve(address(borrowPosition), totalBorrowed);
+    borrowPosition.repay(totalBorrowed);
+    vm.stopPrank();
+
+    // toAssetsDown may leave at most 1 dust share; its asset value rounds to 0
+    assertLe(borrowPosition.totalBorrowed(), 1, "Debt should be fully or near-fully repaid");
+  }
+
+  /// @notice Fuzz: repay(totalBorrowed()) never reverts across borrow amounts and time periods.
+  function testFuzz_repay_TotalBorrowedDoesNotRevert(uint256 borrowAmount, uint256 timePassed) public {
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, LOAN_AMOUNT / 2);
+    timePassed = bound(timePassed, 1 days, 365 days);
+
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    // Advance time to accrue interest
+    vm.warp(block.timestamp + timePassed);
+
+    uint256 totalBorrowed = borrowPosition.totalBorrowed();
+
+    loanToken.setBalance(positionManager, totalBorrowed);
+    vm.startPrank(positionManager);
+    loanToken.approve(address(borrowPosition), totalBorrowed);
+    borrowPosition.repay(totalBorrowed);
+    vm.stopPrank();
+
+    // toAssetsDown may leave at most 1 dust share; its asset value rounds to 0
+    assertLe(borrowPosition.totalBorrowed(), 1, "Debt should be fully or near-fully repaid");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1375,6 +1479,61 @@ contract MorphoBorrowPositionTest is Test {
     }
   }
 
+  /// @notice Borrowing maxBorrow(ltv) must not revert. _maxBorrow computes in share space
+  ///         to match Morpho's toSharesUp → toAssetsUp round-trip.
+  function test_maxBorrow_BorrowMaxDoesNotRevertHealthCheck() public {
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Create a non-trivial share rate by borrowing and repaying
+    borrowPosition.borrow(1_000e18);
+    vm.stopPrank();
+
+    // Now borrow the remaining max
+    uint256 maxBorrowable = borrowPosition.maxBorrow(SAFE_LTV);
+    if (maxBorrowable > 0) {
+      vm.prank(positionManager);
+      borrowPosition.borrow(maxBorrowable);
+      assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after borrowing maxBorrow");
+    }
+  }
+
+  /// @notice Fuzz: borrowing maxBorrow(ltv) never reverts across a range of parameters.
+  function testFuzz_maxBorrow_BorrowMaxDoesNotRevertHealthCheck(
+    uint256 collateralAmount,
+    uint256 existingBorrowFraction,
+    uint256 ltv
+  ) public {
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    existingBorrowFraction = bound(existingBorrowFraction, 0, 90);
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Optionally create an existing borrow to set up a non-trivial share rate
+    uint256 initialMax = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 existingBorrow = (initialMax * existingBorrowFraction) / 100;
+    if (existingBorrow > 0) {
+      borrowPosition.borrow(existingBorrow);
+    }
+    vm.stopPrank();
+
+    uint256 maxBorrowable = borrowPosition.maxBorrow(ltv);
+    if (maxBorrowable == 0) return;
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxBorrowable);
+
+    assertTrue(borrowPosition.isHealthy(ltv), "Position must be healthy after borrowing maxBorrow");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    MORPHO VIEW TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -1719,6 +1878,11 @@ contract MorphoBorrowPositionTest is Test {
     vm.expectRevert(PositionHealthy.selector);
     borrowPosition.preLiquidate(address(borrowPosition), collateralAmount / 2, 0, "");
     vm.stopPrank();
+  }
+
+  function test_preLiquidate_RevertWhen_BorrowerIsNotSelf() public {
+    vm.expectRevert(InvalidBorrower.selector);
+    borrowPosition.preLiquidate(address(0xdead), 1, 0, "");
   }
 
   function test_preLiquidate_RevertWhen_BothAmountsAreZero() public {
@@ -2312,5 +2476,1050 @@ contract MorphoBorrowPositionTest is Test {
     uint256 theoreticalFree = collateral - theoreticalRequired;
 
     assertLe(freeCollat, theoreticalFree + 1, "Available collateral should be conservatively rounded");
+  }
+
+  /// @notice Withdrawing availableCollateral(ltv) must not revert on the subsequent
+  ///         _isHealthy check. _requiredCollateral must use two sequential ceilings to
+  ///         properly invert _isHealthy's two sequential floors.
+  function test_AvailableCollateral_WithdrawMaxDoesNotRevertHealthCheck() public {
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Borrow 95% of max at SAFE_LTV to create a tight health boundary
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 borrowAmount = (maxBorrow * 95) / 100;
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    uint256 available = borrowPosition.availableCollateral(SAFE_LTV);
+
+    // Withdraw the full available amount — must not revert
+    vm.prank(positionManager);
+    borrowPosition.withdrawCollateral(available);
+
+    assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after withdrawing availableCollateral");
+    assertEq(borrowPosition.totalCollateral(), COLLATERAL_AMOUNT - available, "Collateral properly reduced");
+  }
+
+  /// @notice Fuzz: withdrawing availableCollateral(SAFE_LTV) never reverts across a range
+  ///         of borrow fractions and oracle prices.
+  function testFuzz_AvailableCollateral_WithdrawMaxDoesNotRevertHealthCheck(uint256 borrowFraction, uint256 pricePct)
+    public
+  {
+    // Borrow between 50% and 99% of max at SAFE_LTV
+    borrowFraction = bound(borrowFraction, 50, 99);
+    // Oracle price between 90% and 110% of default
+    pricePct = bound(pricePct, 90, 110);
+
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 borrowAmount = (maxBorrow * borrowFraction) / 100;
+    if (borrowAmount == 0) borrowAmount = 1;
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    // Shift oracle price
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * pricePct) / 100);
+
+    uint256 available = borrowPosition.availableCollateral(SAFE_LTV);
+    if (available == 0) return;
+
+    // Withdraw the full available amount — must not revert
+    vm.prank(positionManager);
+    borrowPosition.withdrawCollateral(available);
+
+    assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after withdrawing availableCollateral");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              PRE-LIQUIDATION HEALTH CHECK TESTS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  // ── Helpers ────────────────────────────────────────────────────
+
+  /// @dev Sets up an unhealthy position by supplying collateral, borrowing, and dropping the price.
+  ///      Returns (collateralAmount, borrowAmount, borrowShares).
+  function _setupUnhealthyPosition(uint256 priceDrop)
+    internal
+    returns (uint256 collateralAmount, uint256 borrowAmount)
+  {
+    collateralAmount = COLLATERAL_AMOUNT;
+
+    // Supply liquidity
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    // Supply collateral
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow near safe LTV
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    borrowAmount = (maxBorrow * 99) / 100;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    // Drop price to make position unhealthy at liquidation LTV
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * priceDrop) / 100);
+    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be unhealthy at liquidation LTV");
+  }
+
+  /// @dev Sets up a liquidator with loan tokens and approval
+  function _setupLiquidator(address liquidator, uint256 amount) internal {
+    loanToken.setBalance(liquidator, amount);
+    vm.prank(liquidator);
+    loanToken.approve(address(borrowPosition), type(uint256).max);
+  }
+
+  // ── Repaid Shares Can Exceed Borrow Shares ──
+
+  /// @notice Seizing all collateral with rounding-up shares would previously cause
+  ///         repaidShares > borrowShares and revert in Morpho.
+  ///         After fix, repaidShares is capped at borrowShares.
+  function test_preLiquidate_SeizeAllCollateral_SharesCapped() public {
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    // Seize ALL collateral — mulDivUp can round repaidShares above borrowShares
+    // mulDivUp(borrowShares, collateral) with seizedAssets == collateral can round up beyond borrowShares
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), collateralAmount, 0, "");
+
+    assertEq(seized, collateralAmount, "Should seize all collateral");
+    assertGt(repaid, 0, "Should repay some debt");
+
+    // Position should have 0 collateral and 0 debt after full liquidation
+    assertEq(borrowPosition.totalCollateral(), 0, "No collateral should remain");
+    assertEq(borrowPosition.totalBorrowed(), 0, "No debt should remain");
+  }
+
+  /// @notice Tests that seizing collateral with a tiny remainder works after a prior partial liquidation.
+  ///         This covers the "exactly the right amount" edge case.
+  function test_preLiquidate_SeizeRemainingCollateralAfterPartialLiquidation() public {
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    // First partial liquidation: seize most but not all collateral
+    uint256 firstSeize = collateralAmount - 1; // leave 1 wei of collateral
+    vm.prank(liquidator);
+    borrowPosition.preLiquidate(address(borrowPosition), firstSeize, 0, "");
+
+    uint256 remainingCollateral = borrowPosition.totalCollateral();
+    assertEq(remainingCollateral, 1, "Should have 1 wei collateral left");
+
+    uint256 remainingDebt = borrowPosition.totalBorrowed();
+
+    // If there's still debt, another liquidation should work (or position should be healthy now)
+    if (remainingDebt > 0 && !borrowPosition.isHealthy(LIQUIDATION_LTV)) {
+      vm.prank(liquidator);
+      borrowPosition.preLiquidate(address(borrowPosition), remainingCollateral, 0, "");
+      assertEq(borrowPosition.totalCollateral(), 0, "No collateral after final liquidation");
+    }
+  }
+
+  // ── Partial Liquidations Fail Health Check ──
+
+  /// @notice When LTV > Morpho LLTV, proportional partial
+  ///         liquidation would fail Morpho's health check. After fix, the function repays
+  ///         enough debt to make the position healthy on Morpho.
+  function test_preLiquidate_PartialSeize_AboveLLTV_RepaysExtraDebt() public {
+    // Drop price enough so the position is above Morpho's 80% LLTV
+    // With 65% safe LTV, borrowing 99% of max, and 75% price: LTV ≈ 65*99/75 ≈ 85.8% > 80% LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+    uint256 seizeTarget = collateralAmount / 4; // seize 25% of collateral
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize requested collateral");
+    assertGt(repaid, 0, "Should repay debt");
+
+    // Key assertion: more debt is repaid than proportional
+    // Proportional repaid would be ≈ 25% of total debt
+    uint256 proportionalRepaid = borrowedBefore / 4;
+    assertGe(repaid, proportionalRepaid, "Should repay at least proportional debt");
+
+    // Position should now be healthy on Morpho after collateral withdrawal
+    // (the test would have reverted otherwise, but let's verify explicitly)
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be healthy on Morpho after partial liquidation");
+  }
+
+  /// @notice When LTV > LLTV and liquidator specifies repaidShares, seized collateral should
+  ///         be capped to what Morpho's health check allows (less than proportional).
+  function test_preLiquidate_PartialRepay_AboveLLTV_SeizesLessCollateral() public {
+    // Position above Morpho LLTV
+    _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 sharesToRepay = pos.borrowShares / 4; // repay 25% of shares
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    assertGt(repaid, 0, "Should repay debt");
+    assertGt(seized, 0, "Should seize some collateral");
+
+    // Key assertion: seized should be ≤ proportional (25% of collateral)
+    uint256 proportionalSeized = collateralBefore / 4;
+    assertLe(seized, proportionalSeized, "Should seize at most proportional collateral");
+
+    // Position should be healthy on Morpho after the operation
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be healthy on Morpho after partial repay");
+  }
+
+  /// @notice When LTV is between liquidationLtv and LLTV, proportional liquidation should work normally.
+  function test_preLiquidate_BetweenLtvs_ProportionalWorks() public {
+    // 85% price: LTV ≈ 65*99/85 ≈ 75.6%, which is > 72% liquidationLtv but < 80% LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(85);
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be below Morpho LLTV");
+    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be above liquidation LTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    // Seize 50% of collateral
+    uint256 seizeTarget = collateralBefore / 2;
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize target collateral");
+    assertGt(repaid, 0, "Should repay debt");
+
+    // Between the LTVs, proportional liquidation is sufficient for Morpho
+    assertEq(collateralBefore - seized, borrowPosition.totalCollateral(), "Collateral reduced correctly");
+  }
+
+  /// @notice Partial liquidation of a very small amount when above LLTV: the liquidator
+  ///         must repay significantly more debt than proportional to restore health.
+  function test_preLiquidate_SmallSeize_AboveLLTV_RepaysDisproportionateDebt() public {
+    _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    uint256 borrowedBefore = borrowPosition.totalBorrowed();
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowedBefore * 2);
+
+    // Seize only 1% of collateral — a very small partial liquidation
+    uint256 seizeTarget = collateralBefore / 100;
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize 1% of collateral");
+
+    // The repaid amount should be much more than proportional (1% of debt)
+    // because the liquidator must bring the position back to healthy on Morpho
+    uint256 proportionalRepaid = borrowedBefore / 100;
+    assertGt(repaid, proportionalRepaid, "Repaid should exceed proportional for small seize above LLTV");
+  }
+
+  /// @notice Full liquidation still works when deeply underwater (LTV >> LLTV).
+  function test_preLiquidate_FullLiquidation_DeeplyUnderwater() public {
+    // 50% price drop: LTV ≈ 65*99/50 ≈ 128.7%, deeply above LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(50);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be deeply underwater");
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), collateralAmount, 0, "");
+
+    assertEq(seized, collateralAmount, "Should seize all collateral");
+    assertGt(repaid, 0, "Should repay debt");
+    assertEq(borrowPosition.totalCollateral(), 0, "No collateral should remain");
+  }
+
+  /// @notice Repaying all shares should seize all collateral regardless of LTV.
+  function test_preLiquidate_RepayAllShares_SeizesAllCollateral() public {
+    _setupUnhealthyPosition(75);
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 allShares = pos.borrowShares;
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, allShares, "");
+
+    assertEq(seized, collateralBefore, "Should seize all collateral when repaying all shares");
+    assertGt(repaid, 0, "Should repay all debt");
+    assertEq(borrowPosition.totalCollateral(), 0, "No collateral after full repay");
+    assertEq(borrowPosition.totalBorrowed(), 0, "No debt after full repay");
+  }
+
+  /// @notice When position is exactly at LLTV boundary, partial liquidation should still work.
+  function test_preLiquidate_ExactlyAtLLTV() public {
+    // Setup position that's unhealthy at liquidationLtv but approximately at LLTV
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    // Borrow near safe LTV
+    uint256 maxBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+    uint256 borrowAmount = (maxBorrow * 99) / 100;
+    vm.prank(positionManager);
+    borrowPosition.borrow(borrowAmount);
+
+    // Drop price so LTV ≈ LLTV (80%). With 65% LTV at 99%, we need price factor of ~65*99/80 ≈ 80.4%
+    // Use 80% to get LTV slightly above LLTV
+    oracle.setPrice((DEFAULT_ORACLE_PRICE * 80) / 100);
+    assertFalse(borrowPosition.isHealthy(LIQUIDATION_LTV), "Position should be unhealthy at liquidation LTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    // Partial seize should work
+    uint256 seizeTarget = collateralBefore / 2;
+    vm.prank(liquidator);
+    (uint256 seized,) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize target collateral near LLTV boundary");
+  }
+
+  /// @notice Successive partial liquidations should work, each reducing the position.
+  function test_preLiquidate_SuccessivePartialLiquidations() public {
+    _setupUnhealthyPosition(75);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    uint256 totalSeized;
+    uint256 totalRepaid;
+
+    // Perform 3 successive partial liquidations
+    for (uint256 i = 0; i < 3; i++) {
+      if (borrowPosition.isHealthy(LIQUIDATION_LTV)) break;
+
+      uint256 currentCollateral = borrowPosition.totalCollateral();
+      if (currentCollateral == 0) break;
+
+      uint256 seizeTarget = currentCollateral / 3;
+      if (seizeTarget == 0) break;
+
+      vm.prank(liquidator);
+      (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+      totalSeized += seized;
+      totalRepaid += repaid;
+
+      assertEq(seized, seizeTarget, "Should seize target in each iteration");
+      assertGt(repaid, 0, "Should repay in each iteration");
+    }
+
+    assertGt(totalSeized, 0, "Total seized should be non-zero");
+    assertGt(totalRepaid, 0, "Total repaid should be non-zero");
+  }
+
+  /// @notice With callback and above LLTV, the adjusted amounts are passed correctly.
+  function test_preLiquidate_WithCallback_AboveLLTV() public {
+    _setupUnhealthyPosition(75);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be above Morpho LLTV");
+
+    MockPreLiquidationCallback mockLiquidator = new MockPreLiquidationCallback(address(loanToken));
+    loanToken.setBalance(address(mockLiquidator), borrowPosition.totalBorrowed() * 2);
+
+    uint256 seizeTarget = borrowPosition.totalCollateral() / 4;
+    vm.prank(address(mockLiquidator));
+    (uint256 seized, uint256 repaid) =
+      borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, abi.encode("test"));
+
+    assertEq(seized, seizeTarget, "Should seize target with callback");
+    assertGt(repaid, 0, "Should repay debt with callback");
+    assertTrue(mockLiquidator.callbackReceived(), "Callback should be called");
+  }
+
+  /// @notice repaidShares mode: repaying half the shares when between LTVs gives proportional collateral.
+  function test_preLiquidate_ByRepayingShares_BetweenLtvs_Proportional() public {
+    // 85% price: LTV between liquidationLtv and LLTV
+    _setupUnhealthyPosition(85);
+    assertTrue(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be below Morpho LLTV");
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 halfShares = pos.borrowShares / 2;
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized,) = borrowPosition.preLiquidate(address(borrowPosition), 0, halfShares, "");
+
+    // Between LTVs, seized should be proportional: halfShares * collateral / borrowShares
+    uint256 expectedSeized = uint256(halfShares) * collateralBefore / uint256(pos.borrowShares);
+    assertEq(seized, expectedSeized, "Should seize proportional collateral between LTVs");
+  }
+
+  /// @notice Fuzz test: seizedAssets mode works for various price drops and seize fractions.
+  function testFuzz_preLiquidate_BySeizingCollateral(uint256 pricePct, uint256 seizeFraction) public {
+    // Price between 50% and 84% (position must be unhealthy at liquidation LTV 72%)
+    pricePct = bound(pricePct, 50, 84);
+    // Seize between 1% and 100% of collateral
+    seizeFraction = bound(seizeFraction, 1, 100);
+
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(pricePct);
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    uint256 seizeTarget = (collateralAmount * seizeFraction) / 100;
+    if (seizeTarget == 0) seizeTarget = 1;
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), seizeTarget, 0, "");
+
+    assertEq(seized, seizeTarget, "Should seize target amount");
+    assertGt(repaid, 0, "Should repay some debt");
+    assertEq(borrowPosition.totalCollateral(), collateralAmount - seized, "Collateral properly reduced");
+  }
+
+  /// @notice Fuzz test: repaidShares mode works for various price drops and repay fractions.
+  function testFuzz_preLiquidate_ByRepayingShares(uint256 pricePct, uint256 repayFraction) public {
+    // Price between 50% and 84% (position must be unhealthy at liquidation LTV 72%)
+    pricePct = bound(pricePct, 50, 84);
+    // Repay between 1% and 100% of shares
+    repayFraction = bound(repayFraction, 1, 100);
+
+    _setupUnhealthyPosition(pricePct);
+
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 sharesToRepay = (uint256(pos.borrowShares) * repayFraction) / 100;
+    if (sharesToRepay == 0) sharesToRepay = 1;
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    // When deeply underwater, seized may be 0 if no collateral can be freed
+    assertLe(seized, collateralBefore, "Seized should not exceed collateral");
+    assertGt(repaid, 0, "Should repay some debt");
+  }
+
+  /// @notice When deeply underwater, repaying a tiny fraction of debt cannot free any collateral.
+  ///         The liquidator repays debt but receives 0 collateral. This exercises the
+  ///         seizedAssets == 0 path in onMorphoRepay (skips withdrawCollateral).
+  function test_preLiquidate_ZeroSeizedAssets_DeeplyUnderwater() public {
+    // 30% price: LTV ≈ 65*99/30 ≈ 214%, massively above 80% LLTV
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(30);
+    assertFalse(borrowPosition.isHealthy(DEFAULT_LLTV), "Position should be deeply underwater");
+
+    // Repay just 1 share — tiny fraction of debt
+    uint256 sharesToRepay = 1;
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    // With such extreme underwater position and tiny repayment, no collateral can be freed
+    assertEq(seized, 0, "Should seize 0 collateral when deeply underwater with tiny repay");
+    assertGt(repaid, 0, "Should still repay some debt");
+    assertEq(borrowPosition.totalCollateral(), collateralAmount, "Collateral should be unchanged");
+  }
+
+  // ── Seized Assets Rounding Matches Morpho's Two-Floor Health Check ─
+
+  /// @notice _computeSeizedAssets must use two sequential ceilings to invert Morpho's
+  ///         two sequential floors in _isHealthy: floor(collateral * price / SCALE) then
+  ///         floor(result * lltv / WAD). A single combined floor can be 1 unit too
+  ///         optimistic, making partial pre-liquidations revert on Morpho's health check.
+  function test_preLiquidate_SeizedAssetsMatchesMorphoTwoFloorHealthCheck() public {
+    // Use a price that triggers divergence between single-floor and two-floor rounding.
+    // At 83% of the default 1e36 price, the intermediate floor in Morpho's _isHealthy
+    // can produce a value 1 unit lower than the combined floor in the old code.
+    (uint256 collateralAmount,) = _setupUnhealthyPosition(83);
+
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 borrowShares = uint256(pos.borrowShares);
+
+    // Repay a fraction that triggers the maxSeized path (not proportional).
+    // A small repayFraction means most debt remains, so the health check is tight.
+    uint256 sharesToRepay = (borrowShares * 5) / 100; // repay 5%
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 2);
+
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    // Verify the pre-liquidation succeeded
+    assertGt(seized, 0, "Should seize some collateral");
+    assertGt(repaid, 0, "Should repay some debt");
+
+    // Verify position is healthy on Morpho after the operation
+    Position memory posAfter = morpho.position(marketId, address(borrowPosition));
+    if (uint256(posAfter.borrowShares) > 0) {
+      uint256 collateralPrice = oracle.price();
+      uint256 maxBorrow =
+        uint256(posAfter.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE).wMulDown(DEFAULT_LLTV);
+      Market memory mkt = morpho.market(marketId);
+      uint256 borrowed =
+        uint256(posAfter.borrowShares).toAssetsUp(uint256(mkt.totalBorrowAssets), uint256(mkt.totalBorrowShares));
+      assertGe(maxBorrow, borrowed, "Position must be healthy on Morpho after partial pre-liquidation");
+    }
+
+    assertEq(borrowPosition.totalCollateral(), collateralAmount - seized, "Collateral properly reduced");
+  }
+
+  /// @notice Fuzz: partial pre-liquidation via repaidShares never reverts due to Morpho's
+  ///         health check across a range of price drops and repay fractions. When collateral
+  ///         is seized, withdrawCollateral internally checks _isHealthy — the two-ceil
+  ///         inversion ensures this always passes. We replicate Morpho's exact formula post-tx.
+  function testFuzz_preLiquidate_SeizedAssetsMatchesMorphoTwoFloorHealthCheck(uint256 pricePct, uint256 repayFraction)
+    public
+  {
+    // Price between 50% and 84% (must be unhealthy at liquidation LTV 72%)
+    pricePct = bound(pricePct, 50, 84);
+    // Repay between 1% and 95% of shares (partial liquidation, not full)
+    repayFraction = bound(repayFraction, 1, 95);
+
+    _setupUnhealthyPosition(pricePct);
+
+    Position memory pos = morpho.position(marketId, address(borrowPosition));
+    uint256 sharesToRepay = (uint256(pos.borrowShares) * repayFraction) / 100;
+    if (sharesToRepay == 0) sharesToRepay = 1;
+
+    uint256 collateralBefore = borrowPosition.totalCollateral();
+
+    address liquidator = makeAddr("liquidator");
+    _setupLiquidator(liquidator, borrowPosition.totalBorrowed() * 3);
+
+    // The call must not revert — if seized > 0, Morpho's withdrawCollateral
+    // runs _isHealthy and would revert on the rounding mismatch without the fix.
+    vm.prank(liquidator);
+    (uint256 seized, uint256 repaid) = borrowPosition.preLiquidate(address(borrowPosition), 0, sharesToRepay, "");
+
+    assertGt(repaid, 0, "Should repay some debt");
+    assertLe(seized, collateralBefore, "Seized should not exceed collateral");
+
+    // When collateral was seized, withdrawCollateral ran _isHealthy with post-repay
+    // state. Our test reads the identical post-tx state, so this replicates the exact
+    // check Morpho performed. When seized == 0 the position was too underwater to free
+    // any collateral — withdrawCollateral was skipped, so no health invariant applies.
+    if (seized > 0) {
+      Position memory posAfter = morpho.position(marketId, address(borrowPosition));
+      if (uint256(posAfter.borrowShares) > 0) {
+        uint256 collateralPrice = oracle.price();
+        // Morpho's _isHealthy: floor(floor(c * price / SCALE) * lltv / WAD) >= ceil(shares_to_assets)
+        uint256 maxBorrow =
+          uint256(posAfter.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE).wMulDown(DEFAULT_LLTV);
+        Market memory mkt = morpho.market(marketId);
+        uint256 borrowed =
+          uint256(posAfter.borrowShares).toAssetsUp(uint256(mkt.totalBorrowAssets), uint256(mkt.totalBorrowShares));
+        assertGe(maxBorrow, borrowed, "Position must be healthy on Morpho after collateral seizure");
+      }
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  COLLATERAL FOR BORROW TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_collateralForBorrow_NoExistingPosition() public {
+    // No collateral, no debt — borrowing requires full collateral
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    // At 65% LTV with 1:1 price, borrowing 6500e18 requires 10000e18 collateral
+    uint256 borrowAmount = 6_500e18;
+    uint256 required = borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+
+    // required = ceil(6500e18 * 1e36 / (0.65e18 * 1e36)) = 10000e18
+    assertEq(required, 10_000e18, "Should require full collateral when position is empty");
+  }
+
+  function test_collateralForBorrow_ExcessCollateralCoversNewBorrow() public {
+    // Position with 10k collateral, 0 debt — excess collateral covers the new borrow
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // At 65% LTV, 10k collateral supports up to 6500 debt. Borrowing 5000 needs 0 additional.
+    uint256 required = borrowPosition.collateralForBorrow(LOAN_AMOUNT, SAFE_LTV);
+    assertEq(required, 0, "Should require 0 additional collateral when existing collateral covers borrow");
+  }
+
+  function test_collateralForBorrow_PartialCoverage() public {
+    // Position with 10k collateral, 5k debt — borrowing 2k more requires some additional collateral
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(LOAN_AMOUNT);
+
+    // Current state: 10k collateral, ~5k debt
+    // New total debt = 5k + 2k = 7k
+    // Required collateral = ceil(7000e18 / 0.65) ≈ 10769.23e18
+    // Additional needed = 10769.23e18 - 10000e18 ≈ 769.23e18
+    uint256 required = borrowPosition.collateralForBorrow(2_000e18, SAFE_LTV);
+    assertGt(required, 0, "Should require additional collateral");
+    assertLt(required, 2_000e18, "Should require less collateral than borrow amount at < 100% LTV");
+  }
+
+  function test_collateralForBorrow_ExactlyAtCapacity() public {
+    // Position at maximum utilization for its LTV — any new borrow needs collateral
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Borrow exactly the max at SAFE_LTV: 10000 * 0.65 = 6500
+    uint256 maxAtSafeLtv = borrowPosition.maxBorrow(SAFE_LTV);
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxAtSafeLtv);
+
+    // Any additional borrow requires additional collateral
+    uint256 required = borrowPosition.collateralForBorrow(1_000e18, SAFE_LTV);
+    assertGt(required, 0, "Should require additional collateral when at capacity");
+  }
+
+  function test_collateralForBorrow_RevertWhen_InsufficientLiquidity() public {
+    // No liquidity in the market — should revert
+    uint256 borrowAmount = LOAN_AMOUNT;
+
+    vm.expectRevert(InsufficientLiquidity.selector);
+    borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+  }
+
+  function test_collateralForBorrow_RevertWhen_BorrowExceedsLiquidity() public {
+    // Supply some liquidity but try to borrow more than available
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    vm.expectRevert(InsufficientLiquidity.selector);
+    borrowPosition.collateralForBorrow(LOAN_AMOUNT + 1, SAFE_LTV);
+  }
+
+  function test_collateralForBorrow_ZeroBorrowAmount() public {
+    // Borrowing 0 should require 0 collateral
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    uint256 required = borrowPosition.collateralForBorrow(0, SAFE_LTV);
+    assertEq(required, 0, "Should require 0 collateral for 0 borrow");
+  }
+
+  function test_collateralForBorrow_WithDifferentOraclePrice() public {
+    // Set oracle price to 2:1 (1 collateral = 2 borrow tokens)
+    oracle.setPrice(2e36);
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    // No position yet, borrowing 6500 at 65% LTV
+    // required = ceil(6500e18 * 1e36 / (0.65e18 * 2e36)) = 5000e18
+    uint256 required = borrowPosition.collateralForBorrow(6_500e18, SAFE_LTV);
+    assertEq(required, 5_000e18, "Should require half the collateral at 2x price");
+  }
+
+  function test_collateralForBorrow_WithDifferentLtv() public {
+    _supplyLiquidity(LOAN_AMOUNT);
+
+    // At 50% LTV, borrowing 5000 requires 10000 collateral
+    uint256 requiredAt50 = borrowPosition.collateralForBorrow(LOAN_AMOUNT, 0.5e18);
+    assertEq(requiredAt50, 10_000e18, "At 50% LTV, 5000 borrow needs 10000 collateral");
+
+    // At 80% LTV (market LLTV), borrowing 4000 requires 5000 collateral
+    uint256 requiredAt80 = borrowPosition.collateralForBorrow(4_000e18, DEFAULT_LLTV);
+    assertEq(requiredAt80, 5_000e18, "At 80% LTV, 4000 borrow needs 5000 collateral");
+  }
+
+  function testFuzz_collateralForBorrow_ConsistentWithMaxBorrow(uint256 collateralAmount, uint256 borrowAmount) public {
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+
+    uint256 maxBorrowable = borrowPosition.maxBorrow(SAFE_LTV);
+
+    if (borrowAmount <= maxBorrowable) {
+      // If we can borrow this much, no additional collateral needed
+      uint256 required = borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+      assertEq(required, 0, "Should require 0 when borrow is within capacity");
+    }
+  }
+
+  /// @notice Supplying collateralForBorrow(amount, ltv) then borrowing amount must not
+  ///         revert. The share round-trip (toSharesUp then toAssetsUp) can inflate actual
+  ///         debt beyond (currentDebt + borrowAmount); collateralForBorrow must account
+  ///         for this by simulating Morpho's exact conversion.
+  function test_collateralForBorrow_SupplyThenBorrowDoesNotRevertHealthCheck() public {
+    // Use small liquidity to amplify rounding effects from virtual offsets
+    _supplyLiquidity(10e18);
+
+    uint256 borrowAmount = 3e18;
+    uint256 required = borrowPosition.collateralForBorrow(borrowAmount, SAFE_LTV);
+
+    collateralToken.setBalance(positionManager, required);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(required);
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after supplying collateralForBorrow");
+  }
+
+  /// @notice Fuzz: supplying collateralForBorrow then borrowing never reverts across a
+  ///         range of borrow amounts and LTVs, with and without existing positions.
+  function testFuzz_collateralForBorrow_SupplyThenBorrowDoesNotRevertHealthCheck(
+    uint256 existingCollateral,
+    uint256 existingBorrow,
+    uint256 borrowAmount,
+    uint256 ltv
+  ) public {
+    existingCollateral = bound(existingCollateral, 0, MAX_TEST_AMOUNT / 2);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // Optionally create an existing position
+    if (existingCollateral > 0) {
+      collateralToken.setBalance(positionManager, existingCollateral);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(existingCollateral);
+
+      uint256 maxExistingBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+      existingBorrow = bound(existingBorrow, 0, maxExistingBorrow);
+      if (existingBorrow > 0) {
+        vm.prank(positionManager);
+        borrowPosition.borrow(existingBorrow);
+      }
+    }
+
+    uint256 required = borrowPosition.collateralForBorrow(borrowAmount, ltv);
+
+    vm.startPrank(positionManager);
+    if (required > 0) {
+      collateralToken.setBalance(positionManager, required);
+      borrowPosition.supplyCollateral(required);
+    }
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    assertTrue(borrowPosition.isHealthy(ltv), "Position must be healthy after supplying collateralForBorrow");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  BORROW FOR COLLATERAL TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_borrowForCollateral_NoExistingPosition() public {
+    // No collateral, no debt — adding collateral gives full borrow capacity
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    // At 65% LTV with 1:1 price, 10000 collateral => 6500 borrow capacity
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 6_500e18, "Should return full borrow capacity for new collateral");
+  }
+
+  function test_borrowForCollateral_WithExistingExcessCollateral() public {
+    // 10k collateral, 0 debt — already have excess capacity, adding more increases it
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    // Existing capacity: 10000 * 0.65 = 6500
+    // Adding 5000 more collateral: (10000 + 5000) * 0.65 = 9750
+    uint256 capacity = borrowPosition.borrowForCollateral(5_000e18, SAFE_LTV);
+    assertEq(capacity, 9_750e18, "Should include existing excess collateral in capacity");
+  }
+
+  function test_borrowForCollateral_WithExistingDebt() public {
+    // 10k collateral, 5k debt — adding collateral increases remaining capacity
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    vm.prank(positionManager);
+    borrowPosition.borrow(LOAN_AMOUNT);
+
+    // Current: 10k collateral, 5k debt, capacity at 65% = 6500 - 5000 = 1500
+    // Adding 10k more: (10k + 10k) * 0.65 - 5k = 8000
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 8_000e18, "Should account for existing debt when computing capacity");
+  }
+
+  function test_borrowForCollateral_ZeroAdditionalCollateral() public {
+    // Just returns the existing remaining capacity
+    _supplyLiquidity(LOAN_AMOUNT * 2);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    uint256 capacityFromZero = borrowPosition.borrowForCollateral(0, SAFE_LTV);
+    uint256 maxBorrowDirect = borrowPosition.maxBorrow(SAFE_LTV);
+    assertEq(capacityFromZero, maxBorrowDirect, "Zero additional collateral should equal maxBorrow");
+  }
+
+  function test_borrowForCollateral_CappedByLiquidity() public {
+    // Limited liquidity — capacity capped at available liquidity
+    uint256 limitedLiquidity = 1_000e18;
+    _supplyLiquidity(limitedLiquidity);
+
+    // 10k collateral at 65% LTV = 6500 capacity, but only 1000 liquidity
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, limitedLiquidity, "Should be capped at available liquidity");
+  }
+
+  function test_borrowForCollateral_FullyUtilizedPosition() public {
+    // Position at max utilization — adding collateral gives new capacity
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    collateralToken.setBalance(positionManager, COLLATERAL_AMOUNT);
+    vm.prank(positionManager);
+    borrowPosition.supplyCollateral(COLLATERAL_AMOUNT);
+
+    uint256 maxAtSafeLtv = borrowPosition.maxBorrow(SAFE_LTV);
+    vm.prank(positionManager);
+    borrowPosition.borrow(maxAtSafeLtv);
+
+    // Verify no remaining capacity
+    assertEq(borrowPosition.maxBorrow(SAFE_LTV), 0, "Should have 0 remaining capacity");
+
+    // Adding 10k collateral at 65% LTV gives 6500 new capacity
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 6_500e18, "New collateral should unlock new borrow capacity");
+  }
+
+  function test_borrowForCollateral_WithDifferentOraclePrice() public {
+    // Set oracle price to 2:1 (1 collateral = 2 borrow tokens)
+    oracle.setPrice(2e36);
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    // 10k collateral at 2:1 price and 65% LTV = 10000 * 2 * 0.65 = 13000
+    uint256 capacity = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, SAFE_LTV);
+    assertEq(capacity, 13_000e18, "Should double capacity at 2x price");
+  }
+
+  function test_borrowForCollateral_WithDifferentLtv() public {
+    _supplyLiquidity(LOAN_AMOUNT * 4);
+
+    // At 50% LTV: 10000 * 0.5 = 5000
+    uint256 capacityAt50 = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, 0.5e18);
+    assertEq(capacityAt50, 5_000e18, "At 50% LTV should give 5000 capacity");
+
+    // At 80% LTV (market LLTV): 10000 * 0.8 = 8000
+    uint256 capacityAt80 = borrowPosition.borrowForCollateral(COLLATERAL_AMOUNT, DEFAULT_LLTV);
+    assertEq(capacityAt80, 8_000e18, "At 80% LTV should give 8000 capacity");
+  }
+
+  function testFuzz_borrowForCollateral_SupplyAndBorrowIsHealthy(
+    uint256 existingCollateral,
+    uint256 existingBorrow,
+    uint256 collateralAmount,
+    uint256 ltv
+  ) public {
+    existingCollateral = bound(existingCollateral, 0, MAX_TEST_AMOUNT / 2);
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    // Cap at safeLtv because borrow() enforces the safeLtv health check internally
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // Build a pre-existing position
+    if (existingCollateral > 0) {
+      collateralToken.setBalance(positionManager, existingCollateral);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(existingCollateral);
+
+      // Borrow up to a fraction of max capacity so the position stays healthy
+      uint256 maxExistingBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+      existingBorrow = bound(existingBorrow, 0, maxExistingBorrow);
+      if (existingBorrow > 0) {
+        vm.prank(positionManager);
+        borrowPosition.borrow(existingBorrow);
+      }
+    }
+
+    // Compute how much we can borrow if we supply collateralAmount
+    uint256 borrowable = borrowPosition.borrowForCollateral(collateralAmount, ltv);
+    vm.assume(borrowable > 0);
+
+    // Supply the collateral and borrow the computed amount
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+    borrowPosition.borrow(borrowable);
+    vm.stopPrank();
+
+    // Position should be healthy at the same LTV used to compute capacity
+    assertTrue(borrowPosition.isHealthy(ltv), "Position should be healthy after borrowing computed capacity");
+  }
+
+  function testFuzz_collateralForBorrow_SupplyAndBorrowIsHealthy(
+    uint256 existingCollateral,
+    uint256 existingBorrow,
+    uint256 borrowAmount,
+    uint256 ltv
+  ) public {
+    existingCollateral = bound(existingCollateral, 0, MAX_TEST_AMOUNT / 2);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    // Cap at safeLtv because borrow() enforces the safeLtv health check internally
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // Build a pre-existing position
+    if (existingCollateral > 0) {
+      collateralToken.setBalance(positionManager, existingCollateral);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(existingCollateral);
+
+      // Borrow up to a fraction of max capacity so the position stays healthy
+      uint256 maxExistingBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+      existingBorrow = bound(existingBorrow, 0, maxExistingBorrow);
+      if (existingBorrow > 0) {
+        vm.prank(positionManager);
+        borrowPosition.borrow(existingBorrow);
+      }
+    }
+
+    // Compute how much collateral we need to borrow borrowAmount
+    uint256 requiredCollateral = borrowPosition.collateralForBorrow(borrowAmount, ltv);
+
+    // Supply the required collateral (if any) and borrow
+    vm.startPrank(positionManager);
+    if (requiredCollateral > 0) {
+      collateralToken.setBalance(positionManager, requiredCollateral);
+      borrowPosition.supplyCollateral(requiredCollateral);
+    }
+    borrowPosition.borrow(borrowAmount);
+    vm.stopPrank();
+
+    // Position should be healthy at the same LTV used to compute required collateral
+    assertTrue(borrowPosition.isHealthy(ltv), "Position should be healthy after supplying computed collateral");
+  }
+
+  // ── borrowForCollateral Accounts for Share Round-Trip ───────────
+
+  /// @notice Supplying collateral then borrowing borrowForCollateral(amount, ltv) must not revert.
+  function test_borrowForCollateral_SupplyThenBorrowMaxDoesNotRevertHealthCheck() public {
+    _supplyLiquidity(LOAN_AMOUNT * 10);
+
+    uint256 collateralAmount = COLLATERAL_AMOUNT;
+    uint256 borrowable = borrowPosition.borrowForCollateral(collateralAmount, SAFE_LTV);
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+    if (borrowable > 0) {
+      borrowPosition.borrow(borrowable);
+    }
+    vm.stopPrank();
+
+    assertTrue(borrowPosition.isHealthy(SAFE_LTV), "Position must be healthy after borrowing borrowForCollateral");
+  }
+
+  /// @notice Fuzz: supplying collateral then borrowing borrowForCollateral never reverts.
+  function testFuzz_borrowForCollateral_SupplyThenBorrowMaxDoesNotRevertHealthCheck(
+    uint256 existingCollateral,
+    uint256 existingBorrow,
+    uint256 collateralAmount,
+    uint256 ltv
+  ) public {
+    existingCollateral = bound(existingCollateral, 0, MAX_TEST_AMOUNT / 2);
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    ltv = bound(ltv, 0.01e18, SAFE_LTV);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // Optionally create an existing position
+    if (existingCollateral > 0) {
+      collateralToken.setBalance(positionManager, existingCollateral);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(existingCollateral);
+
+      uint256 maxExistingBorrow = borrowPosition.maxBorrow(SAFE_LTV);
+      existingBorrow = bound(existingBorrow, 0, maxExistingBorrow);
+      if (existingBorrow > 0) {
+        vm.prank(positionManager);
+        borrowPosition.borrow(existingBorrow);
+      }
+    }
+
+    uint256 borrowable = borrowPosition.borrowForCollateral(collateralAmount, ltv);
+    if (borrowable == 0) return;
+
+    collateralToken.setBalance(positionManager, collateralAmount);
+    vm.startPrank(positionManager);
+    borrowPosition.supplyCollateral(collateralAmount);
+    borrowPosition.borrow(borrowable);
+    vm.stopPrank();
+
+    assertTrue(borrowPosition.isHealthy(ltv), "Position must be healthy after borrowing borrowForCollateral");
+  }
+
+  function testFuzz_borrowForCollateral_ConsistentWithCollateralForBorrow(
+    uint256 collateralAmount,
+    uint256 borrowAmount
+  ) public {
+    collateralAmount = bound(collateralAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+    borrowAmount = bound(borrowAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+
+    _supplyLiquidity(MAX_TEST_AMOUNT);
+
+    // If borrowForCollateral says we can borrow X with Y collateral,
+    // then collateralForBorrow(X) with that collateral supplied should return 0
+    uint256 capacity = borrowPosition.borrowForCollateral(collateralAmount, SAFE_LTV);
+
+    if (capacity > 0) {
+      // Supply the collateral
+      collateralToken.setBalance(positionManager, collateralAmount);
+      vm.prank(positionManager);
+      borrowPosition.supplyCollateral(collateralAmount);
+
+      // Borrowing up to capacity should require 0 additional collateral
+      uint256 required = borrowPosition.collateralForBorrow(capacity, SAFE_LTV);
+      assertEq(required, 0, "Should not need extra collateral to borrow within reported capacity");
+    }
   }
 }

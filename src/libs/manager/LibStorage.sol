@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibChecks} from "../common/LibChecks.sol";
 import {LibView} from "./LibView.sol";
-import {STORAGE_SLOT} from "./LibConstants.sol";
+import {STORAGE_SLOT, MAX_REBALANCE_LOSS} from "./LibConstants.sol";
+import {LibManagerErrors} from "./LibManagerErrors.sol";
 
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
 /// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%)
-/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%)
+/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on net gains
+///        after management fee deduction
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -20,15 +22,24 @@ struct FeeData {
 /// @notice Metadata for the PositionManager share token and assets.
 /// @param name The ERC20 name of the position manager share token.
 /// @param symbol The ERC20 symbol of the position manager share token.
-/// @param decimals The number of decimals for the share token (matches the collateral asset).
 /// @param collateralAsset The address of the collateral asset (e.g., USDC) users deposit.
 /// @param debtAsset The address of the debt asset borrowed against positions.
 struct PositionManagerMetadata {
   string name;
   string symbol;
-  uint8 decimals;
   address collateralAsset;
   address debtAsset;
+}
+
+/// @notice Rebalance configuration and state for the PositionManager.
+/// @param maxRebalanceLoss Maximum allowed loss during rebalancing operations in basis points
+///        (e.g., 100 = 1%). Protects against excessive slippage or manipulation.
+/// @param rebalanceCooldown Minimum seconds between consecutive rebalance calls. Zero disables.
+/// @param lastRebalanceTimestamp Unix timestamp of the last rebalance, used for cooldown enforcement.
+struct RebalanceConfig {
+  uint16 maxRebalanceLoss;
+  uint40 rebalanceCooldown;
+  uint40 lastRebalanceTimestamp;
 }
 
 /// @notice Storage struct containing all persistent state for the PositionManager contract.
@@ -44,14 +55,19 @@ struct PositionManagerMetadata {
 /// @param metadata Token metadata and asset addresses for the position manager.
 /// @param lastTotalAssets Cached total assets value from the last fee accrual, used for
 ///        calculating high water mark and performance fees.
-/// @param lltv Liquidation loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
-///        Positions below this threshold are subject to liquidation.
+/// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
+///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
+/// @param virtualShareOffset Virtual shares offset for inflation attack protection, derived from debt asset decimals.
+///        Computed as 10^(18 - debtAsset.decimals()), so tokens with fewer decimals get stronger protection.
+///        For 18-decimal tokens the offset is 1 (weakest); for 6-decimal tokens (e.g., USDC) the offset is 1e12.
+///        @notice For debt assets with 18 decimals, the inflation front-running protection is low.
+///        To protect against this attack, vault deployers should make an initial deposit of a non-trivial amount
+///        in the vault, or depositors should check that the share price does not exceed a certain limit.
 /// @param lastFeeAccrualTimestamp Unix timestamp of the last fee accrual, used for
 ///        calculating time-weighted management fees.
-/// @param maxRebalanceLoss Maximum allowed loss during rebalancing operations in basis points
-///        (e.g., 100 = 1%). Protects against excessive slippage or manipulation.
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
 ///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
+/// @param rebalanceConfig Rebalance parameters packed in a single struct (maxRebalanceLoss, cooldown, timestamp).
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -59,10 +75,11 @@ struct PositionManagerStorageData {
   EnumerableSetLib.AddressSet borrowModules;
   PositionManagerMetadata metadata;
   uint256 lastTotalAssets;
-  uint64 lltv;
+  uint64 ltv;
+  uint64 virtualShareOffset;
   uint40 lastFeeAccrualTimestamp;
-  uint16 maxRebalanceLoss;
   address transferGuard;
+  RebalanceConfig rebalanceConfig;
 }
 
 /// @title LibStorage
@@ -85,18 +102,36 @@ library LibStorage {
   /*                          SETTERS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Sets the LLTV value after validation.
+  /// @dev Sets the LTV value after validation.
   /// @param self The storage pointer to the PositionManagerStorageData struct.
-  /// @param lltv_ The LLTV value to set (WAD precision).
-  function setLltv(PositionManagerStorageData storage self, uint256 lltv_) internal {
-    // LLTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
-    LibChecks.checkValidLltv(lltv_);
+  /// @param ltv_ The LTV value to set (WAD precision).
+  function setLtv(PositionManagerStorageData storage self, uint256 ltv_) internal {
+    // LTV must be > 0 (division by zero in availableCollateral) and <= WAD (100%)
+    LibChecks.checkValidLtv(ltv_);
     unchecked {
-      // Safe: lltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
+      // Safe: ltv_ is WAD precision (1e18 max), which fits in uint64 (max ~1.8e19)
       // forge-lint: disable-next-line(unsafe-typecast)
-      self.lltv = uint64(lltv_);
-      emit IPositionManagerAdmin.LLTVSet(lltv_);
+      self.ltv = uint64(ltv_);
+      emit IPositionManagerAdmin.LTVSet(ltv_);
     }
+  }
+
+  /// @dev Sets the rebalance configuration (maxRebalanceLoss and cooldown).
+  ///      Does not modify lastRebalanceTimestamp.
+  /// @param self The storage pointer to the PositionManagerStorageData struct.
+  /// @param maxRebalanceLoss_ The max rebalance loss in basis points (e.g., 100 = 1%).
+  /// @param rebalanceCooldown_ The cooldown period in seconds (0 = disabled).
+  function setRebalanceConfig(
+    PositionManagerStorageData storage self,
+    uint16 maxRebalanceLoss_,
+    uint40 rebalanceCooldown_
+  ) internal {
+    if (maxRebalanceLoss_ > MAX_REBALANCE_LOSS) {
+      revert LibManagerErrors.MaxRebalanceLossExceedsMax();
+    }
+    self.rebalanceConfig.maxRebalanceLoss = maxRebalanceLoss_;
+    self.rebalanceConfig.rebalanceCooldown = rebalanceCooldown_;
+    emit IPositionManagerAdmin.RebalanceConfigSet(maxRebalanceLoss_, rebalanceCooldown_);
   }
 
   /// @dev Updates the lastTotalAssets snapshot to the current total assets.

@@ -2,21 +2,22 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {USCCFund} from "src/funds/USCCFund.sol";
-import {USCCFundFactory} from "src/funds/USCCFundFactory.sol";
+import {USCCFund} from "src/funds/USCC/USCCFund.sol";
+import {USCCFundFactory} from "src/funds/USCC/USCCFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
-import {MockERC20} from "../mock/MockERC20.sol";
-import {MockAllowlist} from "../mock/funds/MockAllowlist.sol";
-import {MockChainlinkOracle} from "../mock/funds/MockChainlinkOracle.sol";
-import {MockSuperstateToken} from "../mock/funds/MockSuperstateToken.sol";
+import {MockERC20} from "../../mock/MockERC20.sol";
+import {MockAllowlist} from "../../mock/funds/MockAllowlist.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
+import {MockSuperstateToken} from "../../mock/funds/MockSuperstateToken.sol";
 
 contract USCCFundTest is Test {
   using LibOrder for Order;
+  using LibClone for address;
 
   error InvalidInitialization();
   error Unauthorized();
@@ -29,13 +30,15 @@ contract USCCFundTest is Test {
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
   event OrderRecovering(bytes32 indexed orderId);
+  event OrderProcessing(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
-  );
+  event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
-  bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
   uint256 private constant ONE_USDC = 1e6;
+
+  // USCCFund roles (matching internal constants)
+  uint256 private constant OPERATOR_ROLE = 1 << 0;
+  uint256 private constant DEPOSITOR_ROLE = 1 << 1;
 
   // WrappedAsset roles (matching internal constants)
   uint256 private constant WUSCC_ISSUER_ROLE = 1 << 0;
@@ -75,7 +78,7 @@ contract USCCFundTest is Test {
     address proxy = LibClone.deployERC1967(address(implementation));
     wuscc = WrappedAsset(proxy);
     vm.prank(owner);
-    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC", 6);
+    wuscc.initialize(owner, owner, address(uscc), "wUSCC", "Wrapped USCC");
 
     factory = new USCCFundFactory(owner, address(usdc), address(uscc), address(wuscc));
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
@@ -97,28 +100,28 @@ contract USCCFundTest is Test {
     assertEq(fund.owner(), owner, "owner");
     assertEq(fund.asset(), address(usdc), "usdc");
     assertEq(fund.share(), address(wuscc), "wuscc");
-    assertEq(fund.rolesOf(address(this)), fund.DEPOSITOR_ROLE(), "depositor role");
+    assertEq(fund.rolesOf(address(this)), DEPOSITOR_ROLE, "depositor role");
     assertEq(uint256(fund.state(_depositOrder(ONE_USDC, ONE_USDC))), uint256(State.EMPTY), "initial state");
   }
 
   function test_Initialize_RevertsInvalidContract() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
     local.initialize(owner, address(0xBEEF), recipient, address(oracle));
 
-    local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     local.initialize(owner, address(this), recipient, address(1));
   }
 
   function test_Initialize_RevertsInvalidOwner() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(CommonErrors.AddressZero.selector);
     local.initialize(address(0), address(this), recipient, address(oracle));
   }
 
   function test_Initialize_RevertsInvalidRecipient() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     vm.expectRevert(CommonErrors.AddressZero.selector);
     local.initialize(owner, address(this), address(0), address(oracle));
   }
@@ -142,7 +145,7 @@ contract USCCFundTest is Test {
   }
 
   function test_Initialize_RevertsInvalidOracleDecimals() public {
-    USCCFund local = new USCCFund(address(usdc), address(uscc), address(wuscc));
+    USCCFund local = USCCFund(address(new USCCFund(address(usdc), address(uscc), address(wuscc))).clone());
     MockChainlinkOracle badOracle = new MockChainlinkOracle(8);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOracle.selector, address(badOracle)));
     local.initialize(owner, address(this), recipient, address(badOracle));
@@ -210,11 +213,66 @@ contract USCCFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsOrderAlreadyExists() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    _unlockDeposit(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+
+    // Create a different order to trigger archiving of the ended order
+    Order memory nextOrder = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(nextOrder);
+    _commitDeposit(nextOrder);
+    _unlockDeposit(nextOrder);
+
+    // Now try to create a new order with the same params as the first (already archived) order
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.OrderAlreadyExists.selector, order.toId(address(fund))));
+    fund.create(order);
+  }
+
   function test_Create_RevertsNotAllowedSuperstate() public {
     allowlist.setAllowed(address(fund), "USCC", false);
     Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
     vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
     fund.create(order);
+  }
+
+  function test_Create_RevertsInvalidOutput_Deposit() public {
+    // With oracle price = 1:1, expected output = input = 100 USDC
+    // MAX_OUTPUT_DEVIATION = 500 bps (5%), so min valid output = 100 - 5 = 95
+    // Output of 94 should revert
+    Order memory order = _depositOrder(100 * ONE_USDC, 94 * ONE_USDC);
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RevertsInvalidOutput_Redeem() public {
+    Order memory order = _redeemOrder(100 * ONE_USDC, 94 * ONE_USDC);
+    vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
+    fund.create(order);
+  }
+
+  function test_Create_SucceedsAtMinOutputBoundary_Deposit() public {
+    // With oracle price = 1:1, expected output = 100 USDC
+    // maxDeviation = 100e6 * 500 / 10000 = 5e6
+    // minOutput = 100e6 - 5e6 = 95e6
+    Order memory order = _depositOrder(100 * ONE_USDC, 95 * ONE_USDC);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted at boundary");
+  }
+
+  function test_Create_SucceedsAtMinOutputBoundary_Redeem() public {
+    Order memory order = _redeemOrder(100 * ONE_USDC, 95 * ONE_USDC);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted at boundary");
+  }
+
+  function test_Create_SucceedsWithOutputAboveExpected() public {
+    // Output above oracle-derived expected should pass (no downside check triggered)
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC * 2);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted above expected");
   }
 
   function test_Create_OnlyDepositorRole() public {
@@ -310,7 +368,6 @@ contract USCCFundTest is Test {
     assertEq(amount, order.input, "amount");
     assertEq(usdc.balanceOf(recipient), order.input, "recipient");
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
-    assertEq(_cachedBalance(), 0, "cached balance");
   }
 
   function test_Commit_RedeemSuccess() public {
@@ -373,6 +430,16 @@ contract USCCFundTest is Test {
     order.owner = outsider;
 
     vm.expectRevert(LibFundsErrors.InvalidOwner.selector);
+    fund.commit(order);
+  }
+
+  function test_Commit_RevertsNotAllowedSuperstate() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    allowlist.setAllowed(address(fund), "USCC", false);
+
+    vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
     fund.commit(order);
   }
 
@@ -456,7 +523,7 @@ contract USCCFundTest is Test {
     _commitDeposit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
     usdc.mint(address(fund), order.input);
 
     bytes32 orderId = order.toId(address(fund));
@@ -474,7 +541,7 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
     usdc.mint(address(fund), order.input);
 
     Order memory wrongOrder = order;
@@ -495,7 +562,7 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
     usdc.mint(address(fund), order.input);
 
     vm.prank(outsider);
@@ -516,7 +583,7 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing");
   }
@@ -533,13 +600,57 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
     emit OrderRecovering(order.toId(address(fund)));
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
+  }
+
+  function test_Recovering_RevertsInvalidOrder() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    bytes32 staleOrderId = keccak256("stale");
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, staleOrderId));
+    fund.recovering(staleOrderId);
+  }
+
+  function test_Recovering_RevertsStaleOrderId() public {
+    // First order: create, commit, unlock
+    Order memory order1 = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order1);
+    _commitDeposit(order1);
+    uscc.mint(address(fund), order1.output);
+    fund.unlock(order1);
+
+    // Second order: create, commit → now in PROCESSING
+    Order memory order2 = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(order2);
+    _commitDeposit(order2);
+
+    // A stale recovering() call targeting the old order must revert
+    bytes32 staleOrderId = order1.toId(address(fund));
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, staleOrderId));
+    fund.recovering(staleOrderId);
+  }
+
+  function test_CancelRecovering_RevertsInvalidOrder() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    bytes32 staleOrderId = keccak256("stale");
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, staleOrderId));
+    fund.cancelRecovering(staleOrderId);
   }
 
   function test_Recovering_RevertsInvalidState() public {
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.EMPTY));
-    fund.recovering();
+    fund.recovering(bytes32(0));
   }
 
   function test_Recovering_OnlyOperatorOrOwner() public {
@@ -549,7 +660,98 @@ contract USCCFundTest is Test {
 
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
+  }
+
+  function test_CancelRecovering_Success() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit OrderProcessing(order.toId(address(fund)));
+    fund.cancelRecovering(order.toId(address(fund)));
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "back to processing");
+  }
+
+  function test_CancelRecovering_RevertsInvalidState() public {
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.EMPTY));
+    fund.cancelRecovering(bytes32(0));
+  }
+
+  function test_CancelRecovering_OnlyOperatorOrOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.cancelRecovering(order.toId(address(fund)));
+  }
+
+  function test_CancelRecovering_ThenUnlock_Deposit() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    // Superstate delivers output USCC despite recovering state
+    uscc.mint(address(fund), order.output);
+
+    // State is stuck — RECOVERING branch only checks USDC input, not USCC output
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "stuck in processing");
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering(order.toId(address(fund)));
+
+    // Now _state() uses PROCESSING branch which checks USCC output
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+    assertEq(wuscc.balanceOf(address(this)), order.output, "wuscc received");
+  }
+
+  function test_CancelRecovering_ThenUnlock_Redeem() public {
+    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Operator mistakenly calls recovering
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    // Superstate delivers output USDC despite recovering state
+    usdc.mint(address(fund), order.output);
+
+    // State is stuck — RECOVERING branch only checks USCC input, not USDC output
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "stuck in processing");
+
+    // Operator cancels recovering
+    vm.prank(owner);
+    fund.cancelRecovering(order.toId(address(fund)));
+
+    // Now _state() uses PROCESSING branch which checks USDC output
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after cancel");
+
+    fund.unlock(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
+    assertEq(usdc.balanceOf(address(this)), order.output, "usdc received");
   }
 
   function test_SetOracle_Success() public {
@@ -592,23 +794,13 @@ contract USCCFundTest is Test {
     bytes32 orderId = order.toId(address(fund));
     uint256 newInput = order.input;
     uint256 newOutput = ONE_USDC / 2;
-    Order memory resolvedOrder = Order({
-      mode: order.mode,
-      owner: order.owner,
-      receiver: order.receiver,
-      input: newInput,
-      output: newOutput,
-      salt: order.salt
-    });
-    bytes32 resolvedOrderId = resolvedOrder.toId(address(fund));
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit OrderResolved(orderId, resolvedOrderId, newInput, newOutput, owner);
+    emit OrderResolved(orderId, newInput, newOutput, owner);
     fund.resolve(order, newInput, newOutput);
 
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "original processing");
-    assertEq(uint256(fund.state(resolvedOrder)), uint256(State.EMPTY), "resolved empty");
 
     uscc.mint(address(fund), newOutput);
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "uses resolved output");
@@ -619,7 +811,7 @@ contract USCCFundTest is Test {
     fund.create(order);
     _commitDeposit(order);
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     vm.prank(owner);
     fund.resolve(order, ONE_USDC * 2, ONE_USDC * 2);
@@ -643,6 +835,16 @@ contract USCCFundTest is Test {
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
     fund.resolve(wrongOrder, ONE_USDC, ONE_USDC);
+  }
+
+  function test_Resolve_RevertsInputZero() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AmountZero.selector);
+    fund.resolve(order, 0, ONE_USDC);
   }
 
   function test_Resolve_OnlyOperatorOrOwner() public {
@@ -780,13 +982,22 @@ contract USCCFundTest is Test {
     fund.totalAssets();
   }
 
-  function test_MaxDeposit_ReturnsMax() public view {
-    assertEq(fund.maxDeposit(address(this)), type(uint256).max, "max deposit");
+  function test_MaxDeposit_ReturnsBalance() public {
+    usdc.mint(address(this), ONE_USDC);
+    assertEq(fund.maxDeposit(address(this)), ONE_USDC, "max deposit");
+  }
+
+  function test_MaxDeposit_ReturnsZero_WhenNotDepositor() public view {
+    assertEq(fund.maxDeposit(outsider), 0, "max deposit outsider");
   }
 
   function test_MaxRedeem_ReturnsBalance() public {
     _mintWuscc(address(this), ONE_USDC);
     assertEq(fund.maxRedeem(address(this)), ONE_USDC, "max redeem");
+  }
+
+  function test_MaxRedeem_ReturnsZero_WhenNotDepositor() public view {
+    assertEq(fund.maxRedeem(outsider), 0, "max redeem outsider");
   }
 
   function test_State_AllStates() public {
@@ -840,7 +1051,7 @@ contract USCCFundTest is Test {
     _commitDeposit(order);
 
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
     usdc.mint(address(fund), order.input);
     fund.recover(order);
 
@@ -872,10 +1083,9 @@ contract USCCFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_Roles_OperatorGrantable() public {
-    uint256 operatorRole = fund.OPERATOR_ROLE();
     vm.prank(owner);
-    fund.grantRoles(operator, operatorRole);
-    assertEq(fund.rolesOf(operator), operatorRole, "operator role");
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    assertEq(fund.rolesOf(operator), OPERATOR_ROLE, "operator role");
   }
 
   function test_Roles_OwnershipTransfer() public {
@@ -887,13 +1097,6 @@ contract USCCFundTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         EDGE CASES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function test_Edge_CachedBalanceAccuracy() public {
-    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
-    fund.create(order);
-    _commitDeposit(order);
-    assertEq(_cachedBalance(), 0, "cached");
-  }
 
   function test_Edge_OrderIdCollision() public view {
     Order memory orderA = _depositOrder(ONE_USDC, ONE_USDC);
@@ -961,7 +1164,7 @@ contract USCCFundTest is Test {
 
     // Set to recovering state (owner can call this)
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     // Superstate returns 10% more USDC than was sent
     uint256 excessAmount = order.input + (order.input / 10);
@@ -987,7 +1190,7 @@ contract USCCFundTest is Test {
 
     // Set to recovering state (owner can call this)
     vm.prank(owner);
-    fund.recovering();
+    fund.recovering(order.toId(address(fund)));
 
     // Superstate returns 10% more USCC than was burned
     uint256 excessAmount = order.input + (order.input / 10);
@@ -1045,12 +1248,6 @@ contract USCCFundTest is Test {
   function _unlockDeposit(Order memory order) internal {
     uscc.mint(address(fund), order.output);
     fund.unlock(order);
-  }
-
-  function _cachedBalance() internal view returns (uint256) {
-    // Storage layout: recipient(+0), currentOrderId(+1), Order(+2..+6, 5 slots),
-    // internalState+oracle(+7 packed), cachedBalance(+8)
-    return uint256(vm.load(address(fund), bytes32(uint256(_MAIN_STORAGE_SLOT) + 8)));
   }
 
   /// @dev Helper to mint wUSCC to a recipient. Wraps USCC into wUSCC.

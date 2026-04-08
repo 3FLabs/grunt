@@ -8,11 +8,18 @@ import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {MockFund} from "test/mock/facility/MockFund.sol";
+import {LibOrder} from "src/libs/funds/Order.sol";
 
 /// @title FacilityIntentsTest
 /// @notice Tests for intent creation, update, lock, and resolve operations
 contract FacilityIntentsTest is FacilityBaseTest {
+  using LibClone for address;
+  using LibOrder for Order;
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CREATE INTENT TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -295,7 +302,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     uint256 intentId = _createResolvingIntent();
 
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
 
     (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund), "Fund should be set");
@@ -307,7 +314,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true);
     emit IFacilityIntents.FundUpdated(intentId, address(mockFund));
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
   }
 
   function test_setFund_revertOnNonFacilitator() public {
@@ -315,7 +322,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(user);
     vm.expectRevert();
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
   }
 
   function test_setFund_worksOnDepositing() public {
@@ -323,10 +330,228 @@ contract FacilityIntentsTest is FacilityBaseTest {
     uint256 intentId = _createDefaultIntent();
 
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
 
     (, address fund,,) = facility.getIntent(intentId);
     assertEq(fund, address(mockFund), "Fund should be set");
+  }
+
+  function test_setFund_revertWhenExpired() public {
+    uint256 intentId = _createResolvingIntent();
+
+    uint256 deadline = block.timestamp - 1;
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.DeadlineExpired.selector);
+    facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_setFund_revertWhenInvalidSignatureLength() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    address[] memory signers = new address[](2);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signers[1] = guardian2;
+    signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidSignatureLength.selector);
+    facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_setFund_revertWhenInsufficientSignatures() public {
+    vm.prank(owner);
+    uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidSignatureCount.selector, 2, 1));
+    facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_setFund_revertWhenInvalidSignerOrder() public {
+    vm.prank(owner);
+    uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+
+    address[] memory signers = new address[](2);
+    bytes[] memory signatures = new bytes[](2);
+
+    if (guardian < guardian2) {
+      signers[0] = guardian2;
+      signers[1] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN2_PK);
+      signatures[1] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+    } else {
+      signers[0] = guardian;
+      signers[1] = guardian2;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      signatures[1] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN2_PK);
+    }
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidSignerOrder.selector);
+    facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_setFund_revertWhenNotGuardian() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    uint256 userPk = 0x9999;
+    address userSigner = vm.addr(userPk);
+
+    bytes32 digest = _getSetFundDigest(intentId, address(mockFund), deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPk, digest);
+    bytes memory signature = abi.encodePacked(r, s, v);
+
+    address[] memory signers = new address[](1);
+    signers[0] = userSigner;
+    bytes[] memory signatures = new bytes[](1);
+    signatures[0] = signature;
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.NotGuardian.selector, userSigner));
+    facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_setFund_revertWhenInvalidSignature() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    bytes memory invalidSig = _signSetFund(intentId, address(mockFund), deadline - 1, GUARDIAN_PK);
+
+    address[] memory signers = new address[](1);
+    signers[0] = guardian;
+    bytes[] memory signatures = new bytes[](1);
+    signatures[0] = invalidSig;
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidSignature.selector, guardian));
+    facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+  }
+
+  function test_resolve_autoSyncsEndedOrder() public {
+    uint256 intentId = _createResolvingIntent();
+
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+
+    // Create a stale order and mark it as ENDED in mock fund state
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 500e18, Mode.DEPOSIT);
+    (Order memory order,) = facility.getOrder(intentId);
+    mockFund.setOrderState(order.toId(address(mockFund)), State.ENDED);
+
+    vm.prank(facilitator);
+    facility.resolve(intentId);
+
+    assertTrue(_isResolved(intentId), "Intent should be resolved after auto-sync");
+
+    (order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "Order should be cleared during auto-sync");
+
+    (,, address fund,) = facility.getIntent(intentId);
+    assertEq(fund, address(0), "Fund should be cleared during auto-sync");
+  }
+
+  function test_setFund_autoSyncsEndedOrder_differentFund() public {
+    uint256 intentId = _createResolvingIntent();
+    MockFund altFund = new MockFund(address(debtToken), address(collateralToken));
+
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 1 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    // Create a stale order and mark it as ENDED in the current fund
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 500e18, Mode.DEPOSIT);
+    (Order memory order,) = facility.getOrder(intentId);
+    mockFund.setOrderState(order.toId(address(mockFund)), State.ENDED);
+
+    // Re-bind to a different fund after auto-sync clears stale binding
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 2 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(altFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(altFund), deadline, signers, signatures);
+    }
+
+    (order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "Order should be cleared during auto-sync");
+
+    (, address fundAfter,,) = facility.getIntent(intentId);
+    assertEq(fundAfter, address(altFund), "Fund should be updated to the new address");
+  }
+
+  function test_setFund_autoSyncsEndedOrder_sameFund() public {
+    uint256 intentId = _createResolvingIntent();
+
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 1 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    // Create a stale order and mark it as ENDED in mock fund state
+    vm.prank(facilitator);
+    facility.create(intentId, 500e18, 500e18, Mode.DEPOSIT);
+    (Order memory order,) = facility.getOrder(intentId);
+    mockFund.setOrderState(order.toId(address(mockFund)), State.ENDED);
+
+    // Expect two FundUpdated events: one for sync clearing, one for re-bind
+    vm.expectEmit(true, true, true, true);
+    emit IFacilityIntents.FundUpdated(intentId, address(0));
+    vm.expectEmit(true, true, true, true);
+    emit IFacilityIntents.FundUpdated(intentId, address(mockFund));
+
+    vm.prank(facilitator);
+    {
+      uint256 deadline = block.timestamp + 2 hours;
+      address[] memory signers = new address[](1);
+      bytes[] memory signatures = new bytes[](1);
+
+      signers[0] = guardian;
+      signatures[0] = _signSetFund(intentId, address(mockFund), deadline, GUARDIAN_PK);
+      facility.setFund(intentId, address(mockFund), deadline, signers, signatures);
+    }
+
+    (order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "Order should be cleared during auto-sync");
+
+    (, address fund,,) = facility.getIntent(intentId);
+    assertEq(fund, address(mockFund), "Fund should be re-bound after auto-sync");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -337,10 +562,120 @@ contract FacilityIntentsTest is FacilityBaseTest {
     uint256 intentId = _createResolvingIntent();
 
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     (,, address request,) = facility.getIntent(intentId);
     assertEq(request, address(mockRequest), "Request should be set");
+  }
+
+  function test_setRequest_revertWhenExpired() public {
+    uint256 intentId = _createResolvingIntent();
+
+    uint256 deadline = block.timestamp - 1;
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signatures[0] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.DeadlineExpired.selector);
+    facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
+  }
+
+  function test_setRequest_revertWhenInvalidSignatureLength() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    address[] memory signers = new address[](2);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signers[1] = guardian2;
+    signatures[0] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidSignatureLength.selector);
+    facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
+  }
+
+  function test_setRequest_revertWhenInsufficientSignatures() public {
+    vm.prank(owner);
+    uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    signers[0] = guardian;
+    signatures[0] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN_PK);
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidSignatureCount.selector, 2, 1));
+    facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
+  }
+
+  function test_setRequest_revertWhenInvalidSignerOrder() public {
+    vm.prank(owner);
+    uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+
+    address[] memory signers = new address[](2);
+    bytes[] memory signatures = new bytes[](2);
+
+    if (guardian < guardian2) {
+      signers[0] = guardian2;
+      signers[1] = guardian;
+      signatures[0] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN2_PK);
+      signatures[1] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN_PK);
+    } else {
+      signers[0] = guardian;
+      signers[1] = guardian2;
+      signatures[0] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN_PK);
+      signatures[1] = _signSetRequest(intentId, address(mockRequest), deadline, GUARDIAN2_PK);
+    }
+
+    vm.prank(facilitator);
+    vm.expectRevert(LibFacilityErrors.InvalidSignerOrder.selector);
+    facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
+  }
+
+  function test_setRequest_revertWhenNotGuardian() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    uint256 userPk = 0x9999;
+    address userSigner = vm.addr(userPk);
+
+    bytes32 digest = _getSetRequestDigest(intentId, address(mockRequest), deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPk, digest);
+    bytes memory signature = abi.encodePacked(r, s, v);
+
+    address[] memory signers = new address[](1);
+    signers[0] = userSigner;
+    bytes[] memory signatures = new bytes[](1);
+    signatures[0] = signature;
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.NotGuardian.selector, userSigner));
+    facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
+  }
+
+  function test_setRequest_revertWhenInvalidSignature() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    bytes memory invalidSig = _signSetRequest(intentId, address(mockRequest), deadline - 1, GUARDIAN_PK);
+
+    address[] memory signers = new address[](1);
+    signers[0] = guardian;
+    bytes[] memory signatures = new bytes[](1);
+    signatures[0] = invalidSig;
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidSignature.selector, guardian));
+    facility.setRequest(intentId, address(mockRequest), deadline, signers, signatures);
   }
 
   function test_setRequest_emitsEvent() public {
@@ -349,7 +684,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true);
     emit IFacilityIntents.RequestUpdated(intentId, address(mockRequest));
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
   }
 
   function test_setRequest_revertOnNonFacilitator() public {
@@ -357,7 +692,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(user);
     vm.expectRevert();
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -418,7 +753,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     // First set a fund
     vm.prank(facilitator);
-    facility.setFund(intentId, address(mockFund));
+    _setFund(intentId, address(mockFund));
 
     // Verify fund is set
     (, address fund,,) = facility.getIntent(intentId);
@@ -426,11 +761,79 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     // Now remove the fund with address(0)
     vm.prank(facilitator);
-    facility.setFund(intentId, address(0));
+    _setFund(intentId, address(0));
 
     // Verify fund is removed
     (, address newFund,,) = facility.getIntent(intentId);
     assertEq(newFund, address(0), "Fund should be removed");
+  }
+
+  function test_setFund_removesFundWithoutSignatures() public {
+    uint256 intentId = _createResolvingIntent();
+
+    // First set a fund (requires signatures)
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+
+    (, address fund,,) = facility.getIntent(intentId);
+    assertEq(fund, address(mockFund));
+
+    // Remove fund with address(0) — no signatures needed
+    address[] memory emptySigners = new address[](0);
+    bytes[] memory emptySignatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    facility.setFund(intentId, address(0), 0, emptySigners, emptySignatures);
+
+    (, address removedFund,,) = facility.getIntent(intentId);
+    assertEq(removedFund, address(0), "Fund should be removed without signatures");
+  }
+
+  function test_setRequest_removesRequestWithoutSignatures() public {
+    uint256 intentId = _createResolvingIntent();
+
+    // First set a request (requires signatures)
+    vm.prank(facilitator);
+    _setRequest(intentId, address(mockRequest));
+    mockRequest.setRepaid(true);
+
+    (,, address request,) = facility.getIntent(intentId);
+    assertEq(request, address(mockRequest));
+
+    // Remove request with address(0) — no signatures needed
+    address[] memory emptySigners = new address[](0);
+    bytes[] memory emptySignatures = new bytes[](0);
+
+    vm.prank(facilitator);
+    facility.setRequest(intentId, address(0), 0, emptySigners, emptySignatures);
+
+    (,, address removedRequest,) = facility.getIntent(intentId);
+    assertEq(removedRequest, address(0), "Request should be removed without signatures");
+  }
+
+  function test_setFund_skipsWhenSameFund() public {
+    uint256 intentId1 = _createResolvingIntent();
+
+    vm.prank(owner);
+    uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Set fund on first intent
+    vm.prank(facilitator);
+    _setFund(intentId1, address(mockFund));
+
+    // Call setFund again with the same fund — should be a no-op (early return)
+    vm.prank(facilitator);
+    _setFund(intentId1, address(mockFund));
+
+    // Fund should still be set
+    (, address fund,,) = facility.getIntent(intentId1);
+    assertEq(fund, address(mockFund), "Fund should still be set");
+
+    // Reverse mapping must be preserved — setting same fund on another intent should revert
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.FundAlreadyInUse.selector, address(mockFund), intentId1));
+    _setFund(intentId2, address(mockFund));
   }
 
   function test_setFund_revertWhenFundAlreadyInUse() public {
@@ -443,12 +846,39 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     // Set fund on first intent
     vm.prank(facilitator);
-    facility.setFund(intentId1, address(mockFund));
+    _setFund(intentId1, address(mockFund));
 
     // Try to set same fund on second intent - should revert
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.FundAlreadyInUse.selector, address(mockFund), intentId1));
-    facility.setFund(intentId2, address(mockFund));
+    _setFund(intentId2, address(mockFund));
+  }
+
+  function test_setRequest_skipsWhenSameRequest() public {
+    uint256 intentId1 = _createResolvingIntent();
+
+    vm.prank(owner);
+    uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Set request on first intent
+    vm.prank(facilitator);
+    _setRequest(intentId1, address(mockRequest));
+
+    // Call setRequest again with the same request — should be a no-op (early return)
+    vm.prank(facilitator);
+    _setRequest(intentId1, address(mockRequest));
+
+    // Request should still be set
+    (,, address request,) = facility.getIntent(intentId1);
+    assertEq(request, address(mockRequest), "Request should still be set");
+
+    // Reverse mapping must be preserved — setting same request on another intent should revert
+    vm.prank(facilitator);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibFacilityErrors.RequestAlreadyInUse.selector, address(mockRequest), intentId1)
+    );
+    _setRequest(intentId2, address(mockRequest));
   }
 
   function test_setRequest_revertWhenRequestAlreadyInUse() public {
@@ -461,14 +891,14 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     // Set request on first intent
     vm.prank(facilitator);
-    facility.setRequest(intentId1, address(mockRequest));
+    _setRequest(intentId1, address(mockRequest));
 
     // Try to set same request on second intent - should revert
     vm.prank(facilitator);
     vm.expectRevert(
       abi.encodeWithSelector(LibFacilityErrors.RequestAlreadyInUse.selector, address(mockRequest), intentId1)
     );
-    facility.setRequest(intentId2, address(mockRequest));
+    _setRequest(intentId2, address(mockRequest));
   }
 
   function test_resolve_revertWhenRequestNotRepaid() public {
@@ -476,7 +906,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     // Set a request that has outstanding debt
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Configure mock to report not repaid
     mockRequest.setRepaid(false);
@@ -506,18 +936,19 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_createIntent_revertOnInvalidGuardKeyInTargetPM() public {
     // When target is the only PM, guard key must match the target asset
     // Deploy a different PM to use as invalid guard key
-    PositionManager pm3 = new PositionManager();
+    PositionManager pm3 = PositionManager(address(new PositionManager()).clone());
     pm3.initialize(
       owner,
       PositionManagerMetadata({
         name: "Position Manager 3",
         symbol: "PM3",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
       8e17,
-      address(transferGuard)
+      address(transferGuard),
+      0,
+      0
     );
 
     IntentProperties memory params = _intentParamsWithTargetPM();
@@ -532,18 +963,19 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_createIntent_revertOnInvalidGuardKeyInDualPM() public {
     // Deploy a third position manager to use as invalid guard key
     // (it must be a valid contract that responds to assets())
-    PositionManager pm3 = new PositionManager();
+    PositionManager pm3 = PositionManager(address(new PositionManager()).clone());
     pm3.initialize(
       owner,
       PositionManagerMetadata({
         name: "Position Manager 3",
         symbol: "PM3",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      8e17, // 80% LLTV
-      address(transferGuard)
+      8e17, // 80% LTV
+      address(transferGuard),
+      0,
+      0
     );
 
     IntentProperties memory params = _intentParamsWithDualPM();
@@ -614,12 +1046,12 @@ contract FacilityIntentsTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.deposit(invalidId, 1000e18);
 
-    // withdraw and claim check balance first (via ERC6909 balanceOf which returns 0),
-    // so they revert with InsufficientBalance before checking intent existence
-    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
+    // withdraw and claim now revert with IntentNotFound because _burn's _beforeTokenTransfer
+    // validates the intent before checking balance
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.withdraw(invalidId, user, user, 1000e18);
 
-    vm.expectRevert(LibCommonErrors.InsufficientBalance.selector);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.claim(invalidId, user, user, 1000e18);
 
     vm.stopPrank();
@@ -642,20 +1074,20 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.resolve(invalidId);
 
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
-    facility.setFund(invalidId, address(mockFund));
+    _setFund(invalidId, address(mockFund));
 
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
-    facility.setRequest(invalidId, address(mockRequest));
+    _setRequest(invalidId, address(mockRequest));
 
     // Position manager functions
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
     facility.depositManager(invalidId, 1000e18, 0, false);
 
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
-    facility.withdrawManager(invalidId, 1000e18, 0, false);
+    facility.withdrawManager(invalidId, 1000e18, 0, false, WithdrawalStrategy.SEQUENTIAL);
 
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));
-    facility.burnManager(invalidId, 1000e18, false);
+    facility.burnManager(invalidId, 1000e18, false, WithdrawalStrategy.PROPORTIONAL);
 
     // Fund order functions
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.IntentNotFound.selector, invalidId));

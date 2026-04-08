@@ -5,6 +5,7 @@ import {FacilityBaseTest} from "./FacilityBase.t.sol";
 import {IntentProperties} from "src/libs/facility/LibIntent.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {MockRequest} from "test/mock/facility/MockRequest.sol";
 
 /// @title FacilityRequestsTest
 /// @notice Tests for Facility request operations (pull, repay)
@@ -19,7 +20,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request for the intent
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
   }
 
   /// @notice Funds the mock request with tokens for pulling
@@ -115,7 +116,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request while still in depositing phase
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     _fundMockRequest(500e18);
 
@@ -223,7 +224,7 @@ contract FacilityRequestsTest is FacilityBaseTest {
 
     // Set request while still in depositing phase
     vm.prank(facilitator);
-    facility.setRequest(intentId, address(mockRequest));
+    _setRequest(intentId, address(mockRequest));
 
     // Still in depositing phase - should revert
     vm.prank(facilitator);

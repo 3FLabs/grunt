@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IPositionManagerAdmin, SupplyQueueEntry} from "./base/IPositionManagerAdmin.sol";
 import {IPositionManagerRebalancing} from "./base/IPositionManagerRebalancing.sol";
@@ -62,7 +62,7 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @notice Returns the fee configuration and accounting state.
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days
-  /// @return performanceFee The performance fee rate in basis points
+  /// @return performanceFee The performance fee rate in basis points (charged on net gains after mgmt fee)
   /// @return lastTotalAssets The last total assets snapshot for performance fee calculation
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
   function feeData()
@@ -76,9 +76,35 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
       uint256 lastFeeAccrualTimestamp
     );
 
+  /// @notice Returns the pending fee data needed to compute an accurate share price.
+  /// @dev Mirrors the logic of the internal `_accrueFees()` function without mutating state.
+  ///      Integrators can compute an accurate share price as:
+  ///      `price = totalAssets / (totalSupply + managementFeeShares + performanceFeeShares)`.
+  /// @return totalAssets_ The current total assets (collateral value - debt) across all borrow modules
+  /// @return totalSupply_ The current total supply of shares (excluding pending fee shares)
+  /// @return managementFeeShares The shares that would be minted for management fees
+  /// @return performanceFeeShares The shares that would be minted for performance fees
+  function pendingFees()
+    external
+    view
+    returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares);
+
+  /// @notice Returns the virtual share offset used for inflation attack protection.
+  /// @dev Derived from the debt asset decimals: 10^(18 - debtAsset.decimals()), floored at 1.
+  /// @return The virtual share offset value
+  function virtualShareOffset() external view returns (uint256);
+
   /// @notice Returns the configuration parameters.
-  /// @return lltv The LLTV used for available collateral calculations (WAD precision)
-  /// @return maxRebalanceLoss The maximum allowed loss during rebalance in basis points
+  /// @return ltv The LTV used for available collateral calculations (WAD precision)
   /// @return transferGuard The address of the transfer guard contract (address(0) if disabled)
-  function config() external view returns (uint256 lltv, uint16 maxRebalanceLoss, address transferGuard);
+  function config() external view returns (uint256 ltv, address transferGuard);
+
+  /// @notice Returns the rebalance configuration and state.
+  /// @return maxRebalanceLoss The maximum allowed loss during rebalance in basis points
+  /// @return rebalanceCooldown The minimum seconds between consecutive rebalance calls (0 = disabled)
+  /// @return lastRebalanceTimestamp The timestamp of the last rebalance call (0 if never rebalanced)
+  function rebalanceConfig()
+    external
+    view
+    returns (uint16 maxRebalanceLoss, uint40 rebalanceCooldown, uint40 lastRebalanceTimestamp);
 }

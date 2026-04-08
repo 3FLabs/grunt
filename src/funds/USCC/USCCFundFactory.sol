@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {USCCFund} from "./USCCFund.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {LibChecks} from "../libs/common/LibChecks.sol";
+import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title USCCFundFactory
 /// @author 3F Protocol
@@ -68,6 +68,14 @@ contract USCCFundFactory {
   address public immutable WUSCC;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          STORAGE                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Mapping to track all USCCFund contracts deployed by this factory.
+  /// @dev Returns true if the address is a USCCFund deployed by this factory.
+  mapping(address => bool) internal _isFund;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -104,7 +112,7 @@ contract USCCFundFactory {
   ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
   ///      to the newly deployed fund address so it can mint wrapped tokens.
   ///
-  ///      The depositor receives DEPOSITOR_ROLE on the fund (can execute orders).
+  ///      The depositor receives _DEPOSITOR_ROLE on the fund (can execute orders).
   ///      Emits a {FundCreated} event.
   /// @param owner The address that will own the USCCFund (admin privileges)
   /// @param depositor The address that will have the depositor role (must be a contract)
@@ -121,6 +129,15 @@ contract USCCFundFactory {
     // Initialize USCCFund
     USCCFund(fund).initialize(owner, depositor, recipient, oracle);
 
+    _isFund[fund] = true;
+
     emit FundCreated(fund, recipient);
+  }
+
+  /// @notice Checks if an address is a USCCFund contract deployed by this factory.
+  /// @param fund The address to check
+  /// @return True if the address is a USCCFund deployed by this factory
+  function isFund(address fund) external view returns (bool) {
+    return _isFund[fund];
   }
 }

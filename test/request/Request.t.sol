@@ -13,6 +13,7 @@ import {MockRequestInteractionsCallback} from "../mock/request/MockRequestIntera
 import {Offer} from "../../src/interfaces/request/IOfferReceiver.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
+import {LibCommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
 
 contract RequestTest is Test {
   RequestFactory public factory;
@@ -42,6 +43,7 @@ contract RequestTest is Test {
   event FundsPulled(address indexed puller, uint256 amount);
   event AuthorizedMinting(address indexed to, uint256 ptAmount, uint256 ytAmount);
   event RequestCreated(address request, address asset, address ptToken, address ytToken);
+  event MintToRepaidDelaySet(uint40 mintToRepaidDelay);
 
   function setUp() public {
     owner = makeAddr("owner");
@@ -60,8 +62,9 @@ contract RequestTest is Test {
 
     // Create request via factory with far future deadline (effectively disabled for most tests)
     vm.prank(owner);
-    (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(type(uint64).max));
+    (address reqAddr, address ptAddr, address ytAddr) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(block.timestamp + 90 days), 0
+    );
 
     request = Request(reqAddr);
     ptVault = Vault(ptAddr);
@@ -89,7 +92,9 @@ contract RequestTest is Test {
     vm.expectEmit(false, true, false, false);
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
-    factory.createRequest(owner, puller, consumer, address(asset), "New Request", "NEW", uint64(type(uint64).max));
+    factory.createRequest(
+      owner, puller, consumer, address(asset), "New Request", "NEW", uint64(block.timestamp + 90 days), 0
+    );
   }
 
   function test_factory_createRequest_initializesCorrectly() public view {
@@ -126,10 +131,12 @@ contract RequestTest is Test {
 
   function test_factory_isRequest_tracksMultipleRequests() public {
     // Deploy additional requests
-    (address req1,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(type(uint64).max));
-    (address req2,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(type(uint64).max));
+    (address req1,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(block.timestamp + 90 days), 0
+    );
+    (address req2,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(block.timestamp + 90 days), 0
+    );
 
     // All deployed requests should be tracked
     assertEq(factory.isRequest(address(request)), true);
@@ -155,7 +162,8 @@ contract RequestTest is Test {
       address(ytVault),
       "New",
       "NEW",
-      uint64(type(uint64).max)
+      uint64(block.timestamp + 90 days),
+      0
     );
   }
 
@@ -164,64 +172,64 @@ contract RequestTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_authorizeMinting_success() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.expectEmit(true, false, false, true, address(request));
-    emit AuthorizedMinting(primeBroker, 1_000_000e6, 100_000e6);
+    emit AuthorizedMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
 
-    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(primeBroker);
+    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(bridgeFacilitator);
     assertEq(ptAmount, 1_000_000e6);
     assertEq(ytAmount, 100_000e6);
   }
 
   function test_authorizeMinting_onlyOwnerOrConsumer() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     address notAuthorized = makeAddr("notAuthorized");
 
     vm.prank(notAuthorized);
     vm.expectRevert(LibRequestErrors.Unauthorized.selector);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
   }
 
   function test_authorizeMinting_consumerCanCall() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.expectEmit(true, false, false, true, address(request));
-    emit AuthorizedMinting(primeBroker, 1_000_000e6, 100_000e6);
+    emit AuthorizedMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
 
     vm.prank(consumer);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
 
-    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(primeBroker);
+    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(bridgeFacilitator);
     assertEq(ptAmount, 1_000_000e6);
     assertEq(ytAmount, 100_000e6);
   }
 
   function test_authorizeMinting_canUpdate() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.startPrank(owner);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
-    request.authorizeMinting(primeBroker, 2_000_000e6, 200_000e6);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 2_000_000e6, 200_000e6);
     vm.stopPrank();
 
-    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(primeBroker);
+    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(bridgeFacilitator);
     assertEq(ptAmount, 2_000_000e6);
     assertEq(ytAmount, 200_000e6);
   }
 
   function test_authorizeMinting_canRevoke() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.startPrank(owner);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
-    request.authorizeMinting(primeBroker, 0, 0);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 0, 0);
     vm.stopPrank();
 
-    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(primeBroker);
+    (uint128 ptAmount, uint128 ytAmount) = request.mintAuthorization(bridgeFacilitator);
     assertEq(ptAmount, 0);
     assertEq(ytAmount, 0);
   }
@@ -231,68 +239,188 @@ contract RequestTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_mint_success() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 ptAmount = 1_000_000e6;
     uint128 ytAmount = 100_000e6;
 
     // Authorize minting
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
-    // Fund prime broker and approve
-    asset.mint(primeBroker, ptAmount);
-    vm.startPrank(primeBroker);
+    // Fund bridge facilitator and approve
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
 
     // Mint
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Verify balances
-    assertEq(ptVault.balanceOf(primeBroker), ptAmount);
-    assertEq(ytVault.balanceOf(primeBroker), ytAmount);
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount);
     assertEq(asset.balanceOf(address(request)), ptAmount);
-    assertEq(asset.balanceOf(primeBroker), 0);
+    assertEq(asset.balanceOf(bridgeFacilitator), 0);
 
     // Verify authorization is consumed
-    (uint128 remainingPt, uint128 remainingYt) = request.mintAuthorization(primeBroker);
+    (uint128 remainingPt, uint128 remainingYt) = request.mintAuthorization(bridgeFacilitator);
     assertEq(remainingPt, 0);
     assertEq(remainingYt, 0);
   }
 
   function test_mint_revertsWhenRepaid() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
 
     // Set as repaid
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     // Try to mint
-    vm.prank(primeBroker);
+    vm.prank(bridgeFacilitator);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    request.mint();
+    request.mint(type(uint128).max, 0);
   }
 
-  function test_mint_revertsWithNoAuthorization() public {
-    address primeBroker = makeAddr("primeBroker");
+  function test_mint_noopWithNoAuthorization() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
-    asset.mint(primeBroker, 1_000_000e6);
+    // Early return — no tokens minted, no state changes
+    vm.prank(bridgeFacilitator);
+    request.mint(type(uint128).max, 0);
 
-    vm.startPrank(primeBroker);
-    asset.approve(address(request), 1_000_000e6);
+    assertEq(ptVault.balanceOf(bridgeFacilitator), 0);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), 0);
+  }
 
-    // Should revert because no authorization (ptAmount = 0, so transfer of 0 succeeds but no tokens minted)
-    // Actually it will try to transfer 0 and mint 0, which may or may not revert
-    // Let's verify the behavior
-    request.mint();
+  function test_mint_zeroAuthDoesNotBumpLastMintTimestamp() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    // Perform a real mint to set lastMintTimestamp
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    // No tokens should be minted
-    assertEq(ptVault.balanceOf(primeBroker), 0);
-    assertEq(ytVault.balanceOf(primeBroker), 0);
+    uint40 mintTimestamp = request.lastMintTimestamp();
+    assertGt(mintTimestamp, 0);
+
+    // Warp forward — a griefing caller tries to bump the timestamp
+    vm.warp(block.timestamp + 1 days);
+    address griefer = makeAddr("griefer");
+    vm.prank(griefer);
+    request.mint(type(uint128).max, 0);
+
+    // lastMintTimestamp should NOT have changed
+    assertEq(request.lastMintTimestamp(), mintTimestamp, "zero-auth mint must not bump lastMintTimestamp");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  MINT SLIPPAGE TESTS                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_mint_revertsWhenPtAboveMax() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+
+    // maxPt below authorized PT — broker caps deposit lower than authorized
+    vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
+    request.mint(ptAmount - 1, ytAmount);
+    vm.stopPrank();
+  }
+
+  function test_mint_revertsWhenYtBelowMin() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+
+    // minYt exceeds authorized YT
+    vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
+    request.mint(ptAmount, ytAmount + 1);
+    vm.stopPrank();
+  }
+
+  function test_mint_succeedsWithExactMinimums() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+    request.mint(ptAmount, ytAmount);
+    vm.stopPrank();
+
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount);
+  }
+
+  function test_mint_succeedsWithRelaxedBounds() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+    // Higher maxPt (more lenient cap) and lower minYt (more lenient floor) both succeed
+    request.mint(ptAmount * 2, ytAmount / 2);
+    vm.stopPrank();
+
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount);
+  }
+
+  function testFuzz_mint_slippageProtection(uint128 ptAuth, uint128 ytAuth, uint128 maxPt, uint128 minYt) public {
+    vm.assume(ptAuth > 0 && ptAuth < type(uint128).max / 2);
+    vm.assume(ytAuth > 0 && ytAuth < type(uint128).max / 2);
+
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAuth, ytAuth);
+
+    asset.mint(bridgeFacilitator, ptAuth);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAuth);
+
+    if (ptAuth > maxPt || ytAuth < minYt) {
+      vm.expectRevert(LibRequestErrors.SlippageExceeded.selector);
+      request.mint(maxPt, minYt);
+    } else {
+      request.mint(maxPt, minYt);
+      assertEq(ptVault.balanceOf(bridgeFacilitator), ptAuth);
+      assertEq(ytVault.balanceOf(bridgeFacilitator), ytAuth);
+    }
+    vm.stopPrank();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -351,16 +479,16 @@ contract RequestTest is Test {
 
   function test_pullFunds_success() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Now pull funds (puller receives funds, no callback)
@@ -378,16 +506,16 @@ contract RequestTest is Test {
   }
 
   function test_pullFunds_partial() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull partial funds - expect event with puller address and partial amount
@@ -411,7 +539,7 @@ contract RequestTest is Test {
 
   function test_pullFunds_revertsWhenRepaid() public {
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     vm.prank(puller);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
@@ -420,16 +548,16 @@ contract RequestTest is Test {
 
   function test_pullFunds_withCallback() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -438,19 +566,26 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner,
+      address(callback),
+      consumer,
+      address(asset),
+      "Callback Request",
+      "CALLBACK",
+      uint64(block.timestamp + 90 days),
+      0
     );
 
     Request callbackRequest = Request(reqAddr);
 
     // Fund the callback request
     vm.prank(owner);
-    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    callbackRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with callback data
@@ -467,16 +602,16 @@ contract RequestTest is Test {
 
   function test_pullFunds_withCallback_revertsIfCallbackReverts() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract that will revert
@@ -486,19 +621,26 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner,
+      address(callback),
+      consumer,
+      address(asset),
+      "Callback Request",
+      "CALLBACK",
+      uint64(block.timestamp + 90 days),
+      0
     );
 
     Request callbackRequest = Request(reqAddr);
 
     // Fund the callback request
     vm.prank(owner);
-    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    callbackRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with callback data - should revert
@@ -510,16 +652,16 @@ contract RequestTest is Test {
 
   function test_pullFunds_withEmptyData_noCallback() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -528,19 +670,26 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner,
+      address(callback),
+      consumer,
+      address(asset),
+      "Callback Request",
+      "CALLBACK",
+      uint64(block.timestamp + 90 days),
+      0
     );
 
     Request callbackRequest = Request(reqAddr);
 
     // Fund the callback request
     vm.prank(owner);
-    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    callbackRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with empty data - callback should not be called
@@ -555,16 +704,16 @@ contract RequestTest is Test {
 
   function test_pullFunds_withCallback_differentData() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Deploy callback contract
@@ -573,19 +722,26 @@ contract RequestTest is Test {
     // Create a new request with callback as puller
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, address(callback), consumer, address(asset), "Callback Request", "CALLBACK", uint64(type(uint64).max)
+      owner,
+      address(callback),
+      consumer,
+      address(asset),
+      "Callback Request",
+      "CALLBACK",
+      uint64(block.timestamp + 90 days),
+      0
     );
 
     Request callbackRequest = Request(reqAddr);
 
     // Fund the callback request
     vm.prank(owner);
-    callbackRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    callbackRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(callbackRequest), amount);
-    callbackRequest.mint();
+    callbackRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds with different data types
@@ -614,16 +770,16 @@ contract RequestTest is Test {
 
   function test_repay_success() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -644,16 +800,16 @@ contract RequestTest is Test {
   }
 
   function test_repay_partial() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -673,16 +829,16 @@ contract RequestTest is Test {
   }
 
   function test_repay_revertsWhenRepaid() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -697,7 +853,7 @@ contract RequestTest is Test {
 
     // Mark as repaid
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     // Try to repay again - should revert (even if puller has funds)
     asset.mint(puller, amount);
@@ -709,16 +865,16 @@ contract RequestTest is Test {
   }
 
   function test_repay_multipleTimes() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds - puller now has the funds
@@ -751,23 +907,23 @@ contract RequestTest is Test {
     emit Repaid(0);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     assertEq(request.canWithdraw(), true);
   }
 
   function test_setRepaid_emitsAmountWithBalance() public {
     // First deposit some funds via mint
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, amount, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), amount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Now set repaid - should emit with the balance
@@ -775,7 +931,7 @@ contract RequestTest is Test {
     emit Repaid(amount);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     assertEq(request.canWithdraw(), true);
   }
@@ -785,16 +941,508 @@ contract RequestTest is Test {
 
     vm.prank(notOwner);
     vm.expectRevert(LibRequestErrors.Unauthorized.selector);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
   }
 
   function test_setRepaid_cannotCallTwice() public {
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*             SET REPAID MIN BALANCE TESTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setRepaid_withMinBalance_success() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    vm.expectEmit(true, true, true, true, address(request));
+    emit Repaid(amount);
+
+    vm.prank(owner);
+    request.setRepaid(amount, type(uint256).max);
+
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_withMinBalance_revertsWhenBalanceTooLow() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Pull funds to simulate facilitator draining
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    // setRepaid with minBalance should revert because balance is 0
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, 0, amount));
+    request.setRepaid(amount, type(uint256).max);
+  }
+
+  function test_setRepaid_withMinBalance_frontrunProtection() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Simulate partial frontrun: facilitator pulls half the funds
+    vm.prank(puller);
+    request.pullFunds(500_000e6, "");
+
+    // setRepaid with minBalance = full amount should revert
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, 500_000e6, amount));
+    request.setRepaid(amount, type(uint256).max);
+
+    // setRepaid with minBalance matching remaining balance should succeed
+    vm.prank(owner);
+    request.setRepaid(500_000e6, type(uint256).max);
+
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_zeroMinBalance_alwaysSucceeds() public {
+    // setRepaid(0) should always succeed (no balance check)
+    vm.prank(owner);
+    request.setRepaid(0, type(uint256).max);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*             SET REPAID MAX BALANCE TESTS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setRepaid_withMaxBalance_success() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // maxBalance matches balance exactly — should succeed
+    vm.prank(owner);
+    request.setRepaid(0, amount);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_withMaxBalance_revertsWhenBalanceTooHigh() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Malicious facilitator over-repays to inflate YT value
+    uint256 excessAmount = 500_000e6;
+    asset.mint(address(request), excessAmount);
+
+    // setRepaid with maxBalance = original amount should revert
+    vm.prank(owner);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, amount + excessAmount, uint256(amount))
+    );
+    request.setRepaid(0, amount);
+  }
+
+  function test_setRepaid_withMaxBalance_overRepayProtection() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 ptAmount = 1_000_000e6;
+    uint128 ytAmount = 100_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
+
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), ptAmount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Pull funds then "repay" with excess — facilitator is also a YT holder
+    vm.prank(puller);
+    request.pullFunds(ptAmount, "");
+
+    // Facilitator over-repays: sends back ptAmount + extra to inflate YT redemption value
+    uint256 overRepayAmount = ptAmount + 500_000e6;
+    asset.mint(address(request), overRepayAmount);
+
+    // Owner sets bounds: expect at least ptAmount, at most ptAmount + small tolerance
+    uint256 maxExpected = ptAmount + 10_000e6; // small tolerance for interest
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, overRepayAmount, maxExpected));
+    request.setRepaid(ptAmount, maxExpected);
+
+    // After facilitator corrects the balance, setRepaid succeeds
+    // Simulate: remove the excess, leave ptAmount + small interest within tolerance
+    asset.burn(address(request), overRepayAmount - ptAmount - 5_000e6);
+    assertEq(asset.balanceOf(address(request)), ptAmount + 5_000e6);
+
+    vm.prank(owner);
+    request.setRepaid(ptAmount, maxExpected);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_withBothBounds_success() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Balance is exactly amount — both min and max match
+    vm.prank(owner);
+    request.setRepaid(amount, amount);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function test_setRepaid_typeUint256Max_skipsMaxCheck() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Add excess — but type(uint256).max skips the check
+    asset.mint(address(request), 10_000_000e6);
+
+    vm.prank(owner);
+    request.setRepaid(0, type(uint256).max);
+    assertEq(request.canWithdraw(), true);
+  }
+
+  function testFuzz_setRepaid_balanceBounds(
+    uint128 depositAmount,
+    uint128 pullAmount,
+    uint128 extraAssets,
+    uint128 minBalance,
+    uint128 maxBalance
+  ) public {
+    vm.assume(depositAmount > 0 && depositAmount < type(uint128).max / 2);
+    vm.assume(pullAmount <= depositAmount);
+    vm.assume(extraAssets < type(uint128).max / 2);
+
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, depositAmount, 0);
+
+    asset.mint(bridgeFacilitator, depositAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), depositAmount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    if (pullAmount > 0) {
+      vm.prank(puller);
+      request.pullFunds(pullAmount, "");
+    }
+    if (extraAssets > 0) {
+      asset.mint(address(request), extraAssets);
+    }
+
+    uint256 balance = uint256(depositAmount) - pullAmount + extraAssets;
+
+    if (balance < minBalance) {
+      vm.prank(owner);
+      vm.expectRevert(
+        abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, balance, uint256(minBalance))
+      );
+      request.setRepaid(minBalance, maxBalance);
+    } else if (balance > maxBalance) {
+      vm.prank(owner);
+      vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, balance, uint256(maxBalance)));
+      request.setRepaid(minBalance, maxBalance);
+    } else {
+      vm.prank(owner);
+      request.setRepaid(minBalance, maxBalance);
+      assertTrue(request.canWithdraw());
+    }
+  }
+
+  function testFuzz_setRepaid_minBalance(uint128 depositAmount, uint128 pullAmount, uint128 minBalance) public {
+    vm.assume(depositAmount > 0 && depositAmount < type(uint128).max / 2);
+    vm.assume(pullAmount <= depositAmount);
+
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, depositAmount, 0);
+
+    asset.mint(bridgeFacilitator, depositAmount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), depositAmount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    if (pullAmount > 0) {
+      vm.prank(puller);
+      request.pullFunds(pullAmount, "");
+    }
+
+    uint256 remainingBalance = depositAmount - pullAmount;
+
+    if (remainingBalance < minBalance) {
+      vm.prank(owner);
+      vm.expectRevert(
+        abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, remainingBalance, uint256(minBalance))
+      );
+      request.setRepaid(minBalance, type(uint256).max);
+    } else {
+      vm.prank(owner);
+      request.setRepaid(minBalance, type(uint256).max);
+      assertTrue(request.canWithdraw());
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              MINT-TO-REPAID TIMELOCK TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_lastMintTimestamp_initiallyZero() public view {
+    assertEq(request.lastMintTimestamp(), 0);
+  }
+
+  function test_mintToRepaidDelay_initiallyZero() public view {
+    assertEq(request.mintToRepaidDelay(), 0);
+  }
+
+  function test_initialize_setsMintToRepaidDelay() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+    );
+    Request timelockRequest = Request(reqAddr);
+    assertEq(timelockRequest.mintToRepaidDelay(), delay);
+  }
+
+  function test_mint_updatesLastMintTimestamp() public {
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 1_000_000e6;
+
+    vm.prank(owner);
+    request.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
+
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(request), amount);
+    request.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    assertEq(request.lastMintTimestamp(), uint40(block.timestamp));
+  }
+
+  function test_setRepaid_revertsWhenTimelockActive() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+    );
+    Request timelockRequest = Request(reqAddr);
+
+    // Mint to set lastMintTimestamp
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(bridgeFacilitator, amount, 100e6);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    uint40 expectedAvailableAt = uint40(block.timestamp) + delay;
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
+    timelockRequest.setRepaid(0, type(uint256).max);
+  }
+
+  function test_setRepaid_succeedsAfterTimelockExpires() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+    );
+    Request timelockRequest = Request(reqAddr);
+
+    // Mint to set lastMintTimestamp
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(bridgeFacilitator, amount, 100e6);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    // Warp past the timelock
+    vm.warp(block.timestamp + delay);
+
+    vm.prank(owner);
+    timelockRequest.setRepaid(0, type(uint256).max);
+    assertTrue(timelockRequest.canWithdraw());
+  }
+
+  function test_setRepaid_succeedsWithoutMinting() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+    );
+    Request timelockRequest = Request(reqAddr);
+
+    // No minting — lastMintTimestamp is 0, so 0 + delay < block.timestamp for any non-zero block.timestamp
+    // Actually, if block.timestamp >= delay, it would pass. Let's ensure it works at timestamp 1.
+    vm.warp(1);
+    vm.prank(owner);
+    timelockRequest.setRepaid(0, type(uint256).max);
+    assertTrue(timelockRequest.canWithdraw());
+  }
+
+  function test_repaidAvailableAt_returnsZeroWithNoMint() public view {
+    assertEq(request.repaidAvailableAt(), 0);
+  }
+
+  function test_repaidAvailableAt_returnsCorrectTimestamp() public {
+    uint40 delay = 24 hours;
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+    );
+    Request timelockRequest = Request(reqAddr);
+
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(bridgeFacilitator, amount, 100e6);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    assertEq(timelockRequest.repaidAvailableAt(), uint40(block.timestamp) + delay);
+  }
+
+  function test_setMintToRepaidDelay_ownerCanSet() public {
+    uint40 newDelay = 12 hours;
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit MintToRepaidDelaySet(newDelay);
+    request.setMintToRepaidDelay(newDelay);
+    assertEq(request.mintToRepaidDelay(), newDelay);
+  }
+
+  function test_setMintToRepaidDelay_revertsOnNonOwner() public {
+    address notOwner = makeAddr("notOwner");
+    vm.prank(notOwner);
+    vm.expectRevert(LibRequestErrors.Unauthorized.selector);
+    request.setMintToRepaidDelay(12 hours);
+  }
+
+  function test_setMintToRepaidDelay_revertsOnZero() public {
+    vm.prank(owner);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    request.setMintToRepaidDelay(0);
+  }
+
+  function testFuzz_setRepaid_respectsTimelock(uint40 delay, uint40 timePassed) public {
+    delay = uint40(bound(delay, 1, 90 days - 1)); // delay must be strictly less than deadline offset
+    timePassed = uint40(bound(timePassed, 0, 2 * 90 days));
+
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(
+      owner, puller, consumer, address(asset), "Fuzz", "FZ", uint64(block.timestamp + 90 days), delay
+    );
+    Request timelockRequest = Request(reqAddr);
+
+    // Mint to set lastMintTimestamp
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
+    uint128 amount = 100e6;
+    vm.prank(owner);
+    timelockRequest.authorizeMinting(bridgeFacilitator, amount, 100e6);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
+    asset.approve(address(timelockRequest), amount);
+    timelockRequest.mint(type(uint128).max, 0);
+    vm.stopPrank();
+
+    uint256 mintTime = block.timestamp;
+    vm.warp(mintTime + timePassed);
+
+    if (timePassed >= 90 days) {
+      // Past the repayment deadline — contract auto-repays, setRepaid reverts
+      vm.prank(owner);
+      vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
+      timelockRequest.setRepaid(0, type(uint256).max);
+    } else if (timePassed < delay) {
+      uint40 expectedAvailableAt = uint40(mintTime) + delay;
+      vm.prank(owner);
+      vm.expectRevert(
+        abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt)
+      );
+      timelockRequest.setRepaid(0, type(uint256).max);
+    } else {
+      vm.prank(owner);
+      timelockRequest.setRepaid(0, type(uint256).max);
+      assertTrue(timelockRequest.canWithdraw());
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -809,7 +1457,7 @@ contract RequestTest is Test {
     assertEq(request.isRepaid(), false);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     assertEq(request.isRepaid(), true);
   }
@@ -819,7 +1467,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 1 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline, 0);
     Request deadlineRequest = Request(reqAddr);
 
     // Initially both isRepaid and canWithdraw should be false
@@ -844,23 +1492,23 @@ contract RequestTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_integration_fullLifecycle_authorizeMinting() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 principal = 1_000_000e6;
     uint128 expectedYield = 100_000e6;
 
     // 1. Owner authorizes minting
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, principal, expectedYield);
+    request.authorizeMinting(bridgeFacilitator, principal, expectedYield);
 
-    // 2. Prime broker mints
-    asset.mint(primeBroker, principal);
-    vm.startPrank(primeBroker);
+    // 2. Bridge facilitator mints
+    asset.mint(bridgeFacilitator, principal);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), principal);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    assertEq(ptVault.balanceOf(primeBroker), principal);
-    assertEq(ytVault.balanceOf(primeBroker), expectedYield);
+    assertEq(ptVault.balanceOf(bridgeFacilitator), principal);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), expectedYield);
 
     // 3. Puller pulls funds
     vm.prank(puller);
@@ -876,46 +1524,46 @@ contract RequestTest is Test {
 
     // 5. Owner marks as repaid
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
-    // 6. Prime broker redeems PT and YT
-    vm.startPrank(primeBroker);
+    // 6. Bridge facilitator redeems PT and YT
+    vm.startPrank(bridgeFacilitator);
 
     // Redeem PT - should get full principal
-    uint256 ptAssets = ptVault.redeem(principal, primeBroker, primeBroker);
+    uint256 ptAssets = ptVault.redeem(principal, bridgeFacilitator, bridgeFacilitator);
     assertEq(ptAssets, principal);
 
     // Redeem YT - should get 50k (50% of expected yield)
-    uint256 ytAssets = ytVault.redeem(expectedYield, primeBroker, primeBroker);
+    uint256 ytAssets = ytVault.redeem(expectedYield, bridgeFacilitator, bridgeFacilitator);
     assertEq(ytAssets, 50_000e6);
 
     vm.stopPrank();
 
-    assertEq(asset.balanceOf(primeBroker), principal + 50_000e6);
+    assertEq(asset.balanceOf(bridgeFacilitator), principal + 50_000e6);
   }
 
-  function test_integration_multiplePrimeBrokers() public {
-    address broker1 = makeAddr("broker1");
-    address broker2 = makeAddr("broker2");
+  function test_integration_multipleBridgeFacilitators() public {
+    address bf1 = makeAddr("bf1");
+    address bf2 = makeAddr("bf2");
 
-    // Authorize both brokers
+    // Authorize both bfs
     vm.startPrank(owner);
-    request.authorizeMinting(broker1, 1_000_000e6, 100_000e6);
-    request.authorizeMinting(broker2, 500_000e6, 50_000e6);
+    request.authorizeMinting(bf1, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bf2, 500_000e6, 50_000e6);
     vm.stopPrank();
 
-    // Broker 1 mints
-    asset.mint(broker1, 1_000_000e6);
-    vm.startPrank(broker1);
+    // BF 1 mints
+    asset.mint(bf1, 1_000_000e6);
+    vm.startPrank(bf1);
     asset.approve(address(request), 1_000_000e6);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    // Broker 2 mints
-    asset.mint(broker2, 500_000e6);
-    vm.startPrank(broker2);
+    // BF 2 mints
+    asset.mint(bf2, 500_000e6);
+    vm.startPrank(bf2);
     asset.approve(address(request), 500_000e6);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Verify total supplies
@@ -931,40 +1579,40 @@ contract RequestTest is Test {
     asset.transfer(address(request), 1_650_000e6);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
-    // Broker 1 redeems
-    vm.startPrank(broker1);
-    uint256 broker1Pt = ptVault.redeem(1_000_000e6, broker1, broker1);
-    uint256 broker1Yt = ytVault.redeem(100_000e6, broker1, broker1);
+    // BF 1 redeems
+    vm.startPrank(bf1);
+    uint256 bf1Pt = ptVault.redeem(1_000_000e6, bf1, bf1);
+    uint256 bf1Yt = ytVault.redeem(100_000e6, bf1, bf1);
     vm.stopPrank();
 
-    assertEq(broker1Pt, 1_000_000e6);
-    assertEq(broker1Yt, 100_000e6);
+    assertEq(bf1Pt, 1_000_000e6);
+    assertEq(bf1Yt, 100_000e6);
 
-    // Broker 2 redeems
-    vm.startPrank(broker2);
-    uint256 broker2Pt = ptVault.redeem(500_000e6, broker2, broker2);
-    uint256 broker2Yt = ytVault.redeem(50_000e6, broker2, broker2);
+    // BF 2 redeems
+    vm.startPrank(bf2);
+    uint256 bf2Pt = ptVault.redeem(500_000e6, bf2, bf2);
+    uint256 bf2Yt = ytVault.redeem(50_000e6, bf2, bf2);
     vm.stopPrank();
 
-    assertEq(broker2Pt, 500_000e6);
-    assertEq(broker2Yt, 50_000e6);
+    assertEq(bf2Pt, 500_000e6);
+    assertEq(bf2Yt, 50_000e6);
   }
 
   function test_integration_lossScenario() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 principal = 1_000_000e6;
     uint128 expectedYield = 100_000e6;
 
     // Mint tokens
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, principal, expectedYield);
+    request.authorizeMinting(bridgeFacilitator, principal, expectedYield);
 
-    asset.mint(primeBroker, principal);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, principal);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), principal);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -976,16 +1624,16 @@ contract RequestTest is Test {
     asset.transfer(address(request), 900_000e6);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     // Verify total assets
     assertEq(ptVault.totalAssets(), 900_000e6);
     assertEq(ytVault.totalAssets(), 0);
 
     // Redeem
-    vm.startPrank(primeBroker);
-    uint256 ptAssets = ptVault.redeem(principal, primeBroker, primeBroker);
-    uint256 ytAssets = ytVault.redeem(expectedYield, primeBroker, primeBroker);
+    vm.startPrank(bridgeFacilitator);
+    uint256 ptAssets = ptVault.redeem(principal, bridgeFacilitator, bridgeFacilitator);
+    uint256 ytAssets = ytVault.redeem(expectedYield, bridgeFacilitator, bridgeFacilitator);
     vm.stopPrank();
 
     // PT holders share the loss proportionally
@@ -1012,19 +1660,19 @@ contract RequestTest is Test {
     vm.assume(ptAmount > 0 && ptAmount < type(uint128).max / 2);
     vm.assume(ytAmount > 0 && ytAmount < type(uint128).max / 2);
 
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, ptAmount, ytAmount);
+    request.authorizeMinting(bridgeFacilitator, ptAmount, ytAmount);
 
-    asset.mint(primeBroker, ptAmount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, ptAmount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), ptAmount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    assertEq(ptVault.balanceOf(primeBroker), ptAmount);
-    assertEq(ytVault.balanceOf(primeBroker), ytAmount);
+    assertEq(ptVault.balanceOf(bridgeFacilitator), ptAmount);
+    assertEq(ytVault.balanceOf(bridgeFacilitator), ytAmount);
     assertEq(asset.balanceOf(address(request)), ptAmount);
   }
 
@@ -1032,15 +1680,15 @@ contract RequestTest is Test {
     vm.assume(depositAmount > 0);
     vm.assume(pullAmount > 0 && pullAmount <= depositAmount);
 
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, depositAmount, 0);
+    request.authorizeMinting(bridgeFacilitator, depositAmount, 0);
 
-    asset.mint(primeBroker, depositAmount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, depositAmount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), depositAmount);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     vm.prank(puller);
@@ -1056,16 +1704,16 @@ contract RequestTest is Test {
     // Ensure actualReturn is at least 1 to avoid division by zero edge cases
     vm.assume(actualReturn > 0 && actualReturn < type(uint128).max);
 
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     // Authorize and mint
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, principal, expectedYield);
+    request.authorizeMinting(bridgeFacilitator, principal, expectedYield);
 
-    asset.mint(primeBroker, principal);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, principal);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), principal);
-    request.mint();
+    request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1076,7 +1724,7 @@ contract RequestTest is Test {
     asset.mint(address(request), actualReturn);
 
     vm.prank(owner);
-    request.setRepaid();
+    request.setRepaid(0, type(uint256).max);
 
     // Calculate expected redemption values
     uint256 totalAssets = actualReturn;
@@ -1087,9 +1735,9 @@ contract RequestTest is Test {
     assertEq(ytVault.totalAssets(), yieldAssets);
 
     // Redeem
-    vm.startPrank(primeBroker);
-    uint256 ptRedeemed = ptVault.redeem(principal, primeBroker, primeBroker);
-    uint256 ytRedeemed = ytVault.redeem(expectedYield, primeBroker, primeBroker);
+    vm.startPrank(bridgeFacilitator);
+    uint256 ptRedeemed = ptVault.redeem(principal, bridgeFacilitator, bridgeFacilitator);
+    uint256 ytRedeemed = ytVault.redeem(expectedYield, bridgeFacilitator, bridgeFacilitator);
     vm.stopPrank();
 
     assertEq(ptRedeemed, principalAssets);
@@ -1097,17 +1745,17 @@ contract RequestTest is Test {
     assertEq(ytRedeemed, yieldAssets);
   }
 
-  function testFuzz_multipleBrokers(uint8 numBrokers, uint64 basePrincipal, uint64 baseYield) public {
-    numBrokers = uint8(bound(numBrokers, 1, 10));
+  function testFuzz_multipleBFs(uint8 numBFs, uint64 basePrincipal, uint64 baseYield) public {
+    numBFs = uint8(bound(numBFs, 1, 10));
     basePrincipal = uint64(bound(basePrincipal, 1e6, 1_000_000e6));
     baseYield = uint64(bound(baseYield, 1e6, 100_000e6));
 
     uint256 totalPrincipal = 0;
     uint256 totalYield = 0;
 
-    // Create and fund brokers
-    for (uint256 i = 0; i < numBrokers; i++) {
-      address broker = makeAddr(string(abi.encodePacked("broker", vm.toString(i))));
+    // Create and fund bfs
+    for (uint256 i = 0; i < numBFs; i++) {
+      address bf = makeAddr(string(abi.encodePacked("bf", vm.toString(i))));
       uint128 principal = uint128(basePrincipal * (i + 1));
       uint128 yield = uint128(baseYield * (i + 1));
 
@@ -1115,12 +1763,12 @@ contract RequestTest is Test {
       totalYield += yield;
 
       vm.prank(owner);
-      request.authorizeMinting(broker, principal, yield);
+      request.authorizeMinting(bf, principal, yield);
 
-      asset.mint(broker, principal);
-      vm.startPrank(broker);
+      asset.mint(bf, principal);
+      vm.startPrank(bf);
       asset.approve(address(request), principal);
-      request.mint();
+      request.mint(type(uint128).max, 0);
       vm.stopPrank();
     }
 
@@ -1139,33 +1787,33 @@ contract RequestTest is Test {
 
     // Create request with 18 decimals
     (, address pt18, address yt18) = factory.createRequest(
-      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(type(uint64).max)
+      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(block.timestamp + 90 days), 0
     );
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
     (, address pt8, address yt8) = factory.createRequest(
-      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(type(uint64).max)
+      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(block.timestamp + 90 days), 0
     );
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
   }
 
   function test_cannotWithdrawBeforeRepaid() public {
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
 
     vm.prank(owner);
-    request.authorizeMinting(primeBroker, 1_000_000e6, 100_000e6);
+    request.authorizeMinting(bridgeFacilitator, 1_000_000e6, 100_000e6);
 
-    asset.mint(primeBroker, 1_000_000e6);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, 1_000_000e6);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(request), 1_000_000e6);
-    request.mint();
+    request.mint(type(uint128).max, 0);
 
     // Try to redeem before repaid
     vm.expectRevert();
-    ptVault.redeem(100e6, primeBroker, primeBroker);
+    ptVault.redeem(100e6, bridgeFacilitator, bridgeFacilitator);
 
     vm.stopPrank();
   }
@@ -1211,7 +1859,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
     Vault deadlinePtVault = Vault(ptAddr);
@@ -1221,16 +1869,16 @@ contract RequestTest is Test {
     assertEq(deadlineRequest.canWithdraw(), false);
 
     // Deposit some funds
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    deadlineRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Fast forward past the deadline
@@ -1240,9 +1888,9 @@ contract RequestTest is Test {
     assertEq(deadlineRequest.canWithdraw(), false);
 
     // PT/YT holders should be able to redeem - this triggers the sync internally
-    vm.startPrank(primeBroker);
-    uint256 ptAssets = deadlinePtVault.redeem(amount, primeBroker, primeBroker);
-    uint256 ytAssets = deadlineYtVault.redeem(100_000e6, primeBroker, primeBroker);
+    vm.startPrank(bridgeFacilitator);
+    uint256 ptAssets = deadlinePtVault.redeem(amount, bridgeFacilitator, bridgeFacilitator);
+    uint256 ytAssets = deadlineYtVault.redeem(100_000e6, bridgeFacilitator, bridgeFacilitator);
     vm.stopPrank();
 
     // After a withdrawal, canWithdraw and isRepaid should be true
@@ -1257,7 +1905,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1266,7 +1914,7 @@ contract RequestTest is Test {
 
     // Call setRepaid before deadline
     vm.prank(owner);
-    deadlineRequest.setRepaid();
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     // Should be enabled immediately
     assertEq(deadlineRequest.canWithdraw(), true);
@@ -1276,21 +1924,21 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
     // Deposit some funds
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    deadlineRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds
@@ -1303,7 +1951,7 @@ contract RequestTest is Test {
     // Operations should be blocked after deadline (they trigger the sync internally and revert)
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    deadlineRequest.setRepaid();
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     vm.prank(puller);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
@@ -1325,26 +1973,26 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
     // Authorize minting
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    deadlineRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
     // Fast forward past deadline
     vm.warp(deadline + 1);
 
     // Mint should be blocked
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
-    deadlineRequest.mint();
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
   }
 
@@ -1352,7 +2000,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1372,7 +2020,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1380,16 +2028,16 @@ contract RequestTest is Test {
     assertEq(deadlineRequest.canWithdraw(), false);
 
     // Deposit funds
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    deadlineRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     // Pull funds should work
@@ -1405,7 +2053,7 @@ contract RequestTest is Test {
 
     // setRepaid should work
     vm.prank(owner);
-    deadlineRequest.setRepaid();
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     assertEq(deadlineRequest.canWithdraw(), true);
   }
@@ -1414,7 +2062,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1432,7 +2080,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1447,7 +2095,7 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
@@ -1471,13 +2119,13 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
     // setRepaid before deadline
     vm.prank(owner);
-    deadlineRequest.setRepaid();
+    deadlineRequest.setRepaid(0, type(uint256).max);
 
     // syncRepaidStatus should return true
     bool repaid = deadlineRequest.syncRepaidStatus();
@@ -1488,21 +2136,21 @@ contract RequestTest is Test {
     uint64 deadline = uint64(block.timestamp + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
-      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline);
+      factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
 
     Request deadlineRequest = Request(reqAddr);
 
     // Deposit some funds
-    address primeBroker = makeAddr("primeBroker");
+    address bridgeFacilitator = makeAddr("bridgeFacilitator");
     uint128 amount = 1_000_000e6;
 
     vm.prank(owner);
-    deadlineRequest.authorizeMinting(primeBroker, amount, 100_000e6);
+    deadlineRequest.authorizeMinting(bridgeFacilitator, amount, 100_000e6);
 
-    asset.mint(primeBroker, amount);
-    vm.startPrank(primeBroker);
+    asset.mint(bridgeFacilitator, amount);
+    vm.startPrank(bridgeFacilitator);
     asset.approve(address(deadlineRequest), amount);
-    deadlineRequest.mint();
+    deadlineRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
     vm.warp(deadline + 1);
@@ -1512,5 +2160,71 @@ contract RequestTest is Test {
     emit Repaid(amount);
     deadlineRequest.syncRepaidStatus();
   }
-}
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              REPAYMENT DEADLINE VALIDATION TESTS               */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_initialize_revertsWhenDeadlineInPast() public {
+    uint64 pastDeadline = uint64(block.timestamp - 1);
+    vm.prank(owner);
+    vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
+    factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", pastDeadline, 0);
+  }
+
+  function test_initialize_revertsWhenDeadlineAtCurrentTimestamp() public {
+    uint64 currentDeadline = uint64(block.timestamp);
+    vm.prank(owner);
+    vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
+    factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", currentDeadline, 0);
+  }
+
+  function test_initialize_revertsWhenDeadlineTooFarInFuture() public {
+    uint64 farDeadline = uint64(block.timestamp + 91 days);
+    vm.prank(owner);
+    vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
+    factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", farDeadline, 0);
+  }
+
+  function test_initialize_revertsWhenDeadlineBelowMintToRepaidDelay() public {
+    uint40 delay = 30 days;
+    // Deadline is only 15 days away, but delay is 30 days → deadline < block.timestamp + delay
+    uint64 tooSoonDeadline = uint64(block.timestamp + 15 days);
+    vm.prank(owner);
+    vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
+    factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", tooSoonDeadline, delay);
+  }
+
+  function test_initialize_succeedsAtMinimumValidDeadline() public {
+    // Minimum valid: block.timestamp + mintToRepaidDelay (with delay=0, that's block.timestamp + 1 effectively)
+    // Actually with delay=0, minimum is block.timestamp + 0, but strict > is needed for block.timestamp check
+    // Let's use delay=0 and deadline=block.timestamp + 1
+    uint64 minDeadline = uint64(block.timestamp + 1);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Min", "MIN", minDeadline, 0);
+    assertNotEq(reqAddr, address(0));
+  }
+
+  function test_initialize_succeedsAtMaximumValidDeadline() public {
+    uint64 maxDeadline = uint64(block.timestamp + 90 days);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Max", "MAX", maxDeadline, 0);
+    assertNotEq(reqAddr, address(0));
+  }
+
+  function test_initialize_revertsWhenDeadlineEqualsDelay() public {
+    uint40 delay = 30 days;
+    uint64 deadline = uint64(block.timestamp + 30 days);
+    vm.prank(owner);
+    vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
+    factory.createRequest(owner, puller, consumer, address(asset), "Equal", "EQ", deadline, delay);
+  }
+
+  function test_initialize_succeedsWithDeadlineAboveDelay() public {
+    uint40 delay = 30 days;
+    uint64 deadline = uint64(block.timestamp + 30 days + 1);
+    vm.prank(owner);
+    (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Above", "AB", deadline, delay);
+    assertNotEq(reqAddr, address(0));
+  }
+}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import {IFacilityIntents} from "./base/IFacilityIntents.sol";
 import {IFacilityFunds} from "./base/IFacilityFunds.sol";
@@ -49,10 +49,10 @@ interface IFacility is
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the pause state of the facility.
+  /// @notice Returns the facility configuration: pause state.
   /// @return isPaused True if paused, false otherwise.
   /// @return pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent).
-  function paused() external view returns (bool isPaused, uint40 pausedUntil);
+  function facilityConfig() external view returns (bool isPaused, uint40 pausedUntil);
 
   /// @notice Returns all tokens and their balances held by an intent.
   /// @dev Useful for displaying intent holdings and calculating claim previews.
@@ -63,20 +63,12 @@ interface IFacility is
   function intentBalances(uint256 id) external view returns (address[] memory tokens, uint256[] memory amounts);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        ADMIN                               */
+  /*                          ADMIN                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets a new intent descriptor address.
   /// @param descriptor The new descriptor address.
   function setDescriptor(address descriptor) external;
 
-  /// @notice Pauses the facility indefinitely.
-  function pause() external;
-
-  /// @notice Pauses the facility for a specified duration.
-  /// @param duration The duration to pause for (in seconds).
   function pauseFor(uint256 duration) external;
-
-  /// @notice Unpauses the facility.
-  function unpause() external;
 }

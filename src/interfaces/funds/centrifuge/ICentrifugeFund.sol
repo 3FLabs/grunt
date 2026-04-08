@@ -4,11 +4,11 @@ pragma solidity ^0.8.20;
 import {IFund} from "../IFund.sol";
 import {Order, Mode} from "../../../libs/funds/Order.sol";
 
-/// @title IUSCCFund
+/// @title ICentrifugeFund
 /// @author 3F Protocol
-/// @notice Interface for the USCCFund contract that wraps Superstate USCC.
-/// @dev Extends IFund with USCC-specific events, administration, and view functions.
-interface IUSCCFund is IFund {
+/// @notice Interface for the CentrifugeFund contract that wraps Centrifuge ERC-7540 vaults.
+/// @dev Extends IFund with Centrifuge-specific events, administration, and view functions.
+interface ICentrifugeFund is IFund {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -50,85 +50,56 @@ interface IUSCCFund is IFund {
   /// @param owner The owner of the canceled order.
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
 
-  /// @notice Emitted when the internal state is manually set to RECOVERING.
-  /// @param orderId The unique identifier of the order being recovered.
-  event OrderRecovering(bytes32 indexed orderId);
+  /// @notice Emitted when a cancel request is submitted to the Centrifuge vault.
+  /// @param orderId The unique identifier of the order being canceled.
+  event CancelRequestSubmitted(bytes32 indexed orderId);
 
-  /// @notice Emitted when the oracle address is updated.
-  /// @param newOracle The new oracle address.
-  /// @param operator The address that updated the oracle.
-  event OracleUpdated(address indexed newOracle, address indexed operator);
-
-  /// @notice Emitted when an order is manually resolved by an operator.
+  /// @notice Emitted when an order is force-ended by an operator.
   /// @param orderId The unique identifier of the resolved order.
-  /// @param newOrderId The unique identifier of the new resolved order.
-  /// @param newInput The new input amount set by the operator.
-  /// @param newOutput The new output amount set by the operator.
   /// @param operator The address that resolved the order.
-  event OrderResolved(
-    bytes32 indexed orderId, bytes32 indexed newOrderId, uint256 newInput, uint256 newOutput, address indexed operator
-  );
+  event OrderForceEnded(bytes32 indexed orderId, address indexed operator);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Initializes the USCCFund contract with all required parameters.
+  /// @notice Initializes the CentrifugeFund contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
   ///      The owner has admin control, while the depositor can execute orders.
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
-  /// @param recipient_ The superstate address receiving USDC to mint USCC.
-  /// @param oracle_ The address of Chainlink USCC Oracle.
-  function initialize(address owner_, address depositor_, address recipient_, address oracle_) external;
+  /// @param vault_ The Centrifuge ERC-7540 vault address.
+  /// @param wrappedShare_ The WrappedAsset address wrapping the vault's share token.
+  function initialize(address owner_, address depositor_, address vault_, address wrappedShare_) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       ADMINISTRATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Sets the fund internal state to RECOVERING (if issues arise with Superstate).
+  /// @notice Transitions to RECOVERING and submits a cancel request to the Centrifuge vault.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      This is an emergency function to signal that Superstate failed to process the order.
-  ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
-  ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
-  function recovering() external;
+  ///      Must be in PROCESSING state. Reverts with `PendingClaimableAssets` if the vault has
+  ///      claimable partial-fill assets (maxMint for deposits, maxWithdraw for redeems) that must
+  ///      be drained via `unlock()` first. Sets internal state to RECOVERING, then calls
+  ///      cancelDepositRequest or cancelRedeemRequest on the vault depending on the order mode.
+  /// @param order The order to cancel.
+  function cancelRequest(Order calldata order) external;
 
-  /// @notice Sets the oracle address.
+  /// @notice Force-ends a stuck order that cannot transition to ENDED naturally.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  /// @param oracle The new oracle address.
-  function setOracle(address oracle) external;
-
-  /// @notice Resolves the current order by setting its input and output amounts.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
-  ///      differ from expected ones (e.g., due to unexpected conditions).
-  ///
-  ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id remains
-  ///      valid for `state/unlock/recover`, but the fund will use the resolved `input/output` amounts as
-  ///      the effective thresholds for PROCESSING/RECOVERING balance comparisons.
-  ///      It's possible to resolve multiple times if needed, always overriding the previous resolution.
-  ///
-  /// @param order The order to resolve (must match current order ID before resolution).
-  /// @param input The new input amount.
-  /// @param output The new output amount.
-  function resolve(Order memory order, uint256 input, uint256 output) external;
+  ///      Intended for orders stuck in PROCESSING due to griefing (e.g., an attacker
+  ///      inflating the vault's pendingDepositRequest via direct requestDeposit calls).
+  ///      Must be in PROCESSING or RECOVERING state. Reverts with `PendingClaimableAssets`
+  ///      if the vault has claimable fills (maxMint/maxWithdraw) or recoverable cancel assets
+  ///      (claimableCancelDepositRequest/claimableCancelRedeemRequest) that must be drained
+  ///      via `unlock()` or `recover()` first.
+  /// @param order The order to force-end.
+  function forceEnd(Order calldata order) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Role for operator.
-  function OPERATOR_ROLE() external view returns (uint256);
-
-  /// @notice Role for depositor.
-  function DEPOSITOR_ROLE() external view returns (uint256);
-
-  /// @notice The USDC token contract address.
-  function USDC() external view returns (address);
-
-  /// @notice The USCC token contract address.
-  function USCC() external view returns (address);
-
-  /// @notice The wUSCC wrapped token contract address.
-  function WUSCC() external view returns (address);
+  /// @notice The Centrifuge vault address.
+  function vault() external view returns (address);
 }

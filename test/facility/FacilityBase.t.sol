@@ -30,6 +30,9 @@ import {MockERC20} from "test/mock/MockERC20.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 
+// Cloning
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+
 // Morpho dependencies
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -43,6 +46,7 @@ import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactor
 /// @notice Base test contract with setup and helpers for Facility tests
 contract FacilityBaseTest is Test {
   using MarketParamsLib for MarketParams;
+  using LibClone for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        TEST CONTRACTS                      */
@@ -96,7 +100,7 @@ contract FacilityBaseTest is Test {
   // Role constants (from FacilityRoles)
   uint256 constant FACILITATOR_ROLE = 1 << 0;
   uint256 constant GUARDIAN_ROLE = 1 << 1;
-  uint256 constant PAUSER_ROLE = 1 << 2;
+  uint256 constant COMPLIANCE_ROLE = 1 << 2;
 
   // PositionManager roles
   uint256 constant PM_MINTER_ROLE = 1 << 0;
@@ -110,15 +114,23 @@ contract FacilityBaseTest is Test {
 
   // Morpho constants
   uint256 constant DEFAULT_LLTV = 0.8e18;
-  uint256 constant PM_LLTV = 0.7e18;
-  uint128 constant BP_SAFE_LTV = 0.65e18; // Position LTV for borrow position
-  uint128 constant BP_LIQUIDATION_LTV = 0.72e18; // Liquidation LTV for borrow position
+  uint256 constant PM_LTV = 0.7e18;
+  uint128 constant BP_SAFE_LTV = 0.72e18; // Position LTV for borrow position (must be >= PM LTV)
+  uint128 constant BP_LIQUIDATION_LTV = 0.78e18; // Liquidation LTV for borrow position
   uint256 constant ORACLE_PRICE_SCALE = 1e36;
   uint256 constant DEFAULT_ORACLE_PRICE = 1e36;
 
   // Guardian private keys for signing
   uint256 constant GUARDIAN_PK = 0x1234;
   uint256 constant GUARDIAN2_PK = 0x5678;
+
+  /// @notice EIP-712 typehash for setFund params.
+  bytes32 internal constant SET_FUND_PARAMS_TYPEHASH =
+    0x5b29fe7a3c7ef719629449a6e2c108e8c6d692027b5327c7edbdc163a7ce1b0b;
+
+  /// @notice EIP-712 typehash for setRequest params.
+  bytes32 internal constant SET_REQUEST_PARAMS_TYPEHASH =
+    0x3fab97cdfeba7b67ca42aeebb63ab14ea67e6637d1e42acb3a06b721f7d72438;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            SETUP                           */
@@ -174,47 +186,48 @@ contract FacilityBaseTest is Test {
     marketId = marketParams.id();
 
     // Deploy TransferGuard
-    transferGuard = new TransferGuard();
+    transferGuard = TransferGuard(address(new TransferGuard()).clone());
     transferGuard.initialize(owner);
     vm.label(address(transferGuard), "TransferGuard");
 
     // Deploy PositionManager
-    positionManager = new PositionManager();
+    positionManager = PositionManager(address(new PositionManager()).clone());
     positionManager.initialize(
       owner,
       PositionManagerMetadata({
         name: "Position Manager Shares",
         symbol: "PMS",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      PM_LLTV,
-      address(transferGuard)
+      PM_LTV,
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager), "PositionManager");
 
     // Deploy second PositionManager (for dual PM tests)
-    positionManager2 = new PositionManager();
+    positionManager2 = PositionManager(address(new PositionManager()).clone());
     positionManager2.initialize(
       owner,
       PositionManagerMetadata({
         name: "Position Manager Shares 2",
         symbol: "PMS2",
-        decimals: 18,
         collateralAsset: address(collateralToken),
         debtAsset: address(debtToken)
       }),
-      PM_LLTV,
-      address(transferGuard)
+      PM_LTV,
+      address(transferGuard),
+      0,
+      0
     );
     vm.label(address(positionManager2), "PositionManager2");
 
     // Deploy MorphoBorrowPosition for PositionManager
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner);
-    address bp = borrowPositionFactory.createBorrowPosition(
-      morpho, marketId, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV
-    );
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    address bp =
+      borrowPositionFactory.createBorrowPosition(marketId, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition = MorphoBorrowPosition(bp);
     vm.label(address(borrowPosition), "BorrowPosition");
 
@@ -242,7 +255,7 @@ contract FacilityBaseTest is Test {
     vm.label(address(descriptor), "IntentDescriptor");
 
     // Deploy Facility
-    facility = new Facility();
+    facility = Facility(address(new Facility()).clone());
     facility.initialize(owner, facilitator, address(descriptor));
     vm.label(address(facility), "Facility");
 
@@ -257,7 +270,7 @@ contract FacilityBaseTest is Test {
     vm.startPrank(owner);
     facility.grantRoles(guardian, GUARDIAN_ROLE);
     facility.grantRoles(guardian2, GUARDIAN_ROLE);
-    facility.grantRoles(pauser, PAUSER_ROLE);
+    facility.grantRoles(pauser, COMPLIANCE_ROLE);
     vm.stopPrank();
 
     // Deploy mock fund and request
@@ -308,6 +321,101 @@ contract FacilityBaseTest is Test {
   function _mintTokens(address to, uint256 collateralAmount, uint256 debtAmount) internal {
     if (collateralAmount > 0) _mintCollateral(to, collateralAmount);
     if (debtAmount > 0) _mintDebt(to, debtAmount);
+  }
+
+  /// @notice Builds the EIP-712 domain separator used by Facility signatures.
+  function _facilityDomainSeparator() internal view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        keccak256("3F"),
+        keccak256("1"),
+        block.chainid,
+        address(facility)
+      )
+    );
+  }
+
+  /// @notice Computes the digest for setFund actions.
+  function _getSetFundDigest(uint256 id, address newFund, uint256 deadline) internal view returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(
+        "\x19\x01", _facilityDomainSeparator(), keccak256(abi.encode(SET_FUND_PARAMS_TYPEHASH, id, newFund, deadline))
+      )
+    );
+  }
+
+  /// @notice Computes the digest for setRequest actions.
+  function _getSetRequestDigest(uint256 id, address newRequest, uint256 deadline) internal view returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(
+        "\x19\x01",
+        _facilityDomainSeparator(),
+        keccak256(abi.encode(SET_REQUEST_PARAMS_TYPEHASH, id, newRequest, deadline))
+      )
+    );
+  }
+
+  /// @notice Signs a setFund approval.
+  function _signSetFund(uint256 id, address newFund, uint256 deadline, uint256 privateKey)
+    internal
+    view
+    returns (bytes memory)
+  {
+    bytes32 digest = _getSetFundDigest(id, newFund, deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Signs a setRequest approval.
+  function _signSetRequest(uint256 id, address newRequest, uint256 deadline, uint256 privateKey)
+    internal
+    view
+    returns (bytes memory)
+  {
+    bytes32 digest = _getSetRequestDigest(id, newRequest, deadline);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+    return abi.encodePacked(r, s, v);
+  }
+
+  /// @notice Calls setFund as facilitator with default guardian signature.
+  function _setFund(uint256 id, address newFund) internal {
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    uint256 deadline = block.timestamp + 1 hours;
+
+    signers[0] = guardian;
+    signatures[0] = _signSetFund(id, newFund, deadline, GUARDIAN_PK);
+    _setFund(id, newFund, deadline, signers, signatures);
+  }
+
+  /// @notice Calls setFund as facilitator with explicit signature args.
+  function _setFund(uint256 id, address newFund, uint256 deadline, address[] memory signers, bytes[] memory signatures)
+    internal
+  {
+    facility.setFund(id, newFund, deadline, signers, signatures);
+  }
+
+  /// @notice Calls setRequest as facilitator with default guardian signature.
+  function _setRequest(uint256 id, address newRequest) internal {
+    address[] memory signers = new address[](1);
+    bytes[] memory signatures = new bytes[](1);
+    uint256 deadline = block.timestamp + 1 hours;
+
+    signers[0] = guardian;
+    signatures[0] = _signSetRequest(id, newRequest, deadline, GUARDIAN_PK);
+    _setRequest(id, newRequest, deadline, signers, signatures);
+  }
+
+  /// @notice Calls setRequest as facilitator with explicit signature args.
+  function _setRequest(
+    uint256 id,
+    address newRequest,
+    uint256 deadline,
+    address[] memory signers,
+    bytes[] memory signatures
+  ) internal {
+    facility.setRequest(id, newRequest, deadline, signers, signatures);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

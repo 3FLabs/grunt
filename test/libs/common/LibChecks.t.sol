@@ -69,23 +69,23 @@ contract LibChecksTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                   checkValidLltv TESTS                     */
+  /*                   checkValidLtv TESTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_checkValidLltv_success() public view {
-    harness.checkValidLltv(1); // Minimum valid
-    harness.checkValidLltv(FixedPointMathLib.WAD / 2); // 50%
-    harness.checkValidLltv(FixedPointMathLib.WAD); // Maximum valid (100%)
+  function test_checkValidLtv_success() public view {
+    harness.checkValidLtv(1); // Minimum valid
+    harness.checkValidLtv(FixedPointMathLib.WAD / 2); // 50%
+    harness.checkValidLtv(FixedPointMathLib.WAD); // Maximum valid (100%)
   }
 
-  function testFuzz_checkValidLltv_success(uint256 lltv) public view {
-    lltv = bound(lltv, 1, FixedPointMathLib.WAD);
-    harness.checkValidLltv(lltv);
+  function testFuzz_checkValidLtv_success(uint256 ltv) public view {
+    ltv = bound(ltv, 1, FixedPointMathLib.WAD);
+    harness.checkValidLtv(ltv);
   }
 
-  function testFuzz_checkValidLltv_revertOnInvalid(uint256 lltv) public {
-    vm.assume(lltv == 0 || lltv > FixedPointMathLib.WAD);
-    vm.expectRevert(LibCommonErrors.InvalidLltv.selector);
-    harness.checkValidLltv(lltv);
+  function testFuzz_checkValidLtv_revertOnInvalid(uint256 ltv) public {
+    vm.assume(ltv == 0 || ltv > FixedPointMathLib.WAD);
+    vm.expectRevert(LibCommonErrors.InvalidLtv.selector);
+    harness.checkValidLtv(ltv);
   }
 }

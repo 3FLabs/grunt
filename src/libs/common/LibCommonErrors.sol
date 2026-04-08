@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 /// @title LibCommonErrors
 /// @author 3F Protocol
@@ -30,9 +30,9 @@ library LibCommonErrors {
   error Paused();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       LLTV ERRORS                          */
+  /*                        LTV ERRORS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when the provided LLTV is invalid (zero or greater than WAD).
-  error InvalidLltv();
+  /// @notice Thrown when the provided LTV is invalid (zero or greater than WAD).
+  error InvalidLtv();
 }
