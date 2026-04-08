@@ -49,8 +49,14 @@ contract MockSuperstateToken is ERC20 {
     _burn(msg.sender, amount);
   }
 
-  function isAllowed(address addr) external view returns (bool) {
+  function isAllowed(address addr) public view returns (bool) {
     return IAllowlist(allowlist).isAddressAllowedForPrivateInstrument(addr, "USCC");
+  }
+
+  /// @dev Mirrors production USCC: transfers revert when sender or recipient is not on the allowlist.
+  function _beforeTokenTransfer(address from, address to, uint256) internal view override {
+    if (from != address(0) && !isAllowed(from)) revert("MockSuperstateToken: sender not allowed");
+    if (to != address(0) && !isAllowed(to)) revert("MockSuperstateToken: recipient not allowed");
   }
 
   function simulateRedemptionComplete(address recipient, uint256 usdcAmount) external {

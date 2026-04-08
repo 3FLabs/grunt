@@ -16,6 +16,8 @@ import {MockERC20} from "test/mock/MockERC20.sol";
 contract SuperstateRestrictedWrappedAssetTest is Test {
   error InvalidInitialization();
   error Unauthorized();
+  error TransferFailed();
+  error TransferFromFailed();
 
   // WrappedAsset roles (matching internal constants)
   uint256 private constant ISSUER_ROLE = 1 << 0;
@@ -88,12 +90,13 @@ contract SuperstateRestrictedWrappedAssetTest is Test {
     SuperstateRestrictedWrappedAsset token = _deployProxy();
     _mintUscc(user, 100);
 
-    // Remove user from Superstate allowlist
+    // Remove user from Superstate allowlist — underlying USCC safeTransferFrom reverts
+    // (the underlying enforces its own allowlist on the transfer)
     allowlist.setAllowed(user, "USCC", false);
 
     vm.startPrank(user);
     uscc.approve(address(token), 100);
-    vm.expectRevert(Unauthorized.selector);
+    vm.expectRevert(TransferFromFailed.selector);
     token.mint(user, 100);
     vm.stopPrank();
   }
@@ -108,6 +111,20 @@ contract SuperstateRestrictedWrappedAssetTest is Test {
     vm.stopPrank();
 
     assertEq(token.balanceOf(user), 100, "balance");
+  }
+
+  function test_Mint_ToOther_RevertsWhenIssuerNotAllowed() public {
+    SuperstateRestrictedWrappedAsset token = _deployProxy();
+    _mintUscc(issuer, 100);
+
+    // Remove issuer from Superstate allowlist — underlying USCC safeTransferFrom reverts
+    allowlist.setAllowed(issuer, "USCC", false);
+
+    vm.startPrank(issuer);
+    uscc.approve(address(token), 100);
+    vm.expectRevert(TransferFromFailed.selector);
+    token.mint(user, 100);
+    vm.stopPrank();
   }
 
   function test_Mint_ToOther_RevertsWhenRecipientNotAllowed() public {
@@ -136,6 +153,18 @@ contract SuperstateRestrictedWrappedAssetTest is Test {
     token.burn(user, user, 50);
 
     assertEq(token.balanceOf(user), 50, "balance after burn");
+  }
+
+  function test_Burn_RevertsWhenRecipientNotAllowed() public {
+    SuperstateRestrictedWrappedAsset token = _deployProxy();
+    _mintWrapped(token, user, 100);
+
+    // Remove burn recipient from Superstate allowlist — underlying USCC safeTransfer reverts
+    allowlist.setAllowed(recipient, "USCC", false);
+
+    vm.prank(user);
+    vm.expectRevert(TransferFailed.selector);
+    token.burn(user, recipient, 50);
   }
 
   function test_Burn_RevertsWhenFromNotAllowed() public {
