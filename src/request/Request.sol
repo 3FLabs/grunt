@@ -302,7 +302,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      the tokens after transferring the required underlying asset. This is useful for
   ///      whitelisting participants or implementing custom minting logic.
   ///      Emits an {AuthorizedMinting} event.
-  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwnerOrRoles(_ROLE_CONSUMER) {
+  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount)
+    external
+    onlyOwnerOrRoles(_ROLE_CONSUMER)
+    nonReentrant
+  {
     to.updateMintAuth(ptAmount, ytAmount);
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
@@ -314,7 +318,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      `setRepaid(uint256)` is called to enable PT/YT holder withdrawals.
   ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid or the deadline has passed
-  function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
+  function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) nonReentrant {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
     emit FundsPulled(msg.sender, amount);

@@ -170,6 +170,89 @@ contract RequestReentrancyTest is Test {
     assertEq(ytVault.balanceOf(address(maliciousCallback)), expectedReturn);
   }
 
+  /// @notice pullFunds() called during consume() callback is blocked by reentrancy guard
+  function test_consume_pullFunds_blockedByReentrancyGuard() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    // Fund the Request so pullFunds() would succeed if it weren't blocked.
+    asset.mint(address(request), offerAmount);
+
+    // Grant PULLER_ROLE to the callback (owner-only; callback is the owner).
+    vm.prank(address(maliciousCallback));
+    request.grantRoles(address(maliciousCallback), 1);
+
+    maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.PULL_FUNDS);
+
+    Offer memory offer =
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+    asset.mint(address(maliciousCallback), offerAmount);
+
+    vm.prank(consumer);
+    request.consume(offer, signature, offerAmount);
+
+    // Attack was attempted and blocked
+    assertTrue(maliciousCallback.attackTriggered());
+    assertTrue(maliciousCallback.wasReentrancyError());
+
+    // consume() still completed: PT/YT minted, principal landed (plus the pre-funded balance).
+    assertEq(ptVault.balanceOf(address(maliciousCallback)), offerAmount);
+    assertEq(ytVault.balanceOf(address(maliciousCallback)), expectedReturn);
+    assertEq(asset.balanceOf(address(request)), offerAmount * 2);
+  }
+
+  /// @notice authorizeMinting() called during consume() callback is blocked by reentrancy guard
+  function test_consume_authorizeMinting_blockedByReentrancyGuard() public {
+    uint256 offerAmount = 1_000_000e6;
+    uint256 expectedReturn = 100_000e6;
+
+    maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.AUTHORIZE_MINTING);
+
+    Offer memory offer =
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+    bytes memory signature = _signOffer(offer);
+    asset.mint(address(maliciousCallback), offerAmount);
+
+    vm.prank(consumer);
+    request.consume(offer, signature, offerAmount);
+
+    // Attack was attempted and blocked
+    assertTrue(maliciousCallback.attackTriggered());
+    assertTrue(maliciousCallback.wasReentrancyError());
+
+    // No extra mint authorization was written for the callback.
+    (uint128 ptAuth, uint128 ytAuth) = request.mintAuthorization(address(maliciousCallback));
+    assertEq(ptAuth, 0);
+    assertEq(ytAuth, 0);
+
+    // consume() still completed
+    assertEq(ptVault.balanceOf(address(maliciousCallback)), offerAmount);
+    assertEq(ytVault.balanceOf(address(maliciousCallback)), expectedReturn);
+  }
+
+  /// @notice pullFunds() works normally outside of a reentrant context
+  function test_pullFunds_worksOutsideReentrancy() public {
+    uint256 amount = 1_000_000e6;
+    asset.mint(address(request), amount);
+
+    vm.prank(puller);
+    request.pullFunds(amount, "");
+
+    assertEq(asset.balanceOf(puller), amount);
+    assertEq(asset.balanceOf(address(request)), 0);
+  }
+
+  /// @notice authorizeMinting() works normally outside of a reentrant context
+  function test_authorizeMinting_worksOutsideReentrancy() public {
+    vm.prank(address(maliciousCallback));
+    request.authorizeMinting(address(this), 123, 456);
+
+    (uint128 ptAuth, uint128 ytAuth) = request.mintAuthorization(address(this));
+    assertEq(ptAuth, 123);
+    assertEq(ytAuth, 456);
+  }
+
   /// @notice setRepaid() works normally outside of a reentrant context
   function test_setRepaid_worksOutsideReentrancy() public {
     vm.prank(address(maliciousCallback));
