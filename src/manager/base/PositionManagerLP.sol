@@ -195,10 +195,10 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
         // forge-lint: disable-next-line(unsafe-typecast)
         sharesDelta = int256(sharesToMint);
       } else {
-        // Shares rounded to zero: check pause since _beforeTokenTransfer won't run
+        // Shares rounded to zero: run the transfer guard since _beforeTokenTransfer won't.
         address guard = _storage.transferGuard;
-        if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
-          revert CommonErrors.Paused();
+        if (guard != address(0) && !ITransferGuard(guard).canTransfer(address(this), msg.sender, msg.sender, 0)) {
+          revert LibManagerErrors.TransferBlocked();
         }
       }
     } else if (totalAssetsAfter < totalAssetsBefore) {
@@ -210,10 +210,10 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       // forge-lint: disable-next-line(unsafe-typecast)
       sharesDelta = -int256(sharesToBurn);
     } else {
-      // Assets unchanged: no mint/burn needed, but check pause since _beforeTokenTransfer won't run
+      // Assets unchanged: no mint/burn, but run the transfer guard since _beforeTokenTransfer won't.
       address guard = _storage.transferGuard;
-      if (guard != address(0) && ITransferGuard(guard).paused(address(this))) {
-        revert CommonErrors.Paused();
+      if (guard != address(0) && !ITransferGuard(guard).canTransfer(address(this), msg.sender, msg.sender, 0)) {
+        revert LibManagerErrors.TransferBlocked();
       }
     }
     // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
