@@ -262,6 +262,40 @@ contract ParetoFundTest is Test {
     assertEq(uint256(state), uint256(State.ACCEPTED), "redeem accepted when AA withdraw allowed");
   }
 
+  function test_Create_Redeem_AllowedByKeyringAllowWithdraw() public {
+    // Run a full deposit cycle while the wallet is still allowed, so the user holds wrapped shares.
+    Order memory depositOrder = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(depositOrder);
+    _commitDeposit(depositOrder);
+    _fulfillDeposit(depositOrder);
+    fund.unlock(depositOrder);
+
+    // Now mirror the upstream open-withdraw mode: wallet revoked, but keyringAllowWithdraw enabled.
+    cdo.setWalletAllowed(address(fund), false);
+    cdo.setKeyringAllowWithdraw(true);
+
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "redeem accepted via keyringAllowWithdraw");
+  }
+
+  function test_Create_Redeem_RevertsWhenNeitherAllowed() public {
+    cdo.setWalletAllowed(address(fund), false);
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.create(order);
+  }
+
+  function test_Create_Deposit_RevertsEvenIfKeyringAllowWithdraw() public {
+    // keyringAllowWithdraw must NOT bypass the allowlist for deposits.
+    cdo.setWalletAllowed(address(fund), false);
+    cdo.setKeyringAllowWithdraw(true);
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.create(order);
+  }
+
+
   function test_Create_AfterEndedOrder() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);
@@ -462,6 +496,53 @@ contract ParetoFundTest is Test {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);
     cdo.setWalletAllowed(address(fund), false);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.commit(order);
+  }
+
+  function test_Commit_Redeem_AllowedByKeyringAllowWithdraw() public {
+    // Full deposit cycle while wallet is still allowed.
+    Order memory depositOrder = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(depositOrder);
+    _commitDeposit(depositOrder);
+    _fulfillDeposit(depositOrder);
+    fund.unlock(depositOrder);
+
+    // Create the redeem order while still allowed, then flip into keyringAllowWithdraw mode
+    // before committing — exercises the commit-time allowlist check.
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order);
+    wrappedShare.approve(address(fund), order.input);
+
+    cdo.setWalletAllowed(address(fund), false);
+    cdo.setKeyringAllowWithdraw(true);
+
+    (State state, uint256 amount) = fund.commit(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "redeem committed via keyringAllowWithdraw");
+    assertEq(amount, order.input, "amount");
+  }
+
+  function test_Commit_Redeem_RevertsWhenNeitherAllowed() public {
+    Order memory depositOrder = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(depositOrder);
+    _commitDeposit(depositOrder);
+    _fulfillDeposit(depositOrder);
+    fund.unlock(depositOrder);
+
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    fund.create(order);
+    wrappedShare.approve(address(fund), order.input);
+
+    cdo.setWalletAllowed(address(fund), false);
+    vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
+    fund.commit(order);
+  }
+
+  function test_Commit_Deposit_RevertsEvenIfKeyringAllowWithdraw() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    fund.create(order);
+    cdo.setWalletAllowed(address(fund), false);
+    cdo.setKeyringAllowWithdraw(true);
     vm.expectRevert(LibFundsErrors.NotAllowedByFund.selector);
     fund.commit(order);
   }
