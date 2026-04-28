@@ -61,6 +61,12 @@ library LibRequestErrors {
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();
 
+  /// @notice Thrown when an approve amount falls in `[type(uint128).max, type(uint256).max - 1]`,
+  ///         which cannot be represented exactly in the uint128-packed allowance storage. Only
+  ///         values strictly below `type(uint128).max` (stored as-is) and `type(uint256).max`
+  ///         (stored as the infinite-allowance sentinel) are accepted.
+  error AllowanceTooLarge();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    VAULT OPERATIONS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
