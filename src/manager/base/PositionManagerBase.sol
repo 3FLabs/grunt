@@ -57,7 +57,10 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     FeeData memory fd = _storage.feeData;
 
     totalAssets_ = _storage.totalAssets();
-    totalSupply_ = totalSupply();
+    
+    // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply(),
+    // since _pendingFees() is reachable from _accrueFees() during a guarded deposit/withdraw/burn.
+    totalSupply_ = ERC20.totalSupply();
 
     if (fd.feeRecipient == address(0) || totalSupply_ == 0) return (totalAssets_, totalSupply_, 0, 0);
 

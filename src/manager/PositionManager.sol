@@ -124,23 +124,30 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function collateralAmount() public view returns (uint256) {
+  function collateralAmount() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().collateralAmount();
   }
 
   /// @inheritdoc IPositionManager
-  function collateralAmountQuoted() public view returns (uint256) {
+  function collateralAmountQuoted() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().collateralAmountQuoted();
   }
 
   /// @inheritdoc IPositionManager
-  function debtAmount() public view returns (uint256) {
+  function debtAmount() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().debtAmount();
   }
 
   /// @inheritdoc IPositionManager
-  function totalAssets() public view returns (uint256) {
+  function totalAssets() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().totalAssets();
+  }
+
+  /// @inheritdoc ERC20
+  /// @dev Reverts via {nonReadReentrant} when read during a deposit/withdraw/burn so external
+  ///      integrators cannot observe a stale supply against a freshly-mutated NAV.
+  function totalSupply() public view override nonReadReentrant returns (uint256) {
+    return ERC20.totalSupply();
   }
 
   /// @inheritdoc IPositionManager
@@ -168,6 +175,7 @@ contract PositionManager is
   function pendingFees()
     public
     view
+    nonReadReentrant
     returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
   {
     return _pendingFees();
