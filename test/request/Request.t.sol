@@ -1462,7 +1462,7 @@ contract RequestTest is Test {
     assertEq(request.isRepaid(), true);
   }
 
-  function test_isRepaid_falseWhenDeadlinePassed() public {
+  function test_canWithdraw_realTimeAfterDeadline_isRepaidStillFalse() public {
     // Create a request with a deadline that will pass
     uint64 deadline = uint64(block.timestamp + 1 days);
     vm.prank(owner);
@@ -1477,8 +1477,9 @@ contract RequestTest is Test {
     // Warp past the deadline
     vm.warp(deadline + 1);
 
-    // Both should still be false until syncRepaidStatus() is called
-    assertEq(deadlineRequest.canWithdraw(), false);
+    // canWithdraw() reflects effective state in real time, while isRepaid() still tracks the
+    // stored flag and only flips after a sync transaction.
+    assertEq(deadlineRequest.canWithdraw(), true);
     assertEq(deadlineRequest.isRepaid(), false);
 
     // After syncing, both should be true
@@ -1884,8 +1885,10 @@ contract RequestTest is Test {
     // Fast forward past the deadline
     vm.warp(deadline + 1);
 
-    // Withdrawals are still disabled until syncRepaidStatus() is called or a withdrawal is attempted
-    assertEq(deadlineRequest.canWithdraw(), false);
+    // canWithdraw() now reflects effective state in real time, while the stored flag (isRepaid)
+    // remains false until a sync transaction runs.
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), false);
 
     // PT/YT holders should be able to redeem - this triggers the sync internally
     vm.startPrank(bridgeFacilitator);
@@ -1961,12 +1964,15 @@ contract RequestTest is Test {
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
     deadlineRequest.repay(100e6);
 
-    // canWithdraw is false until syncRepaidStatus() is called (reverts don't persist state changes)
-    assertEq(deadlineRequest.canWithdraw(), false);
+    // canWithdraw() is real-time true post-deadline, but the stored repaid flag has not flipped
+    // because the mutating operations all reverted before completing _syncWithdrawalStatus().
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), false);
 
-    // After syncing, withdrawals should work
+    // After syncing, the stored flag flips
     deadlineRequest.syncRepaidStatus();
     assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), true);
   }
 
   function test_repaymentDeadline_mintBlockedAfterDeadline() public {
@@ -2066,14 +2072,17 @@ contract RequestTest is Test {
 
     Request deadlineRequest = Request(reqAddr);
 
-    // At exactly the deadline, canWithdraw is still false until synced
+    // At exactly the deadline, canWithdraw() flips to true via the real-time check
+    // (block.timestamp >= repaymentDeadline), even before any sync transaction.
     vm.warp(deadline);
-    assertEq(deadlineRequest.canWithdraw(), false);
+    assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), false);
 
-    // syncRepaidStatus returns true and enables withdrawals
+    // syncRepaidStatus returns true and flips the stored flag
     bool repaid = deadlineRequest.syncRepaidStatus();
     assertEq(repaid, true);
     assertEq(deadlineRequest.canWithdraw(), true);
+    assertEq(deadlineRequest.isRepaid(), true);
   }
 
   function test_syncRepaidStatus_returnsFalseBeforeDeadline() public {
