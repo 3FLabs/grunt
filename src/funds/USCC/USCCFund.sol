@@ -177,6 +177,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (!ISuperstateToken(USCC).isAllowed(address(this))) {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
+    // Check allowlist permissions for the eventual wUSCC receiver
+    if (!ISuperstateToken(USCC).isAllowed(order.receiver)) {
+      revert LibFundsErrors.NotAllowedSuperstate();
+    }
 
     // offchainRedeem() is a burn path; reject redeems while Superstate accounting is paused
     // so the order does not get stuck in ACCEPTED with a guaranteed-revert commit.
@@ -237,6 +241,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
     // Check allowlist permissions for this contract to deposit in USCC
     if (!ISuperstateToken(USCC).isAllowed(address(this))) {
+      revert LibFundsErrors.NotAllowedSuperstate();
+    }
+    // Re-check allowlist permissions for the eventual wUSCC receiver
+    if (!ISuperstateToken(USCC).isAllowed(order.receiver)) {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
 

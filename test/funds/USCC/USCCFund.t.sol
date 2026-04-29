@@ -245,6 +245,13 @@ contract USCCFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsNotAllowedSuperstate_Receiver() public {
+    allowlist.setAllowed(address(this), "USCC", false);
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
+    fund.create(order);
+  }
+
   function test_Create_RevertsRedeem_WhenAccountingPaused() public {
     uscc.setAccountingPaused(true);
     Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
@@ -258,6 +265,7 @@ contract USCCFundTest is Test {
     State state = fund.create(order);
     assertEq(uint256(state), uint256(State.ACCEPTED), "deposit accepted while paused");
   }
+
 
   function test_Create_RevertsInvalidOutput_Deposit() public {
     // With oracle price = 1:1, expected output = input = 100 USDC
@@ -462,6 +470,31 @@ contract USCCFundTest is Test {
 
     vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
     fund.commit(order);
+  }
+
+  function test_Commit_RevertsNotAllowedSuperstate_Receiver() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    allowlist.setAllowed(address(this), "USCC", false);
+
+    vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
+    fund.commit(order);
+  }
+
+  function test_Commit_AllowsAfterReceiverReinstated() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    allowlist.setAllowed(address(this), "USCC", false);
+    usdc.mint(address(this), order.input);
+    usdc.approve(address(fund), order.input);
+    vm.expectRevert(LibFundsErrors.NotAllowedSuperstate.selector);
+    fund.commit(order);
+
+    allowlist.setAllowed(address(this), "USCC", true);
+    (State state,) = fund.commit(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "processing");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
