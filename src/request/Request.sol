@@ -55,6 +55,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   using SafeTransferLib for address;
   using LibMintAuth for address;
   using LibChecks for uint256;
+  using LibChecks for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -146,6 +147,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     uint64 repaymentDeadline_,
     uint40 mintToRepaidDelay_
   ) public initializer {
+    owner_.checkNotZero();
     // Validate repayment deadline is within a reasonable range
     if (
       repaymentDeadline_ <= block.timestamp + mintToRepaidDelay_
