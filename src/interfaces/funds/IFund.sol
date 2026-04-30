@@ -106,6 +106,11 @@ interface IFund {
   function share() external view returns (address);
 
   /// @notice Returns the total amount of the wrapper's base asset under management.
+  /// @dev Implementations typically derive this from the share token's `totalSupply()`. When the
+  ///      share token returned by `share()` is reused across multiple fund instances (e.g. a
+  ///      shared `WrappedAsset`), the value reflects the wrapper-wide aggregate AUM rather than
+  ///      AUM attributable to a single fund instance. Integrators that need per-fund AUM must
+  ///      account for this off-chain.
   /// @return The total amount of assets denominated in the asset() token.
   function totalAssets() external view returns (uint256);
 

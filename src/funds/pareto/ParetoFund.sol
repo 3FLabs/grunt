@@ -341,6 +341,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @dev Converts total wrapped share supply to assets using the CDO's virtual price.
   ///      virtualPrice is in underlying token decimals (6 for USDC), wrappedShare totalSupply is 18 decimals (AA tranche),
   ///      result is in underlying (USDC, 6 decimals): totalSupply * virtualPrice / 1e18.
+  ///      The returned value is derived from `$.wrappedShare.totalSupply()`, so when a single
+  ///      `WrappedAsset` deployment backs multiple `ParetoFund` instances, every instance reports
+  ///      the same wrapper-wide aggregate AUM rather than AUM scoped to this fund.
   function totalAssets() external view override returns (uint256) {
     ParetoFundStorage storage $ = _paretoFundStorage();
     return IERC20($.wrappedShare).totalSupply().mulDiv(IIdleCDOEpochVariant($.vault).virtualPrice($.aaTranche), 1e18);

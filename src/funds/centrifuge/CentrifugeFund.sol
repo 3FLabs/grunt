@@ -425,6 +425,9 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev Converts total wrapped share supply to assets using the vault's conversion rate.
+  ///      The returned value is derived from `$.wrappedShare.totalSupply()`, so when a single
+  ///      `WrappedAsset` deployment backs multiple `CentrifugeFund` instances, every instance
+  ///      reports the same wrapper-wide aggregate AUM rather than AUM scoped to this fund.
   function totalAssets() external view override returns (uint256) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     return ICentrifugeVault($.vault).convertToAssets(IERC20($.wrappedShare).totalSupply());
