@@ -399,6 +399,8 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      4. Optionally calls the liquidator's onPreLiquidate callback
   ///      5. Pulls loan tokens from the liquidator to complete the repayment
   ///      Reverts with {LibBorrowErrors.NotMorpho} if called by any address other than the Morpho contract.
+  ///      `seizedAssets` is decoded directly from `callbackData` (passed by `preLiquidate`); we do
+  ///      not infer it from balance differences in this contract.
   ///
   ///      **Reentrancy:** This callback is intentionally not marked `nonReentrant`. Its only access
   ///      control is the `msg.sender == address(MORPHO)` check in the function body. See the

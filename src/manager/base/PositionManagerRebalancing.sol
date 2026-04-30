@@ -38,6 +38,13 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
   ///      Reverts with {LibManagerErrors.RebalanceLossExceedsMax} if total assets decrease exceeds maxRebalanceLoss.
   ///      Protected by nonReentrant to prevent malicious modules from manipulating
   ///      guard state (pause/unpause) mid-transaction via callbacks.
+  ///
+  ///      Operator note: Morpho rounds repay shares down (toSharesDown) and borrow shares up
+  ///      (toSharesUp), which can produce a 1-2 wei "phantom" NAV decrease across a single
+  ///      rebalance even when no real economic loss occurs. With `maxRebalanceLoss == 0` the
+  ///      check below would revert on this dust. Production deployments must therefore configure
+  ///      `maxRebalanceLoss > 0` (a single basis point is enough); `maxRebalanceLoss == 0` will
+  ///      revert otherwise-valid rebalances and must not be used.
   function rebalance(RebalancingData calldata data, address receiver)
     public
     virtual

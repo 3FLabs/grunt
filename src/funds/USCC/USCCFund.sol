@@ -86,6 +86,12 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _checkDecimals(uscc);
     _checkDecimals(wuscc);
 
+    // Mirror the wrapped-share invariant enforced by ParetoFund/CentrifugeFund:
+    // wUSCC must wrap USCC, otherwise mint/burn flows would silently move the wrong asset.
+    if (IWrappedAsset(wuscc).underlying() != uscc) {
+      revert LibFundsErrors.InvalidUnderlyingAsset();
+    }
+
     USDC = usdc;
     USCC = uscc;
     WUSCC = wuscc;
