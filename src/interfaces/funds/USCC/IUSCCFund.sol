@@ -70,6 +70,14 @@ interface IUSCCFund is IFund {
   /// @param operator The address that resolved the order.
   event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
+  /// @notice Emitted when an operator manually credits unassigned tokens to the current order by lowering
+  ///         the input or output snapshot.
+  /// @param orderId The unique identifier of the order receiving the assignment.
+  /// @param isInput True if the input snapshot was lowered, false if the output snapshot was lowered.
+  /// @param amount The amount the snapshot was lowered by (i.e., credited to the order).
+  /// @param operator The address that performed the assignment.
+  event OrderTokensAssigned(bytes32 indexed orderId, bool isInput, uint256 amount, address indexed operator);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -125,6 +133,25 @@ interface IUSCCFund is IFund {
   /// @param input The new input amount.
   /// @param output The new output amount.
   function resolve(Order memory order, uint256 input, uint256 output) external;
+
+  /// @notice Credits unassigned tokens (already sitting on the fund) to the current order by lowering
+  ///         the relevant balance snapshot.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
+  ///      The fund attributes only post-commit balance deltas to the current order. Pre-existing tokens
+  ///      (late arrivals from a previous flow, leftovers, etc.) are excluded by the snapshot taken at
+  ///      commit() time. This function lets a trusted operator explicitly reattribute some of that
+  ///      "unassigned" balance to the current order — e.g., when a known late Superstate batch tied to
+  ///      this order arrived before commit. The operator is responsible for verifying that the assigned
+  ///      amount belongs to the current order.
+  ///
+  ///      Reverts if the order is not the current order, if the internal state is not PROCESSING or
+  ///      RECOVERING, or if `amount` exceeds the targeted snapshot (Solidity 0.8 underflow check).
+  /// @param orderId The order ID that must match the current order. Required to prevent a stale pending
+  ///        transaction from targeting the wrong order if the current order changes before it is mined.
+  /// @param isInput True to lower the input snapshot (used by recover()), false to lower the output
+  ///        snapshot (used by unlock()).
+  /// @param amount The amount of pre-existing balance to credit to the current order.
+  function assignToCurrentOrder(bytes32 orderId, bool isInput, uint256 amount) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */

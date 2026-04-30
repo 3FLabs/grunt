@@ -109,6 +109,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Mapping of ended order Ids to boolean (true if ended). To archive ended orders
   ///                    (since we only handle one at a time).
+  /// @param inputSnapshot Balance of the input token at the end of commit() (USDC for DEPOSIT, USCC for REDEEM).
+  ///                      Used as the baseline so that only post-commit inflows are attributed to the current order.
+  /// @param outputSnapshot Balance of the output token at the end of commit() (USCC for DEPOSIT, USDC for REDEEM).
   struct UsccFundStorage {
     address recipient;
     bytes32 currentOrderId;
@@ -118,6 +121,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     uint256 resolvedInput;
     uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
+    uint256 inputSnapshot;
+    uint256 outputSnapshot;
   }
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
@@ -191,6 +196,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _storage.hasResolvedAmounts = false;
     _storage.resolvedInput = 0;
     _storage.resolvedOutput = 0;
+    _storage.inputSnapshot = 0;
+    _storage.outputSnapshot = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -237,10 +244,14 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (order.mode == Mode.DEPOSIT) {
       // Depositing: transfer USDC to recipient to mint USCC
       USDC.safeTransferFrom(msg.sender, _storage.recipient, order.input);
+      _storage.inputSnapshot = IERC20(USDC).balanceOf(address(this));
+      _storage.outputSnapshot = IERC20(USCC).balanceOf(address(this));
     } else {
       // Redeeming: burn wUSCC (sends USCC to this contract), then call offchain redeem on USCC
       IWrappedAsset(WUSCC).burn(msg.sender, address(this), order.input);
       ISuperstateToken(USCC).offchainRedeem(order.input);
+      _storage.inputSnapshot = IERC20(USCC).balanceOf(address(this));
+      _storage.outputSnapshot = IERC20(USDC).balanceOf(address(this));
     }
 
     _storage.internalState = State.PROCESSING;
@@ -360,6 +371,28 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     emit OrderResolved(_storage.currentOrderId, input, output, msg.sender);
   }
 
+  /// @inheritdoc IUSCCFund
+  function assignToCurrentOrder(bytes32 orderId, bool isInput, uint256 amount)
+    external
+    override
+    onlyOwnerOrRoles(_OPERATOR_ROLE)
+  {
+    UsccFundStorage storage _storage = _usccFundStorage();
+    if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
+    State _internalState = _storage.internalState;
+    if (_internalState != State.PROCESSING && _internalState != State.RECOVERING) {
+      revert LibFundsErrors.InvalidState(_internalState);
+    }
+
+    if (isInput) {
+      _storage.inputSnapshot -= amount;
+    } else {
+      _storage.outputSnapshot -= amount;
+    }
+
+    emit OrderTokensAssigned(orderId, isInput, amount, msg.sender);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -402,7 +435,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Internal function that returns both the dynamic state and the associated amount.
-  ///      This function returns the dynamic state based on balance checks, which may differ from internalState.
+  ///      This function returns the dynamic state based on balance deltas (current balance minus the snapshot
+  ///      taken at commit() time), which may differ from internalState. Using deltas — rather than raw
+  ///      balances — guarantees that only tokens received after the current order's commit are attributed
+  ///      to that order, preventing cross-order value leakage from late arrivals or pre-existing balances.
   ///
   ///      For PROCESSING state (waiting for Superstate to process the order):
   ///      - Deposit: checks if USCC output was received → UNLOCKING if yes, PROCESSING if no
@@ -416,7 +452,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   ///
   ///      Returns EMPTY for any order that is not the current order (except when internalState is EMPTY or ENDED).
   /// @param order The order to check the state for.
-  /// @return The current state based on balance checks.
+  /// @return The current state based on balance deltas.
   /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage _storage = _usccFundStorage();
@@ -444,32 +480,28 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
 
     if (_internalState == State.PROCESSING) {
-      uint256 _amount;
-      if (order.mode == Mode.DEPOSIT) {
-        // Deposit: check if we received USCC
-        _amount = IERC20(USCC).balanceOf(address(this));
-        return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
-      } else {
-        // Redeem: check if we received USDC
-        _amount = IERC20(USDC).balanceOf(address(this));
-        return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
-      }
+      address _outputToken = order.mode == Mode.DEPOSIT ? USCC : USDC;
+      uint256 _delta = _balanceDelta(_outputToken, _storage.outputSnapshot);
+      return _delta >= _effectiveOutput ? (State.UNLOCKING, _delta) : (State.PROCESSING, 0);
     }
 
     if (_internalState == State.RECOVERING) {
-      uint256 _amount;
-      if (order.mode == Mode.DEPOSIT) {
-        // Deposit: check if we can recover USDC
-        _amount = IERC20(USDC).balanceOf(address(this));
-        return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
-      } else {
-        // Redeem: check if we can recover USCC
-        _amount = IERC20(USCC).balanceOf(address(this));
-        return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
-      }
+      address _inputToken = order.mode == Mode.DEPOSIT ? USDC : USCC;
+      uint256 _delta = _balanceDelta(_inputToken, _storage.inputSnapshot);
+      return _delta >= _effectiveInput ? (State.RECOVERING, _delta) : (State.PROCESSING, 0);
     }
 
     return (_internalState, 0);
+  }
+
+  /// @dev Returns the post-commit balance delta of `token`: `balanceOf(this) - snapshot`, clamped to 0
+  ///      when the current balance is below the snapshot (e.g., a token transfer-out happened after commit).
+  /// @param token The token to read the balance of.
+  /// @param snapshot The balance snapshot recorded at commit() time.
+  /// @return The amount received after commit, attributable to the current order.
+  function _balanceDelta(address token, uint256 snapshot) internal view returns (uint256) {
+    uint256 _balance = IERC20(token).balanceOf(address(this));
+    return _balance > snapshot ? _balance - snapshot : 0;
   }
 
   /// @dev Returns the validated oracle price for USCC/USD.

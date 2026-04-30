@@ -1214,6 +1214,215 @@ contract USCCFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  SNAPSHOTS / DELTA ACCOUNTING              */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  event OrderTokensAssigned(bytes32 indexed orderId, bool isInput, uint256 amount, address indexed operator);
+
+  // Pre-existing USCC sitting on the fund before commit() must NOT count toward
+  // the current order's expected output. Only post-commit deltas are attributed.
+  function test_Snapshot_PreExistingUscc_ExcludedFromDeposit() public {
+    // Stage: a leftover deposit-style transfer puts USCC on the fund before any new order.
+    uint256 leftover = ONE_USDC * 7;
+    uscc.mint(address(fund), leftover);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Without any post-commit USCC arrival, the order must still be PROCESSING.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
+
+    // Superstate now mints exactly the order's output.
+    uscc.mint(address(fund), order.output);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking on delta");
+
+    fund.unlock(order);
+
+    // The user receives only the post-commit delta; the leftover stays on the fund.
+    assertEq(wuscc.balanceOf(address(this)), order.output, "user gets only delta");
+    assertEq(uscc.balanceOf(address(fund)), leftover, "leftover retained on fund");
+  }
+
+  // Same guard for RECOVERING on a deposit: pre-existing USDC must not be returned.
+  function test_Snapshot_PreExistingUsdc_ExcludedFromDepositRecovery() public {
+    uint256 leftover = ONE_USDC * 4;
+    usdc.mint(address(fund), leftover);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    // No USDC has come back yet → still PROCESSING.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
+
+    // Simulate Superstate returning the original USDC.
+    usdc.mint(address(fund), order.input);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering on delta");
+
+    fund.recover(order);
+
+    assertEq(usdc.balanceOf(address(this)), order.input, "user gets only delta");
+    assertEq(usdc.balanceOf(address(fund)), leftover, "leftover retained on fund");
+  }
+
+  // Same guard for REDEEM unlock with pre-existing USDC.
+  function test_Snapshot_PreExistingUsdc_ExcludedFromRedeem() public {
+    uint256 leftover = ONE_USDC * 3;
+    usdc.mint(address(fund), leftover);
+
+    Order memory order = _redeemOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _mintWuscc(address(this), order.input);
+    wuscc.approve(address(fund), order.input);
+    fund.commit(order);
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
+
+    usdc.mint(address(fund), order.output);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking on delta");
+
+    fund.unlock(order);
+
+    assertEq(usdc.balanceOf(address(this)), order.output, "user gets only delta");
+    assertEq(usdc.balanceOf(address(fund)), leftover, "leftover retained on fund");
+  }
+
+  // The original audit scenario: an old order ends, late tokens arrive on the
+  // fund, a new order is created, and the new order must NOT auto-unlock.
+  function test_Snapshot_CrossOrderLeakage_NewOrderNotPolluted() public {
+    Order memory first = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(first);
+    _commitDeposit(first);
+    uscc.mint(address(fund), first.output);
+    fund.unlock(first);
+
+    // Late arrival from a previous Superstate batch lands on the fund AFTER
+    // the first order has fully ended.
+    uint256 latePayment = ONE_USDC * 5;
+    uscc.mint(address(fund), latePayment);
+
+    // A new order is now created and committed; the late USCC predates commit
+    // and must be excluded from the new order's accounting.
+    Order memory second = _depositOrder(ONE_USDC * 2, ONE_USDC * 2);
+    fund.create(second);
+    _commitDeposit(second);
+
+    assertEq(uint256(fund.state(second)), uint256(State.PROCESSING), "second not polluted");
+  }
+
+  // The operator must be able to credit pre-existing tokens to the current order
+  // when reconciliation confirms that they belong to it.
+  function test_AssignToCurrentOrder_DepositOutput_CreditsPreExisting() public {
+    // Pre-existing USCC on the fund that the operator later deems to belong to the new order.
+    uint256 carriedOver = ONE_USDC * 2;
+    uscc.mint(address(fund), carriedOver);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Pre-existing tokens are excluded from the order until the operator assigns them.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing pre-assign");
+
+    bytes32 orderId = order.toId(address(fund));
+    vm.expectEmit(true, true, true, true);
+    emit OrderTokensAssigned(orderId, false, carriedOver, owner);
+    vm.prank(owner);
+    fund.assignToCurrentOrder(orderId, false, carriedOver);
+
+    // Now the carried-over balance counts toward the order.
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after assign");
+
+    fund.unlock(order);
+    assertEq(wuscc.balanceOf(address(this)), carriedOver, "user receives assigned tokens");
+    assertEq(uscc.balanceOf(address(fund)), 0, "fund cleared");
+  }
+
+  function test_AssignToCurrentOrder_DepositInput_CreditsPreExistingForRecovery() public {
+    uint256 carriedOver = ONE_USDC * 3;
+    usdc.mint(address(fund), carriedOver);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing pre-assign");
+
+    vm.prank(owner);
+    fund.assignToCurrentOrder(order.toId(address(fund)), true, ONE_USDC);
+
+    // Only ONE_USDC was assigned, which equals the order input → recoverable.
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering after assign");
+
+    fund.recover(order);
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC, "user receives assigned input");
+    assertEq(usdc.balanceOf(address(fund)), carriedOver - ONE_USDC, "remainder still unassigned");
+  }
+
+  function test_AssignToCurrentOrder_RevertsWrongOrderId() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    bytes32 wrongId = keccak256("wrong");
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongId));
+    fund.assignToCurrentOrder(wrongId, false, 1);
+  }
+
+  function test_AssignToCurrentOrder_RevertsInvalidState_BeforeCommit() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
+    fund.assignToCurrentOrder(order.toId(address(fund)), false, 1);
+  }
+
+  function test_AssignToCurrentOrder_RevertsInvalidState_AfterEnded() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    uscc.mint(address(fund), order.output);
+    fund.unlock(order);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ENDED));
+    fund.assignToCurrentOrder(order.toId(address(fund)), false, 1);
+  }
+
+  function test_AssignToCurrentOrder_RevertsAmountExceedsSnapshot() public {
+    uint256 leftover = 5;
+    uscc.mint(address(fund), leftover);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    // Lowering the snapshot by more than its value must underflow and revert.
+    vm.prank(owner);
+    vm.expectRevert();
+    fund.assignToCurrentOrder(order.toId(address(fund)), false, leftover + 1);
+  }
+
+  function test_AssignToCurrentOrder_OnlyOperatorOrOwner() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.assignToCurrentOrder(order.toId(address(fund)), false, 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            HELPERS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
