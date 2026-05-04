@@ -295,7 +295,6 @@ contract ParetoFundTest is Test {
     fund.create(order);
   }
 
-
   function test_Create_AfterEndedOrder() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);
