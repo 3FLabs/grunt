@@ -263,6 +263,23 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      Liquidators implementing `IPreLiquidationCallback.onPreLiquidate(uint256 repaidAssets, bytes calldata data)`
   ///      will receive the callback if `data` is non-empty.
   ///
+  ///      **Reentrancy:**
+  ///      `preLiquidate()` is intentionally not marked `nonReentrant`. A liquidator's `onPreLiquidate`
+  ///      callback may re-enter `preLiquidate()` on this or another `MorphoBorrowPosition`. This is safe
+  ///      because:
+  ///      - Morpho settles the position and market state for the in-flight `repay` before invoking
+  ///        `onMorphoRepay`, so a nested `preLiquidate` reads fresh state and computes its own
+  ///        `seizedAssets` / `repaidShares` against it — economically identical to two sequential,
+  ///        independent liquidation transactions.
+  ///      - The window in `onMorphoRepay` where the liquidator holds seized collateral but has not yet
+  ///        returned loan tokens cannot corrupt `PositionManager` or `Facility` state: the
+  ///        state-changing entry points there (`deposit`, `withdraw`, `burn`, `cancel`, `commit`,
+  ///        `unlock`, `recover`, `pull`, `repay`) are gated by `MINTER_ROLE` / `FACILITATOR_ROLE` plus
+  ///        `nonReentrant`.
+  ///
+  ///      This relies on the assumption that liquidators are external actors and are never granted
+  ///      `MINTER_ROLE` or `FACILITATOR_ROLE`. Any future integration that grants a callback-capable
+  ///      address either of those roles invalidates this analysis and must add a guard here.
   /// @param borrower The address of the position owner (typically this contract's address).
   /// @param seizedAssets The amount of collateral to seize. Pass 0 to calculate based on repaidShares.
   /// @param repaidShares The amount of borrow shares to repay. Pass 0 to calculate based on seizedAssets.
@@ -382,6 +399,10 @@ contract MorphoBorrowPosition is IBorrowPosition, Initializable, Ownable, IMorph
   ///      4. Optionally calls the liquidator's onPreLiquidate callback
   ///      5. Pulls loan tokens from the liquidator to complete the repayment
   ///      Reverts with {LibBorrowErrors.NotMorpho} if called by any address other than the Morpho contract.
+  ///
+  ///      **Reentrancy:** This callback is intentionally not marked `nonReentrant`. Its only access
+  ///      control is the `msg.sender == address(MORPHO)` check in the function body. See the
+  ///      `preLiquidate` Reentrancy note for the full rationale.
   /// @param repaidAssets The amount of loan tokens that were repaid.
   /// @param callbackData Encoded data containing (seizedAssets, borrower, liquidator, data).
   function onMorphoRepay(uint256 repaidAssets, bytes calldata callbackData) external {
