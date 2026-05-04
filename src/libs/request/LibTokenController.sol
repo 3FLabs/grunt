@@ -14,6 +14,11 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///      The actual bit manipulation and storage operations are delegated to {Lib128Fields},
 ///      which provides gas-optimized assembly implementations for reading and writing packed uint128 fields.
 ///      Used for total supplies, balances, and allowances across the dual-token system.
+///
+///      Storage layout: the slot constants below (`_TOTAL_SUPPLY_SLOT`, `_BALANCE_SLOT_SEED`,
+///      `_ALLOWANCE_SLOT_SEED`) and their derivation are intentionally chosen to be storage-compatible
+///      with Solady's `ERC20`. This lets the PT/YT view layer expose Solady-style ERC20 reads against
+///      the same underlying slots while keeping the lower-128/upper-128 packed encoding.
 library LibTokenController {
   using Lib128Fields for uint256;
   using FixedPointMathLib for bool;

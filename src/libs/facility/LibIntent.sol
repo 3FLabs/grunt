@@ -29,7 +29,8 @@ struct Asset {
 /// @param depositAsset Asset deposited into the intent.
 /// @param targetAsset Target asset or position manager for the intent.
 /// @param depositCap Maximum amount that can be deposited into the intent.
-/// @param guardKey Guard key address associated with intent authorization.
+/// @param guardKey Address of the position manager whose transfer guard authorizes intent transfers.
+///                  Must equal the deposit asset, the target asset, or both (when both are position managers).
 /// @param resolveStart Timestamp at which the deposit phase ends and the resolving phase begins.
 /// @param quorum Quorum threshold required for guard approvals.
 /// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
@@ -184,8 +185,8 @@ library LibIntent {
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Initializes an intent with the deposit asset and quorum.
-  /// @dev Sets the deposit asset and quorum, then emits IntentCreated.
+  /// @notice Initializes an intent with the deposit asset, quorum, and transferable flag.
+  /// @dev Sets the deposit asset, quorum, and transferableIntent flag, then emits IntentCreated.
   ///      The deposit asset must be a deployed contract.
   ///      Does not check if the intent already exists - caller must ensure this.
   /// @param _self The intent storage reference.

@@ -77,11 +77,11 @@ contract RequestFactory {
   ///      - PT Token beacon with a new Vault(false) implementation
   ///      - YT Token beacon with a new Vault(true) implementation
   ///      The beacon owner can later upgrade implementations for all proxies.
-  /// @param intialBeaconOwner The address that will own all three beacons (can upgrade implementations)
-  constructor(address intialBeaconOwner) {
-    REQUEST_BEACON = address(new UpgradeableBeacon(intialBeaconOwner, address(new Request())));
-    PT_TOKEN_BEACON = address(new UpgradeableBeacon(intialBeaconOwner, address(new Vault(false))));
-    YT_TOKEN_BEACON = address(new UpgradeableBeacon(intialBeaconOwner, address(new Vault(true))));
+  /// @param initialBeaconOwner The address that will own all three beacons (can upgrade implementations)
+  constructor(address initialBeaconOwner) {
+    REQUEST_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new Request())));
+    PT_TOKEN_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new Vault(false))));
+    YT_TOKEN_BEACON = address(new UpgradeableBeacon(initialBeaconOwner, address(new Vault(true))));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

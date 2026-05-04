@@ -6,6 +6,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibTokenController} from "../../../libs/request/LibTokenController.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ControlledVault} from "./ControlledVault.sol";
+import {IERC20} from "../../../interfaces/integrations/IERC20.sol";
 import {IVaultController} from "../../../interfaces/request/IVaultController.sol";
 import {IHasAsset} from "../../../interfaces/request/IHasAsset.sol";
 import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
@@ -73,7 +74,7 @@ abstract contract VaultController is TokenController, IVaultController {
   {
     unchecked {
       (ptSupply, ytSupply) = LibTokenController.totalSupplies();
-      uint256 assets = _asset().balanceOf(address(this));
+      uint256 assets = IERC20(_asset()).balanceOf(address(this));
       pAssets = FixedPointMathLib.min(assets, ptSupply);
       yAssets = assets - pAssets;
     }

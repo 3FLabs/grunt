@@ -250,7 +250,7 @@ stateDiagram-v2
 | Function | Required Role | Required State | Additional Checks |
 |----------|--------------|----------------|-------------------|
 | `createIntent` | Owner/Facilitator | Any | resolveStart > now |
-| `updateTarget` | Owner | DEPOSITING | - |
+| `updateTarget` | Owner | DEPOSITING / RESOLVING | - |
 | `setDepositCap` | Facilitator | DEPOSITING | - |
 | `lock` | Facilitator | DEPOSITING | - |
 | `setFund` | Facilitator | Any | No active order |
