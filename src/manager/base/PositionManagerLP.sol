@@ -15,6 +15,7 @@ import {LibCommonErrors as CommonErrors} from "../../libs/common/LibCommonErrors
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
+import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 
 /// @title PositionManagerLP
 /// @author 3F Protocol
@@ -47,9 +48,10 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
-    // Accrue fees and get current total assets
+    // Accrue fees and get current total assets.
+    // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply().
     uint256 totalAssetsBefore = _accrueFees();
-    uint256 _totalSupply = totalSupply();
+    uint256 _totalSupply = ERC20.totalSupply();
 
     // Pull collateral from caller
     if (collateral > 0) {
@@ -68,13 +70,14 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.processDeposit(collateral, debt);
     }
 
+    // Settle shares based on assets delta before any external transfer to keep
+    // totalAssets() and totalSupply() consistent during outbound calls.
+    shares = _settleShares(totalAssetsBefore, _totalSupply);
+
     // Send borrowed debt to caller
     if (debt > 0) {
       _storage.metadata.debtAsset.safeTransfer(msg.sender, debt);
     }
-
-    // Settle shares based on assets delta
-    shares = _settleShares(totalAssetsBefore, _totalSupply);
 
     emit Deposit(msg.sender, collateral, debt, shares);
   }
@@ -91,9 +94,10 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
-    // Accrue fees and get current total assets
+    // Accrue fees and get current total assets.
+    // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply().
     uint256 totalAssetsBefore = _accrueFees();
-    uint256 _totalSupply = totalSupply();
+    uint256 _totalSupply = ERC20.totalSupply();
 
     // Pull debt from caller for repayment
     if (debt > 0) {
@@ -104,13 +108,14 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     // checkLtv=true: proportional withdrawals must respect per-position LTV bounds
     _storage.processWithdrawal(collateral, debt, strategy, true);
 
+    // Settle shares based on assets delta before any external transfer to keep
+    // totalAssets() and totalSupply() consistent during outbound calls.
+    shares = _settleShares(totalAssetsBefore, _totalSupply);
+
     // Send collateral to caller
     if (collateral > 0) {
       _storage.metadata.collateralAsset.safeTransfer(msg.sender, collateral);
     }
-
-    // Settle shares based on assets delta
-    shares = _settleShares(totalAssetsBefore, _totalSupply);
 
     emit Withdraw(msg.sender, collateral, debt, shares);
   }
@@ -130,7 +135,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     // Accrue fees first
     _accrueFees();
 
-    uint256 _totalSupply = totalSupply();
+    // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply().
+    uint256 _totalSupply = ERC20.totalSupply();
     uint256 _totalCollateral = _storage.collateralAmount();
     uint256 _totalDebt = _storage.debtAmount();
     uint256 virtualShareOffset_ = _storage.virtualShareOffset;
