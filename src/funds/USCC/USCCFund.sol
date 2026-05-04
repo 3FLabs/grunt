@@ -383,6 +383,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
   ///      Validates the oracle round data is consistent and complete.
+  ///      The returned value is derived from `WUSCC.totalSupply()`, so when a single `WUSCC`
+  ///      deployment backs multiple `USCCFund` instances, every instance reports the same
+  ///      wrapper-wide aggregate AUM rather than AUM scoped to this fund.
   function totalAssets() external view override returns (uint256) {
     return WUSCC.totalSupply().mulDiv(_getOraclePrice(), _SCALED_UNIT);
   }
