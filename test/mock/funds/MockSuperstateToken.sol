@@ -16,6 +16,8 @@ contract MockSuperstateToken is ERC20 {
   uint256 public lastOffchainRedeemAmount;
   address public lastOffchainRedeemer;
 
+  bool internal _accountingPaused;
+
   constructor(string memory name_, string memory symbol_, address allowlist_, address usdc_) {
     _name = name_;
     _symbol = symbol_;
@@ -44,9 +46,18 @@ contract MockSuperstateToken is ERC20 {
   }
 
   function offchainRedeem(uint256 amount) external {
+    require(!_accountingPaused, "AccountingIsPaused");
     lastOffchainRedeemAmount = amount;
     lastOffchainRedeemer = msg.sender;
     _burn(msg.sender, amount);
+  }
+
+  function accountingPaused() external view returns (bool) {
+    return _accountingPaused;
+  }
+
+  function setAccountingPaused(bool paused) external {
+    _accountingPaused = paused;
   }
 
   function isAllowed(address addr) public view returns (bool) {

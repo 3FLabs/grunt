@@ -178,6 +178,12 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
 
+    // offchainRedeem() is a burn path; reject redeems while Superstate accounting is paused
+    // so the order does not get stuck in ACCEPTED with a guaranteed-revert commit.
+    if (order.mode == Mode.REDEEM && ISuperstateToken(USCC).accountingPaused()) {
+      revert LibFundsErrors.SuperstateAccountingPaused();
+    }
+
     if (_internalState == State.ENDED) {
       // Archive ended order
       _storage.endedOrders[_storage.currentOrderId] = true;
