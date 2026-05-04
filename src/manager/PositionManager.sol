@@ -16,6 +16,7 @@ import {
 import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
+import {LibChecks} from "../libs/common/LibChecks.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
@@ -36,6 +37,7 @@ contract PositionManager is
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using LibStorage for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
+  using LibChecks for address;
 
   constructor() {
     _disableInitializers();
@@ -60,6 +62,7 @@ contract PositionManager is
     uint16 maxRebalanceLoss_,
     uint40 rebalanceCooldown_
   ) external initializer {
+    owner_.checkNotZero();
     _initializeOwner(owner_);
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     _storage.metadata = metadata_;

@@ -2227,4 +2227,11 @@ contract RequestTest is Test {
     (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Above", "AB", deadline, delay);
     assertNotEq(reqAddr, address(0));
   }
+
+  function test_initialize_revertOnZeroOwner() public {
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    factory.createRequest(
+      address(0), puller, consumer, address(asset), "Zero", "ZRO", uint64(block.timestamp + 90 days), 0
+    );
+  }
 }

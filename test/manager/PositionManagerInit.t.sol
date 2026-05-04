@@ -7,6 +7,7 @@ import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
 /// @title PositionManagerInitTest
 /// @notice Tests for PositionManager initialization and view functions
@@ -102,6 +103,21 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     assertEq(positionManager.debtAmount(), DEBT_AMOUNT);
+  }
+
+  function test_initialize_revertOnZeroOwner() public {
+    PositionManager pm = PositionManager(address(new PositionManager()).clone());
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    pm.initialize(
+      address(0),
+      PositionManagerMetadata({
+        name: "PM", symbol: "PM", collateralAsset: address(collateralToken), debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
   }
 
   function test_initialize_withRebalanceConfig() public {
