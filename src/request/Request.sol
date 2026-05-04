@@ -179,10 +179,13 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc VaultController
-  /// @dev Returns true only if the request has been marked as repaid.
-  ///      Use syncRepaidStatus() to trigger automatic repayment after the deadline.
+  /// @dev Real-time view: returns true if the request has been marked repaid OR the
+  ///      repayment deadline has passed. Decoupled from the stored `repaid` flag so that
+  ///      ERC-4626 views (convertToAssets, maxWithdraw, maxRedeem, canWithdraw) reflect
+  ///      effective state without requiring a prior syncRepaidStatus() call.
   function _canWithdraw() internal view override returns (bool) {
-    return _requestStorage().repaid;
+    RequestStorage storage req = _requestStorage();
+    return req.repaid || block.timestamp >= req.repaymentDeadline;
   }
 
   /// @inheritdoc VaultController
