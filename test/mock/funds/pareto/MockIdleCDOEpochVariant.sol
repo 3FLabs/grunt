@@ -23,6 +23,8 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   uint256 public _epochDiscountBps;
   bool public _apr0Mode;
   bool public _simulateInstantWithdraw;
+  bool public _isDepositDuringEpochDisabled;
+  bool public _allowAAWithdrawRequest = true;
 
   constructor(address underlying_, address aaTranche_, address strategy_) {
     _underlying = underlying_;
@@ -63,6 +65,14 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
     return _walletAllowed[wallet];
   }
 
+  function isDepositDuringEpochDisabled() external view override returns (bool) {
+    return _isDepositDuringEpochDisabled;
+  }
+
+  function allowAAWithdrawRequest() external view override returns (bool) {
+    return _allowAAWithdrawRequest;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                IIdleCDOEpochVariant MUTATIONS                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -81,6 +91,7 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function depositDuringEpoch(uint256 amount, address) external override returns (uint256) {
     require(_isEpochRunning, "MockCDO: epoch not running");
+    require(!_isDepositDuringEpochDisabled, "MockCDO: deposit during epoch disabled");
     // Pull underlying from caller
     _underlying.safeTransferFrom(msg.sender, address(this), amount);
     // The real CDO mints at a future end-of-epoch price, which is higher than the current
@@ -95,6 +106,7 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   }
 
   function requestWithdraw(uint256 amount, address) external override returns (uint256) {
+    require(_allowAAWithdrawRequest, "MockCDO: AA withdraw request disabled");
     // Burn AA tranche tokens directly from caller (matches real IdleCDO behavior — no approval needed)
     _aaTranche.burn(msg.sender, amount);
     // Convert AA tranche amount to underlying amount
@@ -159,6 +171,14 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function setSimulateInstantWithdraw(bool simulate) external {
     _simulateInstantWithdraw = simulate;
+  }
+
+  function setIsDepositDuringEpochDisabled(bool disabled) external {
+    _isDepositDuringEpochDisabled = disabled;
+  }
+
+  function setAllowAAWithdrawRequest(bool allowed) external {
+    _allowAAWithdrawRequest = allowed;
   }
 
   /// @dev Advances the epoch: clears epochEndDate and increments strategy epoch number.

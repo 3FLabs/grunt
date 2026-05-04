@@ -226,6 +226,42 @@ contract ParetoFundTest is Test {
     fund.create(order);
   }
 
+  function test_Create_RevertsWhenDepositDuringEpochDisabled() public {
+    cdo.setIsEpochRunning(true);
+    cdo.setIsDepositDuringEpochDisabled(true);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    vm.expectRevert(LibFundsErrors.DepositDuringEpochDisabled.selector);
+    fund.create(order);
+  }
+
+  function test_Create_DepositSucceeds_WhenEpochNotRunning_AndDepositsDisabled() public {
+    // Gate only matters when an epoch is running: depositAA path is unaffected.
+    cdo.setIsDepositDuringEpochDisabled(true);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_AA);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "accepted when epoch not running");
+  }
+
+  function test_Create_RevertsWhenAAWithdrawRequestDisabled() public {
+    // Need shares first so a redeem is meaningful.
+    _depositAndUnlock(ONE_USDC);
+
+    cdo.setAllowAAWithdrawRequest(false);
+
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    vm.expectRevert(LibFundsErrors.WithdrawRequestDisabled.selector);
+    fund.create(order);
+  }
+
+  function test_Create_RedeemSucceeds_WhenAAWithdrawRequestAllowed() public {
+    // Default mock state: allowAAWithdrawRequest == true.
+    Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
+    State state = fund.create(order);
+    assertEq(uint256(state), uint256(State.ACCEPTED), "redeem accepted when AA withdraw allowed");
+  }
+
   function test_Create_AfterEndedOrder() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_AA);
     fund.create(order);

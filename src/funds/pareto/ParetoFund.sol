@@ -148,8 +148,23 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     State _internalState = $.internalState;
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
-    if (!IIdleCDOEpochVariant($.vault).isWalletAllowed(address(this))) {
+    IIdleCDOEpochVariant _vault = IIdleCDOEpochVariant($.vault);
+    if (!_vault.isWalletAllowed(address(this))) {
       revert LibFundsErrors.NotAllowedByFund();
+    }
+
+    // Refuse orders that would always revert at commit() time.
+    // Deposits during a running epoch use `depositDuringEpoch`, which reverts when
+    // `isDepositDuringEpochDisabled` is true. Redeems use `requestWithdraw`, which reverts
+    // when `allowAAWithdrawRequest` is false (set by `startEpoch`).
+    if (order.mode == Mode.DEPOSIT) {
+      if (_vault.isEpochRunning() && _vault.isDepositDuringEpochDisabled()) {
+        revert LibFundsErrors.DepositDuringEpochDisabled();
+      }
+    } else {
+      if (!_vault.allowAAWithdrawRequest()) {
+        revert LibFundsErrors.WithdrawRequestDisabled();
+      }
     }
 
     if (_internalState == State.ENDED) {
@@ -157,7 +172,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     }
 
     // Slippage guard: reject if expected output deviates too far below the current rate.
-    uint256 _virtualPrice = IIdleCDOEpochVariant($.vault).virtualPrice($.aaTranche);
+    uint256 _virtualPrice = _vault.virtualPrice($.aaTranche);
     uint256 _expectedOutput =
       order.mode == Mode.DEPOSIT ? order.input.mulDiv(1e18, _virtualPrice) : order.input.mulDiv(_virtualPrice, 1e18);
 

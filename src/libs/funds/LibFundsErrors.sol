@@ -55,6 +55,15 @@ library LibFundsErrors {
   /// @notice Thrown when the fund is not permissioned to operate with the vault.
   error NotAllowedByFund();
 
+  /// @notice Thrown when the vault is running an epoch and `depositDuringEpoch` is disabled upstream,
+  ///         so any deposit accepted now would be guaranteed to revert at commit time.
+  error DepositDuringEpochDisabled();
+
+  /// @notice Thrown when the vault has AA-tranche withdrawal requests disabled upstream
+  ///         (e.g., during an epoch where `startEpoch` flipped `allowAAWithdrawRequest` to false),
+  ///         so any redeem accepted now would be guaranteed to revert at commit time.
+  error WithdrawRequestDisabled();
+
   /// @notice Thrown when the wrapped share contract is not permissioned on the vault's share token.
   error WrappedShareNotPermissioned();
 
