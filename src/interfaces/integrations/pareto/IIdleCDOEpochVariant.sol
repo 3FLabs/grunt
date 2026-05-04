@@ -65,4 +65,9 @@ interface IIdleCDOEpochVariant {
   /// @param wallet The address to check.
   /// @return Whether the wallet is allowed.
   function isWalletAllowed(address wallet) external view returns (bool);
+
+  /// @notice Returns whether the vault currently allows withdrawals regardless of the wallet allowlist.
+  /// @dev When true, `requestWithdraw` bypasses `isWalletAllowed`. Used by Pareto for liquidations
+  ///      and other open-withdraw modes.
+  function keyringAllowWithdraw() external view returns (bool);
 }

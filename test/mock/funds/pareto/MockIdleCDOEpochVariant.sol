@@ -19,6 +19,7 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
   bool public _isEpochRunning;
   uint256 public _epochEndDate;
   mapping(address => bool) public _walletAllowed;
+  bool public _keyringAllowWithdraw;
   uint256 public _claimAmountOverride;
   uint256 public _epochDiscountBps;
   bool public _apr0Mode;
@@ -71,6 +72,10 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function allowAAWithdrawRequest() external view override returns (bool) {
     return _allowAAWithdrawRequest;
+  }
+
+  function keyringAllowWithdraw() external view override returns (bool) {
+    return _keyringAllowWithdraw;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -143,6 +148,10 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function setWalletAllowed(address wallet, bool allowed) external {
     _walletAllowed[wallet] = allowed;
+  }
+
+  function setKeyringAllowWithdraw(bool allowed) external {
+    _keyringAllowWithdraw = allowed;
   }
 
   function setClaimAmountOverride(uint256 amount) external {

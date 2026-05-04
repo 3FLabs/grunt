@@ -149,9 +149,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
     IIdleCDOEpochVariant _vault = IIdleCDOEpochVariant($.vault);
-    if (!_vault.isWalletAllowed(address(this))) {
-      revert LibFundsErrors.NotAllowedByFund();
-    }
+    _checkVaultAllowed(address(_vault), order.mode);
 
     // Refuse orders that would always revert at commit() time.
     // Deposits during a running epoch use `depositDuringEpoch`, which reverts when
@@ -227,9 +225,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
     address _vault = $.vault;
 
-    if (!IIdleCDOEpochVariant(_vault).isWalletAllowed(address(this))) {
-      revert LibFundsErrors.NotAllowedByFund();
-    }
+    _checkVaultAllowed(_vault, order.mode);
     address _aaTranche = $.aaTranche;
     if (order.mode == Mode.DEPOSIT) {
       // Pull underlying asset from depositor, approve to vault, deposit into AA tranche
@@ -442,5 +438,15 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @param order The given order.
   function _checkOrderOwner(Order calldata order) internal view {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
+  }
+
+  /// @dev Reverts if the fund wallet is not authorized to perform `mode` against the vault.
+  ///      DEPOSIT requires `isWalletAllowed`. REDEEM also accepts `keyringAllowWithdraw`,
+  ///      mirroring upstream IdleCDOEpochVariant.requestWithdraw which bypasses the wallet
+  ///      allowlist when the vault is in open-withdraw / liquidation mode.
+  function _checkVaultAllowed(address vault_, Mode mode) internal view {
+    if (IIdleCDOEpochVariant(vault_).isWalletAllowed(address(this))) return;
+    if (mode == Mode.REDEEM && IIdleCDOEpochVariant(vault_).keyringAllowWithdraw()) return;
+    revert LibFundsErrors.NotAllowedByFund();
   }
 }
