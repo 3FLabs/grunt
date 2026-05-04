@@ -43,6 +43,7 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   /// @dev Computes pending fee shares without mutating state.
   ///      Management fees are computed first based on time elapsed and total assets.
   ///      Performance fees are then charged on the net gain: totalAssets - lastTotalAssets - managementFeeAssets.
+  ///      The combined fee assets are converted to shares against the LP-owned post-fee asset base.
   ///      This ensures performance fees are only taken on gains that exceed the management fee cost.
   /// @return totalAssets_ The current total assets across all borrow modules
   /// @return totalSupply_ The current total supply of shares (before fee minting)
@@ -63,26 +64,36 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
 
     uint256 _lastTotalAssets = _storage.lastTotalAssets;
     uint256 virtualShareOffset_ = _storage.virtualShareOffset;
-    uint256 managementFeeAssets = 0;
+    uint256 managementFeeAssets;
+    uint256 performanceFeeAssets;
 
     // Management fee: based on time elapsed and total assets
     if (fd.managementFee > 0) {
       uint256 elapsed = block.timestamp - _storage.lastFeeAccrualTimestamp;
       managementFeeAssets = totalAssets_.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
-      if (managementFeeAssets > 0) {
-        managementFeeShares =
-          managementFeeAssets.convertToShares(totalSupply_, totalAssets_, virtualShareOffset_, false);
-      }
+      managementFeeAssets = managementFeeAssets.min(totalAssets_);
     }
 
     // Performance fee: based on net gains (after management fee deduction) since last snapshot
-    if (fd.performanceFee > 0 && totalAssets_ > _lastTotalAssets + managementFeeAssets) {
-      uint256 gains = totalAssets_ - _lastTotalAssets - managementFeeAssets;
-      uint256 performanceFeeAssets = gains.mulDiv(fd.performanceFee, BPS);
-      if (performanceFeeAssets > 0) {
-        performanceFeeShares =
-          performanceFeeAssets.convertToShares(totalSupply_, totalAssets_, virtualShareOffset_, false);
+    if (fd.performanceFee > 0 && totalAssets_ > _lastTotalAssets) {
+      uint256 gains = totalAssets_ - _lastTotalAssets;
+      if (gains > managementFeeAssets) {
+        performanceFeeAssets = (gains - managementFeeAssets).mulDiv(fd.performanceFee, BPS);
       }
+    }
+
+    uint256 totalFeeAssets = managementFeeAssets + performanceFeeAssets;
+    if (totalFeeAssets == 0) return (totalAssets_, totalSupply_, 0, 0);
+
+    uint256 feeAdjustedAssets = totalAssets_ - totalFeeAssets;
+    uint256 feeShares = totalFeeAssets.convertToShares(totalSupply_, feeAdjustedAssets, virtualShareOffset_, false);
+
+    if (managementFeeAssets > 0) {
+      managementFeeShares =
+        managementFeeAssets.convertToShares(totalSupply_, feeAdjustedAssets, virtualShareOffset_, false);
+    }
+    if (performanceFeeAssets > 0) {
+      performanceFeeShares = feeShares - managementFeeShares;
     }
   }
 
