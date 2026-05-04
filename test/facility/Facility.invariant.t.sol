@@ -10,6 +10,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {TransferGuard} from "src/guard/TransferGuard.sol";
+import {TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 
 // Borrow position
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
@@ -243,7 +244,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
 
     // ----- 14. Set transfer guard config: blocklist mode for PM token -----
     vm.prank(owner);
-    transferGuard.setTokenConfig(address(positionManager), false, false); // blocklist mode, not paused
+    transferGuard.setTokenConfig(address(positionManager), false, TokenMode.BLOCKLIST, false); // blocklist mode, not paused
 
     // ----- 15. Grant SENDER_ROLE to minter (needs to wrap/transfer collateral for PM deposits) -----
     vm.prank(owner);

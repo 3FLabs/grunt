@@ -3,7 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
-import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
+import {TransferGuard} from "src/guard/TransferGuard.sol";
+import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 
 /// @title TransferGuardFactoryTest
@@ -177,7 +178,7 @@ contract TransferGuardFactoryTest is Test {
 
     // Set token config (whitelist mode)
     vm.prank(guardOwner);
-    tg.setTokenConfig(token, false, true);
+    tg.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
     // Set address status for both parties
     vm.startPrank(guardOwner);
@@ -208,7 +209,7 @@ contract TransferGuardFactoryTest is Test {
     address bob = makeAddr("bob");
 
     // Blocklist mode is default
-    assertFalse(tg.isWhitelistMode(token));
+    assertEq(uint8(tg.tokenMode(token)), uint8(TokenMode.BLOCKLIST));
 
     // Should allow transfers between any non-blocklisted addresses
     assertTrue(tg.canTransfer(token, alice, bob, 1000e18));

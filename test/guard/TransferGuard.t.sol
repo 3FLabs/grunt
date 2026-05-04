@@ -2,11 +2,39 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
-import {ITransferGuard} from "src/interfaces/guard/ITransferGuard.sol";
+import {TransferGuard, TokenConfig} from "src/guard/TransferGuard.sol";
+import {ITransferGuard, AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
+import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {IWrappedAsset} from "src/interfaces/funds/IWrappedAsset.sol";
 import {LibPause} from "src/libs/common/LibPause.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+
+/// @dev Mock PositionManager that returns configurable collateral asset via assets().
+contract MockPositionManagerForGuard {
+  address public collateral;
+
+  constructor(address collateral_) {
+    collateral = collateral_;
+  }
+
+  function assets() external view returns (address, address) {
+    return (collateral, address(0));
+  }
+}
+
+/// @dev Mock WrappedAsset with configurable isAllowed response.
+contract MockWrappedAssetForGuard {
+  mapping(address => bool) public allowed;
+
+  function setAllowed(address account, bool status) external {
+    allowed[account] = status;
+  }
+
+  function isAllowed(address account, uint256) external view returns (bool) {
+    return allowed[account];
+  }
+}
 
 /// @title TransferGuardTest
 /// @notice Test suite for TransferGuard contract
@@ -29,6 +57,7 @@ contract TransferGuardTest is Test {
   address public alice;
   address public bob;
   address public blockedUser;
+  address public facility; // NATIVE role address
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          CONSTANTS                         */
@@ -42,7 +71,7 @@ contract TransferGuardTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   event AddressStatusSet(address indexed account, AddressStatus status);
-  event TokenConfigSet(address indexed token, uint40 pausedUntil, bool whitelist);
+  event TokenConfigSet(address indexed token, uint40 pausedUntil, TokenMode mode, bool checkCollateralAllowed);
   event TokenPausedSet(address indexed token, uint40 pausedUntil);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -57,6 +86,7 @@ contract TransferGuardTest is Test {
     alice = makeAddr("alice");
     bob = makeAddr("bob");
     blockedUser = makeAddr("blockedUser");
+    facility = makeAddr("facility");
 
     // Deploy guard
     guard = TransferGuard(address(new TransferGuard()).clone());
@@ -106,6 +136,13 @@ contract TransferGuardTest is Test {
     assertEq(uint8(guard.addressStatus(alice)), uint8(AddressStatus.BLOCKLIST));
   }
 
+  function test_setAddressStatus_native() public {
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    assertEq(uint8(guard.addressStatus(facility)), uint8(AddressStatus.NATIVE));
+  }
+
   function test_setAddressStatus_revertsUnauthorized() public {
     vm.prank(alice);
     vm.expectRevert();
@@ -132,43 +169,52 @@ contract TransferGuardTest is Test {
 
   function test_setTokenConfig() public {
     vm.expectEmit(true, false, false, true);
-    emit TokenConfigSet(token, LibPause.NOT_PAUSED, true);
+    emit TokenConfigSet(token, LibPause.NOT_PAUSED, TokenMode.WHITELIST, false);
 
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
-    (uint40 pausedUntil_, bool whitelist_) = guard.tokenConfig(token);
-    assertEq(pausedUntil_, 0); // Not paused
-    assertEq(whitelist_, true);
+    (uint40 pausedUntil_, TokenMode mode_, bool checkCollateral_) = guard.tokenConfig(token);
+    assertEq(pausedUntil_, 0);
+    assertEq(uint8(mode_), uint8(TokenMode.WHITELIST));
+    assertFalse(checkCollateral_);
   }
 
   function test_setTokenConfig_withPause() public {
     vm.expectEmit(true, false, false, true);
-    emit TokenConfigSet(token, LibPause.PERMANENT_PAUSE, false);
+    emit TokenConfigSet(token, LibPause.PERMANENT_PAUSE, TokenMode.BLOCKLIST, false);
 
     vm.prank(owner);
-    guard.setTokenConfig(token, true, false);
+    guard.setTokenConfig(token, true, TokenMode.BLOCKLIST, false);
 
-    (uint40 pausedUntil_, bool whitelist_) = guard.tokenConfig(token);
-    assertEq(pausedUntil_, type(uint40).max); // Permanently paused
-    assertEq(whitelist_, false);
+    (uint40 pausedUntil_, TokenMode mode_,) = guard.tokenConfig(token);
+    assertEq(pausedUntil_, type(uint40).max);
+    assertEq(uint8(mode_), uint8(TokenMode.BLOCKLIST));
+  }
+
+  function test_setTokenConfig_withCollateralCheck() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, true);
+
+    (,, bool checkCollateral_) = guard.tokenConfig(token);
+    assertTrue(checkCollateral_);
   }
 
   function test_setTokenConfig_revertsNonOwner() public {
     vm.prank(compliance);
     vm.expectRevert();
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
   }
 
-  function test_isWhitelistMode() public {
-    // Default is blocklist mode
-    assertFalse(guard.isWhitelistMode(token));
+  function test_tokenMode() public {
+    // Default is BLOCKLIST mode
+    assertEq(uint8(guard.tokenMode(token)), uint8(TokenMode.BLOCKLIST));
 
-    // Set to whitelist mode
+    // Set to NATIVE_ONLY mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
 
-    assertTrue(guard.isWhitelistMode(token));
+    assertEq(uint8(guard.tokenMode(token)), uint8(TokenMode.NATIVE_ONLY));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -183,7 +229,7 @@ contract TransferGuardTest is Test {
     guard.pause(token);
 
     assertTrue(guard.paused(token));
-    (uint40 pausedUntil_,) = guard.tokenConfig(token);
+    (uint40 pausedUntil_,,) = guard.tokenConfig(token);
     assertEq(pausedUntil_, type(uint40).max);
   }
 
@@ -228,7 +274,7 @@ contract TransferGuardTest is Test {
     guard.pauseFor(token, duration);
 
     assertTrue(guard.paused(token));
-    (uint40 pausedUntil_,) = guard.tokenConfig(token);
+    (uint40 pausedUntil_,,) = guard.tokenConfig(token);
     assertEq(pausedUntil_, expectedPauseUntil);
   }
 
@@ -242,12 +288,10 @@ contract TransferGuardTest is Test {
   }
 
   function test_pauseFor_zeroDurationUnpauses() public {
-    // First pause
     vm.prank(pauser);
     guard.pause(token);
     assertTrue(guard.paused(token));
 
-    // pauseFor(0) unpauses
     vm.prank(pauser);
     guard.pauseFor(token, 0);
     assertFalse(guard.paused(token));
@@ -265,7 +309,7 @@ contract TransferGuardTest is Test {
     vm.prank(pauser);
     guard.pauseFor(token, hugeValue);
 
-    (uint40 pausedUntil_,) = guard.tokenConfig(token);
+    (uint40 pausedUntil_,,) = guard.tokenConfig(token);
     assertEq(pausedUntil_, type(uint40).max);
   }
 
@@ -290,22 +334,18 @@ contract TransferGuardTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_blocklist_allowsDefaultNoConfig() public view {
-    // No config set - should allow (blocklist mode by default, NONE status allowed)
     assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
   function test_blocklist_allowsNoneStatus() public view {
-    // NONE status is allowed in blocklist mode
     assertTrue(guard.canTransfer(token, alice, bob, 1000e18));
   }
 
   function test_blocklist_allowsMint() public view {
-    // Mints have from = address(0)
     assertTrue(guard.canTransfer(token, address(0), bob, 1000e18));
   }
 
   function test_blocklist_allowsBurn() public view {
-    // Burns have to = address(0)
     assertTrue(guard.canTransfer(token, alice, address(0), 1000e18));
   }
 
@@ -323,14 +363,21 @@ contract TransferGuardTest is Test {
     assertFalse(guard.canTransfer(token, alice, address(0), 1000e18));
   }
 
+  function test_blocklist_allowsNative() public {
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    assertTrue(guard.canTransfer(token, facility, alice, 1000e18));
+    assertTrue(guard.canTransfer(token, alice, facility, 1000e18));
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   WHITELIST MODE TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_whitelist_blocksBlocklisted() public {
-    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
     vm.prank(compliance);
     guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
@@ -339,47 +386,333 @@ contract TransferGuardTest is Test {
   }
 
   function test_whitelist_allowsMintToWhitelisted() public {
-    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
-    // Whitelist recipient
     vm.prank(compliance);
     guard.setAddressStatus(bob, AddressStatus.WHITELIST);
 
-    // Mints have from = address(0) which is skipped
     assertTrue(guard.canTransfer(token, address(0), bob, 1000e18));
   }
 
   function test_whitelist_allowsBurnFromWhitelisted() public {
-    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
-    // Whitelist sender
     vm.prank(compliance);
     guard.setAddressStatus(alice, AddressStatus.WHITELIST);
 
-    // Burns have to = address(0) which is skipped
     assertTrue(guard.canTransfer(token, alice, address(0), 1000e18));
   }
 
   function test_whitelist_blocksMintToNone() public {
-    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
-    // bob has NONE status (not whitelisted)
     assertFalse(guard.canTransfer(token, address(0), bob, 1000e18));
   }
 
   function test_whitelist_blocksBurnFromNone() public {
-    // Set whitelist mode
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
-    // alice has NONE status (not whitelisted)
     assertFalse(guard.canTransfer(token, alice, address(0), 1000e18));
+  }
+
+  function test_whitelist_allowsNative() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+
+    assertTrue(guard.canTransfer(token, facility, alice, 1000e18));
+    assertTrue(guard.canTransfer(token, alice, facility, 1000e18));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  NATIVE_ONLY MODE TESTS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_nativeOnly_allowsWithNativeParty() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    // facility (NATIVE) -> alice (NONE): allowed
+    assertTrue(guard.canTransfer(token, facility, alice, 1000e18));
+    // alice (NONE) -> facility (NATIVE): allowed
+    assertTrue(guard.canTransfer(token, alice, facility, 1000e18));
+  }
+
+  function test_nativeOnly_blocksWithoutNativeParty() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    // alice (NONE) -> bob (NONE): blocked (no NATIVE party)
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_nativeOnly_blocksBlocklisted() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+    guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
+    vm.stopPrank();
+
+    // facility (NATIVE) -> alice (BLOCKLIST): blocked
+    assertFalse(guard.canTransfer(token, facility, alice, 1000e18));
+    // alice (BLOCKLIST) -> facility (NATIVE): blocked
+    assertFalse(guard.canTransfer(token, alice, facility, 1000e18));
+  }
+
+  function test_nativeOnly_allowsWhitelistedWithNative() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    vm.stopPrank();
+
+    assertTrue(guard.canTransfer(token, facility, alice, 1000e18));
+  }
+
+  function test_nativeOnly_blocksWhitelistedPairWithoutNative() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+    vm.stopPrank();
+
+    // Two whitelisted but no NATIVE: blocked in NATIVE_ONLY
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_nativeOnly_mintBypassesNativeRequirement() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    // Mint to NONE address: allowed (bypass NATIVE requirement)
+    assertTrue(guard.canTransfer(token, address(0), alice, 1000e18));
+  }
+
+  function test_nativeOnly_burnBypassesNativeRequirement() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    // Burn from NONE address: allowed (bypass NATIVE requirement)
+    assertTrue(guard.canTransfer(token, alice, address(0), 1000e18));
+  }
+
+  function test_nativeOnly_mintBlocksBlocklisted() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
+
+    // Mint to blocklisted: blocked
+    assertFalse(guard.canTransfer(token, address(0), alice, 1000e18));
+    // Burn from blocklisted: blocked
+    assertFalse(guard.canTransfer(token, alice, address(0), 1000e18));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*               NATIVE_WHITELIST MODE TESTS                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_nativeWhitelist_allowsNativeToWhitelisted() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    vm.stopPrank();
+
+    assertTrue(guard.canTransfer(token, facility, alice, 1000e18));
+    assertTrue(guard.canTransfer(token, alice, facility, 1000e18));
+  }
+
+  function test_nativeWhitelist_allowsNativeToNative() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+    guard.setAddressStatus(bob, AddressStatus.NATIVE);
+    vm.stopPrank();
+
+    assertTrue(guard.canTransfer(token, facility, bob, 1000e18));
+  }
+
+  function test_nativeWhitelist_blocksWhitelistedPairWithoutNative() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+    guard.setAddressStatus(bob, AddressStatus.WHITELIST);
+    vm.stopPrank();
+
+    // Both WHITELIST but no NATIVE: blocked
+    assertFalse(guard.canTransfer(token, alice, bob, 1000e18));
+  }
+
+  function test_nativeWhitelist_blocksNoneAddress() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    // facility (NATIVE) -> alice (NONE): blocked (NONE not allowed)
+    assertFalse(guard.canTransfer(token, facility, alice, 1000e18));
+  }
+
+  function test_nativeWhitelist_blocksBlocklisted() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.startPrank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+    guard.setAddressStatus(alice, AddressStatus.BLOCKLIST);
+    vm.stopPrank();
+
+    assertFalse(guard.canTransfer(token, facility, alice, 1000e18));
+  }
+
+  function test_nativeWhitelist_mintBypassesNativeRequirement() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+
+    // Mint to WHITELIST: allowed (bypass NATIVE requirement for null party)
+    assertTrue(guard.canTransfer(token, address(0), alice, 1000e18));
+  }
+
+  function test_nativeWhitelist_mintBlocksNone() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    // Mint to NONE: blocked (NONE not WHITELIST/NATIVE)
+    assertFalse(guard.canTransfer(token, address(0), alice, 1000e18));
+  }
+
+  function test_nativeWhitelist_burnBypassesNativeRequirement() public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_WHITELIST, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(alice, AddressStatus.WHITELIST);
+
+    // Burn from WHITELIST: allowed
+    assertTrue(guard.canTransfer(token, alice, address(0), 1000e18));
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              CHECK COLLATERAL ALLOWED TESTS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_checkCollateralAllowed_blocksNonAllowed() public {
+    // Setup mock collateral
+    MockWrappedAssetForGuard mockCollateral = new MockWrappedAssetForGuard();
+    MockPositionManagerForGuard mockPM = new MockPositionManagerForGuard(address(mockCollateral));
+    address pmAddr = address(mockPM);
+
+    // Configure guard with collateral check
+    vm.prank(owner);
+    guard.setTokenConfig(pmAddr, false, TokenMode.BLOCKLIST, true);
+
+    // alice not allowed on collateral
+    mockCollateral.setAllowed(alice, false);
+    mockCollateral.setAllowed(bob, true);
+
+    // alice -> bob: blocked (alice not allowed on collateral)
+    assertFalse(guard.canTransfer(pmAddr, alice, bob, 1000e18));
+
+    // bob -> alice: blocked (alice not allowed on collateral)
+    assertFalse(guard.canTransfer(pmAddr, bob, alice, 1000e18));
+  }
+
+  function test_checkCollateralAllowed_allowsBothAllowed() public {
+    MockWrappedAssetForGuard mockCollateral = new MockWrappedAssetForGuard();
+    MockPositionManagerForGuard mockPM = new MockPositionManagerForGuard(address(mockCollateral));
+    address pmAddr = address(mockPM);
+
+    vm.prank(owner);
+    guard.setTokenConfig(pmAddr, false, TokenMode.BLOCKLIST, true);
+
+    mockCollateral.setAllowed(alice, true);
+    mockCollateral.setAllowed(bob, true);
+
+    assertTrue(guard.canTransfer(pmAddr, alice, bob, 1000e18));
+  }
+
+  function test_checkCollateralAllowed_mintSkipsFromCheck() public {
+    MockWrappedAssetForGuard mockCollateral = new MockWrappedAssetForGuard();
+    MockPositionManagerForGuard mockPM = new MockPositionManagerForGuard(address(mockCollateral));
+    address pmAddr = address(mockPM);
+
+    vm.prank(owner);
+    guard.setTokenConfig(pmAddr, false, TokenMode.BLOCKLIST, true);
+
+    mockCollateral.setAllowed(bob, true);
+
+    // Mint: from=address(0), only checks to
+    assertTrue(guard.canTransfer(pmAddr, address(0), bob, 1000e18));
+  }
+
+  function test_checkCollateralAllowed_burnSkipsToCheck() public {
+    MockWrappedAssetForGuard mockCollateral = new MockWrappedAssetForGuard();
+    MockPositionManagerForGuard mockPM = new MockPositionManagerForGuard(address(mockCollateral));
+    address pmAddr = address(mockPM);
+
+    vm.prank(owner);
+    guard.setTokenConfig(pmAddr, false, TokenMode.BLOCKLIST, true);
+
+    mockCollateral.setAllowed(alice, true);
+
+    // Burn: to=address(0), only checks from
+    assertTrue(guard.canTransfer(pmAddr, alice, address(0), 1000e18));
+  }
+
+  function test_checkCollateralAllowed_combinesWithMode() public {
+    MockWrappedAssetForGuard mockCollateral = new MockWrappedAssetForGuard();
+    MockPositionManagerForGuard mockPM = new MockPositionManagerForGuard(address(mockCollateral));
+    address pmAddr = address(mockPM);
+
+    // NATIVE_ONLY mode + collateral check
+    vm.prank(owner);
+    guard.setTokenConfig(pmAddr, false, TokenMode.NATIVE_ONLY, true);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    // Both allowed on collateral
+    mockCollateral.setAllowed(facility, true);
+    mockCollateral.setAllowed(alice, true);
+
+    // facility (NATIVE) -> alice (NONE): passes mode + collateral
+    assertTrue(guard.canTransfer(pmAddr, facility, alice, 1000e18));
+
+    // Remove alice from collateral allowlist
+    mockCollateral.setAllowed(alice, false);
+
+    // facility (NATIVE) -> alice (NONE): passes mode but fails collateral
+    assertFalse(guard.canTransfer(pmAddr, facility, alice, 1000e18));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -406,9 +739,10 @@ contract TransferGuardTest is Test {
     }
   }
 
-  function testFuzz_pausedAlwaysBlocked(uint256 amount, bool isWhitelistMode) public {
+  function testFuzz_pausedAlwaysBlocked(uint256 amount, uint8 modeSeed) public {
+    TokenMode mode = TokenMode(modeSeed % 4);
     vm.prank(owner);
-    guard.setTokenConfig(token, false, isWhitelistMode);
+    guard.setTokenConfig(token, false, mode, false);
 
     vm.prank(pauser);
     guard.pause(token);
@@ -416,12 +750,13 @@ contract TransferGuardTest is Test {
     assertFalse(guard.canTransfer(token, alice, bob, amount));
   }
 
-  function testFuzz_whitelist_onlyWhitelistedAllowed(uint256 amount, bool senderWhitelisted, bool recipientWhitelisted)
-    public
-  {
-    // Set whitelist mode
+  function testFuzz_whitelist_onlyWhitelistedOrNativeAllowed(
+    uint256 amount,
+    bool senderWhitelisted,
+    bool recipientWhitelisted
+  ) public {
     vm.prank(owner);
-    guard.setTokenConfig(token, false, true);
+    guard.setTokenConfig(token, false, TokenMode.WHITELIST, false);
 
     vm.startPrank(compliance);
     if (senderWhitelisted) {
@@ -434,5 +769,19 @@ contract TransferGuardTest is Test {
 
     bool expected = senderWhitelisted && recipientWhitelisted;
     assertEq(guard.canTransfer(token, alice, bob, amount), expected);
+  }
+
+  function testFuzz_nativeOnly_requiresNativeParty(uint256 amount) public {
+    vm.prank(owner);
+    guard.setTokenConfig(token, false, TokenMode.NATIVE_ONLY, false);
+
+    vm.prank(compliance);
+    guard.setAddressStatus(facility, AddressStatus.NATIVE);
+
+    // With NATIVE party: allowed
+    assertTrue(guard.canTransfer(token, facility, alice, amount));
+
+    // Without NATIVE party: blocked
+    assertFalse(guard.canTransfer(token, alice, bob, amount));
   }
 }
