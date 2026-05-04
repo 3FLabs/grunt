@@ -358,19 +358,23 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     address[] memory modules = positionManager.borrowModules();
     for (uint256 i = 0; i < modules.length; i++) {
       IBorrowPosition bp = IBorrowPosition(modules[i]);
-      uint256 borrowed = bp.totalBorrowed();
+      MorphoBorrowPosition mbp = MorphoBorrowPosition(modules[i]);
+      // Use raw borrowShares as the "no debt" predicate so it agrees with _isHealthy:
+      // totalBorrowed() rounds down via toAssetsDown, but _isHealthy uses toAssetsUp
+      // and short-circuits on borrowShares == 0. Dust shares can leave totalBorrowed()
+      // at 0 while _isHealthy still treats the position as having debt.
+      uint256 borrowShares = morpho.position(mbp.marketId(), modules[i]).borrowShares;
       uint256 collateral = bp.totalCollateral();
 
-      if (borrowed == 0) {
+      if (borrowShares == 0) {
         // A position with no debt is always healthy at any LTV.
-        uint128 bpSafeLtv = MorphoBorrowPosition(modules[i]).safeLtv();
-        assertTrue(bp.isHealthy(bpSafeLtv), "PM-7: debt-free position reported unhealthy");
+        assertTrue(bp.isHealthy(mbp.safeLtv()), "PM-7: debt-free position reported unhealthy");
       }
 
       if (collateral == 0) {
         // If there is no collateral, there must be no debt either
         // (Morpho requires collateral to borrow).
-        assertEq(borrowed, 0, "PM-7: debt without collateral");
+        assertEq(borrowShares, 0, "PM-7: debt without collateral");
       }
     }
   }
