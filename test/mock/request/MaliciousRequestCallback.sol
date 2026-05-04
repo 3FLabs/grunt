@@ -16,7 +16,9 @@ contract MaliciousRequestCallback is IRequestCallback {
   enum AttackType {
     NONE,
     SET_REPAID,
-    MINT
+    MINT,
+    PULL_FUNDS,
+    AUTHORIZE_MINTING
   }
 
   address public asset;
@@ -56,6 +58,18 @@ contract MaliciousRequestCallback is IRequestCallback {
     } else if (attackType == AttackType.MINT) {
       attackTriggered = true;
       try Request(request).mint(type(uint128).max, 0) {}
+      catch (bytes memory reason) {
+        lastRevertReason = reason;
+      }
+    } else if (attackType == AttackType.PULL_FUNDS) {
+      attackTriggered = true;
+      try Request(request).pullFunds(principal, "") {}
+      catch (bytes memory reason) {
+        lastRevertReason = reason;
+      }
+    } else if (attackType == AttackType.AUTHORIZE_MINTING) {
+      attackTriggered = true;
+      try Request(request).authorizeMinting(address(this), 1, 1) {}
       catch (bytes memory reason) {
         lastRevertReason = reason;
       }
