@@ -266,7 +266,6 @@ contract USCCFundTest is Test {
     assertEq(uint256(state), uint256(State.ACCEPTED), "deposit accepted while paused");
   }
 
-
   function test_Create_RevertsInvalidOutput_Deposit() public {
     // With oracle price = 1:1, expected output = input = 100 USDC
     // MAX_OUTPUT_DEVIATION = 500 bps (5%), so min valid output = 100 - 5 = 95
