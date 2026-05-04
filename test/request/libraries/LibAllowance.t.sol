@@ -48,39 +48,8 @@ contract LibAllowanceTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      NORMALIZE TESTS                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function testFuzz_normalize(uint128 allowance) public pure {
-    uint256 result = LibAllowance.normalize(allowance);
-
-    if (allowance == type(uint128).max) {
-      // Max uint128 should become max uint256 (infinite approval)
-      assertEq(result, type(uint256).max, "Max allowance should normalize to max uint256");
-    } else {
-      // Other values should remain unchanged (just cast to uint256)
-      assertEq(result, uint256(allowance), "Normal allowance should remain unchanged");
-    }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    INTEGRATION TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function testFuzz_consumeAndNormalize(uint128 allowance, uint128 amount) public pure {
-    vm.assume(allowance >= amount);
-
-    uint128 consumed = LibAllowance.consume(allowance, amount);
-    uint256 normalized = LibAllowance.normalize(consumed);
-
-    if (allowance == type(uint128).max) {
-      assertEq(consumed, type(uint128).max);
-      assertEq(normalized, type(uint256).max);
-    } else {
-      assertEq(consumed, allowance - amount);
-      assertEq(normalized, uint256(allowance - amount));
-    }
-  }
 
   function testFuzz_multipleConsumes(uint128 initialAllowance, uint128 amount1, uint128 amount2, uint128 amount3)
     public

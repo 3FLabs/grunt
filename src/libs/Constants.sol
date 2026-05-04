@@ -21,7 +21,6 @@ pragma solidity ^0.8.22;
 ///      Usage in LibAllowance:
 ///      - Represents infinite allowance threshold (type(uint128).max)
 ///      - `consume()`: Skips subtraction when allowance equals MAX_128_BITS (infinite approval)
-///      - `normalize()`: Converts uint128.max to uint256.max for ERC20 compatibility
 ///
 /// @custom:value 2^128 - 1 = 340,282,366,920,938,463,463,374,607,431,768,211,455
 uint256 constant MAX_128_BITS = 0xffffffffffffffffffffffffffffffff;
