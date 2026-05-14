@@ -118,6 +118,8 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @inheritdoc IWrappedAsset
   /// @dev Unwraps to underlying asset: burns wrapper from `from`, sends underlying to `to`.
   ///      If `from != msg.sender`, caller must have sufficient allowance.
+  ///      When `to` is set to a redemption-capable underlying token (e.g. USCC),
+  ///      this transfer is the on-chain leg of an off-chain redemption flow.
   function burn(address from, address to, uint256 amount) external override {
     to.checkNotZero();
     if (from != msg.sender) {
@@ -157,16 +159,32 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     ALLOWLIST HOOK                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IWrappedAsset
+  /// @dev Base implementation returns true. Override for compliance checks (e.g., Superstate allowlist).
+  function isAllowed(address, uint256) public view virtual returns (bool) {
+    return true;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ERC20 HOOK                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Enforces transfer restrictions (excluding burns and mints):
-  ///      - Transfers are allowed if the sender has SENDER_ROLE, OR
-  ///      - Transfers are allowed if the receiver has RECEIVER_ROLE
-  function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+  /// @dev Enforces transfer restrictions:
+  ///      - Transfers (not mints/burns) require sender to have SENDER_ROLE or receiver to have RECEIVER_ROLE
+  ///      - Non-null parties must pass isAllowed check (base returns true, override for compliance)
+  ///      Note: Solady's ERC20 permits transfers to `address(0)` and treats them as a burn-by-transfer
+  ///      (this differs from OpenZeppelin's ERC20, which reverts on `to == address(0)`). EIP-20 does not
+  ///      forbid this. The `from == address(0) || to == address(0)` guards below intentionally let such
+  ///      mint/burn paths through without role or allowlist checks.
+  function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override {
     if (from != address(0) && to != address(0) && !hasAnyRole(to, RECEIVER_ROLE) && !hasAnyRole(from, SENDER_ROLE)) {
       revert Unauthorized();
     }
+    if (from != address(0) && !isAllowed(from, amount)) revert Unauthorized();
+    if (to != address(0) && !isAllowed(to, amount)) revert Unauthorized();
     super._beforeTokenTransfer(from, to, amount);
   }
 }

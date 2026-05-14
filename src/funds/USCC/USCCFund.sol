@@ -86,6 +86,12 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     _checkDecimals(uscc);
     _checkDecimals(wuscc);
 
+    // Mirror the wrapped-share invariant enforced by ParetoFund/CentrifugeFund:
+    // wUSCC must wrap USCC, otherwise mint/burn flows would silently move the wrong asset.
+    if (IWrappedAsset(wuscc).underlying() != uscc) {
+      revert LibFundsErrors.InvalidUnderlyingAsset();
+    }
+
     USDC = usdc;
     USCC = uscc;
     WUSCC = wuscc;
@@ -177,6 +183,16 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (!ISuperstateToken(USCC).isAllowed(address(this))) {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
+    // Check allowlist permissions for the eventual wUSCC receiver
+    if (!ISuperstateToken(USCC).isAllowed(order.receiver)) {
+      revert LibFundsErrors.NotAllowedSuperstate();
+    }
+
+    // offchainRedeem() is a burn path; reject redeems while Superstate accounting is paused
+    // so the order does not get stuck in ACCEPTED with a guaranteed-revert commit.
+    if (order.mode == Mode.REDEEM && ISuperstateToken(USCC).accountingPaused()) {
+      revert LibFundsErrors.SuperstateAccountingPaused();
+    }
 
     if (_internalState == State.ENDED) {
       // Archive ended order
@@ -231,6 +247,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
     // Check allowlist permissions for this contract to deposit in USCC
     if (!ISuperstateToken(USCC).isAllowed(address(this))) {
+      revert LibFundsErrors.NotAllowedSuperstate();
+    }
+    // Re-check allowlist permissions for the eventual wUSCC receiver
+    if (!ISuperstateToken(USCC).isAllowed(order.receiver)) {
       revert LibFundsErrors.NotAllowedSuperstate();
     }
 
@@ -377,6 +397,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
   ///      Validates the oracle round data is consistent and complete.
+  ///      The returned value is derived from `WUSCC.totalSupply()`, so when a single `WUSCC`
+  ///      deployment backs multiple `USCCFund` instances, every instance reports the same
+  ///      wrapper-wide aggregate AUM rather than AUM scoped to this fund.
   function totalAssets() external view override returns (uint256) {
     return WUSCC.totalSupply().mulDiv(_getOraclePrice(), _SCALED_UNIT);
   }

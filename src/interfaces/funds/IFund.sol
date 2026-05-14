@@ -62,27 +62,33 @@ interface IFund {
   /// @return The new state of the order after cancellation (EMPTY).
   function cancel(Order calldata order) external returns (State);
 
-  /// @notice Transfers assets from the sender to the wrapper for an accepted order.
+  /// @notice Transfers the order input from the sender to the wrapper for an accepted order.
   /// @dev Only callable when state() returns ACCEPTED.
+  ///      The committed amount is denominated in the order input:
+  ///      DEPOSIT: assets committed by the owner.
+  ///      REDEEM: shares committed by the owner.
   /// @param order The order parameters identifying the operation.
   /// @return The new state after the transfer (PROCESSING or UNLOCKING).
-  /// @return The assets that have been committed by the owner.
+  /// @return The amount of input committed by the owner (assets in DEPOSIT, shares in REDEEM).
   function commit(Order calldata order) external returns (State, uint256);
 
-  /// @notice Recovers input assets after failed processing.
+  /// @notice Recovers the order input back to the receiver after failed processing.
   /// @dev Only callable when state() returns RECOVERING.
+  ///      The recovered amount is denominated in the order input:
+  ///      DEPOSIT: assets returned to the receiver.
+  ///      REDEEM: shares returned to the receiver.
   /// @param order The order parameters identifying the operation.
   /// @return The new state after recovery (going back to PROCESSING if partial, ENDED if full).
-  /// @return The assets that have been recovered by the receiver.
+  /// @return The amount of input recovered to the receiver (assets in DEPOSIT, shares in REDEEM).
   function recover(Order calldata order) external returns (State, uint256);
 
-  /// @notice Claims output assets or shares after successful processing.
+  /// @notice Claims the order output after successful processing.
   /// @dev Only callable when state() returns UNLOCKING.
-  ///      DEPOSIT: transfers shares to order.receiver
-  ///      REDEEM: transfers output assets to order.receiver
+  ///      DEPOSIT: transfers shares to order.receiver.
+  ///      REDEEM: transfers output assets to order.receiver.
   /// @param order The order parameters identifying the completed operation.
   /// @return The new state after unlocking (going back to PROCESSING if partial, ENDED if full).
-  /// @return The assets that have been unlocked to the receiver.
+  /// @return The amount of output unlocked to the receiver (shares in DEPOSIT, assets in REDEEM).
   function unlock(Order calldata order) external returns (State, uint256);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -106,6 +112,11 @@ interface IFund {
   function share() external view returns (address);
 
   /// @notice Returns the total amount of the wrapper's base asset under management.
+  /// @dev Implementations typically derive this from the share token's `totalSupply()`. When the
+  ///      share token returned by `share()` is reused across multiple fund instances (e.g. a
+  ///      shared `WrappedAsset`), the value reflects the wrapper-wide aggregate AUM rather than
+  ///      AUM attributable to a single fund instance. Integrators that need per-fund AUM must
+  ///      account for this off-chain.
   /// @return The total amount of assets denominated in the asset() token.
   function totalAssets() external view returns (uint256);
 

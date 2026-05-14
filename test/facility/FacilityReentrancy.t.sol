@@ -9,6 +9,7 @@ import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {TransferGuard} from "src/guard/TransferGuard.sol";
+import {TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
 
@@ -152,7 +153,7 @@ contract FacilityReentrancyTest is Test {
     positionManager.grantRoles(minter, PM_MINTER_ROLE);
     facility.grantRoles(guardian, GUARDIAN_ROLE);
     facility.grantRoles(pauser, COMPLIANCE_ROLE);
-    transferGuard.setTokenConfig(address(positionManager), false, false);
+    transferGuard.setTokenConfig(address(positionManager), false, TokenMode.BLOCKLIST, false);
     vm.stopPrank();
 
     // User approvals

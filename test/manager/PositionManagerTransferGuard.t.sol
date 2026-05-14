@@ -2,7 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
-import {TransferGuard, AddressStatus, TokenConfig} from "src/guard/TransferGuard.sol";
+import {TransferGuard, TokenConfig} from "src/guard/TransferGuard.sol";
+import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {TransferGuardFactory} from "src/guard/TransferGuardFactory.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
@@ -46,7 +47,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
 
     // Configure guard for position manager (whitelist mode)
     vm.startPrank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, true);
+    guard.setTokenConfig(address(positionManager), false, TokenMode.WHITELIST, false);
     guard.setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
     guard.setAddressStatus(whitelistedUser, AddressStatus.WHITELIST);
     // Whitelist minter for deposits/withdrawals
@@ -136,7 +137,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
   function test_transfer_allowedInBlocklistMode() public {
     // Switch to blocklist mode
     vm.prank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, false);
+    guard.setTokenConfig(address(positionManager), false, TokenMode.BLOCKLIST, false);
 
     // Mint shares to minter
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -306,7 +307,7 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     _mintDebt(minter, amount);
 
     vm.prank(minter);
-    vm.expectRevert(CommonErrors.Paused.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.deposit(amount, amount);
   }
 
@@ -329,13 +330,86 @@ contract PositionManagerTransferGuardTest is PositionManagerBaseTest {
     _mintCollateral(minter, 1);
 
     vm.prank(minter);
-    vm.expectRevert(CommonErrors.Paused.selector);
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
     positionManager.deposit(1, 0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  NO GUARD TESTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deposit_blockedWhenSenderBlocklisted_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit via the whitelisted minter
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Grant MINTER_ROLE to a blocklisted user
+    vm.prank(owner);
+    positionManager.grantRoles(blockedUser, _ROLE_MINTER);
+
+    uint256 amount = 1000e18;
+    _mintCollateral(blockedUser, amount);
+
+    vm.startPrank(blockedUser);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+
+    // Neutral deposit (collateral == debt) hits the zero-delta branch of _settleShares.
+    // The transfer guard must still reject the blocklisted caller.
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
+    positionManager.deposit(amount, amount);
+    vm.stopPrank();
+  }
+
+  function test_deposit_blockedWhenSenderBlocklisted_zeroSharesDelta() public {
+    // Seed positions so totalSupply and totalAssets are non-zero
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Inflate the per-share asset value so 1 wei of collateral rounds to 0 shares
+    oracle.setPrice(1000 * DEFAULT_ORACLE_PRICE);
+
+    // Grant MINTER_ROLE to a blocklisted user
+    vm.prank(owner);
+    positionManager.grantRoles(blockedUser, _ROLE_MINTER);
+
+    _mintCollateral(blockedUser, 1);
+
+    vm.startPrank(blockedUser);
+    collateralToken.approve(address(positionManager), type(uint256).max);
+
+    // sharesToMint rounds to 0 -> zero-mint branch of _settleShares.
+    // The transfer guard must still reject the blocklisted caller.
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
+    positionManager.deposit(1, 0);
+    vm.stopPrank();
+  }
+
+  function test_withdraw_blockedWhenSenderBlocklisted_zeroAssetsDelta() public {
+    // Seed positions with an initial deposit via the whitelisted minter
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Grant MINTER_ROLE to a blocklisted user
+    vm.prank(owner);
+    positionManager.grantRoles(blockedUser, _ROLE_MINTER);
+
+    // Fund the blocklisted user with debt to repay
+    uint256 amount = 1000e18;
+    _mintDebt(blockedUser, amount);
+
+    vm.startPrank(blockedUser);
+    debtToken.approve(address(positionManager), type(uint256).max);
+
+    // Neutral withdraw (repay debt + withdraw matching collateral) hits the
+    // zero-delta branch of _settleShares -- the scenario the issue calls out.
+    // The transfer guard must still reject the blocklisted caller.
+    vm.expectRevert(LibManagerErrors.TransferBlocked.selector);
+    positionManager.withdraw(amount, amount, WithdrawalStrategy.PROPORTIONAL);
+    vm.stopPrank();
+  }
 
   function test_deposit_allowedWhenNotPaused_zeroSharesDelta() public {
     // Same setup as paused test but guard is NOT paused — should succeed

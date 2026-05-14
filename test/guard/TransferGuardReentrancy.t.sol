@@ -10,9 +10,10 @@ import {
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
-import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
-import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
-import {TransferGuard, AddressStatus} from "src/guard/TransferGuard.sol";
+import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {TransferGuard} from "src/guard/TransferGuard.sol";
+import {AddressStatus, TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
@@ -107,7 +108,7 @@ contract TransferGuardReentrancyTest is Test {
 
     // Configure guard (blocklist mode - minter can deposit/withdraw)
     vm.startPrank(guardOwner);
-    guard.setTokenConfig(address(positionManager), false, false);
+    guard.setTokenConfig(address(positionManager), false, TokenMode.BLOCKLIST, false);
     vm.stopPrank();
 
     // Setup approvals

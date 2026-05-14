@@ -14,12 +14,15 @@ contract ReentrantMinter {
     NONE,
     DEPOSIT,
     WITHDRAW,
-    BURN
+    BURN,
+    READ_VIEWS
   }
 
   AttackType public attackType;
   bool public attackTriggered;
   bytes public lastRevertReason;
+  bytes public lastTotalSupplyRevertReason;
+  bytes public lastTotalAssetsRevertReason;
 
   constructor(PositionManager pm_) {
     pm = pm_;
@@ -29,6 +32,8 @@ contract ReentrantMinter {
     attackType = type_;
     attackTriggered = false;
     lastRevertReason = "";
+    lastTotalSupplyRevertReason = "";
+    lastTotalAssetsRevertReason = "";
   }
 
   function deposit(uint256 collateralAmt, uint256 debtAmt) external returns (int256) {
@@ -68,7 +73,33 @@ contract ReentrantMinter {
       catch (bytes memory reason) {
         lastRevertReason = reason;
       }
+    } else if (attackType == AttackType.READ_VIEWS) {
+      try pm.totalSupply() returns (uint256) {}
+      catch (bytes memory reason) {
+        lastTotalSupplyRevertReason = reason;
+      }
+      try pm.totalAssets() returns (uint256) {}
+      catch (bytes memory reason) {
+        lastTotalAssetsRevertReason = reason;
+      }
     }
+  }
+
+  function _isReentrancyRevert(bytes memory reason) internal pure returns (bool) {
+    if (reason.length < 4) return false;
+    bytes4 selector;
+    assembly {
+      selector := mload(add(reason, 32))
+    }
+    return selector == ReentrancyGuardTransient.Reentrancy.selector;
+  }
+
+  function totalSupplyReadReverted() external view returns (bool) {
+    return _isReentrancyRevert(lastTotalSupplyRevertReason);
+  }
+
+  function totalAssetsReadReverted() external view returns (bool) {
+    return _isReentrancyRevert(lastTotalAssetsRevertReason);
   }
 
   /// @notice Helper to check if last revert was Reentrancy error

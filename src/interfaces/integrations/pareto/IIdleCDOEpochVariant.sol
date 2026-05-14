@@ -52,8 +52,22 @@ interface IIdleCDOEpochVariant {
   /// @notice Returns the end date of the current epoch (0 if no epoch running).
   function epochEndDate() external view returns (uint256);
 
+  /// @notice Returns whether deposits via `depositDuringEpoch` are disabled.
+  /// @dev When true, `depositDuringEpoch` reverts even if an epoch is running.
+  function isDepositDuringEpochDisabled() external view returns (bool);
+
+  /// @notice Returns whether AA-tranche withdrawal requests are currently allowed.
+  /// @dev Flipped to false by `startEpoch` and back to true by `stopEpoch`,
+  ///      so withdrawal requests are blocked while an epoch is running.
+  function allowAAWithdrawRequest() external view returns (bool);
+
   /// @notice Checks whether a wallet is allowed to interact with the CDO (Keyring access control).
   /// @param wallet The address to check.
   /// @return Whether the wallet is allowed.
   function isWalletAllowed(address wallet) external view returns (bool);
+
+  /// @notice Returns whether the vault currently allows withdrawals regardless of the wallet allowlist.
+  /// @dev When true, `requestWithdraw` bypasses `isWalletAllowed`. Used by Pareto for liquidations
+  ///      and other open-withdraw modes.
+  function keyringAllowWithdraw() external view returns (bool);
 }

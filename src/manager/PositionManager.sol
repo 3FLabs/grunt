@@ -16,6 +16,7 @@ import {
 import {LibStorage} from "../libs/manager/LibStorage.sol";
 import {LibView} from "../libs/manager/LibView.sol";
 import {LibManagerErrors} from "../libs/manager/LibManagerErrors.sol";
+import {LibChecks} from "../libs/common/LibChecks.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
@@ -36,6 +37,7 @@ contract PositionManager is
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using LibStorage for PositionManagerStorageData;
   using LibView for PositionManagerStorageData;
+  using LibChecks for address;
 
   constructor() {
     _disableInitializers();
@@ -60,6 +62,7 @@ contract PositionManager is
     uint16 maxRebalanceLoss_,
     uint40 rebalanceCooldown_
   ) external initializer {
+    owner_.checkNotZero();
     _initializeOwner(owner_);
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     _storage.metadata = metadata_;
@@ -124,23 +127,30 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function collateralAmount() public view returns (uint256) {
+  function collateralAmount() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().collateralAmount();
   }
 
   /// @inheritdoc IPositionManager
-  function collateralAmountQuoted() public view returns (uint256) {
+  function collateralAmountQuoted() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().collateralAmountQuoted();
   }
 
   /// @inheritdoc IPositionManager
-  function debtAmount() public view returns (uint256) {
+  function debtAmount() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().debtAmount();
   }
 
   /// @inheritdoc IPositionManager
-  function totalAssets() public view returns (uint256) {
+  function totalAssets() public view nonReadReentrant returns (uint256) {
     return LibStorage.positionManagerStorage().totalAssets();
+  }
+
+  /// @inheritdoc ERC20
+  /// @dev Reverts via {nonReadReentrant} when read during a deposit/withdraw/burn so external
+  ///      integrators cannot observe a stale supply against a freshly-mutated NAV.
+  function totalSupply() public view override nonReadReentrant returns (uint256) {
+    return ERC20.totalSupply();
   }
 
   /// @inheritdoc IPositionManager
@@ -168,6 +178,7 @@ contract PositionManager is
   function pendingFees()
     public
     view
+    nonReadReentrant
     returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
   {
     return _pendingFees();

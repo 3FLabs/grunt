@@ -42,7 +42,7 @@ library LibPause {
     // any duration >= PERMANENT_PAUSE results in a permanent pause
     if (duration >= PERMANENT_PAUSE) return PERMANENT_PAUSE;
     uint256 pauseUntil = block.timestamp + duration;
-    // casting to 'uint40' is safe because pauseUntil is equal or less than PERMANENT_PAUSE
+    // casting to 'uint40' is safe because the value is capped at PERMANENT_PAUSE (= type(uint40).max) by .min above
     // forge-lint: disable-next-line(unsafe-typecast)
     return uint40(pauseUntil.min(PERMANENT_PAUSE));
   }

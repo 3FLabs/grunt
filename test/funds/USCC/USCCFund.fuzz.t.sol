@@ -60,7 +60,13 @@ contract USCCFundFuzzTest is Test {
     address fundAddress = factory.createFund(owner, address(this), recipient, address(oracle));
     fund = USCCFund(fundAddress);
 
+    // Allowlist all addresses that send/receive USCC (mirrors production Superstate enforcement)
+    // Allowlist all addresses that send/receive USCC (mirrors production Superstate enforcement)
     allowlist.setAllowed(address(fund), "USCC", true);
+    allowlist.setAllowed(address(wuscc), "USCC", true);
+    allowlist.setAllowed(address(this), "USCC", true);
+    allowlist.setAllowed(owner, "USCC", true);
+    allowlist.setAllowed(recipient, "USCC", true);
     vm.prank(owner);
     wuscc.grantRoles(address(fund), WUSCC_ISSUER_ROLE);
 
@@ -700,7 +706,12 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     address fundAddress = factory.createFund(owner, address(handler), recipient, address(oracle));
     fund = USCCFund(fundAddress);
 
+    // Allowlist all addresses that send/receive USCC (mirrors production Superstate enforcement)
     allowlist.setAllowed(address(fund), "USCC", true);
+    allowlist.setAllowed(address(wuscc), "USCC", true);
+    allowlist.setAllowed(address(handler), "USCC", true);
+    allowlist.setAllowed(owner, "USCC", true);
+    allowlist.setAllowed(recipient, "USCC", true);
 
     vm.prank(owner);
     wuscc.grantRoles(address(fund), WUSCC_ISSUER_ROLE);

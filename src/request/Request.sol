@@ -55,6 +55,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   using SafeTransferLib for address;
   using LibMintAuth for address;
   using LibChecks for uint256;
+  using LibChecks for address;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -146,6 +147,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     uint64 repaymentDeadline_,
     uint40 mintToRepaidDelay_
   ) public initializer {
+    owner_.checkNotZero();
     // Validate repayment deadline is within a reasonable range
     if (
       repaymentDeadline_ <= block.timestamp + mintToRepaidDelay_
@@ -177,10 +179,13 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   }
 
   /// @inheritdoc VaultController
-  /// @dev Returns true only if the request has been marked as repaid.
-  ///      Use syncRepaidStatus() to trigger automatic repayment after the deadline.
+  /// @dev Real-time view: returns true if the request has been marked repaid OR the
+  ///      repayment deadline has passed. Decoupled from the stored `repaid` flag so that
+  ///      ERC-4626 views (convertToAssets, maxWithdraw, maxRedeem, canWithdraw) reflect
+  ///      effective state without requiring a prior syncRepaidStatus() call.
   function _canWithdraw() internal view override returns (bool) {
-    return _requestStorage().repaid;
+    RequestStorage storage req = _requestStorage();
+    return req.repaid || block.timestamp >= req.repaymentDeadline;
   }
 
   /// @inheritdoc VaultController
@@ -302,7 +307,11 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      the tokens after transferring the required underlying asset. This is useful for
   ///      whitelisting participants or implementing custom minting logic.
   ///      Emits an {AuthorizedMinting} event.
-  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external onlyOwnerOrRoles(_ROLE_CONSUMER) {
+  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount)
+    external
+    onlyOwnerOrRoles(_ROLE_CONSUMER)
+    nonReentrant
+  {
     to.updateMintAuth(ptAmount, ytAmount);
     emit AuthorizedMinting(to, ptAmount, ytAmount);
   }
@@ -314,7 +323,7 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      `setRepaid(uint256)` is called to enable PT/YT holder withdrawals.
   ///      Emits a {FundsPulled} event and a Transfer event from the underlying asset contract.
   /// @custom:reverts If the request has been repaid or the deadline has passed
-  function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) {
+  function pullFunds(uint256 amount, bytes calldata data) external onlyRoles(_ROLE_PULLER) nonReentrant {
     if (_syncWithdrawalStatus()) revert LibRequestErrors.AlreadyRepaid();
     _asset().safeTransfer(msg.sender, amount);
     emit FundsPulled(msg.sender, amount);

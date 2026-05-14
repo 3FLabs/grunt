@@ -36,13 +36,14 @@ src/
 │   │   └── ParetoFundFactory.sol    # Beacon proxy factory
 │   ├── USCC/
 │   │   ├── USCCFund.sol             # Superstate USCC integration
-│   │   └── USCCFundFactory.sol      # Beacon proxy factory
-│   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.)
+│   │   ├── USCCFundFactory.sol      # Beacon proxy factory
+│   │   └── SuperstateRestrictedWrappedAsset.sol # WrappedAsset with Superstate allowlist
+│   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.) with virtual isAllowed hook
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
 │   └── MorphoBorrowPositionFactory.sol  # Beacon proxy factory
 ├── guard/                       # Compliance controls
-│   ├── TransferGuard.sol        # Blocklist/whitelist transfer guard
+│   ├── TransferGuard.sol        # Multi-mode transfer guard (blocklist/whitelist/native)
 │   └── TransferGuardFactory.sol # Beacon proxy factory
 ├── interfaces/                  # All interface definitions
 └── libs/                        # Shared libraries
@@ -116,9 +117,9 @@ This section provides a consolidated view of all roles across contracts and how 
 | | Curator | Operations Bot | Set supply/withdrawal queues |
 | | Rebalancer | Rebalancer Contract | Execute rebalancing operations |
 | **BorrowPosition** | Owner | PositionManager | All borrow/supply operations |
-| **TransferGuard** | Owner | Protocol Admin | Set token config, grant roles |
+| **TransferGuard** | Owner | Protocol Admin | Set token config (mode, collateral check), grant roles |
 | | Pauser | Emergency Admin | Pause/unpause tokens |
-| | Compliance | Compliance Bot | Set address blocklist/whitelist status |
+| | Compliance | Compliance Bot | Set address status (NONE/WHITELIST/BLOCKLIST/NATIVE) |
 
 ### Typical Deployment Connections
 
@@ -249,7 +250,7 @@ stateDiagram-v2
 | Function | Required Role | Required State | Additional Checks |
 |----------|--------------|----------------|-------------------|
 | `createIntent` | Owner/Facilitator | Any | resolveStart > now |
-| `updateTarget` | Owner | DEPOSITING | - |
+| `updateTarget` | Owner | DEPOSITING / RESOLVING | - |
 | `setDepositCap` | Facilitator | DEPOSITING | - |
 | `lock` | Facilitator | DEPOSITING | - |
 | `setFund` | Facilitator | Any | No active order |
@@ -925,22 +926,31 @@ Monitor `BorrowPositionCreated` events to track deployments and their LLTV thres
 
 ## Transfer Guard
 
-Compliance controls for token transfers with blocklist/whitelist modes.
+Compliance controls for token transfers with four modes and collateral-layer allowlist delegation.
 
 ### Token Modes
 
+Each mode is a combination of two properties: whether `NONE` status addresses are blocked, and whether at least one `NATIVE` party is required.
+
 | Mode | Behavior |
 |------|----------|
-| Blocklist | All addresses allowed EXCEPT those with BLOCKLIST status |
-| Whitelist | Only addresses with WHITELIST status allowed |
+| `BLOCKLIST` | All addresses allowed EXCEPT those with `BLOCKLIST` status (default) |
+| `WHITELIST` | Only `WHITELIST` or `NATIVE` addresses allowed |
+| `NATIVE_ONLY` | At least one party must be `NATIVE`, no `BLOCKLIST` allowed. Mints/burns bypass `NATIVE` requirement |
+| `NATIVE_WHITELIST` | All parties must be `WHITELIST`/`NATIVE`, at least one `NATIVE`. Mints/burns bypass `NATIVE` requirement |
 
 ### Address Status
 
-| Status | Blocklist Mode | Whitelist Mode |
-|--------|----------------|----------------|
-| NONE | Allowed | Blocked |
-| WHITELIST | Allowed | Allowed |
-| BLOCKLIST | Blocked | Blocked |
+| Status | BLOCKLIST Mode | WHITELIST Mode | NATIVE_ONLY Mode | NATIVE_WHITELIST Mode |
+|--------|----------------|----------------|-------------------|----------------------|
+| `NONE` | Allowed | Blocked | Allowed (but not NATIVE) | Blocked |
+| `WHITELIST` | Allowed | Allowed | Allowed (but not NATIVE) | Allowed |
+| `BLOCKLIST` | Blocked | Blocked | Blocked | Blocked |
+| `NATIVE` | Allowed | Allowed | Allowed + satisfies NATIVE req | Allowed + satisfies NATIVE req |
+
+### Collateral Allowlist Check
+
+When `checkCollateralAllowed` is enabled on a token's config, the guard additionally calls `PositionManager(token).assets()` to get the collateral asset, then calls `WrappedAsset(collateral).isAllowed(account, amount)` for each non-null party. This delegates compliance enforcement (e.g., Superstate allowlist) to the WrappedAsset layer.
 
 ### Transfer Validation
 
@@ -948,29 +958,37 @@ Compliance controls for token transfers with blocklist/whitelist modes.
 flowchart TB
     Start[canTransfer] --> Paused{Token Paused?}
     Paused -->|Yes| Block[BLOCK]
-    Paused -->|No| Mint{Is Mint?}
-    Mint -->|Yes| CheckTo[Check 'to' only]
-    Mint -->|No| Burn{Is Burn?}
-    Burn -->|Yes| CheckFrom[Check 'from' only]
-    Burn -->|No| CheckBoth[Check both addresses]
+    Paused -->|No| BL{BLOCKLIST?}
+    BL -->|Either party| Block
+    BL -->|No| Mode{Token Mode}
 
-    CheckTo --> Status
-    CheckFrom --> Status
-    CheckBoth --> Status
+    Mode -->|BLOCKLIST| Allow[ALLOW]
+    Mode -->|WHITELIST| WL{NONE status?}
+    WL -->|Yes| Block
+    WL -->|No| Allow
 
-    subgraph Status["Per Address"]
-        S1[BLOCKLIST → BLOCK]
-        S2[WHITELIST → ALLOW]
-        S3[NONE + blocklist mode → ALLOW]
-        S4[NONE + whitelist mode → BLOCK]
-    end
+    Mode -->|NATIVE_ONLY| NO{At least one NATIVE?}
+    NO -->|No, regular transfer| Block
+    NO -->|Yes or mint/burn| Allow
+
+    Mode -->|NATIVE_WHITELIST| NW{All WHITELIST/NATIVE?}
+    NW -->|No| Block
+    NW -->|Yes| NW2{At least one NATIVE?}
+    NW2 -->|No, regular transfer| Block
+    NW2 -->|Yes or mint/burn| Collateral
+
+    Allow --> Collateral{checkCollateral?}
+    Collateral -->|No| Pass[ALLOW]
+    Collateral -->|Yes| CA{WrappedAsset.isAllowed?}
+    CA -->|Yes| Pass
+    CA -->|No| Block
 ```
 
 ### Role-Based Access
 
 | Role | Permission |
 |------|------------|
-| Owner | Set token config (paused, mode), grant roles |
+| Owner | Set token config (paused, mode, checkCollateralAllowed), grant roles |
 | Pauser | Pause/unpause tokens |
 | Compliance | Set address statuses |
 
@@ -981,10 +999,13 @@ flowchart TB
 TransferGuardFactory factory = new TransferGuardFactory(beaconOwner);
 address guard = factory.createTransferGuard(guardOwner);
 
-// Configure (whitelist mode)
-TransferGuard(guard).setTokenConfig(address(positionManager), false, true);
+// Configure (NATIVE_ONLY mode with collateral check)
+TransferGuard(guard).setTokenConfig(
+    address(positionManager), false, TokenMode.NATIVE_ONLY, true
+);
 
 // Set address statuses
+TransferGuard(guard).setAddressStatus(facility, AddressStatus.NATIVE);
 TransferGuard(guard).setAddressStatus(blockedUser, AddressStatus.BLOCKLIST);
 TransferGuard(guard).setAddressStatus(allowedUser, AddressStatus.WHITELIST);
 

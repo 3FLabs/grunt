@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {MockTokenController, ControlledToken, TokenController} from "../mock/request/MockTokens.sol";
 import {LibRequestErrors} from "../../src/libs/request/LibRequestErrors.sol";
 import {LibCommonErrors as CommonErrors} from "../../src/libs/common/LibCommonErrors.sol";
@@ -359,14 +360,17 @@ contract ControlledTokenTest is Test {
     vm.assume(recipient != address(0));
     vm.assume(owner != spender);
     vm.assume(owner != recipient);
+    // The sentinel value type(uint128).max is reserved for "infinite" and is rejected at approve.
+    // The infinite-allowance flow is covered separately by test_transferFromMaxAllowance.
+    vm.assume(ptApprove < type(uint128).max && ytApprove < type(uint128).max);
 
     tokenController.mint(owner, ptMint, ytMint);
 
     vm.prank(owner);
     tokenController.approveBatch(spender, ptApprove, ytApprove);
 
-    assertEq(ptToken.allowance(owner, spender), ptApprove < type(uint128).max ? ptApprove : type(uint256).max);
-    assertEq(ytToken.allowance(owner, spender), ytApprove < type(uint128).max ? ytApprove : type(uint256).max);
+    assertEq(ptToken.allowance(owner, spender), ptApprove);
+    assertEq(ytToken.allowance(owner, spender), ytApprove);
 
     bool shouldSucceed =
       ptTransfer <= ptMint && ytTransfer <= ytMint && ptTransfer <= ptApprove && ytTransfer <= ytApprove;
@@ -384,15 +388,9 @@ contract ControlledTokenTest is Test {
       assertEq(ptToken.balanceOf(recipient), ptTransfer);
       assertEq(ytToken.balanceOf(recipient), ytTransfer);
 
-      // Check allowance reduction (unless max)
-      if (ptApprove < type(uint128).max || ytApprove < type(uint128).max) {
-        if (ptApprove < type(uint128).max) {
-          assertEq(ptToken.allowance(owner, spender), ptApprove - ptTransfer);
-        }
-        if (ytApprove < type(uint128).max) {
-          assertEq(ytToken.allowance(owner, spender), ytApprove - ytTransfer);
-        }
-      }
+      // Both approvals are below the sentinel by vm.assume, so allowance always decrements.
+      assertEq(ptToken.allowance(owner, spender), ptApprove - ptTransfer);
+      assertEq(ytToken.allowance(owner, spender), ytApprove - ytTransfer);
     }
   }
 
@@ -638,8 +636,10 @@ contract ControlledTokenTest is Test {
 
     tokenController.mint(owner, 100 ether, 200 ether);
 
-    // Transfer 0 PT - should succeed without emitting event
+    // Transfer 0 PT - per EIP-20, must emit Transfer(from, to, 0) on PT only
     vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Transfer(owner, recipient, 0);
     bool result = ptToken.transfer(recipient, 0);
     assertTrue(result);
     assertEq(ptToken.balanceOf(owner), 100 ether);
@@ -647,6 +647,8 @@ contract ControlledTokenTest is Test {
 
     // Transfer 0 YT
     vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Transfer(owner, recipient, 0);
     result = ytToken.transfer(recipient, 0);
     assertTrue(result);
     assertEq(ytToken.balanceOf(owner), 200 ether);
@@ -728,15 +730,19 @@ contract ControlledTokenTest is Test {
 
     tokenController.mint(owner, 100 ether, 200 ether);
 
-    // Transfer only PT (YT = 0)
+    // Batch is logically two ERC-20 transfers, so both PT and YT emit (zero side included).
     vm.prank(owner);
     vm.expectEmit(true, true, true, true, address(ptToken));
     emit Transfer(owner, recipient, 50 ether);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Transfer(owner, recipient, 0);
     bool result = tokenController.transferBatch(recipient, 50 ether, 0);
     assertTrue(result);
 
-    // Transfer only YT (PT = 0)
+    // Now the other side: PT = 0, YT = 100 ether
     vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Transfer(owner, recipient, 0);
     vm.expectEmit(true, true, true, true, address(ytToken));
     emit Transfer(owner, recipient, 100 ether);
     result = tokenController.transferBatch(recipient, 0, 100 ether);
@@ -749,13 +755,21 @@ contract ControlledTokenTest is Test {
 
     // First approval
     vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Approval(owner, spender, 100 ether);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Approval(owner, spender, 200 ether);
     tokenController.approveBatch(spender, 100 ether, 200 ether);
 
     assertEq(ptToken.allowance(owner, spender), 100 ether);
     assertEq(ytToken.allowance(owner, spender), 200 ether);
 
-    // Approve same amount again - no events should be emitted for unchanged allowances
+    // Approve same amount again - per EIP-20, Approval MUST be emitted on every successful approve.
     vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Approval(owner, spender, 100 ether);
+    vm.expectEmit(true, true, true, true, address(ytToken));
+    emit Approval(owner, spender, 200 ether);
     tokenController.approveBatch(spender, 100 ether, 200 ether);
 
     assertEq(ptToken.allowance(owner, spender), 100 ether);
@@ -812,11 +826,10 @@ contract ControlledTokenTest is Test {
     address owner = address(1);
     address spender = address(2);
 
-    // Set max allowance
+    // Approving exactly type(uint256).max is the canonical infinite allowance.
     vm.prank(owner);
-    tokenController.approveBatch(spender, type(uint128).max, type(uint128).max);
+    tokenController.approveBatch(spender, type(uint256).max, type(uint256).max);
 
-    // Should return uint256 max when uint128 max is stored
     assertEq(tokenController.allowance(owner, spender, false), type(uint256).max);
     assertEq(tokenController.allowance(owner, spender, true), type(uint256).max);
   }
@@ -840,5 +853,130 @@ contract ControlledTokenTest is Test {
     assertEq(ytToken.balanceOf(owner), 100 ether);
     assertEq(ptToken.balanceOf(recipient), 50 ether);
     assertEq(ytToken.balanceOf(recipient), 100 ether);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    ERC-20 COMPLIANCE                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_transferZero_doesNotEmitOnSibling() public {
+    address owner = address(1);
+    address recipient = address(2);
+    tokenController.mint(owner, 100 ether, 200 ether);
+
+    vm.recordLogs();
+    vm.prank(owner);
+    ptToken.transfer(recipient, 0);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    // Exactly one Transfer log, on the PT contract, with value 0.
+    assertEq(logs.length, 1);
+    assertEq(logs[0].emitter, address(ptToken));
+    assertEq(logs[0].topics[0], keccak256("Transfer(address,address,uint256)"));
+    assertEq(logs[0].topics[1], bytes32(uint256(uint160(owner))));
+    assertEq(logs[0].topics[2], bytes32(uint256(uint160(recipient))));
+    assertEq(abi.decode(logs[0].data, (uint256)), 0);
+  }
+
+  function test_transferFromZero_emitsEvent() public {
+    address owner = address(1);
+    address spender = address(2);
+    address recipient = address(3);
+
+    tokenController.mint(owner, 100 ether, 200 ether);
+    vm.prank(owner);
+    ytToken.approve(spender, 50 ether);
+
+    // Zero-value transferFrom must still emit Transfer(owner, recipient, 0) on YT only.
+    vm.recordLogs();
+    vm.prank(spender);
+    ytToken.transferFrom(owner, recipient, 0);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    assertEq(logs.length, 1);
+    assertEq(logs[0].emitter, address(ytToken));
+    assertEq(logs[0].topics[0], keccak256("Transfer(address,address,uint256)"));
+    assertEq(abi.decode(logs[0].data, (uint256)), 0);
+  }
+
+  function test_approve_idempotent_stillEmits_singleToken() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Approval(owner, spender, 100 ether);
+    ptToken.approve(spender, 100 ether);
+
+    // Same value approved again must still emit (per EIP-20), and not on YT.
+    vm.recordLogs();
+    vm.prank(owner);
+    ptToken.approve(spender, 100 ether);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    assertEq(logs.length, 1);
+    assertEq(logs[0].emitter, address(ptToken));
+    assertEq(logs[0].topics[0], keccak256("Approval(address,address,uint256)"));
+    assertEq(abi.decode(logs[0].data, (uint256)), 100 ether);
+    assertEq(ptToken.allowance(owner, spender), 100 ether);
+  }
+
+  function test_approve_revertsOnAmbiguousLargeAmount_uint128Max() public {
+    vm.prank(address(1));
+    vm.expectRevert(LibRequestErrors.AllowanceTooLarge.selector);
+    ptToken.approve(address(2), type(uint128).max);
+  }
+
+  function test_approve_revertsOnAmbiguousLargeAmount_aboveUint128Max() public {
+    vm.prank(address(1));
+    vm.expectRevert(LibRequestErrors.AllowanceTooLarge.selector);
+    ytToken.approve(address(2), uint256(type(uint128).max) + 1);
+  }
+
+  function test_approve_revertsOnAmbiguousLargeAmount_belowUint256Max() public {
+    vm.prank(address(1));
+    vm.expectRevert(LibRequestErrors.AllowanceTooLarge.selector);
+    ptToken.approve(address(2), type(uint256).max - 1);
+  }
+
+  function test_approveBatch_revertsOnAmbiguousLargeAmount_pt() public {
+    vm.prank(address(1));
+    vm.expectRevert(LibRequestErrors.AllowanceTooLarge.selector);
+    tokenController.approveBatch(address(2), type(uint128).max, 0);
+  }
+
+  function test_approveBatch_revertsOnAmbiguousLargeAmount_yt() public {
+    vm.prank(address(1));
+    vm.expectRevert(LibRequestErrors.AllowanceTooLarge.selector);
+    tokenController.approveBatch(address(2), 0, type(uint128).max);
+  }
+
+  function test_approve_emitsAmountUserPassed_forInfinite() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true, address(ptToken));
+    emit Approval(owner, spender, type(uint256).max);
+    ptToken.approve(spender, type(uint256).max);
+
+    assertEq(ptToken.allowance(owner, spender), type(uint256).max);
+  }
+
+  function test_approve_preservesInfiniteSibling() public {
+    address owner = address(1);
+    address spender = address(2);
+
+    // Set PT to infinite first.
+    vm.prank(owner);
+    ptToken.approve(spender, type(uint256).max);
+    assertEq(ptToken.allowance(owner, spender), type(uint256).max);
+
+    // Now approve YT for a finite amount; PT must still read as infinite (sibling preserved
+    // verbatim, and the sentinel must not be re-validated through `_toStored`).
+    vm.prank(owner);
+    ytToken.approve(spender, 100 ether);
+    assertEq(ptToken.allowance(owner, spender), type(uint256).max);
+    assertEq(ytToken.allowance(owner, spender), 100 ether);
   }
 }

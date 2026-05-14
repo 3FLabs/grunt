@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {LibManagerErrors} from "../../src/libs/manager/LibManagerErrors.sol";
 
 /// @title PositionManagerFeeTest
@@ -452,6 +453,58 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     assertEq(perfShares, 0, "no performance fee shares");
   }
 
+  function test_pendingFees_ManagementFeeSharesUseFeeAdjustedBase() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0); // 2% per year
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    uint256 expectedFeeAssets = COLLATERAL_AMOUNT * 200 / 10_000;
+    uint256 offset = positionManager.virtualShareOffset();
+    uint256 expectedShares = expectedFeeAssets * (totalSupply_ + offset) / (totalAssets_ - expectedFeeAssets + 1);
+    uint256 preFeeBaseShares = expectedFeeAssets * (totalSupply_ + offset) / (totalAssets_ + 1);
+
+    assertEq(totalAssets_, COLLATERAL_AMOUNT, "totalAssets");
+    assertEq(mgmtShares, expectedShares, "fee shares should use fee-adjusted base");
+    assertGt(mgmtShares, preFeeBaseShares, "fee-adjusted base should mint more shares than pre-fee base");
+    assertEq(perfShares, 0, "no performance fee shares");
+  }
+
+  function test_managementFeeSharesRedeemToAdvertisedFeeAssets() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0); // 2% per year
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    vm.warp(block.timestamp + 365 days);
+
+    (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+    uint256 expectedFeeAssets = COLLATERAL_AMOUNT * 200 / 10_000;
+    uint256 feeShares = mgmtShares + perfShares;
+
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0);
+
+    assertEq(positionManager.balanceOf(feeRecipient), feeShares, "accrued shares should match pending fees");
+
+    vm.prank(owner);
+    positionManager.grantRoles(feeRecipient, _ROLE_MINTER);
+
+    vm.prank(feeRecipient);
+    (uint256 collateralReceived, uint256 debtOwed) = positionManager.burn(feeShares, WithdrawalStrategy.PROPORTIONAL);
+
+    assertEq(debtOwed, 0, "debt owed");
+    assertApproxEqAbs(collateralReceived, expectedFeeAssets, 1, "fee shares should redeem to fee assets");
+  }
+
   function test_pendingFees_PerformanceFeeOnly() public {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, 0, 2000); // 20% perf fee
@@ -488,6 +541,32 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     assertGt(totalSupply_, 0, "totalSupply");
     assertGt(mgmtShares, 0, "should have management fee shares");
     assertGt(perfShares, 0, "should have performance fee shares");
+  }
+
+  function test_pendingFees_BothFeesUseCombinedFeeAdjustedBase() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 2000);
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    uint256 expectedMgmtFeeAssets = totalAssets_ * 200 / 10_000;
+    uint256 expectedPerfFeeAssets = (totalAssets_ - COLLATERAL_AMOUNT - expectedMgmtFeeAssets) * 2000 / 10_000;
+    uint256 expectedTotalFeeAssets = expectedMgmtFeeAssets + expectedPerfFeeAssets;
+    uint256 offset = positionManager.virtualShareOffset();
+    uint256 feeAdjustedAssets = totalAssets_ - expectedTotalFeeAssets;
+    uint256 expectedFeeShares = expectedTotalFeeAssets * (totalSupply_ + offset) / (feeAdjustedAssets + 1);
+    uint256 expectedMgmtShares = expectedMgmtFeeAssets * (totalSupply_ + offset) / (feeAdjustedAssets + 1);
+
+    assertEq(mgmtShares + perfShares, expectedFeeShares, "total shares should use combined fee-adjusted base");
+    assertEq(mgmtShares, expectedMgmtShares, "management shares");
+    assertEq(perfShares, expectedFeeShares - expectedMgmtShares, "performance shares");
   }
 
   function test_pendingFees_MatchesActualAccrual() public {
@@ -562,5 +641,28 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     assertGt(mgmtShares, 0, "should have management fee shares");
     assertEq(perfShares, 0, "no performance fee when mgmt fee exceeds gain");
+  }
+
+  function test_pendingFees_LongElapsedTimeCapsFeeAssets() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0); // 2% per year
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, 0);
+
+    vm.warp(block.timestamp + 1000 * 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+    uint256 offset = positionManager.virtualShareOffset();
+    uint256 expectedShares = totalAssets_ * (totalSupply_ + offset);
+
+    assertEq(mgmtShares, expectedShares, "management fee assets should cap at total assets");
+    assertEq(perfShares, 0, "no performance fee");
+
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0);
+
+    assertEq(positionManager.balanceOf(feeRecipient), expectedShares, "accrual should not underflow or revert");
   }
 }

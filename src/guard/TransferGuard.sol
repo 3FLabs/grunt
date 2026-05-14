@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {ITransferGuard, AddressStatus} from "../interfaces/guard/ITransferGuard.sol";
+import {ITransferGuard, AddressStatus, TokenMode} from "../interfaces/guard/ITransferGuard.sol";
+import {IPositionManager} from "../interfaces/manager/IPositionManager.sol";
+import {IWrappedAsset} from "../interfaces/funds/IWrappedAsset.sol";
 import {LibPause} from "../libs/common/LibPause.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
@@ -9,36 +11,41 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @notice Per-token configuration packed into a single storage slot.
 /// @param pausedUntil Pause-until timestamp (0 = not paused, type(uint40).max = permanent pause).
-/// @param whitelist If true, token uses whitelist mode (only WHITELIST allowed). If false, blocklist mode (only BLOCKLIST blocked).
-/// @dev Layout: pausedUntil (40 bits) + whitelist (8 bits) = 48 bits (fits in single slot)
+/// @param mode The token transfer mode (BLOCKLIST, WHITELIST, NATIVE_ONLY, NATIVE_WHITELIST).
+/// @param checkCollateralAllowed If true, check the collateral asset's isAllowed for both parties.
+/// @dev Layout: pausedUntil (40 bits) + mode (8 bits) + checkCollateralAllowed (8 bits) = 56 bits (fits in single slot)
 struct TokenConfig {
   uint40 pausedUntil;
-  bool whitelist;
+  TokenMode mode;
+  bool checkCollateralAllowed;
 }
 
 /// @title TransferGuard
 /// @author 3F Protocol
 /// @notice Gas-optimized transfer validation with single mapping for address status.
 /// @dev Uses a single mapping with enum status instead of separate blocklist/allowlist mappings.
-///      Token config (paused, whitelist mode) is packed into a single slot per token.
+///      Token config (paused, mode, collateral check) is packed into a single slot per token.
 ///      Deployable via beacon proxy pattern for upgradeability.
 ///
 ///      **Storage:** Uses ERC-7201 namespaced storage layout for proxy safety.
 ///
 ///      **Token modes:**
-///      Each token can be configured in one of two modes:
-///      - Blocklist mode (default): All addresses allowed EXCEPT those with BLOCKLIST status
-///      - Whitelist mode: ONLY addresses with WHITELIST status are allowed
+///      Each token can be configured in one of four modes:
+///      - BLOCKLIST (default): All addresses allowed EXCEPT those with BLOCKLIST status
+///      - WHITELIST: ONLY addresses with WHITELIST or NATIVE status are allowed
+///      - NATIVE_ONLY: At least one party must be NATIVE, no BLOCKLIST allowed. Mints/burns bypass NATIVE requirement.
+///      - NATIVE_WHITELIST: All parties must be WHITELIST/NATIVE, at least one NATIVE. Mints/burns bypass NATIVE requirement.
 ///
 ///      **Address status behavior:**
-///      - NONE: Behavior depends on token mode (allowed in blocklist mode, blocked in whitelist mode)
-///      - WHITELIST: Always allowed (in both modes)
-///      - BLOCKLIST: Always blocked (in both modes)
+///      - NONE: Allowed in BLOCKLIST mode, blocked in WHITELIST/NATIVE_WHITELIST, allowed (but not NATIVE) in NATIVE_ONLY
+///      - WHITELIST: Always allowed (in all modes)
+///      - BLOCKLIST: Always blocked (in all modes)
+///      - NATIVE: Always allowed, satisfies NATIVE party requirement
 ///
-///      **Validation logic:**
-///      1. If token is paused → block all transfers
-///      2. Check `from` status (skip for mints where from == address(0))
-///      3. Check `to` status (skip for burns where to == address(0))
+///      **Collateral check:**
+///      When checkCollateralAllowed is set, the guard additionally calls the token's collateral
+///      asset's `isAllowed(account, amount)` for each non-null party. This delegates compliance
+///      enforcement (e.g., Superstate allowlist) to the WrappedAsset layer.
 ///
 ///      **Roles:**
 ///      - Owner: Full control (set token config, manage roles)
@@ -64,9 +71,9 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @custom:storage-location erc7201:transferguard.main
   struct TransferGuardStorage {
-    /// @notice Status of each address (NONE, WHITELIST, or BLOCKLIST).
+    /// @notice Status of each address (NONE, WHITELIST, BLOCKLIST, or NATIVE).
     mapping(address account => AddressStatus status) addressStatus;
-    /// @notice Per-token configuration (paused, whitelist mode) packed in one slot.
+    /// @notice Per-token configuration (paused, mode, collateral check) packed in one slot.
     mapping(address token => TokenConfig config) tokenConfig;
   }
 
@@ -75,7 +82,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   bytes32 private constant _STORAGE_SLOT = 0xc6c8482afc451e8caac0099c996ccfb351ca947c4bbb65e7d1fc5f0e82e91c00;
 
   /// @dev Returns a pointer to the ERC-7201 namespaced storage struct.
-  function _storage() private pure returns (TransferGuardStorage storage $) {
+  function _storage() internal pure returns (TransferGuardStorage storage $) {
     assembly ("memory-safe") {
       $.slot := _STORAGE_SLOT
     }
@@ -102,7 +109,7 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
 
   /// @notice Returns the status of an address.
   /// @param account The address to query
-  /// @return The address status (NONE, WHITELIST, or BLOCKLIST)
+  /// @return The address status (NONE, WHITELIST, BLOCKLIST, or NATIVE)
   function addressStatus(address account) external view returns (AddressStatus) {
     return _storage().addressStatus[account];
   }
@@ -110,28 +117,56 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Returns the per-token configuration.
   /// @param token The token address to query
   /// @return pausedUntil The pause-until timestamp
-  /// @return whitelist Whether the token is in whitelist mode
-  function tokenConfig(address token) external view returns (uint40 pausedUntil, bool whitelist) {
+  /// @return mode The token's transfer mode
+  /// @return checkCollateralAllowed Whether collateral isAllowed is checked
+  function tokenConfig(address token)
+    external
+    view
+    returns (uint40 pausedUntil, TokenMode mode, bool checkCollateralAllowed)
+  {
     TokenConfig memory config = _storage().tokenConfig[token];
-    return (config.pausedUntil, config.whitelist);
+    return (config.pausedUntil, config.mode, config.checkCollateralAllowed);
   }
 
   /// @inheritdoc ITransferGuard
-  function canTransfer(address token, address from, address to, uint256 amount) external view returns (bool) {
+  function canTransfer(address token, address from, address to, uint256 amount) public view virtual returns (bool) {
     TransferGuardStorage storage $ = _storage();
     TokenConfig memory config = $.tokenConfig[token];
 
-    // Check pause status using LibPause
     if (config.pausedUntil.paused()) return false;
 
-    // Check sender (skip for mints)
-    if (from != address(0) && !_isAllowed($, from, config.whitelist)) {
+    // Read each status at most once (skip storage read for address(0))
+    AddressStatus fromStatus = from != address(0) ? $.addressStatus[from] : AddressStatus.NONE;
+    AddressStatus toStatus = to != address(0) ? $.addressStatus[to] : AddressStatus.NONE;
+
+    // BLOCKLIST is always blocked in all modes
+    if (fromStatus == AddressStatus.BLOCKLIST || toStatus == AddressStatus.BLOCKLIST) return false;
+
+    // Each mode is a combination of two properties:
+    //   noneBlocked:    WHITELIST, NATIVE_WHITELIST  — NONE status addresses are blocked
+    //   nativeRequired: NATIVE_ONLY, NATIVE_WHITELIST — regular transfers need at least one NATIVE party
+    TokenMode mode = config.mode;
+    bool noneBlocked = mode == TokenMode.WHITELIST || mode == TokenMode.NATIVE_WHITELIST;
+    bool nativeRequired = mode >= TokenMode.NATIVE_ONLY;
+
+    if (noneBlocked) {
+      if (from != address(0) && fromStatus == AddressStatus.NONE) return false;
+      if (to != address(0) && toStatus == AddressStatus.NONE) return false;
+    }
+
+    // Mints/burns bypass the NATIVE requirement (address(0) party is exempt)
+    if (
+      nativeRequired && from != address(0) && to != address(0) && fromStatus != AddressStatus.NATIVE
+        && toStatus != AddressStatus.NATIVE
+    ) {
       return false;
     }
 
-    // Check recipient (skip for burns)
-    if (to != address(0) && !_isAllowed($, to, config.whitelist)) {
-      return false;
+    // Collateral asset isAllowed check
+    if (config.checkCollateralAllowed) {
+      (address collateral,) = IPositionManager(token).assets();
+      if (from != address(0) && !IWrappedAsset(collateral).isAllowed(from, amount)) return false;
+      if (to != address(0) && !IWrappedAsset(collateral).isAllowed(to, amount)) return false;
     }
 
     return true;
@@ -142,43 +177,11 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     return _storage().tokenConfig[token].pausedUntil.paused();
   }
 
-  /// @notice Returns whether a token is in whitelist mode.
+  /// @notice Returns the transfer mode for a token.
   /// @param token The token address
-  /// @return True if whitelist mode, false if blocklist mode
-  function isWhitelistMode(address token) external view returns (bool) {
-    return _storage().tokenConfig[token].whitelist;
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    INTERNAL FUNCTIONS                      */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Checks if an address is allowed based on its status and token mode.
-  /// @param $ The namespaced storage pointer
-  /// @param account The address to check
-  /// @param whitelistMode Whether the token is in whitelist mode
-  /// @return True if allowed, false otherwise
-  function _isAllowed(TransferGuardStorage storage $, address account, bool whitelistMode)
-    internal
-    view
-    returns (bool)
-  {
-    AddressStatus status = $.addressStatus[account];
-
-    // BLOCKLIST is always blocked in both modes
-    if (status == AddressStatus.BLOCKLIST) {
-      return false;
-    }
-
-    // WHITELIST is always allowed in both modes
-    if (status == AddressStatus.WHITELIST) {
-      return true;
-    }
-
-    // status == AddressStatus.NONE: depends on token mode
-    // In blocklist mode (default): NONE is allowed
-    // In whitelist mode: NONE is blocked
-    return !whitelistMode;
+  /// @return The token's transfer mode
+  function tokenMode(address token) external view returns (TokenMode) {
+    return _storage().tokenConfig[token].mode;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -241,12 +244,14 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   /// @notice Sets the full configuration for a token.
   /// @param token The token to configure
   /// @param paused_ Whether transfers should be paused (true = permanent pause, false = not paused)
-  /// @param whitelist_ Whether to use whitelist mode (true) or blocklist mode (false)
-  function setTokenConfig(address token, bool paused_, bool whitelist_) external onlyOwner {
+  /// @param mode The transfer mode for this token
+  /// @param checkCollateralAllowed Whether to check collateral asset's isAllowed
+  function setTokenConfig(address token, bool paused_, TokenMode mode, bool checkCollateralAllowed) external onlyOwner {
     // converting to uint40 is safe because the result is less than 2^40
     // forge-lint: disable-next-line(unsafe-typecast)
     uint40 pausedUntil = uint40(paused_.ternary(LibPause.PERMANENT_PAUSE, LibPause.NOT_PAUSED));
-    _storage().tokenConfig[token] = TokenConfig({pausedUntil: pausedUntil, whitelist: whitelist_});
-    emit TokenConfigSet(token, pausedUntil, whitelist_);
+    _storage().tokenConfig[token] =
+      TokenConfig({pausedUntil: pausedUntil, mode: mode, checkCollateralAllowed: checkCollateralAllowed});
+    emit TokenConfigSet(token, pausedUntil, mode, checkCollateralAllowed);
   }
 }

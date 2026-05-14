@@ -16,6 +16,8 @@ contract MockSuperstateToken is ERC20 {
   uint256 public lastOffchainRedeemAmount;
   address public lastOffchainRedeemer;
 
+  bool internal _accountingPaused;
+
   constructor(string memory name_, string memory symbol_, address allowlist_, address usdc_) {
     _name = name_;
     _symbol = symbol_;
@@ -44,13 +46,28 @@ contract MockSuperstateToken is ERC20 {
   }
 
   function offchainRedeem(uint256 amount) external {
+    require(!_accountingPaused, "AccountingIsPaused");
     lastOffchainRedeemAmount = amount;
     lastOffchainRedeemer = msg.sender;
     _burn(msg.sender, amount);
   }
 
-  function isAllowed(address addr) external view returns (bool) {
+  function accountingPaused() external view returns (bool) {
+    return _accountingPaused;
+  }
+
+  function setAccountingPaused(bool paused) external {
+    _accountingPaused = paused;
+  }
+
+  function isAllowed(address addr) public view returns (bool) {
     return IAllowlist(allowlist).isAddressAllowedForPrivateInstrument(addr, "USCC");
+  }
+
+  /// @dev Mirrors production USCC: transfers revert when sender or recipient is not on the allowlist.
+  function _beforeTokenTransfer(address from, address to, uint256) internal view override {
+    if (from != address(0) && !isAllowed(from)) revert("MockSuperstateToken: sender not allowed");
+    if (to != address(0) && !isAllowed(to)) revert("MockSuperstateToken: recipient not allowed");
   }
 
   function simulateRedemptionComplete(address recipient, uint256 usdcAmount) external {

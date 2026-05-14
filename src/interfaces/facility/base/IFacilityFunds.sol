@@ -31,9 +31,12 @@ interface IFacilityFunds {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a fund order for an intent.
+  /// @dev Both `amount` and `minAmountOut` are denominated according to `mode`:
+  ///      DEPOSIT: `amount` is asset input, `minAmountOut` is the minimum share output.
+  ///      REDEEM:  `amount` is share input, `minAmountOut` is the minimum asset output.
   /// @param id The intent ID.
-  /// @param amount The amount to include in the order.
-  /// @param minAmountOut The minimum amount expected from the order.
+  /// @param amount Order input amount: assets in DEPOSIT, shares in REDEEM.
+  /// @param minAmountOut Minimum order output: shares in DEPOSIT, assets in REDEEM.
   /// @param mode The order mode to execute.
   function create(uint256 id, uint256 amount, uint256 minAmountOut, Mode mode) external returns (Order memory order);
 
