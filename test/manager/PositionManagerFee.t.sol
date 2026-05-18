@@ -329,9 +329,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Perf fee on the bare basis (Scenario A) exceeds perf fee on basis-minus-mgmt-assets (Scenario B).
     uint256 perfSharesWithMgmt = bothShares - mgmtOnlyShares;
-    assertGt(
-      perfOnlyShares, perfSharesWithMgmt, "Perf on bare basis should exceed perf on basis-minus-mgmt"
-    );
+    assertGt(perfOnlyShares, perfSharesWithMgmt, "Perf on bare basis should exceed perf on basis-minus-mgmt");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -362,9 +360,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Total assets should now be higher (collateral worth 1.2x, debt unchanged)
     uint256 totalAssetsAfterGain = positionManager.totalAssets();
-    assertEq(
-      totalAssetsAfterGain, (COLLATERAL_AMOUNT * 120 / 100) - DEBT_AMOUNT, "Total assets should reflect gain"
-    );
+    assertEq(totalAssetsAfterGain, (COLLATERAL_AMOUNT * 120 / 100) - DEBT_AMOUNT, "Total assets should reflect gain");
 
     // Step 4: Call setFeeData - this triggers _accrueFees which should mint performance fees
     vm.prank(owner);
