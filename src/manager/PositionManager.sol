@@ -142,8 +142,8 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
-  function totalAssets() public view nonReadReentrant returns (uint256) {
-    return LibStorage.positionManagerStorage().totalAssets();
+  function totalAssets() public view nonReadReentrant returns (uint256 amount) {
+    (amount,) = LibStorage.positionManagerStorage().totalAssets();
   }
 
   /// @inheritdoc ERC20
@@ -175,13 +175,18 @@ contract PositionManager is
   }
 
   /// @inheritdoc IPositionManager
+  function lastDebt() public view returns (uint256) {
+    return LibStorage.positionManagerStorage().lastDebt;
+  }
+
+  /// @inheritdoc IPositionManager
   function pendingFees()
     public
     view
     nonReadReentrant
     returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
   {
-    return _pendingFees();
+    (totalAssets_, totalSupply_,, managementFeeShares, performanceFeeShares) = _pendingFees();
   }
 
   /// @inheritdoc IPositionManager

@@ -11,8 +11,10 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
 /// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%)
-/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on net gains
-///        after management fee deduction
+/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
+///        performance of the levered slice only — basis `LTV * Δcollat - Δdebt` (equivalently
+///        `lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)`), then reduced by the
+///        management fee assets accrued over the same period. Replaces the prior NAV-variation basis.
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -53,8 +55,10 @@ struct RebalanceConfig {
 /// @param borrowModules Set of approved borrow module addresses that can interact with positions.
 ///        Uses Solady's EnumerableSetLib for O(1) add/remove/contains operations.
 /// @param metadata Token metadata and asset addresses for the position manager.
-/// @param lastTotalAssets Cached total assets value from the last fee accrual, used for
-///        calculating high water mark and performance fees.
+/// @param lastTotalAssets Cached `collateralQuoted - debt` (NAV) from the last fee accrual.
+///        Still represents `collat - debt` as before; for the performance fee, `lastCollat` is
+///        reconstructed on the fly as `lastTotalAssets + lastDebt` rather than storing it directly,
+///        which keeps the storage layout append-only and existing integrations unchanged.
 /// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
 ///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
 /// @param virtualShareOffset Virtual shares offset for inflation attack protection, derived from debt asset decimals.
@@ -68,6 +72,11 @@ struct RebalanceConfig {
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
 ///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
 /// @param rebalanceConfig Rebalance parameters packed in a single struct (maxRebalanceLoss, cooldown, timestamp).
+/// @param lastDebt Cached aggregate debt at the last snapshot. Used together with `lastTotalAssets`
+///        to reconstruct `lastCollat = lastTotalAssets + lastDebt` for the levered-slice performance
+///        fee basis. A value of zero acts as a bootstrap sentinel: the first accrual after upgrade
+///        (or any other time `lastDebt` is zero) skips the performance fee and seeds this slot with
+///        the current debt. Subsequent accruals charge the new basis normally.
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -80,6 +89,7 @@ struct PositionManagerStorageData {
   uint40 lastFeeAccrualTimestamp;
   address transferGuard;
   RebalanceConfig rebalanceConfig;
+  uint256 lastDebt;
 }
 
 /// @title LibStorage
@@ -134,9 +144,14 @@ library LibStorage {
     emit IPositionManagerAdmin.RebalanceConfigSet(maxRebalanceLoss_, rebalanceCooldown_);
   }
 
-  /// @dev Updates the lastTotalAssets snapshot to the current total assets.
+  /// @dev Updates the `lastTotalAssets` and `lastDebt` snapshots to their current values in a
+  ///      single iteration over the borrow modules. `lastDebt` aggregates only non-bad-debt
+  ///      positions (the same set whose NAV contributes to `lastTotalAssets`), so
+  ///      `lastCollat = lastTotalAssets + lastDebt` represents the collateral of "good" positions.
   /// @param self The storage pointer to the PositionManagerStorageData struct.
   function updateSnapshot(PositionManagerStorageData storage self) internal {
-    self.lastTotalAssets = LibView.totalAssets(self);
+    (uint256 newTotalAssets, uint256 newDebt) = LibView.totalAssets(self);
+    self.lastTotalAssets = newTotalAssets;
+    self.lastDebt = newDebt;
   }
 }

@@ -757,12 +757,17 @@ Fees are accrued before every operation:
 managementFeeAssets = totalAssets × managementFee × elapsedTime / (BPS × SECONDS_PER_YEAR)
 ```
 
-**Performance Fee**: Fee on gains since last snapshot (basis points)
+**Performance Fee**: Fee on the performance of the levered slice only (basis points). The basis is
+`LTV · Δcollat - Δdebt` where `LTV = currentDebt / currentCollat`. Algebraically this simplifies to:
 ```
-if (currentTotalAssets > lastTotalAssets):
-    gains = currentTotalAssets - lastTotalAssets
-    performanceFeeAssets = gains × performanceFee / BPS
+basis = lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)
+performanceFeeAssets = max(0, basis - managementFeeAssets) × performanceFee / BPS
 ```
+where `lastCollat = lastTotalAssets + lastDebt` and `currentCollat = currentTotalAssets + currentDebt`.
+
+`lastDebt == 0` is the bootstrap sentinel: the first accrual after deployment (or after the V2
+upgrade) skips the performance fee and seeds `lastDebt` from the current debt. Subsequent
+accruals charge the new basis normally.
 
 Fees are minted as shares to the fee recipient, diluting existing shareholders.
 

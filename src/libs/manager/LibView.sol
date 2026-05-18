@@ -48,18 +48,28 @@ library LibView {
     }
   }
 
-  /// @dev Returns the total assets as the sum of per-position NAVs, treating bad-debt positions as zero.
-  ///      Each position's NAV is computed as collateralQuoted.zeroFloorSub(debt), ensuring positions
-  ///      with bad debt do not reduce the overall NAV.
+  /// @dev Returns both the total assets (sum of per-position NAVs) and the aggregate debt of the
+  ///      non-bad-debt positions in a single iteration. Bad-debt positions — those where the
+  ///      debt value exceeds the collateral value — contribute zero to both, so
+  ///      `currentCollat = amount + totalDebt` represents the collateral of the "good" positions
+  ///      only and lines up with the performance-fee basis.
   /// @param ps The position manager storage data
-  /// @return amount The total assets value
-  function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
+  /// @return amount The total assets value (sum of `collateral - debt` for non-bad-debt positions)
+  /// @return totalDebt The aggregate debt of non-bad-debt positions only
+  function totalAssets(PositionManagerStorageData storage ps)
+    internal
+    view
+    returns (uint256 amount, uint256 totalDebt)
+  {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
     for (uint256 i = 0; i < modulesLength; ++i) {
       uint256 collateral = IBorrowPosition(modules[i]).totalCollateralQuoted();
       uint256 debt = IBorrowPosition(modules[i]).totalBorrowed();
-      amount += collateral.zeroFloorSub(debt);
+      if (collateral >= debt) {
+        amount += collateral - debt;
+        totalDebt += debt;
+      }
     }
   }
 
