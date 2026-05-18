@@ -45,13 +45,13 @@ contract LibManagerStorageHarness {
     return LibStorage.positionManagerStorage().debtAmount();
   }
 
-  /// @dev Expose totalAssets (returns the NAV component only; aggregate debt is dropped)
+  /// @dev Expose totalAssets (returns the NAV component only; aggregates are dropped)
   function totalAssets() external view returns (uint256 amount) {
-    (amount,) = LibStorage.positionManagerStorage().totalAssets();
+    (amount,,) = LibStorage.positionManagerStorage().totalAssets();
   }
 
-  /// @dev Expose the new dual-return totalAssets (NAV + non-bad-debt aggregate debt)
-  function totalAssetsAndDebt() external view returns (uint256 amount, uint256 totalDebt) {
+  /// @dev Expose the full triple-return totalAssets (NAV + non-bad-debt aggregate debt + aggregate collateral)
+  function totalAssetsAndDebt() external view returns (uint256 amount, uint256 totalDebt, uint256 totalCollateral) {
     return LibStorage.positionManagerStorage().totalAssets();
   }
 

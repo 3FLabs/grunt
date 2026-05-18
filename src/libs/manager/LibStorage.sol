@@ -10,7 +10,10 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
-/// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%)
+/// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%), charged
+///        on the aggregate quoted collateral of non-bad-debt positions — *not* on NAV. For a
+///        leveraged vault this basis is materially larger than the NAV. The resulting fee assets
+///        are capped at `totalAssets` so the post-fee asset base remains non-negative.
 /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
 ///        performance of the levered slice only — basis `LTV * Δcollat - Δdebt` (equivalently
 ///        `lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)`), then reduced by the
@@ -148,9 +151,11 @@ library LibStorage {
   ///      single iteration over the borrow modules. `lastDebt` aggregates only non-bad-debt
   ///      positions (the same set whose NAV contributes to `lastTotalAssets`), so
   ///      `lastCollat = lastTotalAssets + lastDebt` represents the collateral of "good" positions.
+  ///      The `totalCollateral` third return from `totalAssets` is discarded — only the
+  ///      performance-fee snapshot needs to be persisted; the management fee re-reads collat live.
   /// @param self The storage pointer to the PositionManagerStorageData struct.
   function updateSnapshot(PositionManagerStorageData storage self) internal {
-    (uint256 newTotalAssets, uint256 newDebt) = LibView.totalAssets(self);
+    (uint256 newTotalAssets, uint256 newDebt,) = LibView.totalAssets(self);
     self.lastTotalAssets = newTotalAssets;
     self.lastDebt = newDebt;
   }

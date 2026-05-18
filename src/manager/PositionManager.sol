@@ -143,7 +143,7 @@ contract PositionManager is
 
   /// @inheritdoc IPositionManager
   function totalAssets() public view nonReadReentrant returns (uint256 amount) {
-    (amount,) = LibStorage.positionManagerStorage().totalAssets();
+    (amount,,) = LibStorage.positionManagerStorage().totalAssets();
   }
 
   /// @inheritdoc ERC20

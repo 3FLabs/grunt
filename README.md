@@ -752,10 +752,13 @@ RebalancingData({
 
 Fees are accrued before every operation:
 
-**Management Fee**: Annual fee on total assets (basis points/year)
+**Management Fee**: Annual fee on the aggregate collateral of non-bad-debt positions (basis points/year)
 ```
-managementFeeAssets = totalAssets × managementFee × elapsedTime / (BPS × SECONDS_PER_YEAR)
+managementFeeAssets = currentCollat × managementFee × elapsedTime / (BPS × SECONDS_PER_YEAR)
 ```
+where `currentCollat` is the sum of quoted collateral across positions whose collateral covers
+their debt. The resulting fee assets are capped at `totalAssets` so the post-fee base stays
+non-negative. For an unlevered vault this matches the prior NAV-based basis exactly.
 
 **Performance Fee**: Fee on the performance of the levered slice only (basis points). The basis is
 `LTV · Δcollat - Δdebt` where `LTV = currentDebt / currentCollat`. Algebraically this simplifies to:

@@ -558,10 +558,13 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
-    // Recompute expected fee assets using the new levered-slice basis.
+    // Recompute expected fee assets using the new bases:
+    //   mgmt fee  = currentCollat * managementFee / BPS (1y elapsed; capped at totalAssets)
+    //   perf fee  = (basis - mgmtFeeAssets) * performanceFee / BPS, basis on levered slice
     uint256 currentDebt = positionManager.debtAmount();
     uint256 currentCollat = totalAssets_ + currentDebt;
-    uint256 expectedMgmtFeeAssets = totalAssets_ * 200 / 10_000;
+    uint256 expectedMgmtFeeAssets = currentCollat * 200 / 10_000;
+    if (expectedMgmtFeeAssets > totalAssets_) expectedMgmtFeeAssets = totalAssets_;
     uint256 hypotheticalDebt = currentDebt * lastCollat / currentCollat; // mulDiv rounds down
     uint256 basis = lastDebt_ > hypotheticalDebt ? lastDebt_ - hypotheticalDebt : 0;
     uint256 expectedPerfFeeAssets = basis > expectedMgmtFeeAssets ? (basis - expectedMgmtFeeAssets) * 2000 / 10_000 : 0;
@@ -792,6 +795,36 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Recipient balance should still be zero — no perf fee charged because basis is non-positive.
     assertEq(positionManager.balanceOf(feeRecipient), 0, "negative basis must clamp to zero perf fee");
+  }
+
+  /// @notice On a leveraged vault, the management fee is charged on the aggregate collateral
+  ///         (not NAV). With 10_000 collat / 5_000 debt / 1y at 2%, the basis is 10_000e18 — not
+  ///         5_000e18 as it would be under the old NAV-based formula.
+  function test_managementFee_basedOnCollateralNotNAV() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0); // 2% mgmt, no perf
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    vm.warp(block.timestamp + 365 days);
+
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+
+    // mgmt fee should be ~2% of *collateral*, not of NAV
+    uint256 currentDebt = positionManager.debtAmount();
+    uint256 currentCollat = totalAssets_ + currentDebt;
+    uint256 expectedMgmtFeeAssets = currentCollat * 200 / 10_000;
+
+    uint256 offset = positionManager.virtualShareOffset();
+    uint256 feeAdjustedAssets = totalAssets_ - expectedMgmtFeeAssets;
+    uint256 expectedMgmtShares = expectedMgmtFeeAssets * (totalSupply_ + offset) / (feeAdjustedAssets + 1);
+
+    assertEq(mgmtShares, expectedMgmtShares, "mgmt shares on collateral basis");
+    assertEq(perfShares, 0, "no perf fee");
+    // Sanity: mgmt fee on collat (200e18 at 10_000 collat) > mgmt fee on NAV (100e18 at 5_000 NAV)
+    assertEq(expectedMgmtFeeAssets, COLLATERAL_AMOUNT * 200 / 10_000, "basis is total collateral");
   }
 
   /// @notice The public `lastDebt()` view returns the snapshot value and tracks updates.

@@ -188,7 +188,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   /// @return sharesDelta Positive if shares minted, negative if shares burned
   function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    (uint256 totalAssetsAfter,) = _storage.totalAssets();
+    (uint256 totalAssetsAfter,,) = _storage.totalAssets();
     uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
     if (totalAssetsAfter > totalAssetsBefore) {

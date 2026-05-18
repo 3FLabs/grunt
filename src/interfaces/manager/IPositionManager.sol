@@ -64,7 +64,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   ///      performance-fee snapshot `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()`
   ///      alongside this value.
   /// @return feeRecipient The address that receives fee payments
-  /// @return managementFee The management fee rate in basis points per 365 days
+  /// @return managementFee The management fee rate in basis points per 365 days, charged on the
+  ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
   /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
   ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
   /// @return lastTotalAssets The last NAV snapshot (`collat - debt`) used for fee accounting
