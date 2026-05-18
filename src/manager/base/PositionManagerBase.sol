@@ -123,6 +123,12 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     if (totalFeeAssets == 0) return (totalAssets_, totalSupply_, currentDebt, 0, 0);
 
     uint256 feeAdjustedAssets = totalAssets_ - totalFeeAssets;
+    // When the mgmt fee cap binds (managementFeeAssets == totalAssets_), feeAdjustedAssets is
+    // zero and convertToShares would mint an inflated share count to the fee recipient,
+    // confiscating the pool. Skip the mint for this period — _accrueFees still refreshes
+    // lastTotalAssets / lastDebt / lastFeeAccrualTimestamp so normal accrual resumes next call.
+    if (feeAdjustedAssets == 0) return (totalAssets_, totalSupply_, currentDebt, 0, 0);
+
     uint256 feeShares = totalFeeAssets.convertToShares(totalSupply_, feeAdjustedAssets, virtualShareOffset_, false);
 
     if (managementFeeAssets > 0) {

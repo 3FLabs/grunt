@@ -649,6 +649,9 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     assertEq(perfShares, 0, "no performance fee when mgmt fee exceeds gain");
   }
 
+  /// @notice When the mgmt fee cap binds (managementFeeAssets == totalAssets_), feeAdjustedAssets
+  ///         collapses to zero and the share-mint would otherwise be confiscatory. _pendingFees
+  ///         short-circuits to zero fee shares so the recipient does not end up owning the pool.
   function test_pendingFees_LongElapsedTimeCapsFeeAssets() public {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, 200, 0); // 2% per year
@@ -657,19 +660,52 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
+    uint256 lpShares = positionManager.balanceOf(minter);
+    uint256 supplyBefore = positionManager.totalSupply();
+
     vm.warp(block.timestamp + 1000 * 365 days);
 
-    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
-    uint256 offset = positionManager.virtualShareOffset();
-    uint256 expectedShares = totalAssets_ * (totalSupply_ + offset);
+    (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
-    assertEq(mgmtShares, expectedShares, "management fee assets should cap at total assets");
+    assertEq(mgmtShares, 0, "no fee shares minted when cap binds");
     assertEq(perfShares, 0, "no performance fee");
 
+    // Trigger accrual; must not revert.
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, 200, 0);
 
-    assertEq(positionManager.balanceOf(feeRecipient), expectedShares, "accrual should not underflow or revert");
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "fee recipient not credited when cap binds");
+    assertEq(positionManager.balanceOf(minter), lpShares, "LP shares preserved");
+    assertEq(positionManager.totalSupply(), supplyBefore, "total supply unchanged");
+  }
+
+  /// @notice Defense-in-depth: on a leveraged vault that goes dormant long enough for either the
+  ///         mgmt fee cap to bind or the bad-debt floor to zero out currentCollat, the fee
+  ///         recipient must not end up owning a confiscatory share of the pool.
+  function test_managementFee_dormantLeveragedVaultDoesNotConfiscatePool() public {
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0); // 2% mgmt, no perf
+
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 lpShares = positionManager.balanceOf(minter);
+    uint256 supplyBefore = positionManager.totalSupply();
+
+    vm.warp(block.timestamp + 30 * 365 days);
+
+    (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(mgmtShares, 0, "no fee shares minted on dormant leveraged vault");
+    assertEq(perfShares, 0, "no performance fee");
+
+    // Trigger accrual via a no-op setFeeData.
+    vm.prank(owner);
+    positionManager.setFeeData(feeRecipient, 200, 0);
+
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "fee recipient not credited");
+    assertEq(positionManager.balanceOf(minter), lpShares, "LP shares preserved");
+    assertEq(positionManager.totalSupply(), supplyBefore, "total supply unchanged");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
