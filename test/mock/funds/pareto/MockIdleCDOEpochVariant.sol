@@ -17,7 +17,12 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   uint256 public _virtualPrice = 1e6;
   bool public _isEpochRunning;
+  bool public _defaulted;
+  uint256 public _epochDuration;
   uint256 public _epochEndDate;
+  uint256 public _expectedEpochInterest;
+  uint256 public _pendingWithdrawFees;
+  uint256 public _fee;
   mapping(address => bool) public _walletAllowed;
   bool public _keyringAllowWithdraw;
   uint256 public _claimAmountOverride;
@@ -58,8 +63,28 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
     return _isEpochRunning;
   }
 
+  function defaulted() external view override returns (bool) {
+    return _defaulted;
+  }
+
+  function epochDuration() external view override returns (uint256) {
+    return _epochDuration;
+  }
+
   function epochEndDate() external view override returns (uint256) {
     return _epochEndDate;
+  }
+
+  function expectedEpochInterest() external view override returns (uint256) {
+    return _expectedEpochInterest;
+  }
+
+  function pendingWithdrawFees() external view override returns (uint256) {
+    return _pendingWithdrawFees;
+  }
+
+  function fee() external view override returns (uint256) {
+    return _fee;
   }
 
   function isWalletAllowed(address wallet) external view override returns (bool) {
@@ -168,6 +193,33 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
 
   function setIsEpochRunning(bool running) external {
     _isEpochRunning = running;
+  }
+
+  function setDefaulted(bool value) external {
+    _defaulted = value;
+  }
+
+  function setEpochDuration(uint256 duration) external {
+    _epochDuration = duration;
+  }
+
+  function setExpectedEpochInterest(uint256 amount) external {
+    _expectedEpochInterest = amount;
+  }
+
+  function setPendingWithdrawFees(uint256 amount) external {
+    _pendingWithdrawFees = amount;
+  }
+
+  function setFee(uint256 fee_) external {
+    _fee = fee_;
+  }
+
+  function setEpochPricing(uint256 duration, uint256 expectedInterest, uint256 pendingFees, uint256 fee_) external {
+    _epochDuration = duration;
+    _expectedEpochInterest = expectedInterest;
+    _pendingWithdrawFees = pendingFees;
+    _fee = fee_;
   }
 
   function setEpochDiscountBps(uint256 discountBps) external {
