@@ -128,14 +128,21 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     }
 
     uint256 totalFeeAssets = managementFeeAssets + performanceFeeAssets;
-    if (totalFeeAssets == 0) return (totalAssets_, totalSupply_, currentDebt, 0, 0);
+    // Combined no-mint guard. Folds together three cases that all imply a zero share mint:
+    //   - `totalFeeAssets == 0`: nothing to mint.
+    //   - `totalFeeAssets == totalAssets_`: mgmt fee cap binds exactly; `feeAdjustedAssets` would be
+    //     zero, and `convertToShares` against a zero base would mint an inflated share count to the
+    //     fee recipient, confiscating the pool.
+    //   - `totalFeeAssets > totalAssets_`: should not occur under current invariants
+    //     (`managementFeeAssets` is capped at `totalAssets_`, and the perf basis is bounded by
+    //     `totalAssets_` because `scaledLastDebt <= currentCollat` whenever `lastDebt <= lastCollat`
+    //     and `performanceFee <= BPS`). Folding it in here makes the subsequent subtraction safe
+    //     without depending on that invariant chain.
+    // `_accrueFees` still refreshes `lastTotalAssets` / `lastDebt` / `lastFeeAccrualTimestamp` so
+    // normal accrual resumes next call.
+    if (totalFeeAssets >= totalAssets_) return (totalAssets_, totalSupply_, currentDebt, 0, 0);
 
     uint256 feeAdjustedAssets = totalAssets_ - totalFeeAssets;
-    // When the mgmt fee cap binds (managementFeeAssets == totalAssets_), feeAdjustedAssets is
-    // zero and convertToShares would mint an inflated share count to the fee recipient,
-    // confiscating the pool. Skip the mint for this period — _accrueFees still refreshes
-    // lastTotalAssets / lastDebt / lastFeeAccrualTimestamp so normal accrual resumes next call.
-    if (feeAdjustedAssets == 0) return (totalAssets_, totalSupply_, currentDebt, 0, 0);
 
     uint256 feeShares = totalFeeAssets.convertToShares(totalSupply_, feeAdjustedAssets, virtualShareOffset_, false);
 
