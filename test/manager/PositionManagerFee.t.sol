@@ -246,8 +246,8 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Levered-slice basis (rough):
     //   lastCollat = 10_000e18, lastDebt = 5_000e18, currentCollat = 10_100e18, currentDebt = 5_000e18
-    //   basis = 5_000 - mulDiv(5_000, 10_000, 10_100) ≈ 5_000 - 4_950.495 ≈ 49.5e18
-    //   managementFeeAssets ≈ totalAssets * 200/10000 ≈ 5_100 * 0.02 ≈ 102e18
+    //   basis = mulDivUp(5_000, 10_100, 10_000) - 5_000 = 5_050 - 5_000 = 50e18
+    //   managementFeeAssets ≈ currentCollat * 200/10000 ≈ 10_100 * 0.02 ≈ 202e18 (capped at totalAssets)
     //   basis < managementFeeAssets → performance fee skipped.
 
     _mintCollateral(minter, 1e18);
@@ -557,12 +557,14 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     // Recompute expected fee assets using the new bases:
     //   mgmt fee  = currentCollat * managementFee / BPS (1y elapsed; capped at totalAssets)
     //   perf fee  = (basis - mgmtFeeAssets) * performanceFee / BPS, basis on levered slice
+    //   basis     = mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt   (LTV_prev anchor)
     uint256 currentDebt = positionManager.debtAmount();
     uint256 currentCollat = totalAssets_ + currentDebt;
     uint256 expectedMgmtFeeAssets = currentCollat * 200 / 10_000;
     if (expectedMgmtFeeAssets > totalAssets_) expectedMgmtFeeAssets = totalAssets_;
-    uint256 hypotheticalDebt = currentDebt * lastCollat / currentCollat; // mulDiv rounds down
-    uint256 basis = lastDebt_ > hypotheticalDebt ? lastDebt_ - hypotheticalDebt : 0;
+    // mulDivUp(lastDebt_, currentCollat, lastCollat)
+    uint256 scaledLastDebt = (lastDebt_ * currentCollat + lastCollat - 1) / lastCollat;
+    uint256 basis = scaledLastDebt > currentDebt ? scaledLastDebt - currentDebt : 0;
     uint256 expectedPerfFeeAssets = basis > expectedMgmtFeeAssets ? (basis - expectedMgmtFeeAssets) * 2000 / 10_000 : 0;
     uint256 expectedTotalFeeAssets = expectedMgmtFeeAssets + expectedPerfFeeAssets;
     uint256 offset = positionManager.virtualShareOffset();
@@ -771,7 +773,8 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
   }
 
   /// @notice Hand-computed basis: with collateral up 50% and debt unchanged, the levered-slice
-  ///         basis equals `lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)`.
+  ///         basis equals `mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt`
+  ///         (i.e. `LTV_prev * currentCollat - currentDebt`).
   function test_performanceFee_basisExactComputation() public {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, 0, 2000); // 20% perf fee, no mgmt fee for cleaner math
@@ -793,8 +796,9 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 currentDebt = positionManager.debtAmount();
     uint256 currentCollat = totalAssets_ + currentDebt;
 
-    uint256 hypotheticalDebt = currentDebt * lastCollat / currentCollat; // matches mulDiv round-down
-    uint256 basis = lastDebt_ - hypotheticalDebt;
+    // mulDivUp(lastDebt_, currentCollat, lastCollat)
+    uint256 scaledLastDebt = (lastDebt_ * currentCollat + lastCollat - 1) / lastCollat;
+    uint256 basis = scaledLastDebt - currentDebt;
     uint256 expectedPerfAssets = basis * 2000 / 10_000;
 
     // Convert expected assets to shares against the fee-adjusted base, matching _pendingFees.

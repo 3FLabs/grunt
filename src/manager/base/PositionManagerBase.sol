@@ -48,10 +48,16 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      base used for share conversion remains non-negative.
   ///
   ///      The performance fee basis is the levered-slice performance only:
-  ///      `LTV * Δcollat - Δdebt`, where `LTV = currentDebt / currentCollat`. Algebraically the
-  ///      basis simplifies to `lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)`. The
-  ///      management fee assets are then deducted from this basis before applying the performance
-  ///      fee rate.
+  ///      `LTV_prev * Δcollat - Δdebt`, where `LTV_prev = lastDebt / lastCollat` is the LTV at the
+  ///      previous snapshot. Algebraically the basis simplifies to
+  ///      `mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt`. Anchoring on `LTV_prev` rather
+  ///      than `LTV_cur` (a) defines the unlevered baseline at the start of the period (the natural
+  ///      comparison for "extra return from leverage"), (b) fixes the multiplier at snapshot time so
+  ///      the basis depends on snapshot state plus current debt/collat rather than live LTV, and
+  ///      (c) biases the basis larger when collateral appreciates faster than debt accrues — the
+  ///      common case — keeping the rounding direction consistent with the rest of the contract.
+  ///      The management fee assets are then deducted from this basis before applying the
+  ///      performance fee rate.
   ///
   ///      Bootstrap: when `lastDebt == 0` (sentinel, e.g. immediately after upgrade), the
   ///      performance fee for this period is zero and only the management fee accrues. The
@@ -104,15 +110,17 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
 
     // Performance fee on the levered-slice basis.
     // Skipped when (a) no performance fee is configured, (b) lastDebt sentinel is zero (bootstrap),
-    // or (c) currentCollat is zero (degenerate empty vault, no basis to compute).
-    if (fd.performanceFee > 0 && _lastDebt > 0 && currentCollat > 0) {
+    // or (c) lastCollat is zero (degenerate empty snapshot, no LTV_prev to anchor on — implied by
+    // the lastDebt > 0 guard since lastCollat = lastTotalAssets + lastDebt).
+    if (fd.performanceFee > 0 && _lastDebt > 0) {
       uint256 lastCollat = _lastTotalAssets + _lastDebt;
-      // basis = lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)
-      // Round down on the subtrahend (default mulDiv) so the basis is biased larger — favors
-      // the protocol, consistent with conservative-to-protocol rounding elsewhere.
-      uint256 hypotheticalDebt = currentDebt.mulDiv(lastCollat, currentCollat);
-      if (_lastDebt > hypotheticalDebt) {
-        uint256 basis = _lastDebt - hypotheticalDebt;
+      // basis = mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt
+      //       = LTV_prev * currentCollat - currentDebt
+      // Round up on the minuend (mulDivUp) so the basis is biased larger — favors the protocol,
+      // consistent with conservative-to-protocol rounding elsewhere.
+      uint256 scaledLastDebt = _lastDebt.mulDivUp(currentCollat, lastCollat);
+      if (scaledLastDebt > currentDebt) {
+        uint256 basis = scaledLastDebt - currentDebt;
         if (basis > managementFeeAssets) {
           performanceFeeAssets = (basis - managementFeeAssets).mulDiv(fd.performanceFee, BPS);
         }
