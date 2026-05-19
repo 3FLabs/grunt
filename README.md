@@ -761,12 +761,17 @@ their debt. The resulting fee assets are capped at `totalAssets` so the post-fee
 non-negative. For an unlevered vault this matches the prior NAV-based basis exactly.
 
 **Performance Fee**: Fee on the performance of the levered slice only (basis points). The basis is
-`LTV · Δcollat - Δdebt` where `LTV = currentDebt / currentCollat`. Algebraically this simplifies to:
+`LTV_prev · Δcollat - Δdebt` where `LTV_prev = lastDebt / lastCollat` is the LTV at the previous
+snapshot. Algebraically this simplifies to:
 ```
-basis = lastDebt - mulDiv(currentDebt, lastCollat, currentCollat)
+basis = mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt
 performanceFeeAssets = max(0, basis - managementFeeAssets) × performanceFee / BPS
 ```
 where `lastCollat = lastTotalAssets + lastDebt` and `currentCollat = currentTotalAssets + currentDebt`.
+Anchoring on `LTV_prev` rather than the live LTV defines the unlevered baseline at the start of the
+period (the natural comparison for "extra return from leverage") and fixes the multiplier at snapshot
+time. `mulDivUp` biases the basis slightly larger, consistent with the conservative-to-protocol
+rounding used elsewhere.
 
 `lastDebt == 0` is the bootstrap sentinel: the first accrual after deployment (or after the V2
 upgrade) skips the performance fee and seeds `lastDebt` from the current debt. Subsequent
