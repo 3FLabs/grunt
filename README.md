@@ -773,9 +773,9 @@ period (the natural comparison for "extra return from leverage") and fixes the m
 time. `mulDivUp` biases the basis slightly larger, consistent with the conservative-to-protocol
 rounding used elsewhere.
 
-`lastDebt == 0` is the bootstrap sentinel: the first accrual after deployment (or after the V2
-upgrade) skips the performance fee and seeds `lastDebt` from the current debt. Subsequent
-accruals charge the new basis normally.
+`lastDebt == 0` is the bootstrap sentinel: the first accrual after deployment (or after upgrading
+from v1.1.0 of the contracts) skips the performance fee and seeds `lastDebt` from the current debt.
+Subsequent accruals charge the new basis normally.
 
 Fees are minted as shares to the fee recipient, diluting existing shareholders.
 
