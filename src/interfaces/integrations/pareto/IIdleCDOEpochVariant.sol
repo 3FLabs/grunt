@@ -49,6 +49,12 @@ interface IIdleCDOEpochVariant {
   /// @notice Returns whether an epoch is currently running.
   function isEpochRunning() external view returns (bool);
 
+  /// @notice Returns whether the CDO has defaulted.
+  function defaulted() external view returns (bool);
+
+  /// @notice Returns the configured epoch duration in seconds.
+  function epochDuration() external view returns (uint256);
+
   /// @notice Returns the end date of the current epoch (0 if no epoch running).
   function epochEndDate() external view returns (uint256);
 
@@ -60,6 +66,15 @@ interface IIdleCDOEpochVariant {
   /// @dev Flipped to false by `startEpoch` and back to true by `stopEpoch`,
   ///      so withdrawal requests are blocked while an epoch is running.
   function allowAAWithdrawRequest() external view returns (bool);
+
+  /// @notice Returns the expected epoch interest in underlying token units.
+  function expectedEpochInterest() external view returns (uint256);
+
+  /// @notice Returns fees pending for withdrawals in underlying token units.
+  function pendingWithdrawFees() external view returns (uint256);
+
+  /// @notice Returns the CDO fee using the same 100_000 denominator as Idle/Pareto.
+  function fee() external view returns (uint256);
 
   /// @notice Checks whether a wallet is allowed to interact with the CDO (Keyring access control).
   /// @param wallet The address to check.

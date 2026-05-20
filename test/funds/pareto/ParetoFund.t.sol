@@ -98,6 +98,33 @@ contract ParetoFundTest is Test {
     assertEq(uint256(fund.state(_depositOrder(ONE_USDC, ONE_AA))), uint256(State.EMPTY), "initial state");
   }
 
+  function test_MockPricingReads_DefaultsAndSetters() public {
+    assertFalse(cdo.defaulted(), "defaulted default");
+    assertEq(cdo.epochDuration(), 0, "epoch duration default");
+    assertEq(cdo.expectedEpochInterest(), 0, "expected interest default");
+    assertEq(cdo.pendingWithdrawFees(), 0, "pending withdraw fees default");
+    assertEq(cdo.fee(), 0, "fee default");
+
+    cdo.setDefaulted(true);
+    cdo.setEpochDuration(30 days);
+    cdo.setExpectedEpochInterest(100e6);
+    cdo.setPendingWithdrawFees(5e6);
+    cdo.setFee(10_000);
+
+    assertTrue(cdo.defaulted(), "defaulted set");
+    assertEq(cdo.epochDuration(), 30 days, "epoch duration set");
+    assertEq(cdo.expectedEpochInterest(), 100e6, "expected interest set");
+    assertEq(cdo.pendingWithdrawFees(), 5e6, "pending withdraw fees set");
+    assertEq(cdo.fee(), 10_000, "fee set");
+
+    cdo.setEpochPricing(14 days, 42e6, 7e6, 1_000);
+
+    assertEq(cdo.epochDuration(), 14 days, "epoch pricing duration");
+    assertEq(cdo.expectedEpochInterest(), 42e6, "epoch pricing expected interest");
+    assertEq(cdo.pendingWithdrawFees(), 7e6, "epoch pricing pending fees");
+    assertEq(cdo.fee(), 1_000, "epoch pricing fee");
+  }
+
   function test_Initialize_RevertsInvalidOwner() public {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.PARETO_FUND_BEACON());
     vm.expectRevert(CommonErrors.AddressZero.selector);
