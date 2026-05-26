@@ -37,6 +37,7 @@ contract RequestTest is Test {
   bytes32 internal constant OFFER_TYPEHASH = 0x3ded0c963332962cf2d273c8fb4f3e69f4ef33407ca72484fcebb56263ad0664;
   bytes32 internal constant TYPE_HASH =
     keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+  uint256 internal constant CONSUMER_ROLE = 1 << 1;
 
   // Events
   event Repaid(uint256 amount);
@@ -105,6 +106,32 @@ contract RequestTest is Test {
     assertEq(request.name(), "Test Request");
     assertEq(request.symbol(), "REQ");
     assertEq(request.canWithdraw(), false);
+  }
+
+  function test_factory_createRequestWithConsumers_grantsAdditionalConsumers() public {
+    address extraConsumerOne = makeAddr("extraConsumerOne");
+    address extraConsumerTwo = makeAddr("extraConsumerTwo");
+    address[] memory additionalConsumers = new address[](2);
+    additionalConsumers[0] = extraConsumerOne;
+    additionalConsumers[1] = extraConsumerTwo;
+
+    (address reqAddr,,) = factory.createRequestWithConsumers(
+      owner,
+      puller,
+      consumer,
+      additionalConsumers,
+      address(asset),
+      "Multi Consumer Request",
+      "MCR",
+      uint64(block.timestamp + 90 days),
+      0
+    );
+    Request multiConsumerRequest = Request(reqAddr);
+
+    assertEq(multiConsumerRequest.owner(), owner);
+    assertTrue(multiConsumerRequest.hasAnyRole(consumer, CONSUMER_ROLE));
+    assertTrue(multiConsumerRequest.hasAnyRole(extraConsumerOne, CONSUMER_ROLE));
+    assertTrue(multiConsumerRequest.hasAnyRole(extraConsumerTwo, CONSUMER_ROLE));
   }
 
   function test_factory_createRequest_initializesVaults() public view {

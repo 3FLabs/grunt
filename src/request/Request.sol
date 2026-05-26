@@ -147,6 +147,76 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     uint64 repaymentDeadline_,
     uint40 mintToRepaidDelay_
   ) public initializer {
+    address[] memory additionalConsumers = new address[](0);
+    _initializeRequest(
+      owner_,
+      puller_,
+      consumer_,
+      additionalConsumers,
+      asset_,
+      ptToken_,
+      ytToken_,
+      name_,
+      symbol_,
+      repaymentDeadline_,
+      mintToRepaidDelay_
+    );
+  }
+
+  /// @notice Initializes the Request contract and grants additional consumer role addresses.
+  /// @dev Intended for factory deployments that need multiple consumer lanes from creation.
+  /// @param owner_ The address that will own the contract and have admin privileges
+  /// @param puller_ The address that will have the puller role
+  /// @param consumer_ The primary address that will have the consumer role
+  /// @param additionalConsumers_ Additional addresses that will have the consumer role
+  /// @param asset_ The address of the underlying ERC20 asset (e.g., USDC)
+  /// @param ptToken_ The address of the deployed Principal Token contract
+  /// @param ytToken_ The address of the deployed Yield Token contract
+  /// @param name_ The base name for the tokens (will be prefixed with "PT-" / "YT-")
+  /// @param symbol_ The base symbol for the tokens (will be prefixed with "PT-" / "YT-")
+  /// @param repaymentDeadline_ The timestamp after which withdrawals are automatically enabled, regardless of repaid status
+  /// @param mintToRepaidDelay_ Minimum delay (seconds) between the last mint/consume and setRepaid(uint256)
+  function initializeWithConsumers(
+    address owner_,
+    address puller_,
+    address consumer_,
+    address[] memory additionalConsumers_,
+    address asset_,
+    address ptToken_,
+    address ytToken_,
+    string memory name_,
+    string memory symbol_,
+    uint64 repaymentDeadline_,
+    uint40 mintToRepaidDelay_
+  ) public initializer {
+    _initializeRequest(
+      owner_,
+      puller_,
+      consumer_,
+      additionalConsumers_,
+      asset_,
+      ptToken_,
+      ytToken_,
+      name_,
+      symbol_,
+      repaymentDeadline_,
+      mintToRepaidDelay_
+    );
+  }
+
+  function _initializeRequest(
+    address owner_,
+    address puller_,
+    address consumer_,
+    address[] memory additionalConsumers_,
+    address asset_,
+    address ptToken_,
+    address ytToken_,
+    string memory name_,
+    string memory symbol_,
+    uint64 repaymentDeadline_,
+    uint40 mintToRepaidDelay_
+  ) internal {
     owner_.checkNotZero();
     // Validate repayment deadline is within a reasonable range
     if (
@@ -167,6 +237,9 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
     _initializeOwner(owner_);
     _grantRoles(puller_, _ROLE_PULLER);
     _grantRoles(consumer_, _ROLE_CONSUMER);
+    for (uint256 i; i < additionalConsumers_.length; ++i) {
+      _grantRoles(additionalConsumers_[i], _ROLE_CONSUMER);
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

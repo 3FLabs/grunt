@@ -119,12 +119,72 @@ contract RequestFactory {
     uint64 repaymentDeadline,
     uint40 mintToRepaidDelay
   ) external returns (address request, address ptToken, address ytToken) {
+    address[] memory additionalConsumers = new address[](0);
+    return _createRequest(
+      owner, puller, consumer, additionalConsumers, asset, name, symbol, repaymentDeadline, mintToRepaidDelay
+    );
+  }
+
+  /// @notice Creates a new Request and grants additional consumer role addresses at initialization.
+  /// @dev The additional consumers are granted before the transaction completes, while preserving `owner`
+  ///      as the Request owner from the initial create call.
+  /// @param owner The address that will own the Request (admin privileges)
+  /// @param puller The address that will have the puller role
+  /// @param consumer The primary address that will have the consumer role
+  /// @param additionalConsumers Additional addresses that will have the consumer role
+  /// @param asset The underlying ERC20 asset address (e.g., USDC)
+  /// @param name The base name for PT/YT tokens (prefixed with "PT-" / "YT-")
+  /// @param symbol The base symbol for PT/YT tokens (prefixed with "PT-" / "YT-")
+  /// @param repaymentDeadline The timestamp after which withdrawals are automatically enabled, regardless of repaid status
+  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(uint256)
+  /// @return request The address of the newly deployed Request proxy
+  /// @return ptToken The address of the newly deployed PT Token proxy
+  /// @return ytToken The address of the newly deployed YT Token proxy
+  function createRequestWithConsumers(
+    address owner,
+    address puller,
+    address consumer,
+    address[] memory additionalConsumers,
+    address asset,
+    string memory name,
+    string memory symbol,
+    uint64 repaymentDeadline,
+    uint40 mintToRepaidDelay
+  ) external returns (address request, address ptToken, address ytToken) {
+    return _createRequest(
+      owner, puller, consumer, additionalConsumers, asset, name, symbol, repaymentDeadline, mintToRepaidDelay
+    );
+  }
+
+  function _createRequest(
+    address owner,
+    address puller,
+    address consumer,
+    address[] memory additionalConsumers,
+    address asset,
+    string memory name,
+    string memory symbol,
+    uint64 repaymentDeadline,
+    uint40 mintToRepaidDelay
+  ) internal returns (address request, address ptToken, address ytToken) {
     request = REQUEST_BEACON.deployERC1967BeaconProxy();
     ptToken = PT_TOKEN_BEACON.deployERC1967BeaconProxy();
     ytToken = YT_TOKEN_BEACON.deployERC1967BeaconProxy();
 
     Request(request)
-      .initialize(owner, puller, consumer, asset, ptToken, ytToken, name, symbol, repaymentDeadline, mintToRepaidDelay);
+      .initializeWithConsumers(
+        owner,
+        puller,
+        consumer,
+        additionalConsumers,
+        asset,
+        ptToken,
+        ytToken,
+        name,
+        symbol,
+        repaymentDeadline,
+        mintToRepaidDelay
+      );
     Vault(ptToken).initialize(request);
     Vault(ytToken).initialize(request);
 
