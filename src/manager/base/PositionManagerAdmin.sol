@@ -26,7 +26,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
   /// @inheritdoc IPositionManagerAdmin
   /// @dev Accrues fees before adding the module to checkpoint totalAssets.
-  ///      Updates lastTotalAssets after adding so the new module's assets are reflected.
+  ///      Refreshes both `lastTotalAssets` and `lastDebt` after adding (via `updateSnapshot`),
+  ///      so the new module's assets and debt are reflected in the next fee period's basis.
   ///      Validates that the module's collateral and debt assets match the position manager's,
   ///      the module's owner is this contract, and the module's safe LTV is >= the PM LTV.
   function addBorrowModule(address module) external override onlyOwner {
@@ -55,7 +56,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
   /// @inheritdoc IPositionManagerAdmin
   /// @dev Accrues fees before removing the module to checkpoint totalAssets.
-  ///      Updates lastTotalAssets after removing so the module's assets are no longer counted.
+  ///      Refreshes both `lastTotalAssets` and `lastDebt` after removing (via `updateSnapshot`),
+  ///      so the removed module's assets and debt are no longer counted in the next fee period's basis.
   ///      Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
   function removeBorrowModule(address module) external override onlyOwner {
     _accrueFees();

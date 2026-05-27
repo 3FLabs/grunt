@@ -16,7 +16,7 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 ///        are capped at `totalAssets` so the post-fee asset base remains non-negative.
 /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
 ///        performance of the levered slice only — basis `LTV_prev * Δcollat - Δdebt` (equivalently
-///        `mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt`), where
+///        `mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt`), where
 ///        `LTV_prev = lastDebt / lastCollat` is the LTV at the previous snapshot. The basis is then
 ///        reduced by the management fee assets accrued over the same period. Replaces the prior
 ///        NAV-variation basis.

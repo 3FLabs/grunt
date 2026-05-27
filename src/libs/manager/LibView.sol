@@ -54,6 +54,11 @@ library LibView {
   ///      to all three, so `totalCollateral == amount + totalDebt` and represents the collateral
   ///      of the "good" positions only. `totalCollateral` is consumed directly by the management
   ///      fee basis and feeds the performance-fee basis as `currentCollat`.
+  ///
+  ///      Inclusion cliff: the `collateral >= debt` filter is binary. At exactly 100% LTV a module
+  ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
+  ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
+  ///      case in practice — liquidation is expected long before LTV reaches 100% — but worth noting.
   /// @param ps The position manager storage data
   /// @return amount The total assets value (sum of `collateral - debt` for non-bad-debt positions)
   /// @return totalDebt The aggregate debt of non-bad-debt positions only

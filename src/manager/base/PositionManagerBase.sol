@@ -50,7 +50,7 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      The performance fee basis is the levered-slice performance only:
   ///      `LTV_prev * Δcollat - Δdebt`, where `LTV_prev = lastDebt / lastCollat` is the LTV at the
   ///      previous snapshot. Algebraically the basis simplifies to
-  ///      `mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt`. Anchoring on `LTV_prev` rather
+  ///      `mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt`. Anchoring on `LTV_prev` rather
   ///      than `LTV_cur` (a) defines the unlevered baseline at the start of the period (the natural
   ///      comparison for "extra return from leverage"), (b) fixes the multiplier at snapshot time so
   ///      the basis depends on snapshot state plus current debt/collat rather than live LTV, and
@@ -62,6 +62,14 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      Bootstrap: when `lastDebt == 0` (sentinel, e.g. immediately after upgrade), the
   ///      performance fee for this period is zero and only the management fee accrues. The
   ///      `lastDebt` slot is seeded in `_accrueFees` from the current debt.
+  ///
+  ///      Bad-debt recovery edge case: when every borrow module is underwater
+  ///      (`debt > collateral`), `LibView.totalAssets()` excludes them all, so an accrual snapshots
+  ///      `lastTotalAssets = 0` and `lastDebt = 0`. Because `lastDebt == 0` doubles as the bootstrap
+  ///      sentinel, the first accrual after a subsequent recovery skips the performance fee and only
+  ///      reseeds `lastDebt`. In effect, gains realised across the
+  ///      `good -> bad-debt checkpoint -> recovery` transition are not performance-fee charged;
+  ///      performance fees only apply to gains after the recovery checkpoint.
   /// @return totalAssets_ The current total assets across all borrow modules (`collateralQuoted - debt`)
   /// @return totalSupply_ The current total supply of shares (before fee minting)
   /// @return currentDebt The current aggregate debt across non-bad-debt positions
