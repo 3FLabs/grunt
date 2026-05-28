@@ -59,6 +59,13 @@ library LibView {
   ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
   ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
   ///      case in practice — liquidation is expected long before LTV reaches 100% — but worth noting.
+  ///
+  ///      Debt rounding: each module's `totalBorrowed()` returns `toAssetsDown(borrowShares)`,
+  ///      which is the same rounding Morpho applies internally when converting borrow shares to
+  ///      debt assets. The value is therefore the exact debt the underlying market recognises in
+  ///      asset terms — not a 1-wei understatement — so `collateral - debt` here matches the NAV
+  ///      Morpho itself attributes to the position. The sub-1-wei share residual left by the
+  ///      conversion is not separately enforceable as additional asset debt.
   /// @param ps The position manager storage data
   /// @return amount The total assets value (sum of `collateral - debt` for non-bad-debt positions)
   /// @return totalDebt The aggregate debt of non-bad-debt positions only
