@@ -48,18 +48,43 @@ library LibView {
     }
   }
 
-  /// @dev Returns the total assets as the sum of per-position NAVs, treating bad-debt positions as zero.
-  ///      Each position's NAV is computed as collateralQuoted.zeroFloorSub(debt), ensuring positions
-  ///      with bad debt do not reduce the overall NAV.
+  /// @dev Returns the total assets (sum of per-position NAVs), the aggregate debt, and the
+  ///      aggregate collateral of the non-bad-debt positions in a single iteration. Bad-debt
+  ///      positions — those where the debt value exceeds the collateral value — contribute zero
+  ///      to all three, so `totalCollateral == amount + totalDebt` and represents the collateral
+  ///      of the "good" positions only. `totalCollateral` is consumed directly by the management
+  ///      fee basis and feeds the performance-fee basis as `currentCollat`.
+  ///
+  ///      Inclusion cliff: the `collateral >= debt` filter is binary. At exactly 100% LTV a module
+  ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
+  ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
+  ///      case in practice (liquidation is expected long before LTV reaches 100%), but worth noting.
+  ///
+  ///      Debt rounding: each module's `totalBorrowed()` returns `toAssetsDown(borrowShares)`,
+  ///      which is the same rounding Morpho applies internally when converting borrow shares to
+  ///      debt assets. The value is therefore the exact debt the underlying market recognises in
+  ///      asset terms, not a 1-wei understatement, so `collateral - debt` here matches the NAV
+  ///      Morpho itself attributes to the position. The sub-1-wei share residual left by the
+  ///      conversion is not separately enforceable as additional asset debt.
   /// @param ps The position manager storage data
-  /// @return amount The total assets value
-  function totalAssets(PositionManagerStorageData storage ps) internal view returns (uint256 amount) {
+  /// @return amount The total assets value (sum of `collateral - debt` for non-bad-debt positions)
+  /// @return totalDebt The aggregate debt of non-bad-debt positions only
+  /// @return totalCollateral The aggregate quoted collateral of non-bad-debt positions only
+  function totalAssets(PositionManagerStorageData storage ps)
+    internal
+    view
+    returns (uint256 amount, uint256 totalDebt, uint256 totalCollateral)
+  {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
     for (uint256 i = 0; i < modulesLength; ++i) {
       uint256 collateral = IBorrowPosition(modules[i]).totalCollateralQuoted();
       uint256 debt = IBorrowPosition(modules[i]).totalBorrowed();
-      amount += collateral.zeroFloorSub(debt);
+      if (collateral >= debt) {
+        amount += collateral - debt;
+        totalDebt += debt;
+        totalCollateral += collateral;
+      }
     }
   }
 

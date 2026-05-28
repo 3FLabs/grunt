@@ -60,10 +60,15 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   function totalAssets() external view returns (uint256);
 
   /// @notice Returns the fee configuration and accounting state.
+  /// @dev `lastTotalAssets` is still `collat - debt` at the last accrual. To reconstruct the
+  ///      performance-fee snapshot `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()`
+  ///      alongside this value.
   /// @return feeRecipient The address that receives fee payments
-  /// @return managementFee The management fee rate in basis points per 365 days
-  /// @return performanceFee The performance fee rate in basis points (charged on net gains after mgmt fee)
-  /// @return lastTotalAssets The last total assets snapshot for performance fee calculation
+  /// @return managementFee The management fee rate in basis points per 365 days, charged on the
+  ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
+  /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
+  ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
+  /// @return lastTotalAssets The last NAV snapshot (`collat - debt`) used for fee accounting
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
   function feeData()
     external
@@ -75,6 +80,13 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
       uint256 lastTotalAssets,
       uint256 lastFeeAccrualTimestamp
     );
+
+  /// @notice Returns the cached aggregate debt at the last performance-fee snapshot.
+  /// @dev Combined with `feeData().lastTotalAssets`, callers can reconstruct
+  ///      `lastCollat = lastTotalAssets + lastDebt`. A value of zero is the bootstrap sentinel
+  ///      and means the next accrual will skip the performance fee and seed this slot.
+  /// @return The last aggregate debt snapshot
+  function lastDebt() external view returns (uint256);
 
   /// @notice Returns the pending fee data needed to compute an accurate share price.
   /// @dev Mirrors the logic of the internal `_accrueFees()` function without mutating state.

@@ -103,9 +103,10 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
 
     emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
 
-    // Update snapshot to post-rebalance state
-    uint256 totalAssetsAfter = _storage.totalAssets();
-    _storage.lastTotalAssets = totalAssetsAfter;
+    // Update snapshot to post-rebalance state. Goes through updateSnapshot so lastDebt is kept
+    // in sync with lastTotalAssets in a single iteration over the borrow modules.
+    LibStorage.updateSnapshot(_storage);
+    uint256 totalAssetsAfter = _storage.lastTotalAssets;
 
     // Check that totalAssets didn't decrease by more than maxRebalanceLoss
     if (totalAssetsAfter < totalAssetsBefore) {
