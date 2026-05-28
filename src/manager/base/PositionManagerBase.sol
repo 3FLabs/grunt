@@ -62,8 +62,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      Debt rounding: `lastDebt` and `currentDebt` both originate from
   ///      `IBorrowPosition.totalBorrowed()`, which uses Morpho's `toAssetsDown` (see
   ///      `LibView.totalAssets` for the rationale). The basis therefore inherits Morpho's
-  ///      rounding direction — debt is treated here exactly as the underlying market treats
-  ///      it, and no additional bias is introduced on top of that accounting.
+  ///      rounding direction: debt is treated here exactly as the underlying market treats
+  ///      it, with no additional bias on top of that accounting. As a consequence, the
+  ///      performance fee is inherently rounded down.
   ///
   ///      Bootstrap: when `lastDebt == 0` (sentinel, e.g. immediately after upgrade), the
   ///      performance fee for this period is zero and only the management fee accrues. The
