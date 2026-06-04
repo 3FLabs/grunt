@@ -39,5 +39,8 @@ tab_width = 2
 
 [lint]
 ignore = ["test/**/*"]
+# `block.timestamp` comparisons are used deliberately for timelocks / deadlines; validator
+# timestamp drift is bounded and irrelevant at these granularities.
+exclude_lints = ["block-timestamp"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
