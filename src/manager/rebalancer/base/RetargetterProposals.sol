@@ -50,8 +50,7 @@ abstract contract RetargetterProposals is IRetargetterProposals, RetargetterBase
   /// @inheritdoc IRetargetterProposals
   /// @dev Cancellation is allowed even while paused; pausing is exactly the situation in which
   ///      governance needs to tear down an in-flight proposal.
-  function cancelProposal() external override {
-    if (msg.sender != owner() && !hasAnyRole(msg.sender, REBALANCER_ROLE)) _checkOwner();
+  function cancelProposal() external override onlyOwnerOrRoles(REBALANCER_ROLE) {
     RetargetterStorage storage s = LibRetargetter.retargetterStorage();
     if (!s.proposal.active) revert LibRetargetterErrors.NoPendingProposal();
     bytes32 hash = s.proposal.hash;

@@ -4,9 +4,11 @@ pragma solidity ^0.8.22;
 /// @title IRetargetterAdmin
 /// @author 3F Protocol
 /// @notice Owner-driven configuration surface of the Retargetter.
-/// @dev All setters are owner-only (Solady's OwnableRoles `onlyOwner`). Views are open. The auction
-///      parameters ({setAuctionParams}) can only be changed when no batch is open; the timelocks
-///      ({setTimelocks}) can be updated at any time but only affect future batches / proposals.
+/// @dev Configuration setters are owner-only (Solady's OwnableRoles `onlyOwner`); {pause} is the sole
+///      exception, gated to owner-or-PAUSER so a guardian retains an emergency brake when the owner is
+///      offline. Views are open. The auction parameters ({setAuctionParams}) can only be changed when
+///      no batch is open; the timelocks ({setTimelocks}) can be updated at any time but only affect
+///      future batches / proposals.
 interface IRetargetterAdmin {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           EVENTS                           */
@@ -77,10 +79,12 @@ interface IRetargetterAdmin {
   /// @param module The module to remove. Reverts if not registered.
   function removeModule(address module) external;
 
-  /// @notice Pauses the Retargetter for `duration` seconds.
+  /// @notice Pauses the Retargetter for `duration` seconds. Callable by the owner or any PAUSER_ROLE
+  ///         holder; `duration == 0` unpauses.
   /// @dev Pausing blocks {openBatch}, {consumeOffer}, {authorizeMinting}, {propose}, and
   ///      {executeProposal}. {closeBatch} and {cancelProposal} remain callable so governance can
-  ///      tear down in-flight state during an incident.
+  ///      tear down in-flight state during an incident. `duration` is capped at `MAX_PAUSE_DURATION`,
+  ///      so a pause auto-expires rather than wedging the contract permanently.
   /// @param duration The pause duration (seconds, 0 unpauses).
   function pause(uint40 duration) external;
 

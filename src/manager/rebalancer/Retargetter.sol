@@ -75,8 +75,9 @@ struct RetargetterInitParams {
 ///          proposal and close the batch.
 ///        - REBALANCER: opens/closes batches, proposes/cancels/executes proposals.
 ///        - CONSUMER: consumes offers, authorises minting on batch Requests.
-///        - PAUSER: held for downstream automation; pause is still owner-gated through {pause}
-///          and emergency cancel paths.
+///        - PAUSER: emergency brake. Can {pause} / unpause the operational surface (owner-or-PAUSER),
+///          so a guardian can freeze the contract even when the owner is offline. A pause is bounded
+///          by MAX_PAUSE_DURATION and auto-expires.
 contract Retargetter is IRetargetter, RetargetterAdmin, RetargetterBatch, RetargetterProposals, Initializable {
   using EnumerableSetLib for EnumerableSetLib.AddressSet;
   using LibChecks for address;

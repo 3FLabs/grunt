@@ -18,7 +18,8 @@ import {
   MAX_MAX_YIELD_BPS,
   MAX_PAUSE_DURATION,
   MIN_TICK_DURATION,
-  MAX_TICK_DURATION
+  MAX_TICK_DURATION,
+  PAUSER_ROLE
 } from "../../../libs/manager/rebalancer/LibRetargetterConstants.sol";
 import {LibChecks} from "../../../libs/common/LibChecks.sol";
 import {LibPause} from "../../../libs/common/LibPause.sol";
@@ -100,7 +101,12 @@ abstract contract RetargetterAdmin is IRetargetterAdmin, RetargetterBase {
   }
 
   /// @inheritdoc IRetargetterAdmin
-  function pause(uint40 duration) external override onlyOwner {
+  /// @dev Owner or any PAUSER_ROLE holder may pause / unpause. PAUSER is the emergency brake: when
+  ///      the owner is offline a guardian can still freeze the operational surface (open / consume /
+  ///      authorise / propose / execute). A single pause is bounded by MAX_PAUSE_DURATION (90 days),
+  ///      so even a pause set just before the owner goes dark auto-expires; it is a delay, not a
+  ///      permanent kill-switch. Unpause is `pause(0)` and is held to the same role gate.
+  function pause(uint40 duration) external override onlyOwnerOrRoles(PAUSER_ROLE) {
     if (duration > MAX_PAUSE_DURATION) revert LibRetargetterErrors.PauseDurationTooLong();
     uint40 pauseUntil_ = LibPause.pauseFor(duration);
     LibRetargetter.retargetterStorage().pauseUntil = pauseUntil_;

@@ -186,9 +186,7 @@ abstract contract RetargetterBatch is IRetargetterBatch, RetargetterBase {
   ///        - The attached fund (if any) blocks close while it has a live order. An order the fund
   ///          has independently ended is reconciled via {LibRetargetter.syncFundOrder} and does
   ///          not block; an order still in flight reverts with {FundOrderPending}.
-  function closeBatch() external override {
-    if (msg.sender != owner() && !hasAnyRole(msg.sender, REBALANCER_ROLE)) _checkOwner();
-
+  function closeBatch() external override onlyOwnerOrRoles(REBALANCER_ROLE) {
     RetargetterStorage storage s = LibRetargetter.retargetterStorage();
     if (!s.batch.active) revert LibRetargetterErrors.NoActiveBatch();
 
