@@ -213,6 +213,31 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertTrue(pos.hasAnyRole(positionManager, ROLE_ADMIN), "PM is admin (fallback)");
   }
 
+  /// @notice Primary `_governanceOwner` path: when the PositionManager's `owner()` resolves to a
+  ///         real governance address, ROLE_ADMIN is granted to THAT address (owner-of-owner), not to
+  ///         the position owner.
+  function test_governanceOwner_resolvesToOwnerOfOwner() public {
+    address governance = makeAddr("governance");
+    vm.mockCall(positionManager, abi.encodeWithSignature("owner()"), abi.encode(governance));
+    MorphoBorrowPosition p =
+      MorphoBorrowPosition(factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
+    assertTrue(p.hasAnyRole(governance, ROLE_ADMIN), "governance owner is admin");
+    assertFalse(p.hasAnyRole(positionManager, ROLE_ADMIN), "PM not admin when owner-of-owner resolves");
+  }
+
+  /// @notice `_governanceOwner` is total: a PositionManager whose `owner()` returns an unexpected
+  ///         shape (here 64 bytes, not a single address word) must NOT revert initialization; it
+  ///         falls back to the position owner. The same holds for an EOA / reverting `owner()`
+  ///         (the default setUp, where `owner()` is unmocked, already exercises the empty-return
+  ///         fallback in {test_init_factoryPathLandsAtV2}).
+  function test_governanceOwner_malformedOwnerReturn_fallsBackNotRevert() public {
+    // 64-byte return: a valid address word is exactly 32 bytes, so this is "unexpected shape".
+    vm.mockCall(positionManager, abi.encodeWithSignature("owner()"), abi.encode(uint256(1), uint256(2)));
+    MorphoBorrowPosition p =
+      MorphoBorrowPosition(factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
+    assertTrue(p.hasAnyRole(positionManager, ROLE_ADMIN), "fallback to PM on malformed owner() return");
+  }
+
   function test_roleConstants_matchSoladyOrdinals() public pure {
     assertEq(ROLE_ADMIN, 1 << 0, "ROLE_ADMIN == _ROLE_0");
     assertEq(PROPOSER_ROLE, 1 << 1, "PROPOSER_ROLE == _ROLE_1");

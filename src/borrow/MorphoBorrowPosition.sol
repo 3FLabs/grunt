@@ -5,7 +5,6 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
-import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {IOracle} from "lib/morpho-blue/src/interfaces/IOracle.sol";
 import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
@@ -201,29 +200,26 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   }
 
   /// @dev Resolves the governance admin as `owner()`-of-`owner()`. `owner()` here is the
-  ///      PositionManager (Solady `OwnableRoles`), which always exposes `owner()`. The lookup uses
-  ///      Solady `LibCall.tryStaticCall` rather than a raw staticcall for two reasons: it is
-  ///      non-reverting (an owner without an `owner()` accessor, or one returning zero, falls back to
-  ///      the position owner rather than bricking initialization), and it caps the copied return data
-  ///      at 32 bytes (`maxCopy`), so a misbehaving owner cannot grief initialization with a
-  ///      return-data bomb. A 32-byte cap is exactly one word, all that an `address` read needs.
+  ///      PositionManager (Solady `OwnableRoles`), which always exposes `owner()`. The lookup is
+  ///      total: any anomaly (the position owner is not a contract, its `owner()` reverts, or it
+  ///      returns anything other than a single non-zero address word) falls back to the position
+  ///      owner rather than reverting and bricking initialization.
   ///
-  ///      The returned word is masked to 160 bits in assembly instead of `abi.decode(ret,(address))`:
-  ///      `abi.decode` reverts when the high 96 bits are dirty, which would re-introduce a brick path
-  ///      for a malformed return. Masking keeps the whole lookup total (always falls back, never
-  ///      reverts), as the surrounding fallback logic intends.
-  function _governanceOwner() internal view returns (address gov) {
+  ///      A low-level `staticcall` is used deliberately, not a typed call / `try-catch`: the latter
+  ///      cannot be made total here. A call to a codeless address fails the compiler's extcodesize
+  ///      check, and a successful-but-malformed return fails ABI return-decoding; neither is trapped
+  ///      by `catch`, so both bubble up and revert. The low-level call instead reports a codeless
+  ///      target or a revert as `ok == false`, and an unexpected return as a length mismatch. The
+  ///      word is decoded as `uint256` and masked to `uint160` (rather than `abi.decode(ret,
+  ///      (address))`, which itself reverts on dirty high bits) so even a malformed word falls back.
+  function _governanceOwner() internal view returns (address) {
     address positionOwner = owner();
-    (bool ok,, bytes memory ret) =
-      LibCall.tryStaticCall(positionOwner, gasleft(), 32, abi.encodeWithSignature("owner()"));
-    if (ok && ret.length >= 32) {
-      bytes32 word;
-      assembly ("memory-safe") {
-        word := mload(add(ret, 0x20))
-      }
-      gov = address(uint160(uint256(word)));
+    (bool ok, bytes memory ret) = positionOwner.staticcall(abi.encodeWithSignature("owner()"));
+    if (ok && ret.length == 32) {
+      address gov = address(uint160(abi.decode(ret, (uint256))));
+      if (gov != address(0)) return gov;
     }
-    if (gov == address(0)) gov = positionOwner;
+    return positionOwner;
   }
 
   /// @dev Reverts unless the proxy is uninitialized (version 0). Ordered before `reinitializer(2)`
@@ -513,18 +509,16 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     Position memory position = MORPHO.position(_storage.marketId, borrower);
     Market memory market = MORPHO.market(_storage.marketId);
 
-    return LibBorrowOffers.borrowOffersStorage()
-      .consume(
-        LibBorrowOffers.ConsumeInput({
-        seizedTarget: seizedAssets,
-        repaidSharesTarget: repaidShares,
-        price: IOracle(_storage.marketParams.oracle).price(),
-        totalBorrowAssets: uint256(market.totalBorrowAssets),
-        totalBorrowShares: uint256(market.totalBorrowShares),
-        positionCollateral: uint256(position.collateral),
-        positionBorrowShares: uint256(position.borrowShares)
-      })
-      );
+    LibBorrowOffers.ConsumeInput memory input = LibBorrowOffers.ConsumeInput({
+      seizedTarget: seizedAssets,
+      repaidSharesTarget: repaidShares,
+      price: IOracle(_storage.marketParams.oracle).price(),
+      totalBorrowAssets: uint256(market.totalBorrowAssets),
+      totalBorrowShares: uint256(market.totalBorrowShares),
+      positionCollateral: uint256(position.collateral),
+      positionBorrowShares: uint256(position.borrowShares)
+    });
+    return LibBorrowOffers.borrowOffersStorage().consume(input);
   }
 
   /// @dev Computes the repaid shares when the liquidator specifies the collateral to seize.
@@ -1087,18 +1081,16 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) =
       MORPHO.expectedMarketBalances(_storage.marketParams, _storage.marketId);
     Position memory position = MORPHO.position(_storage.marketId, address(this));
-    return LibBorrowOffers.borrowOffersStorage()
-      .previewConsume(
-        LibBorrowOffers.ConsumeInput({
-        seizedTarget: seizedAssets,
-        repaidSharesTarget: repaidShares,
-        price: IOracle(_storage.marketParams.oracle).price(),
-        totalBorrowAssets: totalBorrowAssets,
-        totalBorrowShares: totalBorrowShares,
-        positionCollateral: uint256(position.collateral),
-        positionBorrowShares: uint256(position.borrowShares)
-      })
-      );
+    LibBorrowOffers.ConsumeInput memory input = LibBorrowOffers.ConsumeInput({
+      seizedTarget: seizedAssets,
+      repaidSharesTarget: repaidShares,
+      price: IOracle(_storage.marketParams.oracle).price(),
+      totalBorrowAssets: totalBorrowAssets,
+      totalBorrowShares: totalBorrowShares,
+      positionCollateral: uint256(position.collateral),
+      positionBorrowShares: uint256(position.borrowShares)
+    });
+    return LibBorrowOffers.borrowOffersStorage().previewConsume(input);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
