@@ -89,6 +89,10 @@ contract MorphoBorrowPositionTest is Test {
   // Solady Initializable errors
   error InvalidInitialization();
 
+  // v2 versioning errors
+  error AlreadyInitialized();
+  error NotInitialized();
+
   // Solady Ownable errors
   error Unauthorized();
 
@@ -261,7 +265,9 @@ contract MorphoBorrowPositionTest is Test {
     MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
     newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
-    vm.expectRevert(InvalidInitialization.selector);
+    // v2: initialize now lands at version 2 and the onlyUninitialized guard (ordered before
+    // reinitializer(2)) reverts AlreadyInitialized on a second call.
+    vm.expectRevert(AlreadyInitialized.selector);
     newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
   }
 
