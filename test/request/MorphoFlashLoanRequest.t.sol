@@ -6,12 +6,16 @@ import {MorphoFlashLoanRequest} from "src/request/MorphoFlashLoanRequest.sol";
 import {MorphoFlashLoanRequestFactory} from "src/request/MorphoFlashLoanRequestFactory.sol";
 import {SyncDeposit} from "src/request/scripts/SyncDeposit.sol";
 import {SyncWithdrawal} from "src/request/scripts/SyncWithdrawal.sol";
+import {SyncAllocatorDeposit} from "src/request/scripts/SyncAllocatorDeposit.sol";
+import {IMorphoAllocator} from "src/interfaces/request/IMorphoAllocator.sol";
+import {MockMorphoAllocator} from "test/mock/request/MockMorphoAllocator.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {Mode, State} from "src/libs/funds/Order.sol";
 import {IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                      HELPER CONTRACTS                         */
@@ -102,6 +106,8 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   MockScript public mockScript;
   SyncDeposit public syncDeposit;
   SyncWithdrawal public syncWithdrawal;
+  SyncAllocatorDeposit public syncAllocatorDeposit;
+  MockMorphoAllocator public mockAllocator;
 
   address public executor = makeAddr("executor");
 
@@ -140,6 +146,22 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.label(address(syncWithdrawal), "SyncWithdrawal");
     vm.prank(owner);
     flashLoanRequest.setScript(address(syncWithdrawal), true);
+
+    // Deploy and whitelist SyncAllocatorDeposit
+    syncAllocatorDeposit = new SyncAllocatorDeposit();
+    vm.label(address(syncAllocatorDeposit), "SyncAllocatorDeposit");
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(syncAllocatorDeposit), true);
+
+    // Deploy a MorphoAllocator test double and wire its roles:
+    // - it holds FACILITATOR_ROLE on the facility (to unlock + depositManager)
+    // - the flash loan request proxy holds EXECUTOR_ROLE on it (msg.sender under delegatecall)
+    mockAllocator = new MockMorphoAllocator(owner, address(facility));
+    vm.label(address(mockAllocator), "MockMorphoAllocator");
+    vm.prank(owner);
+    facility.grantRoles(address(mockAllocator), FACILITATOR_ROLE);
+    vm.prank(owner);
+    mockAllocator.grantRoles(address(flashLoanRequest), 1); // EXECUTOR_ROLE == _ROLE_0
 
     // Create an intent with deposits and move to resolving phase
     intentId = _createIntentWithDeposits(DEFAULT_AMOUNT);
@@ -603,6 +625,174 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
 
     // Verify: collateral was deposited into PM (facility no longer holds it)
     assertEq(collateralToken.balanceOf(address(facility)), 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*       H1b. SYNC ALLOCATOR DEPOSIT INTEGRATION TEST           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Sets up a fresh targetPM intent in the resolving phase with the mock fund configured for a
+  ///      synchronous deposit (create → ACCEPTED, commit → UNLOCKING, unlock → ENDED). Returns the
+  ///      intent ID and the amount used for the fund deposit / shares / borrow.
+  function _setupSyncAllocatorIntent() internal returns (uint256 syncIntentId, uint256 amount) {
+    vm.prank(owner);
+    syncIntentId = facility.createIntent(_intentParamsWithTargetPM());
+
+    amount = 1_000e18;
+    _mintDebt(user, amount);
+    vm.prank(user);
+    facility.deposit(syncIntentId, amount);
+
+    // Move to resolving phase
+    vm.warp(block.timestamp + 1 days + 1);
+
+    // Set the mock fund on the intent (requires facilitator + guardian sig)
+    vm.prank(facilitator);
+    _setFund(syncIntentId, address(mockFund));
+
+    mockFund.setNextCreateState(State.ACCEPTED);
+    mockFund.setNextCommitState(State.UNLOCKING);
+    mockFund.setNextUnlockState(State.ENDED);
+    mockFund.setCommitAmount(amount);
+
+    // sharesFromFund == amount so the PM deposit nets to zero shares on the facility.
+    mockFund.setUnlockAmount(amount);
+    collateralToken.setBalance(address(mockFund), amount);
+  }
+
+  function _emptyMarket() internal pure returns (MarketParams memory) {
+    return MarketParams(address(0), address(0), address(0), address(0), 0);
+  }
+
+  /// @dev Default empty-rebalance SyncAllocatorDeposit payload (deposit == borrow == amount, targetPM).
+  function _syncAllocatorDepositPayload(uint256 _intentId, uint256 amount) internal view returns (bytes memory) {
+    SyncAllocatorDeposit.AllocatorParams memory allocatorParams = SyncAllocatorDeposit.AllocatorParams({
+      deallocations: new IMorphoAllocator.Deallocation[](0),
+      allocateAdapter: address(0),
+      allocateMarket: _emptyMarket(),
+      depositAmount: amount,
+      borrowAmount: amount,
+      useTarget: true,
+      minSharesUnlocked: 0
+    });
+    return abi.encodeCall(
+      SyncAllocatorDeposit.run, (address(facility), address(mockAllocator), _intentId, amount, amount, allocatorParams)
+    );
+  }
+
+  function test_execute_syncAllocatorDepositFullCycle() public {
+    (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
+
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+
+    // Empty rebalance: no deallocations, allocation skipped (allocateAdapter == address(0)).
+    // pmDepositAmount = borrowAmount = amount.
+    SyncAllocatorDeposit.AllocatorParams memory allocatorParams = SyncAllocatorDeposit.AllocatorParams({
+      deallocations: new IMorphoAllocator.Deallocation[](0),
+      allocateAdapter: address(0),
+      allocateMarket: _emptyMarket(),
+      depositAmount: amount,
+      borrowAmount: amount,
+      useTarget: true, // targetPM
+      minSharesUnlocked: 0
+    });
+
+    bytes memory scriptPayload = abi.encodeCall(
+      SyncAllocatorDeposit.run,
+      (address(facility), address(mockAllocator), syncIntentId, amount, amount, allocatorParams)
+    );
+
+    uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
+
+    vm.prank(executor);
+    flashLoanRequest.execute(amount, params, address(syncAllocatorDeposit), scriptPayload);
+
+    // Verify: request removed from intent
+    (,, address request,) = facility.getIntent(syncIntentId);
+    assertEq(request, address(0));
+
+    // Verify: flash loan fully repaid (Morpho balance only decreased by borrow amount, not flash loan)
+    assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore - amount);
+
+    // Verify: flash loan request has no leftover balance
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+
+    // Verify: collateral was deposited into PM (facility no longer holds it)
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+
+    // Verify: the allocator received the params routed by the script
+    assertEq(mockAllocator.lastDepositAmount(), amount);
+    assertEq(mockAllocator.lastBorrowAmount(), amount);
+    assertEq(mockAllocator.lastDeallocationsLength(), 0);
+    assertEq(mockAllocator.lastAllocateAdapter(), address(0));
+    assertTrue(mockAllocator.lastUseTarget());
+  }
+
+  function test_execute_syncAllocatorDeposit_forwardsDeallocations() public {
+    (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
+
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+
+    // Non-empty rebalance: proves the calldata array survives delegatecall + encode/decode round-trip.
+    IMorphoAllocator.Deallocation[] memory deallocations = new IMorphoAllocator.Deallocation[](1);
+    deallocations[0] = IMorphoAllocator.Deallocation({
+      adapter: address(0xADA9), marketParams: _emptyMarket(), amount: 123, maxUtilisation: 1e18
+    });
+
+    SyncAllocatorDeposit.AllocatorParams memory allocatorParams = SyncAllocatorDeposit.AllocatorParams({
+      deallocations: deallocations,
+      allocateAdapter: address(0xBEEF),
+      allocateMarket: _emptyMarket(),
+      depositAmount: amount,
+      borrowAmount: amount,
+      useTarget: true,
+      minSharesUnlocked: 0
+    });
+
+    bytes memory scriptPayload = abi.encodeCall(
+      SyncAllocatorDeposit.run,
+      (address(facility), address(mockAllocator), syncIntentId, amount, amount, allocatorParams)
+    );
+
+    vm.prank(executor);
+    flashLoanRequest.execute(amount, params, address(syncAllocatorDeposit), scriptPayload);
+
+    assertEq(mockAllocator.lastDeallocationsLength(), 1);
+    assertEq(mockAllocator.lastAllocateAdapter(), address(0xBEEF));
+  }
+
+  function test_execute_syncAllocatorDeposit_revertsWhenRequestLacksExecutorRole() public {
+    // Remove EXECUTOR_ROLE from the request proxy on the allocator.
+    vm.prank(owner);
+    mockAllocator.revokeRoles(address(flashLoanRequest), 1);
+
+    (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
+
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+    bytes memory scriptPayload = _syncAllocatorDepositPayload(syncIntentId, amount);
+
+    vm.prank(executor);
+    vm.expectRevert();
+    flashLoanRequest.execute(amount, params, address(syncAllocatorDeposit), scriptPayload);
+  }
+
+  function test_execute_syncAllocatorDeposit_revertsWhenAllocatorLacksFacilitatorRole() public {
+    // Remove FACILITATOR_ROLE from the allocator on the facility (so unlock reverts).
+    vm.prank(owner);
+    facility.revokeRoles(address(mockAllocator), FACILITATOR_ROLE);
+
+    (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
+
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+    bytes memory scriptPayload = _syncAllocatorDepositPayload(syncIntentId, amount);
+
+    vm.prank(executor);
+    vm.expectRevert();
+    flashLoanRequest.execute(amount, params, address(syncAllocatorDeposit), scriptPayload);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
