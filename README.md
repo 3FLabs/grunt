@@ -582,6 +582,28 @@ stateDiagram-v2
 3. *Wait for CDO epoch to end*
 4. `unlock()` - Call `claimWithdrawRequest()`, send underlying assets to receiver
 
+### sUSD3 (Staked USD3) Integration
+
+`SUSD3Fund` wraps the sUSD3 subordinate tranche strategy (3Jane's staked USD3). The fund's accounting asset is **USDC**, but sUSD3 stakes **USD3**, which itself wraps USDC — so the fund performs a **double ERC-4626 conversion** (`USDC → USD3 → sUSD3` on deposit, and the reverse on redeem). Shares are represented by WrappedAsset tokens (`wsUSD3`) wrapping the sUSD3 share token; a single shared `wsUSD3` wrapper backs all fund instances, so `totalAssets()` reports wrapper-wide aggregate AUM. Multiple `SUSD3Fund` instances are deployed to run several settlements concurrently (one active order each).
+
+**Key Design Decisions:**
+- Uses the **internal state pattern** (like Centrifuge/Pareto): `state()` queries sUSD3 to detect the PROCESSING → UNLOCKING transition.
+- Deposits are **synchronous** (sUSD3 `lockDuration` is 0): `commit()` stakes atomically and `unlock()` delivers the wrapped shares. A non-zero lock is rejected at commit with `DepositLockActive()` because deposits have no recovery path.
+- Redemptions are **cooldown-gated** — `commit()` calls `startCooldown()`, and `unlock()` becomes available once `sUSD3.maxRedeem() > 0` (after the ~30-day cooldown matures and while withdrawals aren't blocked by unrealized losses or the backing floor). `unlock()` supports **partial fills**, redeeming as much as sUSD3 currently allows and returning to PROCESSING for the remainder.
+- **Operator-abortable recovery** — an `OPERATOR_ROLE` holder calls `cancelRedeem()` to cancel the sUSD3 cooldown (PROCESSING → RECOVERING); `recover()` then re-wraps the fund's still-held sUSD3 (the tracked remainder) back to the receiver. This is the guaranteed escape for a stuck/backing-limited redeem, and clears any sub-wei floor-rounding residual. Only REDEEM orders recover — deposits are atomic.
+- Deposits are floored at USD3's `minDeposit` (rejected in `create()` with `BelowMinDeposit()`); the fund is always a first-time USD3 depositor since it holds no USD3 between orders.
+
+**Deposit Flow (Asset → WrappedShare), synchronous:**
+1. `create(DEPOSIT)` - Validate slippage and `minDeposit`
+2. `commit()` - Pull USDC, `USD3.deposit()` then `sUSD3.deposit()` (measured by balance delta)
+3. `unlock()` - Wrap the received sUSD3 into `wsUSD3`, send to receiver
+
+**Redeem Flow (WrappedShare → Asset), cooldown-gated:**
+1. `create(REDEEM)` - Validate slippage
+2. `commit()` - Burn `wsUSD3` (unwrap to sUSD3), call `sUSD3.startCooldown()`
+3. *Wait ~30 days for the cooldown to mature*
+4. `unlock()` - `sUSD3.redeem()` then `USD3.redeem()`, send USDC to receiver (partial-fill aware)
+
 ## Position Manager
 
 The `PositionManager` aggregates multiple `IBorrowPosition` contracts into a single vault with ERC20 share-based accounting.
@@ -1067,6 +1089,7 @@ flowchart TB
 - `USCCFundFactory` - Deploys USCC fund wrappers
 - `CentrifugeFundFactory` - Deploys Centrifuge ERC-7540 fund wrappers
 - `ParetoFundFactory` - Deploys Pareto CDO fund wrappers
+- `SUSD3FundFactory` - Deploys sUSD3 (staked USD3) fund wrappers
 - `TransferGuardFactory` - Deploys transfer guards
 
 **Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.
