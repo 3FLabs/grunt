@@ -19,8 +19,6 @@ import {
   OPERATION_STORAGE_SLOT,
   WINDOW_TSLOT,
   MODULE_TSLOT,
-  POSITION_MANAGER_TSLOT,
-  FUND_TSLOT,
   AMOUNT_TSLOT
 } from "src/libs/manager/rebalancer/LibRetargetterConstants.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
@@ -835,13 +833,9 @@ contract RetargetterTest is RetargetterBaseTest {
   }
 
   function test_storageLayout_transientSlotConstants() public pure {
-    assertEq(WINDOW_TSLOT, uint256(keccak256("retargetter.transient.window")) - 1, "window tslot");
-    assertEq(MODULE_TSLOT, uint256(keccak256("retargetter.transient.module")) - 1, "module tslot");
-    assertEq(
-      POSITION_MANAGER_TSLOT, uint256(keccak256("retargetter.transient.positionManager")) - 1, "position manager tslot"
-    );
-    assertEq(FUND_TSLOT, uint256(keccak256("retargetter.transient.fund")) - 1, "fund tslot");
-    assertEq(AMOUNT_TSLOT, uint256(keccak256("retargetter.transient.amount")) - 1, "amount tslot");
+    assertEq(WINDOW_TSLOT, bytes32(uint256(keccak256("retargetter.transient.window")) - 1), "window tslot");
+    assertEq(MODULE_TSLOT, bytes32(uint256(keccak256("retargetter.transient.module")) - 1), "module tslot");
+    assertEq(AMOUNT_TSLOT, bytes32(uint256(keccak256("retargetter.transient.amount")) - 1), "amount tslot");
   }
 
   function test_storageLayout_operationPacking() public {

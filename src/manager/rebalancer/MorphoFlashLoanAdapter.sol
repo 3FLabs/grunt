@@ -6,6 +6,7 @@ import {IMorphoFlashLoanCallback} from "lib/morpho-blue/src/interfaces/IMorphoCa
 import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {LibTransientSlot} from "../../libs/common/LibTransientSlot.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @title MorphoFlashLoanAdapter
@@ -26,6 +27,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 contract MorphoFlashLoanAdapter is IFlashLoanModule, IMorphoFlashLoanCallback {
   using SafeTransferLib for address;
   using LibChecks for address;
+  using LibTransientSlot for bytes32;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
@@ -39,12 +41,12 @@ contract MorphoFlashLoanAdapter is IFlashLoanModule, IMorphoFlashLoanCallback {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Transient slot for the in-flight loan's initiator.
-  ///      Computed as: uint256(keccak256("morphoFlashLoanAdapter.transient.initiator")) - 1
-  uint256 private constant _INITIATOR_TSLOT = 0xfa5f7b46217f272988f4af45bb58816b2efa985aea1afa7e65663eb8c2b28654;
+  ///      Computed as: bytes32(uint256(keccak256("morphoFlashLoanAdapter.transient.initiator")) - 1)
+  bytes32 private constant _INITIATOR_TSLOT = 0xfa5f7b46217f272988f4af45bb58816b2efa985aea1afa7e65663eb8c2b28654;
 
   /// @dev Transient slot for the in-flight loan's token.
-  ///      Computed as: uint256(keccak256("morphoFlashLoanAdapter.transient.token")) - 1
-  uint256 private constant _TOKEN_TSLOT = 0x575d37d8424ca69d89964ff6ba8caa9111551c931b64140c534be5fd977cac8b;
+  ///      Computed as: bytes32(uint256(keccak256("morphoFlashLoanAdapter.transient.token")) - 1)
+  bytes32 private constant _TOKEN_TSLOT = 0x575d37d8424ca69d89964ff6ba8caa9111551c931b64140c534be5fd977cac8b;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        CONSTRUCTOR                         */
@@ -66,12 +68,12 @@ contract MorphoFlashLoanAdapter is IFlashLoanModule, IMorphoFlashLoanCallback {
   ///      in the chain. Reverts with {LibRetargetterErrors.OperationActive} when a loan is
   ///      already in flight (no nesting).
   function flashLoan(address token, uint256 amount, bytes calldata data) external {
-    if (_loadAddress(_INITIATOR_TSLOT) != address(0)) revert LibRetargetterErrors.OperationActive();
-    _store(_INITIATOR_TSLOT, msg.sender);
-    _store(_TOKEN_TSLOT, token);
+    if (_INITIATOR_TSLOT.tLoadAddress() != address(0)) revert LibRetargetterErrors.OperationActive();
+    _INITIATOR_TSLOT.tStoreAddress(msg.sender);
+    _TOKEN_TSLOT.tStoreAddress(token);
     MORPHO.flashLoan(token, amount, data);
-    _store(_INITIATOR_TSLOT, address(0));
-    _store(_TOKEN_TSLOT, address(0));
+    _INITIATOR_TSLOT.tStoreAddress(address(0));
+    _TOKEN_TSLOT.tStoreAddress(address(0));
   }
 
   /// @notice Callback called by Morpho during a flash loan.
@@ -81,32 +83,14 @@ contract MorphoFlashLoanAdapter is IFlashLoanModule, IMorphoFlashLoanCallback {
   /// @param assets The amount of assets that was flash loaned
   /// @param data The payload passed to {flashLoan}, forwarded verbatim
   function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
-    address initiator = _loadAddress(_INITIATOR_TSLOT);
+    address initiator = _INITIATOR_TSLOT.tLoadAddress();
     if (msg.sender != address(MORPHO) || initiator == address(0)) {
       revert LibRetargetterErrors.UnauthorizedCaller();
     }
-    address token = _loadAddress(_TOKEN_TSLOT);
+    address token = _TOKEN_TSLOT.tLoadAddress();
     token.safeTransfer(initiator, assets);
     IFlashLoanReceiver(initiator).onFlashLoan(assets, data);
     token.safeTransferFrom(initiator, address(this), assets);
     token.safeApproveWithRetry(address(MORPHO), assets);
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         INTERNALS                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Reads an address from a transient slot.
-  function _loadAddress(uint256 slot) private view returns (address value) {
-    assembly ("memory-safe") {
-      value := tload(slot)
-    }
-  }
-
-  /// @dev Writes an address to a transient slot.
-  function _store(uint256 slot, address value) private {
-    assembly ("memory-safe") {
-      tstore(slot, value)
-    }
   }
 }

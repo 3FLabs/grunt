@@ -16,6 +16,12 @@ import {IFund} from "../../interfaces/funds/IFund.sol";
 import {Order, Mode, State} from "../../libs/funds/Order.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {
+  LibStorage,
+  RetargetterAssets,
+  RetargetterWhitelists,
+  RetargetterOperation
+} from "../../libs/manager/rebalancer/LibStorage.sol";
+import {
   REBALANCER_ROLE,
   CONSUMER_ROLE,
   MIN_HORIZON,
@@ -25,25 +31,19 @@ import {
   MAX_PRINCIPAL_BUFFER_BPS,
   REPAYMENT_DEADLINE_OFFSET,
   FULL_BALANCE_SENTINEL,
-  ASSETS_STORAGE_SLOT,
-  CONFIG_STORAGE_SLOT,
-  WHITELISTS_STORAGE_SLOT,
-  OPERATION_STORAGE_SLOT,
   WINDOW_TSLOT,
   MODULE_TSLOT,
-  POSITION_MANAGER_TSLOT,
-  FUND_TSLOT,
   AMOUNT_TSLOT
 } from "../../libs/manager/rebalancer/LibRetargetterConstants.sol";
 import {BPS} from "../../libs/Constants.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {LibTransientSlot} from "../../libs/common/LibTransientSlot.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Multicallable} from "lib/solady/src/utils/Multicallable.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
-import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 
 /// @title Retargetter
 /// @author 3F Protocol
@@ -57,7 +57,8 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 ///        trustless, tick-priced repayment at `resolve`.
 ///      - SYNC (`startSyncRetargetting`): the whole operation runs atomically inside a flash
 ///        loan taken through an owner-whitelisted {IFlashLoanModule}; the steps are supplied
-///        as a multicall payload executed inside the callback and no state persists.
+///        as a multicall payload executed inside the callback and nothing persists past the
+///        transaction.
 ///
 ///      Trust model: fully trusted owner, semi-trusted rebalancer boxed in by the guardrails
 ///      (direction checks, principal and yield caps, whitelists, zero-residual settlement),
@@ -67,7 +68,7 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 ///      Derive, do not store: everything readable from the composed contracts (direction,
 ///      consumed principal, order liveness progress, repaid status) is recomputed fresh at
 ///      every use; only the operation addresses, the loan clock origin, the per-operation
-///      yield cap and the non-derivable order fields persist.
+///      yield cap and the non-derivable order fields persist (see {LibStorage}).
 contract Retargetter is
   IRetargetter,
   IFlashLoanReceiver,
@@ -78,8 +79,9 @@ contract Retargetter is
 {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
-  using LibCall for address;
   using LibChecks for address;
+  using LibStorage for RetargetterOperation;
+  using LibTransientSlot for bytes32;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
@@ -92,87 +94,6 @@ contract Retargetter is
   address public immutable REQUEST_FACTORY;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      ERC-7201 STORAGE                      */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice The bound asset pair (namespace "retargetter.assets").
-  /// @dev Written once at initialize, never mutated afterwards.
-  /// @param collateralAsset The collateral asset every position manager and fund must match
-  /// @param debtAsset The debt asset every position manager, fund and Request must match
-  struct RetargetterAssets {
-    address collateralAsset;
-    address debtAsset;
-  }
-
-  /// @notice The whitelists (namespace "retargetter.whitelists").
-  /// @dev Plain mappings without enumeration; indexers use the add/remove events.
-  /// @param funds The owner-approved venues
-  /// @param flashLoanModules The owner-approved flash-loan adapters
-  struct RetargetterWhitelists {
-    mapping(address fund => bool) funds;
-    mapping(address module => bool) flashLoanModules;
-  }
-
-  /// @notice The one in-flight asynchronous operation (namespace "retargetter.operation").
-  /// @dev `positionManager != address(0)` is the operation-active flag; the struct is zeroed
-  ///      at resolve. The stored order is partial: `owner` and `receiver` are always the
-  ///      Retargetter (enforced at create) so the wrappers rebuild the full Order in memory.
-  /// @param positionManager The operation's position manager
-  /// @param startedAt The loan clock origin, set at the first consume (0 until then)
-  /// @param operationMaxYieldBps The effective yield cap, fixed at start
-  /// @param request The Request deployed for the operation
-  /// @param fund The operation's venue, owner-whitelisted at start
-  /// @param orderMode The stored order's mode
-  /// @param orderLive Whether an order is stored
-  /// @param orderInput The stored order's input amount
-  /// @param orderOutput The stored order's output amount
-  /// @param orderSalt The stored order's salt
-  struct RetargetterOperation {
-    address positionManager;
-    uint40 startedAt;
-    uint16 operationMaxYieldBps;
-    address request;
-    address fund;
-    Mode orderMode;
-    bool orderLive;
-    uint256 orderInput;
-    uint256 orderOutput;
-    bytes32 orderSalt;
-  }
-
-  /// @dev Returns the ERC-7201 storage pointer for the bound asset pair.
-  function _assetsStorage() internal pure returns (RetargetterAssets storage $) {
-    bytes32 slot = ASSETS_STORAGE_SLOT;
-    assembly ("memory-safe") {
-      $.slot := slot
-    }
-  }
-
-  /// @dev Returns the ERC-7201 storage pointer for the configuration.
-  function _configStorage() internal pure returns (RetargetterConfig storage $) {
-    bytes32 slot = CONFIG_STORAGE_SLOT;
-    assembly ("memory-safe") {
-      $.slot := slot
-    }
-  }
-
-  /// @dev Returns the ERC-7201 storage pointer for the whitelists.
-  function _whitelistsStorage() internal pure returns (RetargetterWhitelists storage $) {
-    bytes32 slot = WHITELISTS_STORAGE_SLOT;
-    assembly ("memory-safe") {
-      $.slot := slot
-    }
-  }
-
-  /// @dev Returns the ERC-7201 storage pointer for the in-flight operation.
-  function _operationStorage() internal pure returns (RetargetterOperation storage $) {
-    bytes32 slot = OPERATION_STORAGE_SLOT;
-    assembly ("memory-safe") {
-      $.slot := slot
-    }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         MODIFIERS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -180,7 +101,7 @@ contract Retargetter is
   ///      callback drive the steps, since `msg.sender` there is the module), when the caller
   ///      is the owner, or when the caller holds the rebalancer role.
   modifier onlyOwnerOrRebalancer() {
-    if (!_isWindowOpen() && msg.sender != owner() && !hasAnyRole(msg.sender, REBALANCER_ROLE)) {
+    if (WINDOW_TSLOT.tLoadUint() == 0 && msg.sender != owner() && !hasAnyRole(msg.sender, REBALANCER_ROLE)) {
       revert Unauthorized();
     }
     _;
@@ -221,7 +142,7 @@ contract Retargetter is
     debtAsset_.checkContract();
     if (collateralAsset_ == debtAsset_) revert LibRetargetterErrors.AssetMismatch();
     _setConfig(config_);
-    RetargetterAssets storage assets_ = _assetsStorage();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     assets_.collateralAsset = collateralAsset_;
     assets_.debtAsset = debtAsset_;
     _initializeOwner(owner_);
@@ -243,15 +164,17 @@ contract Retargetter is
     string calldata requestName,
     string calldata requestSymbol
   ) external onlyOwnerOrRebalancer nonReentrant returns (address request) {
-    RetargetterOperation storage operation_ = _operationStorage();
-    if (operation_.positionManager != address(0) || _isWindowOpen()) revert LibRetargetterErrors.OperationActive();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    // The position manager doubles as the active flag; a SYNC window keeps it populated, so
+    // this also locks out starts smuggled into a window payload
+    if (operation_.positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
     _checkPair(positionManager);
-    if (!_whitelistsStorage().funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
+    if (!LibStorage.whitelistsStorage().funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
     // Fail-fast principal check; the binding check re-runs at every consume
     if (principal > maxPrincipal(positionManager)) revert LibRetargetterErrors.PrincipalCapExceeded();
 
-    uint16 configCap = _configStorage().maxYieldBps;
+    uint16 configCap = LibStorage.configStorage().maxYieldBps;
     uint16 effectiveYieldCap = maxYieldBps_ < configCap ? maxYieldBps_ : configCap;
 
     (request,,) = IRequestFactory(REQUEST_FACTORY)
@@ -259,7 +182,7 @@ contract Retargetter is
         address(this),
         address(this),
         address(this),
-        _assetsStorage().debtAsset,
+        LibStorage.assetsStorage().debtAsset,
         requestName,
         requestSymbol,
         // Safe: block.timestamp + 90 days fits in uint64 for hundreds of billions of years
@@ -288,15 +211,15 @@ contract Retargetter is
     nonReentrant
     returns (uint256 ytAmount)
   {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address positionManager = operation_.positionManager;
-    address request = operation_.request;
-    if (positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    address request = operation_.checkRequest();
     if (offer.expectedReturn * BPS > offer.amount * operation_.operationMaxYieldBps) {
       revert LibRetargetterErrors.YieldTooHigh();
     }
     (uint128 ptSupply,) = ITokenController(request).totalSupplies();
-    if (ptSupply + ptAmount > maxPrincipal(positionManager)) revert LibRetargetterErrors.PrincipalCapExceeded();
+    if (ptSupply + ptAmount > maxPrincipal(operation_.positionManager)) {
+      revert LibRetargetterErrors.PrincipalCapExceeded();
+    }
     // The first consume starts the loan clock; later consumes accrue from the same origin
     if (operation_.startedAt == 0) {
       // Safe: block.timestamp fits in uint40 for ~35,000 years
@@ -310,9 +233,7 @@ contract Retargetter is
   /// @inheritdoc IRetargetter
   /// @dev Naturally bounded by the Request's balance, which the principal cap already bounded.
   function pullRequestFunds(uint256 amount) external onlyOwnerOrRebalancer nonReentrant {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address request = operation_.request;
-    if (operation_.positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    address request = LibStorage.operationStorage().checkRequest();
     IRequestInteractions(request).pullFunds(amount, "");
     emit RequestFundsPulled(request, amount);
   }
@@ -327,11 +248,10 @@ contract Retargetter is
   ///      settling after that point should be delivered to lenders through owner
   ///      rescue(debtAsset, request) before holders redeem, not folded into the position.
   function repay() external onlyOwnerOrRebalancer nonReentrant returns (uint256 owedAmount) {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address request = operation_.request;
-    if (operation_.positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    address request = operation_.checkRequest();
     owedAmount = _owed(operation_);
-    address debtAsset = _assetsStorage().debtAsset;
+    address debtAsset = LibStorage.assetsStorage().debtAsset;
     uint256 requestBalance = debtAsset.balanceOf(request);
     uint256 shortfall = owedAmount > requestBalance ? owedAmount - requestBalance : 0;
     if (shortfall > 0) {
@@ -347,10 +267,8 @@ contract Retargetter is
   /// @dev Owner path for defaults and disputes. For a true default nothing needs calling:
   ///      the Request auto-expires at its deadline and holders redeem what sits there.
   function forceRepay(uint256 amount, uint256 minBalance, uint256 maxBalance) external onlyOwner nonReentrant {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address request = operation_.request;
-    if (operation_.positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
-    if (amount > 0) _assetsStorage().debtAsset.safeTransfer(request, amount);
+    address request = LibStorage.operationStorage().checkRequest();
+    if (amount > 0) LibStorage.assetsStorage().debtAsset.safeTransfer(request, amount);
     IRequest(request).setRepaid(minBalance, maxBalance);
     emit RequestForceRepaid(request, amount, minBalance, maxBalance);
   }
@@ -361,20 +279,13 @@ contract Retargetter is
   ///      pending order (an ENDED or force-ended order is cleared here), and zero residual
   ///      on both bound assets (donations are unblocked by owner rescue).
   function resolve() external onlyOwnerOrRebalancer nonReentrant {
-    RetargetterOperation storage operation_ = _operationStorage();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    address request = operation_.checkRequest();
     address positionManager = operation_.positionManager;
-    address request = operation_.request;
-    if (positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
     if (!IRequest(request).syncRepaidStatus()) revert LibRetargetterErrors.RequestNotRepaid();
-    _checkNoPendingOrder(operation_, operation_.fund);
+    operation_.checkNoPendingOrder(operation_.fund);
     _checkZeroResidual();
-
-    operation_.positionManager = address(0);
-    operation_.startedAt = 0;
-    operation_.operationMaxYieldBps = 0;
-    operation_.request = address(0);
-    operation_.fund = address(0);
-
+    operation_.clearOperation();
     emit RetargettingResolved(positionManager, request);
   }
 
@@ -383,27 +294,25 @@ contract Retargetter is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRetargetter
-  /// @dev Operates against the resolved fund: the active operation's fund, or the window
-  ///      fund inside a flash loan. Only the non-derivable order fields are stored; identical
-  ///      re-submissions need a fresh salt because funds archive ended order ids. An order
-  ///      created inside a flash-loan window must reach ENDED or be canceled before the
-  ///      window closes. Operator note: size order.output at or below the venue-simulated
-  ///      output; on venues whose deviation check is one-sided (Pareto rejects only outputs
-  ///      below the rate), an overstated output commits into an order that never becomes
-  ///      unlockable and stays pending until the fund operator resolves it fund-side.
+  /// @dev Operates against the operation's fund (ASYNC operations and SYNC windows both
+  ///      record it in the operation storage). Only the non-derivable order fields are
+  ///      stored; identical re-submissions need a fresh salt because funds archive ended
+  ///      order ids. An order created inside a flash-loan window must reach ENDED or be
+  ///      canceled before the window closes. Operator note: size order.output at or below
+  ///      the venue-simulated output; on venues whose deviation check is one-sided (Pareto
+  ///      rejects only outputs below the rate), an overstated output commits into an order
+  ///      that never becomes unlockable and stays pending until the fund operator resolves
+  ///      it fund-side.
   function create(Order calldata order_) external onlyOwnerOrRebalancer nonReentrant {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address fund = _resolveFund(operation_);
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    operation_.checkActive();
+    address fund = operation_.fund;
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
     if (order_.owner != address(this) || order_.receiver != address(this)) {
       revert LibRetargetterErrors.InvalidOrder();
     }
     IFund(fund).create(order_);
-    operation_.orderMode = order_.mode;
-    operation_.orderLive = true;
-    operation_.orderInput = order_.input;
-    operation_.orderOutput = order_.output;
-    operation_.orderSalt = order_.salt;
+    operation_.setOrder(order_);
     emit OrderCreated(fund, order_);
   }
 
@@ -411,11 +320,12 @@ contract Retargetter is
   /// @dev Approves exactly the order input (debt asset for DEPOSIT, collateral asset for
   ///      REDEEM) and scrubs the approval after the call.
   function commit() external onlyOwnerOrRebalancer nonReentrant {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address fund = _resolveFund(operation_);
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    operation_.checkActive();
+    address fund = operation_.fund;
     if (!operation_.orderLive) revert LibRetargetterErrors.NoOrder();
-    Order memory order_ = _rebuildOrder(operation_);
-    RetargetterAssets storage assets_ = _assetsStorage();
+    Order memory order_ = operation_.order();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     address inputToken = order_.mode == Mode.DEPOSIT ? assets_.debtAsset : assets_.collateralAsset;
     inputToken.safeApproveWithRetry(fund, order_.input);
     IFund(fund).commit(order_);
@@ -427,24 +337,26 @@ contract Retargetter is
   /// @dev Partial fills leave the order live for a later call; the order is cleared once the
   ///      fund reports ENDED.
   function unlock() external onlyOwnerOrRebalancer nonReentrant returns (uint256 amountOut) {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address fund = _resolveFund(operation_);
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    operation_.checkActive();
+    address fund = operation_.fund;
     if (!operation_.orderLive) revert LibRetargetterErrors.NoOrder();
-    Order memory order_ = _rebuildOrder(operation_);
+    Order memory order_ = operation_.order();
     State state_;
     (state_, amountOut) = IFund(fund).unlock(order_);
-    if (state_ == State.ENDED) _clearOrder(operation_);
+    if (state_ == State.ENDED) operation_.clearOrder();
     emit OrderUnlocked(fund, order_);
   }
 
   /// @inheritdoc IRetargetter
   function cancelOrder() external onlyOwnerOrRebalancer nonReentrant {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address fund = _resolveFund(operation_);
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    operation_.checkActive();
+    address fund = operation_.fund;
     if (!operation_.orderLive) revert LibRetargetterErrors.NoOrder();
-    Order memory order_ = _rebuildOrder(operation_);
+    Order memory order_ = operation_.order();
     IFund(fund).cancel(order_);
-    _clearOrder(operation_);
+    operation_.clearOrder();
     emit OrderCanceled(fund, order_);
   }
 
@@ -452,13 +364,14 @@ contract Retargetter is
   /// @dev Partial recoveries leave the order live for a later call; the order is cleared once
   ///      the fund reports ENDED.
   function recoverOrder() external onlyOwnerOrRebalancer nonReentrant returns (uint256 amountIn) {
-    RetargetterOperation storage operation_ = _operationStorage();
-    address fund = _resolveFund(operation_);
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    operation_.checkActive();
+    address fund = operation_.fund;
     if (!operation_.orderLive) revert LibRetargetterErrors.NoOrder();
-    Order memory order_ = _rebuildOrder(operation_);
+    Order memory order_ = operation_.order();
     State state_;
     (state_, amountIn) = IFund(fund).recover(order_);
-    if (state_ == State.ENDED) _clearOrder(operation_);
+    if (state_ == State.ENDED) operation_.clearOrder();
     emit OrderRecovered(fund, order_);
   }
 
@@ -477,8 +390,8 @@ contract Retargetter is
   ///      A sentinel resolving to a zero balance produces a zero-amount leg, which the borrow
   ///      modules reject; the whole call reverts atomically.
   function rebalance(RebalancingData calldata data) external onlyOwnerOrRebalancer nonReentrant {
-    address positionManager = _resolvePositionManager();
-    RetargetterAssets storage assets_ = _assetsStorage();
+    address positionManager = LibStorage.operationStorage().checkActive();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     address collateralAsset = assets_.collateralAsset;
     address debtAsset = assets_.debtAsset;
 
@@ -548,7 +461,10 @@ contract Retargetter is
   /// @dev Deliberately not nonReentrant: the payload steps executed inside the callback are
   ///      themselves guarded and the guard lives in transient storage shared across the
   ///      delegatecalls, so a held outer guard would revert every inner step. Reentry
-  ///      protection comes from the window flag doubling as the entry lock. Atomicity is the
+  ///      protection comes from the operation storage doubling as the entry lock. The window
+  ///      populates the same operation storage the steps read during an ASYNC operation
+  ///      (minus the Request, whose absence gates the ASYNC-only steps) and zeroes it at
+  ///      window close, so nothing persists past the transaction. Atomicity is the
   ///      settlement invariant: either the whole retarget lands (loan repaid, no stored
   ///      order, zero residual) or the transaction reverts.
   function startSyncRetargetting(
@@ -558,36 +474,37 @@ contract Retargetter is
     address fund,
     bytes[] calldata data
   ) external onlyOwnerOrRebalancer {
-    RetargetterOperation storage operation_ = _operationStorage();
-    if (operation_.positionManager != address(0) || _isWindowOpen()) revert LibRetargetterErrors.OperationActive();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    if (operation_.positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
-    RetargetterWhitelists storage whitelists = _whitelistsStorage();
+    RetargetterWhitelists storage whitelists = LibStorage.whitelistsStorage();
     if (!whitelists.flashLoanModules[flashLoanModule]) revert LibRetargetterErrors.ModuleNotWhitelisted();
     if (!whitelists.funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
     _checkPair(positionManager);
     if (flashLoanAmount > maxPrincipal(positionManager)) revert LibRetargetterErrors.PrincipalCapExceeded();
 
-    // Open the window: the flag hands step authority to the flash-loan callback chain
-    _tstoreUint(WINDOW_TSLOT, 1);
-    _tstoreAddress(MODULE_TSLOT, flashLoanModule);
-    _tstoreAddress(POSITION_MANAGER_TSLOT, positionManager);
-    _tstoreAddress(FUND_TSLOT, fund);
-    _tstoreUint(AMOUNT_TSLOT, flashLoanAmount);
+    // Open the window: the operation storage carries the addresses the steps read (and locks
+    // out nested starts); the transient slots carry the window flag, which hands step
+    // authority to the flash-loan callback chain, and the callback authentication
+    operation_.positionManager = positionManager;
+    operation_.fund = fund;
+    WINDOW_TSLOT.tStoreUint(1);
+    MODULE_TSLOT.tStoreAddress(flashLoanModule);
+    AMOUNT_TSLOT.tStoreUint(flashLoanAmount);
 
-    address debtAsset = _assetsStorage().debtAsset;
+    address debtAsset = LibStorage.assetsStorage().debtAsset;
     IFlashLoanModule(flashLoanModule).flashLoan(debtAsset, flashLoanAmount, abi.encode(data));
 
     // The module has pulled its repayment; close the window and scrub any leftover approval
-    _tstoreUint(WINDOW_TSLOT, 0);
-    _tstoreAddress(MODULE_TSLOT, address(0));
-    _tstoreAddress(POSITION_MANAGER_TSLOT, address(0));
-    _tstoreAddress(FUND_TSLOT, address(0));
-    _tstoreUint(AMOUNT_TSLOT, 0);
+    WINDOW_TSLOT.tStoreUint(0);
+    MODULE_TSLOT.tStoreAddress(address(0));
+    AMOUNT_TSLOT.tStoreUint(0);
     debtAsset.safeApprove(flashLoanModule, 0);
 
-    // Settlement gates on the function's own parameters, not the cleared transients
-    _checkNoPendingOrder(operation_, fund);
+    // Settlement gates, then zero the operation storage so nothing survives the window
+    operation_.checkNoPendingOrder(fund);
     _checkZeroResidual();
+    operation_.clearOperation();
 
     emit SyncRetargettingExecuted(positionManager, flashLoanModule, flashLoanAmount);
   }
@@ -595,24 +512,29 @@ contract Retargetter is
   /// @notice Provider-agnostic flash-loan callback executing the operation payload.
   /// @dev Only callable by the transient module with the exact transient amount; the module
   ///      slot is zeroed on entry so the callback is single-shot (a nested or replayed
-  ///      callback, including one smuggled into the payload, fails). Each payload element is
-  ///      delegatecalled on this contract, so the steps run their own modifiers with
-  ///      `msg.sender` being the module; authorization flows through the window flag.
+  ///      callback, including one smuggled into the payload, fails). The payload runs through
+  ///      Solady's `_multicall`: each element is delegatecalled on this contract, so the
+  ///      steps run their own modifiers with `msg.sender` being the module; authorization
+  ///      flows through the window flag.
   /// @param amount The flash-loaned amount
   /// @param data The ABI-encoded step calls supplied to startSyncRetargetting
   function onFlashLoan(uint256 amount, bytes calldata data) external {
-    address module = _tloadAddress(MODULE_TSLOT);
-    if (module == address(0) || msg.sender != module || amount != _tloadUint(AMOUNT_TSLOT)) {
+    address module = MODULE_TSLOT.tLoadAddress();
+    if (module == address(0) || msg.sender != module || amount != AMOUNT_TSLOT.tLoadUint()) {
       revert LibRetargetterErrors.UnauthorizedFlashLoanCallback();
     }
-    _tstoreAddress(MODULE_TSLOT, address(0));
-    bytes[] memory calls = abi.decode(data, (bytes[]));
-    uint256 callsLength = calls.length;
-    for (uint256 i = 0; i < callsLength; ++i) {
-      address(this).delegateCallContract(calls[i]);
+    MODULE_TSLOT.tStoreAddress(address(0));
+    // `data` is the abi.encode of the step calls built by startSyncRetargetting and forwarded
+    // verbatim by the module; point a calldata array at it in place instead of copying it
+    bytes[] calldata calls;
+    assembly ("memory-safe") {
+      let arrayOffset := add(data.offset, calldataload(data.offset))
+      calls.offset := add(arrayOffset, 0x20)
+      calls.length := calldataload(arrayOffset)
     }
+    _multicall(calls);
     // The module pulls its repayment through this allowance after the callback returns
-    _assetsStorage().debtAsset.safeApproveWithRetry(module, amount);
+    LibStorage.assetsStorage().debtAsset.safeApproveWithRetry(module, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -630,7 +552,7 @@ contract Retargetter is
   /// @dev Zero estimates are valid and equal the zero-rate ideal principal cap. A change
   ///      moves only the cap, which binds future consumption, not past.
   function setEstimates(YieldEstimates calldata estimates_) external onlyOwner nonReentrant {
-    _configStorage().estimates = estimates_;
+    LibStorage.configStorage().estimates = estimates_;
     emit EstimatesSet(estimates_);
   }
 
@@ -639,25 +561,25 @@ contract Retargetter is
   ///      operation start.
   function addFund(address fund) external onlyOwner nonReentrant {
     fund.checkContract();
-    RetargetterAssets storage assets_ = _assetsStorage();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     if (IFund(fund).asset() != assets_.debtAsset || IFund(fund).share() != assets_.collateralAsset) {
       revert LibRetargetterErrors.AssetMismatch();
     }
-    _whitelistsStorage().funds[fund] = true;
+    LibStorage.whitelistsStorage().funds[fund] = true;
     emit FundAdded(fund);
   }
 
   /// @inheritdoc IRetargetter
   function removeFund(address fund) external onlyOwner nonReentrant {
-    if (_operationStorage().fund == fund) revert LibRetargetterErrors.OperationActive();
-    _whitelistsStorage().funds[fund] = false;
+    if (LibStorage.operationStorage().fund == fund) revert LibRetargetterErrors.OperationActive();
+    LibStorage.whitelistsStorage().funds[fund] = false;
     emit FundRemoved(fund);
   }
 
   /// @inheritdoc IRetargetter
   function addFlashLoanModule(address module) external onlyOwner nonReentrant {
     module.checkContract();
-    _whitelistsStorage().flashLoanModules[module] = true;
+    LibStorage.whitelistsStorage().flashLoanModules[module] = true;
     emit FlashLoanModuleAdded(module);
   }
 
@@ -665,7 +587,7 @@ contract Retargetter is
   /// @dev Removable any time: an open window binds its module for the transaction through
   ///      the transient slots, not the whitelist.
   function removeFlashLoanModule(address module) external onlyOwner nonReentrant {
-    _whitelistsStorage().flashLoanModules[module] = false;
+    LibStorage.whitelistsStorage().flashLoanModules[module] = false;
     emit FlashLoanModuleRemoved(module);
   }
 
@@ -682,7 +604,7 @@ contract Retargetter is
 
   /// @inheritdoc IRetargetter
   function assets() external view returns (address collateralAsset, address debtAsset) {
-    RetargetterAssets storage assets_ = _assetsStorage();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     return (assets_.collateralAsset, assets_.debtAsset);
   }
 
@@ -700,21 +622,21 @@ contract Retargetter is
       bool orderLive
     )
   {
-    RetargetterOperation storage operation_ = _operationStorage();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
     return (
       operation_.positionManager,
       operation_.request,
       operation_.fund,
       operation_.startedAt,
       operation_.operationMaxYieldBps,
-      _rebuildOrder(operation_),
+      operation_.order(),
       operation_.orderLive
     );
   }
 
   /// @inheritdoc IRetargetter
   function isActive() external view returns (bool) {
-    return _operationStorage().positionManager != address(0);
+    return LibStorage.operationStorage().positionManager != address(0);
   }
 
   /// @inheritdoc IRetargetter
@@ -731,7 +653,7 @@ contract Retargetter is
     }
     (uint256 target,) = IPositionManager(positionManager).config();
     uint256 current = debt.divWad(collateralQuoted);
-    RetargetterConfig storage config_ = _configStorage();
+    RetargetterConfig storage config_ = LibStorage.configStorage();
     YieldEstimates storage estimates = config_.estimates;
     uint256 principal;
     if (current < target) {
@@ -762,14 +684,14 @@ contract Retargetter is
 
   /// @inheritdoc IRetargetter
   function owed() external view returns (uint256) {
-    RetargetterOperation storage operation_ = _operationStorage();
-    if (operation_.positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    operation_.checkRequest();
     return _owed(operation_);
   }
 
   /// @inheritdoc IRetargetter
   function config() external view returns (RetargetterConfig memory) {
-    RetargetterConfig storage stored = _configStorage();
+    RetargetterConfig storage stored = LibStorage.configStorage();
     return RetargetterConfig({
       horizon: stored.horizon,
       tickDuration: stored.tickDuration,
@@ -782,12 +704,12 @@ contract Retargetter is
 
   /// @inheritdoc IRetargetter
   function isFund(address fund) external view returns (bool) {
-    return _whitelistsStorage().funds[fund];
+    return LibStorage.whitelistsStorage().funds[fund];
   }
 
   /// @inheritdoc IRetargetter
   function isFlashLoanModule(address module) external view returns (bool) {
-    return _whitelistsStorage().flashLoanModules[module];
+    return LibStorage.whitelistsStorage().flashLoanModules[module];
   }
 
   /// @inheritdoc IRetargetter
@@ -813,7 +735,7 @@ contract Retargetter is
     ) {
       revert LibRetargetterErrors.InvalidParameters();
     }
-    RetargetterConfig storage stored = _configStorage();
+    RetargetterConfig storage stored = LibStorage.configStorage();
     stored.horizon = config_.horizon;
     stored.tickDuration = config_.tickDuration;
     stored.tickThreshold = config_.tickThreshold;
@@ -827,7 +749,7 @@ contract Retargetter is
   ///      tokens were validated against the pair at addFund and the Request is created with
   ///      the debt asset, so a matching position manager makes the whole operation match.
   function _checkPair(address positionManager) internal view {
-    RetargetterAssets storage assets_ = _assetsStorage();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
     if (collateralAsset != assets_.collateralAsset || debtAsset != assets_.debtAsset) {
       revert LibRetargetterErrors.AssetMismatch();
@@ -839,7 +761,7 @@ contract Retargetter is
   ///      the owed amount is zero regardless of the elapsed time.
   function _owed(RetargetterOperation storage operation_) internal view returns (uint256) {
     (uint128 ptSupply, uint128 ytSupply) = ITokenController(operation_.request).totalSupplies();
-    RetargetterConfig storage config_ = _configStorage();
+    RetargetterConfig storage config_ = LibStorage.configStorage();
     return IRetargetterQuoter(QUOTER)
       .repaymentOwed(
         ptSupply,
@@ -851,58 +773,11 @@ contract Retargetter is
       );
   }
 
-  /// @dev Resolves the fund a step operates against: the active operation's fund, or the
-  ///      window fund inside a flash loan.
-  function _resolveFund(RetargetterOperation storage operation_) internal view returns (address fund) {
-    fund = operation_.fund;
-    if (fund == address(0)) fund = _tloadAddress(FUND_TSLOT);
-    if (fund == address(0)) revert LibRetargetterErrors.NoActiveOperation();
-  }
-
-  /// @dev Resolves the position manager a step operates against: the active operation's, or
-  ///      the window's inside a flash loan.
-  function _resolvePositionManager() internal view returns (address positionManager) {
-    positionManager = _operationStorage().positionManager;
-    if (positionManager == address(0)) positionManager = _tloadAddress(POSITION_MANAGER_TSLOT);
-    if (positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
-  }
-
-  /// @dev Rebuilds the full stored order in memory; owner and receiver are always this
-  ///      contract (enforced at create), so they are never stored.
-  function _rebuildOrder(RetargetterOperation storage operation_) internal view returns (Order memory) {
-    return Order({
-      mode: operation_.orderMode,
-      owner: address(this),
-      receiver: address(this),
-      input: operation_.orderInput,
-      output: operation_.orderOutput,
-      salt: operation_.orderSalt
-    });
-  }
-
-  /// @dev Clears the stored order fields and the liveness flag.
-  function _clearOrder(RetargetterOperation storage operation_) internal {
-    operation_.orderMode = Mode.DEPOSIT;
-    operation_.orderLive = false;
-    operation_.orderInput = 0;
-    operation_.orderOutput = 0;
-    operation_.orderSalt = bytes32(0);
-  }
-
-  /// @dev Settlement gate: with a stored order, an ENDED (or fund-side force-ended, reading
-  ///      EMPTY) order is cleared, anything else reverts OrderPending.
-  function _checkNoPendingOrder(RetargetterOperation storage operation_, address fund) internal {
-    if (!operation_.orderLive) return;
-    State state_ = IFund(fund).state(_rebuildOrder(operation_));
-    if (state_ != State.ENDED && state_ != State.EMPTY) revert LibRetargetterErrors.OrderPending();
-    _clearOrder(operation_);
-  }
-
   /// @dev Settlement gate: the balances of both bound assets must be exactly zero. Every
   ///      borrowed or withdrawn unit must have returned to the position manager, to the
   ///      Request, or been rescued by the owner.
   function _checkZeroResidual() internal view {
-    RetargetterAssets storage assets_ = _assetsStorage();
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     address collateralAsset = assets_.collateralAsset;
     uint256 balance = collateralAsset.balanceOf(address(this));
     if (balance != 0) revert LibRetargetterErrors.ResidualBalance(collateralAsset, balance);
@@ -929,39 +804,6 @@ contract Retargetter is
     if (debt == 0) return 0;
     if (collateralQuoted == 0) return type(uint256).max;
     return debt.divWad(collateralQuoted);
-  }
-
-  /// @dev Whether a flash-loan window is open.
-  function _isWindowOpen() internal view returns (bool) {
-    return _tloadUint(WINDOW_TSLOT) != 0;
-  }
-
-  /// @dev Reads an address from a transient slot.
-  function _tloadAddress(uint256 slot) internal view returns (address value) {
-    assembly ("memory-safe") {
-      value := tload(slot)
-    }
-  }
-
-  /// @dev Reads a uint256 from a transient slot.
-  function _tloadUint(uint256 slot) internal view returns (uint256 value) {
-    assembly ("memory-safe") {
-      value := tload(slot)
-    }
-  }
-
-  /// @dev Writes an address to a transient slot.
-  function _tstoreAddress(uint256 slot, address value) internal {
-    assembly ("memory-safe") {
-      tstore(slot, value)
-    }
-  }
-
-  /// @dev Writes a uint256 to a transient slot.
-  function _tstoreUint(uint256 slot, uint256 value) internal {
-    assembly ("memory-safe") {
-      tstore(slot, value)
-    }
   }
 
   /// @inheritdoc ReentrancyGuardTransient

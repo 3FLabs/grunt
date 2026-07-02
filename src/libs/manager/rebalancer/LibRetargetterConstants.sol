@@ -89,21 +89,13 @@ bytes32 constant OPERATION_STORAGE_SLOT = 0x79211724a6a2d25fad538c732b7f9fee62ff
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
 /// @dev Transient slot for the flash-loan window flag (nonzero while a window is open).
-///      Computed as: uint256(keccak256("retargetter.transient.window")) - 1
-uint256 constant WINDOW_TSLOT = 0xd6afb5b9c2dc000141f8a98b95795a2e10b482782ed7428b0e955204ff9c2c83;
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.window")) - 1)
+bytes32 constant WINDOW_TSLOT = 0xd6afb5b9c2dc000141f8a98b95795a2e10b482782ed7428b0e955204ff9c2c83;
 
 /// @dev Transient slot for the module expected to call back (zeroed on callback entry).
-///      Computed as: uint256(keccak256("retargetter.transient.module")) - 1
-uint256 constant MODULE_TSLOT = 0x3766ddc68b0c7bb3c206ee7037a0b3dd14384ba84828df4ab6c4637a92d70353;
-
-/// @dev Transient slot for the window's position manager.
-///      Computed as: uint256(keccak256("retargetter.transient.positionManager")) - 1
-uint256 constant POSITION_MANAGER_TSLOT = 0xfac7a8d4bf027b9724c728ba8e0a59f019812d883d6ba618d230c3db4f633620;
-
-/// @dev Transient slot for the window's fund.
-///      Computed as: uint256(keccak256("retargetter.transient.fund")) - 1
-uint256 constant FUND_TSLOT = 0x43b201c9ab0c6337e0d7f6dadaa8fa55ddd669016f1ed1773d3ceeac5f0db496;
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.module")) - 1)
+bytes32 constant MODULE_TSLOT = 0x3766ddc68b0c7bb3c206ee7037a0b3dd14384ba84828df4ab6c4637a92d70353;
 
 /// @dev Transient slot for the expected flash-loan amount.
-///      Computed as: uint256(keccak256("retargetter.transient.amount")) - 1
-uint256 constant AMOUNT_TSLOT = 0xc37562d71acab34fa73520c0ed6a5ead38685eb8f5e228c3c887ece9e742319b;
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.amount")) - 1)
+bytes32 constant AMOUNT_TSLOT = 0xc37562d71acab34fa73520c0ed6a5ead38685eb8f5e228c3c887ece9e742319b;

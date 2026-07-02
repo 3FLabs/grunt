@@ -295,9 +295,11 @@ interface IRetargetter {
   /// @return debtAsset The debt asset of the pair
   function assets() external view returns (address collateralAsset, address debtAsset);
 
-  /// @notice Returns the in-flight asynchronous operation.
+  /// @notice Returns the in-flight operation.
+  /// @dev A SYNC flash-loan window registers here for the duration of its transaction, with
+  ///      only the position manager and the fund populated.
   /// @return positionManager The operation's position manager (zero when inactive)
-  /// @return request The operation's Request
+  /// @return request The operation's Request (zero inside a SYNC window)
   /// @return fund The operation's fund
   /// @return startedAt The loan clock origin (zero until the first consume)
   /// @return operationMaxYieldBps The effective per-operation yield cap
@@ -316,7 +318,8 @@ interface IRetargetter {
       bool orderLive
     );
 
-  /// @notice Returns whether an asynchronous operation is active.
+  /// @notice Returns whether an operation is active (an ASYNC operation, or a SYNC
+  ///         flash-loan window for the duration of its transaction).
   function isActive() external view returns (bool);
 
   /// @notice Computes the current principal cap for a position manager.
