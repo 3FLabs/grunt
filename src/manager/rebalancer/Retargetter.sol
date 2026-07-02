@@ -659,7 +659,9 @@ contract Retargetter is
     (uint256 target,) = IPositionManager(positionManager).config();
     uint256 current = debt.divWad(collateralQuoted);
     RetargetterConfig storage config_ = LibStorage.configStorage();
-    YieldEstimates storage estimates = config_.estimates;
+    // The estimates pack into a single slot, so one copy into memory beats a storage
+    // pointer re-reading the slot for every field passed to the quoter
+    YieldEstimates memory estimates = config_.estimates;
     uint256 principal;
     if (current < target) {
       principal = IRetargetterQuoter(QUOTER)
