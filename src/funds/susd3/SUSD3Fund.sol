@@ -229,8 +229,11 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
 
     address _susd3 = $.susd3;
     if (order.mode == Mode.DEPOSIT) {
-      // Stake synchronously. If sUSD3 applies a deposit lock, the received shares are held here and
-      // delivered by unlock() once the lock elapses (see _state) — no lock rejection needed.
+      // The USDC -> USD3 leg is always synchronous: USD3 (an ERC-4626 TokenizedStrategy) mints on
+      // deposit, has no lock, and its commitment-period transfer guard exempts transfers into sUSD3
+      // (staking), so the received USD3 can always be staked immediately. The only async element is
+      // sUSD3's deposit lock: when active, the received shares are held here and delivered by
+      // unlock() once the per-account lock elapses (see _state) — no lock rejection needed.
       address _asset = $.asset;
       address _usd3 = $.usd3;
 
