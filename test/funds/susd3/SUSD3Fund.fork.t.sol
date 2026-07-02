@@ -10,11 +10,25 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {ISUSD3} from "src/interfaces/integrations/susd3/ISUSD3.sol";
 import {IUSD3} from "src/interfaces/integrations/susd3/IUSD3.sol";
 import {IERC20} from "src/interfaces/integrations/IERC20.sol";
+import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
 interface IUSD3Whitelist {
   function whitelistEnabled() external view returns (bool);
   function management() external view returns (address);
   function setWhitelist(address, bool) external;
+}
+
+interface ISUSD3MorphoCredit {
+  function morphoCredit() external view returns (address);
+}
+
+interface IMorphoCreditConfig {
+  function protocolConfig() external view returns (address);
+}
+
+interface IProtocolConfigOwner {
+  function owner() external view returns (address);
+  function setConfig(bytes32 key, uint256 value) external;
 }
 
 /// @notice Mainnet-fork tests against the real sUSD3/USD3 contracts.
@@ -182,5 +196,34 @@ contract SUSD3FundForkTest is Test {
     assertGt(max, 0, "deposits are open");
     assertLe(max, usd3Cap, "bounded by usd3 supply cap");
     assertLe(max, susd3CapUsdc, "bounded by susd3 subordination cap");
+  }
+
+  /// @dev Re-enable sUSD3's deposit lock (as it was for most of history) and verify the fund defers
+  ///      delivery of the wrapped shares until the lock elapses, against the real sUSD3.
+  function test_Fork_DepositLockDeferred() public {
+    address cfg = IMorphoCreditConfig(ISUSD3MorphoCredit(SUSD3).morphoCredit()).protocolConfig();
+    vm.prank(IProtocolConfigOwner(cfg).owner());
+    IProtocolConfigOwner(cfg).setConfig(keccak256("SUSD3_LOCK_DURATION"), COOLDOWN);
+    assertEq(ISUSD3(SUSD3).lockDuration(), COOLDOWN, "lock enabled");
+
+    Order memory o = _depositOrder(DEPOSIT, "d1");
+    deal(USDC, address(this), DEPOSIT);
+    IERC20(USDC).approve(address(fund), DEPOSIT);
+    fund.create(o);
+    fund.commit(o);
+
+    // Staked, but the received sUSD3 is locked → delivery deferred.
+    assertEq(uint256(fund.state(o)), uint256(State.PROCESSING), "locked -> processing");
+    assertGt(IERC20(SUSD3).balanceOf(address(fund)), 0, "fund holds locked susd3");
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(o);
+
+    // Lock elapses → deliverable.
+    vm.warp(block.timestamp + COOLDOWN + 1);
+    assertEq(uint256(fund.state(o)), uint256(State.UNLOCKING), "lock elapsed -> unlocking");
+    (State s, uint256 shares) = fund.unlock(o);
+    assertEq(uint256(s), uint256(State.ENDED), "ended");
+    assertGt(shares, 0, "shares delivered");
+    assertEq(wrappedShare.balanceOf(address(this)), shares, "wsUSD3 to receiver");
   }
 }

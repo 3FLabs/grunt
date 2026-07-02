@@ -421,15 +421,33 @@ contract SUSD3FundTest is Test {
     fund.create(r);
   }
 
-  function test_Commit_RevertsDepositLockActive() public {
-    susd3.setLockDuration(1 days);
+  function test_Deposit_AsyncWhenLocked() public {
+    // sUSD3 applies a deposit lock: staking still succeeds, but delivery of the wrapped shares is
+    // deferred until the lock elapses (the fund holds the locked sUSD3 meanwhile).
+    susd3.setLockDuration(30 days);
     uint256 amount = 2000e6;
     Order memory o = _depositOrder(amount, amount, "d1");
     usdc.mint(address(this), amount);
     usdc.approve(address(fund), amount);
-    fund.create(o); // create does not check the lock
-    vm.expectRevert(LibFundsErrors.DepositLockActive.selector);
-    fund.commit(o);
+
+    fund.create(o);
+    (State s,) = fund.commit(o);
+    assertEq(uint256(s), uint256(State.PROCESSING), "processing");
+
+    // Staked but locked → not yet deliverable.
+    assertEq(uint256(fund.state(o)), uint256(State.PROCESSING), "locked -> processing");
+    assertEq(susd3.balanceOf(address(fund)), amount, "fund holds locked susd3");
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(o);
+
+    // Lock elapses → deliverable.
+    vm.warp(block.timestamp + 30 days + 1);
+    assertEq(uint256(fund.state(o)), uint256(State.UNLOCKING), "lock elapsed -> unlocking");
+    (State s2, uint256 out) = fund.unlock(o);
+    assertEq(uint256(s2), uint256(State.ENDED), "ended");
+    assertEq(out, amount, "shares delivered");
+    assertEq(wrappedShare.balanceOf(address(this)), amount, "wsUSD3 to receiver");
+    assertEq(susd3.balanceOf(address(fund)), 0, "no susd3 dust");
   }
 
   function test_Commit_RevertsSubordinationCap_StaysAccepted() public {

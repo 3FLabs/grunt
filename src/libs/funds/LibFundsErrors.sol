@@ -79,10 +79,6 @@ library LibFundsErrors {
   /// @notice Thrown when a deposit order's input is below the underlying strategy's minimum deposit.
   error BelowMinDeposit();
 
-  /// @notice Thrown when a deposit is attempted while the sUSD3 lock duration is non-zero,
-  ///         which would strand the received shares (deposits have no recovery path).
-  error DepositLockActive();
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

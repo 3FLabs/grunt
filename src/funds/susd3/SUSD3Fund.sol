@@ -25,9 +25,11 @@ import {BPS} from "../../libs/Constants.sol";
 ///        via two chained ERC-4626 conversions.
 ///      - Shares of this fund are represented by WrappedAsset tokens wrapping the sUSD3 share token.
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
-///      - Deposits are synchronous (sUSD3 `lockDuration` is 0): commit stakes and unlock delivers the
-///        wrapped shares in the same settlement. Redemptions are async: commit starts the sUSD3
-///        cooldown, and unlock claims once the cooldown has matured (`sUSD3.maxRedeem(this) > 0`).
+///      - Deposits stake synchronously (USDC -> USD3 -> sUSD3) in commit. Delivery of the wrapped
+///        shares is immediate when sUSD3 applies no deposit lock, or deferred until the lock elapses
+///        when one is active (the fund holds the staked sUSD3 meanwhile, gated by the per-account
+///        `sUSD3.lockedUntil`). Redemptions are async: commit starts the sUSD3 cooldown, and unlock
+///        claims once the cooldown has matured (`sUSD3.maxRedeem(this) > 0`).
 ///      - Recovery is operator-driven: cancelRedeem() cancels the cooldown (PROCESSING -> RECOVERING),
 ///        then recover() re-wraps the still-held sUSD3 back to the receiver. Only REDEEM orders recover;
 ///        deposits are atomic and never enter RECOVERING.
@@ -227,9 +229,8 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
 
     address _susd3 = $.susd3;
     if (order.mode == Mode.DEPOSIT) {
-      // A non-zero sUSD3 lock would strand the received shares in unlock() (deposits have no recovery).
-      if (ISUSD3(_susd3).lockDuration() != 0) revert LibFundsErrors.DepositLockActive();
-
+      // Stake synchronously. If sUSD3 applies a deposit lock, the received shares are held here and
+      // delivered by unlock() once the lock elapses (see _state) — no lock rejection needed.
       address _asset = $.asset;
       address _usd3 = $.usd3;
 
@@ -470,7 +471,9 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   ///      Queries sUSD3 to determine the PROCESSING -> UNLOCKING transition.
   ///
   ///      For PROCESSING + DEPOSIT:
-  ///      - Synchronous: UNLOCKING as soon as the fund has received sUSD3 (`depositReceived > 0`).
+  ///      - UNLOCKING once the fund holds the staked sUSD3 (`depositReceived > 0`) AND any sUSD3
+  ///        deposit lock has elapsed (`block.timestamp >= sUSD3.lockedUntil(this)`). Immediate when no
+  ///        lock is configured; otherwise deferred until the lock expires.
   ///
   ///      For PROCESSING + REDEEM:
   ///      - UNLOCKING once `sUSD3.maxRedeem(this) > 0`, which is true only after the cooldown has
@@ -485,7 +488,8 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     if (_internalState == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
         uint256 _received = $.depositReceived;
-        return _received > 0 ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
+        bool _ready = _received > 0 && block.timestamp >= ISUSD3($.susd3).lockedUntil(address(this));
+        return _ready ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
       }
       return ISUSD3($.susd3).maxRedeem(address(this)) > 0 ? (State.UNLOCKING, 0) : (State.PROCESSING, 0);
     }

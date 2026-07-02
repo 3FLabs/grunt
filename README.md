@@ -588,15 +588,16 @@ stateDiagram-v2
 
 **Key Design Decisions:**
 - Uses the **internal state pattern** (like Centrifuge/Pareto): `state()` queries sUSD3 to detect the PROCESSING → UNLOCKING transition.
-- Deposits are **synchronous** (sUSD3 `lockDuration` is 0): `commit()` stakes atomically and `unlock()` delivers the wrapped shares. A non-zero lock is rejected at commit with `DepositLockActive()` because deposits have no recovery path.
+- Deposits **stake synchronously** in `commit()` (measured USDC → USD3 → sUSD3). Delivery of the wrapped shares is **immediate** when sUSD3 applies no deposit lock; when a lock is active, the fund holds the staked sUSD3 and `unlock()` delivers once the per-account `sUSD3.lockedUntil` elapses. sUSD3's 30-day friction was historically a **deposit lock** and was only recently swapped to the withdrawal cooldown, so the fund is built to handle either configuration (gating on `lockedUntil`, not `lockDuration`, keeps an in-flight deposit robust to governance changes).
 - Redemptions are **cooldown-gated** — `commit()` calls `startCooldown()`, and `unlock()` becomes available once `sUSD3.maxRedeem() > 0` (after the ~30-day cooldown matures and while withdrawals aren't blocked by unrealized losses or the backing floor). `unlock()` supports **partial fills**, redeeming as much as sUSD3 currently allows and returning to PROCESSING for the remainder.
 - **Operator-abortable recovery** — an `OPERATOR_ROLE` holder calls `cancelRedeem()` to cancel the sUSD3 cooldown (PROCESSING → RECOVERING); `recover()` then re-wraps the fund's still-held sUSD3 (the tracked remainder) back to the receiver. This is the guaranteed escape for a stuck/backing-limited redeem, and clears any sub-wei floor-rounding residual. Only REDEEM orders recover — deposits are atomic.
 - Deposits are floored at USD3's `minDeposit` (rejected in `create()` with `BelowMinDeposit()`); the fund is always a first-time USD3 depositor since it holds no USD3 between orders.
 
-**Deposit Flow (Asset → WrappedShare), synchronous:**
+**Deposit Flow (Asset → WrappedShare), synchronous stake / lock-aware delivery:**
 1. `create(DEPOSIT)` - Validate slippage and `minDeposit`
 2. `commit()` - Pull USDC, `USD3.deposit()` then `sUSD3.deposit()` (measured by balance delta)
-3. `unlock()` - Wrap the received sUSD3 into `wsUSD3`, send to receiver
+3. *If sUSD3 applied a deposit lock, wait for `sUSD3.lockedUntil(fund)` to elapse*
+4. `unlock()` - Wrap the received sUSD3 into `wsUSD3`, send to receiver
 
 **Redeem Flow (WrappedShare → Asset), cooldown-gated:**
 1. `create(REDEEM)` - Validate slippage

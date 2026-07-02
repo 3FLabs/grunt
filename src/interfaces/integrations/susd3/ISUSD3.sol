@@ -39,6 +39,12 @@ interface ISUSD3 is IERC4626 {
   /// @notice Lock duration applied to new deposits (0 = deposited shares are immediately transferable).
   function lockDuration() external view returns (uint256);
 
+  /// @notice Timestamp until which `account`'s deposited shares are locked from transfer (0 if none).
+  /// @dev Set per-account at deposit time to `block.timestamp + lockDuration()`; not affected by later
+  ///      changes to `lockDuration()`.
+  /// @param account The address to query.
+  function lockedUntil(address account) external view returns (uint256);
+
   /// @notice Cooldown duration required before a withdrawal can be claimed.
   function cooldownDuration() external view returns (uint256);
 
