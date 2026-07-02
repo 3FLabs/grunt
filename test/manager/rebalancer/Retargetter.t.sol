@@ -124,6 +124,8 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(stored.tickThreshold, DEFAULT_TICK_THRESHOLD, "tick threshold");
     assertEq(stored.maxYieldBps, DEFAULT_MAX_YIELD_BPS, "max yield bps");
     assertEq(stored.principalBufferBps, DEFAULT_PRINCIPAL_BUFFER_BPS, "principal buffer bps");
+    assertEq(stored.collateralResidualExponent, 0, "collateral residual exponent");
+    assertEq(stored.debtResidualExponent, 0, "debt residual exponent");
     assertEq(stored.estimates.requestYieldRate, 0, "request yield rate");
     assertEq(stored.estimates.borrowRate, 0, "borrow rate");
     assertEq(stored.estimates.collateralYieldRate, 0, "collateral yield rate");
@@ -218,6 +220,8 @@ contract RetargetterTest is RetargetterBaseTest {
       tickThreshold: 1 days,
       maxYieldBps: 500,
       principalBufferBps: 50,
+      collateralResidualExponent: 12,
+      debtResidualExponent: 20,
       estimates: YieldEstimates({
         requestYieldRate: 0.05e18,
         borrowRate: 0.02e18,
@@ -238,6 +242,8 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(stored.tickThreshold, 1 days, "tick threshold");
     assertEq(stored.maxYieldBps, 500, "max yield bps");
     assertEq(stored.principalBufferBps, 50, "principal buffer bps");
+    assertEq(stored.collateralResidualExponent, 12, "collateral residual exponent");
+    assertEq(stored.debtResidualExponent, 20, "debt residual exponent");
     assertEq(stored.estimates.requestYieldRate, 0.05e18, "request yield rate");
     assertEq(stored.estimates.borrowRate, 0.02e18, "borrow rate");
     assertEq(stored.estimates.collateralYieldRate, 0.01e18, "collateral yield rate");

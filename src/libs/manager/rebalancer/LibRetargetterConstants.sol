@@ -47,7 +47,13 @@ uint16 constant MAX_YIELD_CAP_BPS = 5000;
 uint16 constant MAX_PRINCIPAL_BUFFER_BPS = 2000;
 
 /// @dev Repayment deadline offset applied to every deployed Request (the maximum the
-///      Request accepts).
+///      Request accepts). Acknowledged limitation: past the deadline the Request auto-expires
+///      and bypasses the local repayment checks, so 90 days is sized as an effectively
+///      infinite buffer for every supported settlement flow. If an operation ever runs into
+///      it regardless, remediation is arranged offchain and delivered only through beacon
+///      upgrades governed by an extensive multisig behind its own timelock; if 90 days
+///      becomes too short for some assets, the Request and the Retargetter get upgraded
+///      with a longer duration.
 /// @custom:value 7,776,000 (90 days)
 uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 

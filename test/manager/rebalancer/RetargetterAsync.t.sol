@@ -486,6 +486,53 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     assertFalse(retargetter.isActive(), "resolved once residuals are gone");
   }
 
+  /// @notice Balances strictly below 2^exponent on both assets pass the residual gate; the
+  ///         tolerated dust stays behind for the next operation. Asymmetric exponents with
+  ///         debt dust above the collateral tolerance pin each check to its own exponent.
+  function test_resolve_dustWithinResidualTolerance_resolves() public {
+    _startDefault();
+    _setResidualExponents(4, 20);
+    vm.prank(rebalancer);
+    retargetter.repay();
+
+    collateralToken.mint(address(retargetter), (1 << 4) - 1);
+    debtToken.mint(address(retargetter), (1 << 20) - 1);
+    vm.prank(rebalancer);
+    retargetter.resolve();
+
+    assertFalse(retargetter.isActive(), "resolved with tolerated dust");
+    assertEq(collateralToken.balanceOf(address(retargetter)), (1 << 4) - 1, "collateral dust stays");
+    assertEq(debtToken.balanceOf(address(retargetter)), (1 << 20) - 1, "debt dust stays");
+  }
+
+  /// @notice A collateral balance reaching 2^exponent exactly is above the tolerance.
+  function test_resolve_collateralAtToleranceBoundary_reverts() public {
+    _startDefault();
+    _setResidualExponents(20, 20);
+    vm.prank(rebalancer);
+    retargetter.repay();
+
+    collateralToken.mint(address(retargetter), 1 << 20);
+    vm.prank(rebalancer);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRetargetterErrors.ResidualBalance.selector, address(collateralToken), 1 << 20)
+    );
+    retargetter.resolve();
+  }
+
+  /// @notice A debt balance reaching 2^exponent exactly is above the tolerance.
+  function test_resolve_debtAtToleranceBoundary_reverts() public {
+    _startDefault();
+    _setResidualExponents(20, 20);
+    vm.prank(rebalancer);
+    retargetter.repay();
+
+    debtToken.mint(address(retargetter), 1 << 20);
+    vm.prank(rebalancer);
+    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.ResidualBalance.selector, address(debtToken), 1 << 20));
+    retargetter.resolve();
+  }
+
   /// @notice Resolve zeroes every operation field, including the loan clock origin.
   function test_resolve_clearsOperationState() public {
     _seedPosition(10_000e18, 5_000e18);

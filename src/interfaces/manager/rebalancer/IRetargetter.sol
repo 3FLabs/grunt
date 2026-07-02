@@ -25,6 +25,10 @@ struct YieldEstimates {
 /// @param tickThreshold The grace before promoting to the next tick, strictly below tickDuration
 /// @param maxYieldBps The owner ceiling on per-operation yield caps, at most 5000
 /// @param principalBufferBps The headroom over the computed principal cap, at most 2000
+/// @param collateralResidualExponent The settlement tolerance for the collateral asset:
+///        balances strictly below 2^exponent pass the residual gate, so dust donations
+///        cannot grief settlement (zero keeps the gate exact)
+/// @param debtResidualExponent The settlement tolerance for the debt asset, same convention
 /// @param estimates The yield estimates for the bound asset pair
 struct RetargetterConfig {
   uint32 horizon;
@@ -32,6 +36,8 @@ struct RetargetterConfig {
   uint24 tickThreshold;
   uint16 maxYieldBps;
   uint16 principalBufferBps;
+  uint8 collateralResidualExponent;
+  uint8 debtResidualExponent;
   YieldEstimates estimates;
 }
 
@@ -225,7 +231,8 @@ interface IRetargetter {
   function forceRepay(uint256 amount, uint256 minBalance, uint256 maxBalance) external;
 
   /// @notice Settles the asynchronous operation once the Request is repaid, no order is
-  ///         pending and the Retargetter holds none of the bound assets.
+  ///         pending and the Retargetter's balances of both bound assets are within the
+  ///         configured residual tolerance.
   function resolve() external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -235,7 +242,7 @@ interface IRetargetter {
   /// @notice Runs a whole retargetting operation atomically inside a flash loan.
   /// @dev The steps are supplied as a multicall payload executed inside the flash-loan
   ///      callback. At window close no order may be stored and the Retargetter's balances
-  ///      of both bound assets must be exactly zero.
+  ///      of both bound assets must be within the configured residual tolerance.
   /// @param positionManager The position manager to retarget (must match the bound pair)
   /// @param flashLoanModule The whitelisted flash-loan module to borrow through
   /// @param flashLoanAmount The flash-loan size, checked against the principal cap
@@ -279,8 +286,8 @@ interface IRetargetter {
   function removeFlashLoanModule(address module) external;
 
   /// @notice Sweeps the Retargetter's full balance of a token to a recipient.
-  /// @dev Owner escape hatch for donation griefing of the zero-residual gate and for
-  ///      stuck third-party tokens.
+  /// @dev Owner escape hatch for donations above the residual tolerance and for stuck
+  ///      third-party tokens.
   /// @param token The token to sweep
   /// @param to The recipient
   /// @return amount The swept amount

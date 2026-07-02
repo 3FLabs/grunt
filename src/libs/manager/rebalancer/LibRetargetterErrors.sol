@@ -19,8 +19,9 @@ library LibRetargetterErrors {
   /// @notice Thrown at resolve when the operation's Request has not been repaid.
   error RequestNotRepaid();
 
-  /// @notice Thrown when the Retargetter still holds some of a bound asset at settlement.
-  /// @param token The bound asset with a nonzero balance
+  /// @notice Thrown when a bound asset balance is at or above the configured residual
+  ///         tolerance at settlement.
+  /// @param token The bound asset above tolerance
   /// @param balance The residual balance
   error ResidualBalance(address token, uint256 balance);
 

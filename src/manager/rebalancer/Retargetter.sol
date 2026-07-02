@@ -61,9 +61,10 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///        transaction.
 ///
 ///      Trust model: fully trusted owner, semi-trusted rebalancer boxed in by the guardrails
-///      (direction checks, principal and yield caps, whitelists, zero-residual settlement),
+///      (direction checks, principal and yield caps, whitelists, residual settlement gates),
 ///      untrusted everyone else. The Retargetter holds no value at rest: `resolve` and the end
-///      of the flash-loan window both require its balances of the two bound assets to be zero.
+///      of the flash-loan window both require its balances of the two bound assets to stay
+///      within the configured residual tolerance (exact zero by default).
 ///
 ///      Derive, do not store: everything readable from the composed contracts (direction,
 ///      consumed principal, order liveness progress, repaid status) is recomputed fresh at
@@ -153,9 +154,10 @@ contract Retargetter is
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRetargetter
-  /// @dev The deployed Request gets the maximum 90-day repayment deadline and a zero
-  ///      mint-to-repaid delay (the minimum-one-tick rule already guarantees lenders a full
-  ///      tick of yield). The Retargetter becomes its owner, puller and consumer.
+  /// @dev The deployed Request gets the maximum 90-day repayment deadline (treated as
+  ///      effectively infinite; see REPAYMENT_DEADLINE_OFFSET for the acknowledgment) and a
+  ///      zero mint-to-repaid delay (the minimum-one-tick rule already guarantees lenders a
+  ///      full tick of yield). The Retargetter becomes its owner, puller and consumer.
   function startRetargetting(
     address positionManager,
     uint256 principal,
@@ -247,6 +249,8 @@ contract Retargetter is
   ///      90-day deadline it auto-expires and this function reverts AlreadyRepaid; proceeds
   ///      settling after that point should be delivered to lenders through owner
   ///      rescue(debtAsset, request) before holders redeem, not folded into the position.
+  ///      The expiry bypassing the local repayment flow is an acknowledged limitation;
+  ///      see REPAYMENT_DEADLINE_OFFSET for the remediation posture.
   function repay() external onlyOwnerOrRebalancer nonReentrant returns (uint256 owedAmount) {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
@@ -276,15 +280,16 @@ contract Retargetter is
   /// @inheritdoc IRetargetter
   /// @dev Three settlement gates, never bypassed by anyone: Request repaid (through the
   ///      state-mutating sync so a past-deadline Request resolves instead of wedging), no
-  ///      pending order (an ENDED or force-ended order is cleared here), and zero residual
-  ///      on both bound assets (donations are unblocked by owner rescue).
+  ///      pending order (an ENDED or force-ended order is cleared here), and residual within
+  ///      the configured tolerance on both bound assets (dust donations below the tolerance
+  ///      cannot grief settlement; anything above is unblocked by owner rescue).
   function resolve() external onlyOwnerOrRebalancer nonReentrant {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
     address positionManager = operation_.positionManager;
     if (!IRequest(request).syncRepaidStatus()) revert LibRetargetterErrors.RequestNotRepaid();
     operation_.checkNoPendingOrder(operation_.fund);
-    _checkZeroResidual();
+    _checkResidual();
     operation_.clearOperation();
     emit RetargettingResolved(positionManager, request);
   }
@@ -466,7 +471,7 @@ contract Retargetter is
   ///      (minus the Request, whose absence gates the ASYNC-only steps) and zeroes it at
   ///      window close, so nothing persists past the transaction. Atomicity is the
   ///      settlement invariant: either the whole retarget lands (loan repaid, no stored
-  ///      order, zero residual) or the transaction reverts.
+  ///      order, residual within the configured tolerance) or the transaction reverts.
   function startSyncRetargetting(
     address positionManager,
     address flashLoanModule,
@@ -503,7 +508,7 @@ contract Retargetter is
 
     // Settlement gates, then zero the operation storage so nothing survives the window
     operation_.checkNoPendingOrder(fund);
-    _checkZeroResidual();
+    _checkResidual();
     operation_.clearOperation();
 
     emit SyncRetargettingExecuted(positionManager, flashLoanModule, flashLoanAmount);
@@ -698,6 +703,8 @@ contract Retargetter is
       tickThreshold: stored.tickThreshold,
       maxYieldBps: stored.maxYieldBps,
       principalBufferBps: stored.principalBufferBps,
+      collateralResidualExponent: stored.collateralResidualExponent,
+      debtResidualExponent: stored.debtResidualExponent,
       estimates: stored.estimates
     });
   }
@@ -741,6 +748,8 @@ contract Retargetter is
     stored.tickThreshold = config_.tickThreshold;
     stored.maxYieldBps = config_.maxYieldBps;
     stored.principalBufferBps = config_.principalBufferBps;
+    stored.collateralResidualExponent = config_.collateralResidualExponent;
+    stored.debtResidualExponent = config_.debtResidualExponent;
     stored.estimates = config_.estimates;
     emit ConfigSet(config_);
   }
@@ -773,17 +782,26 @@ contract Retargetter is
       );
   }
 
-  /// @dev Settlement gate: the balances of both bound assets must be exactly zero. Every
-  ///      borrowed or withdrawn unit must have returned to the position manager, to the
-  ///      Request, or been rescued by the owner.
-  function _checkZeroResidual() internal view {
+  /// @dev Settlement gate: the balance of each bound asset must stay strictly below two to
+  ///      the power of its configured residual exponent, checked with a single shift. The
+  ///      zero default keeps the gate exact; a small tolerance (for example 2^20 on a
+  ///      6-decimal asset, about one token) stops dust donations from griefing settlement.
+  ///      Everything above must have returned to the position manager, to the Request, or
+  ///      been rescued by the owner; tolerated dust stays here and folds into the next
+  ///      operation through the full-balance sentinels.
+  function _checkResidual() internal view {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
+    RetargetterConfig storage config_ = LibStorage.configStorage();
     address collateralAsset = assets_.collateralAsset;
     uint256 balance = collateralAsset.balanceOf(address(this));
-    if (balance != 0) revert LibRetargetterErrors.ResidualBalance(collateralAsset, balance);
+    if (balance >> config_.collateralResidualExponent != 0) {
+      revert LibRetargetterErrors.ResidualBalance(collateralAsset, balance);
+    }
     address debtAsset = assets_.debtAsset;
     balance = debtAsset.balanceOf(address(this));
-    if (balance != 0) revert LibRetargetterErrors.ResidualBalance(debtAsset, balance);
+    if (balance >> config_.debtResidualExponent != 0) {
+      revert LibRetargetterErrors.ResidualBalance(debtAsset, balance);
+    }
   }
 
   /// @dev Aggregate position manager LTV under the snapshot convention.

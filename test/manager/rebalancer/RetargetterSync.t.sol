@@ -285,6 +285,20 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     _assertNoTrace();
   }
 
+  /// @notice Dust strictly below the configured tolerance passes the window-close gate and
+  ///         stays behind.
+  function test_startSyncRetargetting_dustWithinResidualTolerance_passes() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _setResidualExponents(3, 0);
+    _mintCollateral(address(retargetter), 7);
+
+    _startSync(1_000e18, new bytes[](0));
+
+    _assertNoTrace();
+    assertEq(collateralToken.balanceOf(address(retargetter)), 7, "tolerated dust stays");
+    assertEq(debtToken.balanceOf(address(retargetter)), 0, "zero debt residual");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        START GUARDS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

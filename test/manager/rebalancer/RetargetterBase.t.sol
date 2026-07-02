@@ -115,8 +115,19 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
       tickThreshold: DEFAULT_TICK_THRESHOLD,
       maxYieldBps: DEFAULT_MAX_YIELD_BPS,
       principalBufferBps: DEFAULT_PRINCIPAL_BUFFER_BPS,
+      collateralResidualExponent: 0,
+      debtResidualExponent: 0,
       estimates: _zeroEstimates()
     });
+  }
+
+  /// @dev Sets the residual tolerance exponents on the live config (owner action).
+  function _setResidualExponents(uint8 collateralExponent, uint8 debtExponent) internal {
+    RetargetterConfig memory config_ = retargetter.config();
+    config_.collateralResidualExponent = collateralExponent;
+    config_.debtResidualExponent = debtExponent;
+    vm.prank(owner);
+    retargetter.setConfig(config_);
   }
 
   function _zeroEstimates() internal pure returns (YieldEstimates memory) {
