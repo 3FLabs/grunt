@@ -76,6 +76,21 @@ library LibFundsErrors {
   /// @notice Thrown when the CDO routes a withdrawal to the instant path instead of the normal epoch-gated queue.
   error InstantWithdrawDetected();
 
+  /// @notice Thrown when trying to deposit into a market that has been closed (terminal wind-down).
+  error MarketClosed();
+
+  /// @notice Thrown when a deposit exceeds the market's remaining capacity (maxTotalSupply).
+  error DepositCapExceeded();
+
+  /// @notice Thrown when force-ending an order type that does not support it (e.g. atomic DEPOSIT orders).
+  error ForceEndNotSupported();
+
+  /// @notice Thrown when resolving an order type that does not support it (e.g. queued REDEEM orders).
+  error ResolveNotSupported();
+
+  /// @notice Thrown when force-ending a REDEEM order whose withdrawal batch has not expired yet.
+  error BatchNotExpired();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

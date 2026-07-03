@@ -28,3 +28,8 @@ uint256 constant MAX_128_BITS = 0xffffffffffffffffffffffffffffffff;
 /// @dev Basis points precision (10000 = 100%).
 /// @custom:value 10,000
 uint256 constant BPS = 10_000;
+
+/// @dev Ray precision (27 decimals), used by protocols expressing rates/scale factors in ray
+///      (e.g. Wildcat's scaleFactor).
+/// @custom:value 1e27
+uint256 constant RAY = 1e27;
