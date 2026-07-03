@@ -16,8 +16,11 @@ import {
   DEFAULT_OFFER_TIMELOCK,
   MIN_OFFER_TIMELOCK,
   MAX_OFFER_TIMELOCK,
-  MAX_OFFER_LIFESPAN
+  MAX_OFFER_LIFESPAN,
+  DEFAULT_MIN_OFFER_BONUS_BPS,
+  MAX_MIN_OFFER_BONUS_BPS
 } from "src/libs/borrow/LibBorrowOffersConstants.sol";
+import {BPS} from "src/libs/Constants.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -209,6 +212,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   function test_init_factoryPathLandsAtV2() public view {
     // The factory's initialize ran v1 + v2; ROLE_ADMIN is the governance owner (fallback: PM).
     assertEq(pos.offerTimelock(), DEFAULT_OFFER_TIMELOCK, "default timelock");
+    assertEq(pos.minOfferBonus(), DEFAULT_MIN_OFFER_BONUS_BPS, "default minimum offer bonus");
     assertEq(pos.offerCount(), 0, "no offers");
     assertTrue(pos.hasAnyRole(positionManager, ROLE_ADMIN), "PM is admin (fallback)");
   }
@@ -270,6 +274,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     // Migration runs the v2 setup and lands at version 2.
     v1.initializeV2();
     assertEq(v1.offerTimelock(), DEFAULT_OFFER_TIMELOCK, "timelock seeded");
+    assertEq(v1.minOfferBonus(), DEFAULT_MIN_OFFER_BONUS_BPS, "minimum offer bonus seeded");
     assertTrue(v1.hasAnyRole(positionManager, ROLE_ADMIN), "admin granted on migration");
 
     // Cannot migrate twice (now at version 2).
@@ -692,6 +697,237 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    MINIMUM OFFER BONUS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setMinOfferBonus_setsValueAndEmits() public {
+    vm.expectEmit(true, true, true, true, address(pos));
+    emit IBorrowOffers.MinOfferBonusSet(500);
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(500);
+    assertEq(pos.minOfferBonus(), 500, "value updated");
+  }
+
+  function test_setMinOfferBonus_revertsForNonAdmin() public {
+    _enableProposer(proposer);
+    _enableGuardian(guardian);
+    // Neither a plain proposer, a guardian, nor a random account may set it; admin/owner only.
+    vm.prank(makeAddr("rando"));
+    vm.expectRevert(Unauthorized.selector);
+    pos.setMinOfferBonus(500);
+    vm.prank(proposer);
+    vm.expectRevert(Unauthorized.selector);
+    pos.setMinOfferBonus(500);
+    vm.prank(guardian);
+    vm.expectRevert(Unauthorized.selector);
+    pos.setMinOfferBonus(500);
+  }
+
+  function test_setMinOfferBonus_boundsAndZero() public {
+    vm.startPrank(positionManager);
+    vm.expectRevert(LibBorrowErrors.MinOfferBonusOutOfRange.selector);
+    pos.setMinOfferBonus(MAX_MIN_OFFER_BONUS_BPS + 1);
+    // Both boundary values are accepted: the cap itself and 0 (floor disabled).
+    pos.setMinOfferBonus(MAX_MIN_OFFER_BONUS_BPS);
+    assertEq(pos.minOfferBonus(), MAX_MIN_OFFER_BONUS_BPS, "cap accepted");
+    pos.setMinOfferBonus(0);
+    assertEq(pos.minOfferBonus(), 0, "zero accepted");
+    vm.stopPrank();
+  }
+
+  function test_proposeOffer_revertsBonusTooLow() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    uint256 shares = _positionShares() / 4;
+    // Price 1.005: profitable, but the 0.5% bonus is below the default 1% floor.
+    uint128 coll = _collForPrice(shares, 1.005e18);
+    vm.prank(proposer);
+    vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
+    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+  }
+
+  function test_proposeOffer_minBonusExactBoundary() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    uint256 shares = _positionShares() / 4;
+    (uint256 tba, uint256 tbs) = _borrowTotals();
+    uint256 debt = shares.toAssetsUp(tba, tbs);
+    // Mirror the contract's floor: excess must be at least ceil(debt * bonus / BPS). `coll` is the
+    // smallest collateral whose value covers debt + minExcess (ceiling division), so one unit less
+    // lands strictly below the floor while still being profitable.
+    uint256 minExcess = (debt * DEFAULT_MIN_OFFER_BONUS_BPS + BPS - 1) / BPS;
+    uint256 price = oracle.price();
+    uint128 coll = uint128(((debt + minExcess) * SCALE + price - 1) / price);
+
+    vm.prank(proposer);
+    vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
+    pos.proposeOffer(coll - 1, uint128(shares), uint40(block.timestamp + 30 days));
+
+    uint8 id = _propose(coll, uint128(shares));
+    assertEq(pos.offer(id).remainingCollateral, coll, "exact-floor offer accepted");
+  }
+
+  function test_setMinOfferBonus_zeroDisablesFloorButKeepsProfitability() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(0);
+
+    // An epsilon-bonus offer (0.1%, below the default floor) is now proposable.
+    uint256 shares = _positionShares() / 4;
+    uint8 id = _proposeAtPrice(shares, 1.001e18);
+    assertEq(pos.offerCount(), 1, "epsilon-bonus offer accepted with floor disabled");
+    assertGt(pos.offer(id).remainingCollateral, 0, "offer stored");
+
+    // The strict profitability filter still binds: a break-even offer is rejected.
+    (uint256 tba, uint256 tbs) = _borrowTotals();
+    uint256 debt = shares.toAssetsUp(tba, tbs);
+    uint128 collBreakEven = uint128(debt * SCALE / oracle.price());
+    vm.prank(proposer);
+    vm.expectRevert(LibBorrowErrors.OfferNotProfitable.selector);
+    pos.proposeOffer(collBreakEven, uint128(shares), uint40(block.timestamp + 30 days));
+  }
+
+  /// @notice Raising the floor above a live offer's bonus does not evict it from the book (a
+  ///         guardian must revoke it), but because the floor is enforced at consume time the live
+  ///         offer stops being consumable, and its terms can no longer be re-proposed.
+  function test_setMinOfferBonus_raiseGatesLiveOfferConsumption() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    uint256 shares = _positionShares() / 4;
+    uint8 id = _proposeAtPrice(shares, 1.02e18); // 2% bonus: clears the default 1% floor
+    _warpActive();
+    assertTrue(pos.isConsumable(id), "consumable under the default floor");
+
+    // Raise the floor above the live offer's ~2% bonus.
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(MAX_MIN_OFFER_BONUS_BPS); // 10%
+
+    // Not evicted from storage, but no longer consumable (consume-time floor).
+    assertEq(pos.offerCount(), 1, "live offer stays in the book");
+    assertGt(pos.offer(id).remainingCollateral, 0, "offer still stored");
+    assertFalse(pos.isConsumable(id), "raised floor gates the live offer's consumption");
+
+    // The same terms can no longer be re-proposed.
+    uint128 coll = _collForPrice(shares, 1.02e18);
+    vm.prank(proposer);
+    vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
+    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+  }
+
+  /// @notice The floor is enforced at CONSUME time: an offer whose realized bonus has drifted below
+  ///         the floor (but is still strictly profitable and in band) is skipped by the consume
+  ///         walk, exactly like an unprofitable offer. This keeps band liquidations attractive even
+  ///         as price/interest erode standing offers.
+  function test_consume_belowFloorOffer_skippedAtConsumeTime() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    uint256 shares = _positionShares() / 2;
+    // Propose at a 2% bonus (clears the default 1% floor at proposal time).
+    uint8 id = _proposeAtPrice(shares, 1.02e18);
+    _warpActive();
+
+    // Drop the oracle 1.5%: the offer's realized price -> 1.02 * 0.985 = 1.0047 (bonus ~0.47%, now
+    // below the 1% floor yet still profitable), while L -> 0.70/0.985 = 0.7107 stays in band.
+    oracle.setPrice(oracle.price() * 985 / 1000);
+    assertGt(_ltvWad(), SAFE_LTV, "still in band (above safe)");
+    assertLe(_ltvWad(), LIQ_LTV, "still in band (at/below liq)");
+
+    // The offer's live bonus is strictly between 0 and the floor.
+    Offer memory o = pos.offer(id);
+    (uint256 tba, uint256 tbs) = _borrowTotals();
+    uint256 offerDebt = uint256(o.remainingDebtShares).toAssetsUp(tba, tbs);
+    uint256 offerValue = uint256(o.remainingCollateral) * oracle.price() / SCALE;
+    uint256 liveBonusBps = (offerValue - offerDebt) * BPS / offerDebt;
+    assertGt(offerValue, offerDebt, "still profitable");
+    assertLt(liveBonusBps, DEFAULT_MIN_OFFER_BONUS_BPS, "live bonus dropped below the floor");
+
+    // Consume-time floor: the below-floor offer is no longer consumable and the band has nothing to
+    // fill (it is the only offer), so previewConsume returns (0, 0) and preLiquidate reverts.
+    assertFalse(pos.isConsumable(id), "below-floor offer not consumable");
+    (uint256 pSeized, uint256 pDebt) = pos.previewConsume(o.remainingCollateral, 0);
+    assertEq(pSeized, 0, "preview seizes nothing");
+    assertEq(pDebt, 0, "preview repays nothing");
+    vm.expectRevert(LibBorrowErrors.NoConsumableOffer.selector);
+    pos.preLiquidate(address(pos), o.remainingCollateral, 0, "");
+
+    // The skipped offer is left in the book (not pruned); a guardian can revoke it.
+    assertEq(pos.offerCount(), 1, "below-floor offer left in the book");
+  }
+
+  /// @notice A below-floor offer at the head is skipped (like an unprofitable one) and the walk
+  ///         consumes the next, above-floor offer. Mirrors {test_consume_skipsUnprofitable_consumesNext}
+  ///         but for the bonus floor rather than raw profitability.
+  function test_consume_skipsBelowFloorConsumesNext() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    uint256 shares = _positionShares() / 4;
+    // Under the default 1% floor both are admissible: A at 2% bonus, B at 30% bonus.
+    uint8 a = _proposeAtPrice(shares, 1.02e18);
+    uint8 b = _proposeAtPrice(shares, 1.3e18);
+    _warpActive();
+
+    // Raise the floor to 5%: A (~2%) is now below it, B (~30%) still clears. A sorts to the head
+    // (lowest price), so the walk must skip A and reach B.
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(500);
+    assertFalse(pos.isConsumable(a), "A below the 5% floor");
+    assertTrue(pos.isConsumable(b), "B clears the 5% floor");
+
+    Offer memory offerB = pos.offer(b);
+    (uint256 seized,) = pos.preLiquidate(address(pos), offerB.remainingCollateral, 0, "");
+    assertEq(seized, offerB.remainingCollateral, "consumed above-floor offer B");
+    // A was skipped (below floor), not pruned: it remains in the list.
+    assertEq(pos.offer(a).proposer, proposer, "below-floor offer A left in place");
+    assertEq(pos.offerCount(), 1, "only B removed");
+  }
+
+  /// @notice The consume-time gate reads the CURRENT floor: lowering the floor re-admits a live
+  ///         offer that a prior raise had gated, without it being re-proposed.
+  function test_setMinOfferBonus_lowerReadmitsLiveOffer() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    uint256 shares = _positionShares() / 2;
+    uint8 id = _proposeAtPrice(shares, 1.05e18); // ~5% bonus
+    _warpActive();
+
+    // Raise the floor above the offer's bonus: no longer consumable.
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(800); // 8%
+    assertFalse(pos.isConsumable(id), "gated at the 8% floor");
+
+    // Lower the floor below the offer's bonus: consumable again, and it fills.
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(200); // 2%
+    assertTrue(pos.isConsumable(id), "re-admitted at the 2% floor");
+    Offer memory o = pos.offer(id);
+    (uint256 seized,) = pos.preLiquidate(address(pos), o.remainingCollateral, 0, "");
+    assertEq(seized, o.remainingCollateral, "consumed after the floor was lowered");
+    assertEq(pos.offerCount(), 0, "offer exhausted and removed");
+  }
+
+  /// @notice With the floor disabled (0) the consume path falls back to the strict profitability
+  ///         gate only: a tiny-bonus offer that would be rejected under the default floor still
+  ///         fills.
+  function test_consume_floorZero_consumesEpsilonBonusOffer() public {
+    _enterBand(0.7e18);
+    _enableProposer(proposer);
+    vm.prank(positionManager);
+    pos.setMinOfferBonus(0);
+
+    uint256 shares = _positionShares() / 2;
+    uint8 id = _proposeAtPrice(shares, 1.001e18); // 0.1% bonus, far below the default floor
+    _warpActive();
+
+    assertTrue(pos.isConsumable(id), "epsilon-bonus offer consumable with floor disabled");
+    Offer memory o = pos.offer(id);
+    (uint256 seized, uint256 repaid) = pos.preLiquidate(address(pos), o.remainingCollateral, 0, "");
+    assertEq(seized, o.remainingCollateral, "consumed epsilon-bonus offer");
+    assertGt(seized * oracle.price() / SCALE, repaid, "still profitable (I1)");
+    assertEq(pos.offerCount(), 0, "offer exhausted and removed");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          REVOKE                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -812,8 +1048,10 @@ contract MorphoBorrowPositionOffersTest is Test {
 
     // 1/L in WAD; since L <= 0.71, invLtv >= ~1.408e18, leaving ample room above 1e18.
     uint256 invLtv = uint256(1e18) * 1e18 / _ltvWad();
-    // Price strictly inside (1, 1/L), with margin below 1/L for rounding.
-    uint256 priceWad = bound(pricePick, 1.01e18, invLtv - 1e16);
+    // Price strictly inside (1 + minimum offer bonus, 1/L): margin above the proposal-time bonus
+    // floor (1.01 exactly can miss it through _collForPrice's floor rounding) and below 1/L for
+    // the de-risking check's rounding.
+    uint256 priceWad = bound(pricePick, 1.02e18, invLtv - 1e16);
 
     uint256 shares = _positionShares() * bound(fracPick, 10, 90) / 100;
     if (shares == 0) return;

@@ -360,7 +360,10 @@ contract LibBorrowOffersTest is Test {
       totalBorrowAssets: TOTAL_BORROW_ASSETS,
       totalBorrowShares: TOTAL_BORROW_SHARES,
       positionCollateral: POSITION_COLLATERAL,
-      positionBorrowShares: POSITION_BORROW_SHARES
+      positionBorrowShares: POSITION_BORROW_SHARES,
+      // These data-structure tests exercise the list/consume mechanics with the bonus floor
+      // disabled (0); the floor's own behavior is covered in MorphoBorrowPositionOffers.t.sol.
+      minOfferBonusBps: 0
     });
   }
 }

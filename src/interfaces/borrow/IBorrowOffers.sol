@@ -82,6 +82,10 @@ interface IBorrowOffers {
   /// @param effectiveAt The absolute timestamp at which `newTimelock` becomes effective.
   event OfferTimelockScheduled(uint40 newTimelock, uint40 effectiveAt);
 
+  /// @notice Emitted when the minimum offer bonus is changed.
+  /// @param minOfferBonusBps The new minimum offer bonus, in basis points.
+  event MinOfferBonusSet(uint16 minOfferBonusBps);
+
   /// @notice Emitted once, at initialization, when the admin role is granted.
   /// @param admin The account granted `ROLE_ADMIN` (the PositionManager's governance owner, or the
   ///        position owner as a fallback).
@@ -121,6 +125,20 @@ interface IBorrowOffers {
   ///      timelock elapses. `timelock` must be within `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
   function setOfferTimelock(uint40 timelock) external;
 
+  /// @notice Sets the minimum offer bonus, in basis points. Gated to `ROLE_ADMIN | owner`.
+  /// @dev The floor requires a fill's collateral value to exceed the debt value it repays by at
+  ///      least this fraction of that debt value. It is enforced both when an offer is proposed and
+  ///      again per fill at consume time (see {proposeOffer}), so a change takes effect on the next
+  ///      liquidation: raising it leaves live offers in the book but stops any whose current bonus
+  ///      is below the new floor from being consumable (a guardian can revoke them; lowering the
+  ///      floor again re-admits them). Effective immediately, not timelocked: the floor only ever
+  ///      makes consumption stricter (it can skip fills, never force or enlarge one), so it carries
+  ///      no direct fund exposure, and any offer proposed under a lowered floor still faces its own
+  ///      veto timelock before becoming consumable. `minOfferBonusBps` must be at most
+  ///      `MAX_MIN_OFFER_BONUS_BPS`; 0 disables the floor (leaving only the strict profitability
+  ///      check).
+  function setMinOfferBonus(uint16 minOfferBonusBps) external;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -133,6 +151,9 @@ interface IBorrowOffers {
   /// @return value The pending timelock value (0 if none scheduled).
   /// @return effectiveAt The timestamp at which it becomes effective (0 if none scheduled).
   function pendingOfferTimelock() external view returns (uint40 value, uint40 effectiveAt);
+
+  /// @notice Returns the minimum offer bonus required to propose an offer, in basis points.
+  function minOfferBonus() external view returns (uint16);
 
   /// @notice Returns the number of currently-live offers.
   function offerCount() external view returns (uint256);

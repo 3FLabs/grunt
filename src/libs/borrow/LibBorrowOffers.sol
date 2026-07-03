@@ -7,6 +7,7 @@ import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol
 import {LibBorrowErrors} from "./LibBorrowErrors.sol";
 import {IBorrowOffers, Offer} from "../../interfaces/borrow/IBorrowOffers.sol";
 import {MAX_OFFERS, NULL, BORROW_OFFERS_STORAGE_SLOT} from "./LibBorrowOffersConstants.sol";
+import {BPS} from "../Constants.sol";
 
 /// @title LibBorrowOffers
 /// @author 3F Protocol
@@ -36,9 +37,9 @@ library LibBorrowOffers {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Offer container, stored at {BORROW_OFFERS_STORAGE_SLOT}.
-  /// @dev Layout (slot 0 packs to 160 bits; the fixed-size `slab` array starts at slot 1):
+  /// @dev Layout (slot 0 packs to 176 bits; the fixed-size `slab` array starts at slot 1):
   ///      `offerTimelock`(40) + `pendingTimelock`(40) + `pendingTimelockAt`(40) + `head`(8) +
-  ///      `tail`(8) + `freeHead`(8) + `count`(8) + `nextFresh`(8).
+  ///      `tail`(8) + `freeHead`(8) + `count`(8) + `nextFresh`(8) + `minOfferBonusBps`(16).
   ///
   ///      Slab allocation uses a high-water mark (`nextFresh`) plus a recycled free-list
   ///      (`freeHead`, threaded through `Offer.next`). This is a deliberate, gas-favourable
@@ -57,6 +58,8 @@ library LibBorrowOffers {
     uint8 freeHead; // head of the recycled free-list; NULL when none recycled
     uint8 count; // number of live offers
     uint8 nextFresh; // next never-allocated slab index (high-water mark)
+    // --- proposal admission ---
+    uint16 minOfferBonusBps; // minimum offer bonus in basis points; 0 only pre-initializeV2 or if disabled
     Offer[MAX_OFFERS] slab; // ids are slab indices (uint8)
   }
 
@@ -72,6 +75,7 @@ library LibBorrowOffers {
     uint256 totalBorrowShares; // market total borrow shares (post-accrual)
     uint256 positionCollateral; // position collateral at entry
     uint256 positionBorrowShares; // position borrow shares at entry
+    uint256 minOfferBonusBps; // consume-time bonus floor (basis points); 0 => only strict I1 applies
   }
 
   /// @dev Per-offer decision returned by {_computeFill}.
@@ -99,8 +103,9 @@ library LibBorrowOffers {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the list/slab bookkeeping for a fresh offer setup.
-  /// @dev Leaves `offerTimelock` untouched (set by the caller). With the high-water-mark allocator,
-  ///      all slots start as never-allocated, so only the head/tail/free/counters need resetting.
+  /// @dev Leaves `offerTimelock` and `minOfferBonusBps` untouched (set by the caller). With the
+  ///      high-water-mark allocator, all slots start as never-allocated, so only the
+  ///      head/tail/free/counters need resetting.
   function initFreeList(BorrowOffersStorage storage s) internal {
     s.head = NULL;
     s.tail = NULL;
@@ -392,8 +397,8 @@ library LibBorrowOffers {
   ///      cannot underpay), clamped to the remaining share target and to the position's remaining
   ///      shares.
   ///
-  ///      The two binding checks (I1 profitability, I2 strict de-risk) and their conservative
-  ///      (protocol-favorable) rounding are evaluated in {_priceAction}.
+  ///      The binding checks (I1 profitability, the consume-time bonus floor, I2 strict de-risk)
+  ///      and their conservative (protocol-favorable) rounding are evaluated in {_priceAction}.
   ///
   ///      The position's remaining collateral/shares before this fill (`remainingPositionCollateral`
   ///      / `remainingPositionShares`) are derived from `inp` and the running totals here rather than
@@ -433,47 +438,49 @@ library LibBorrowOffers {
     if (fillShares > remainingPositionShares) fillShares = remainingPositionShares;
     if (fillShares == 0) return (FillAction.Skip, 0, 0); // cannot charge any shares for this collateral
 
-    // I1/I2 are evaluated in a separate frame ({_priceAction}) to keep this function's stack within
-    // the limits of the non-via-IR pipeline.
-    FillAction action = _priceAction(
-      inp.price,
-      inp.totalBorrowAssets,
-      inp.totalBorrowShares,
-      fillCollateral,
-      fillShares,
-      remainingPositionCollateral,
-      remainingPositionShares
-    );
+    // I1, the bonus floor and I2 are evaluated in a separate frame ({_priceAction}) to keep this
+    // function's stack within the limits of the non-via-IR pipeline. `inp` is passed by reference
+    // (one stack slot) rather than unpacking its price/totals/floor fields, which keeps the callee
+    // shallow enough to add the bonus-floor check without spilling.
+    FillAction action =
+      _priceAction(inp, fillCollateral, fillShares, remainingPositionCollateral, remainingPositionShares);
     if (action == FillAction.Consume) return (FillAction.Consume, fillCollateral, fillShares);
     return (action, 0, 0);
   }
 
-  /// @dev Evaluates the two binding per-fill checks on the final fill amounts (pure). The local
+  /// @dev Evaluates the binding per-fill checks on the final fill amounts (pure). The local
   ///      names map to the spec notation (BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md §4 / §10):
   ///      `seizedValue` = v, `repaidDebtValue` = d, `remainingDebtValue` = B,
   ///      `remainingCollateralValue` = V.
   ///      - I1 (profitable): `seizedValue > repaidDebtValue`, else {FillAction.Skip}.
+  ///      - Bonus floor: the fill's bonus (`v - d`, as a fraction of the debt value `d`) must be at
+  ///        least `minBonusBps` (rounded up, matching the proposal-time floor in
+  ///        {MorphoBorrowPosition._checkOfferProfitable}), else {FillAction.Skip}. The offer's price
+  ///        is fixed by its terms, so like an unprofitable offer it is skipped (not stopped): the
+  ///        list is sorted ascending in price, so a below-floor head can be followed by
+  ///        higher-bonus offers that still qualify. `minBonusBps == 0` disables it (the required
+  ///        excess is 0, so the check never fires and I1 alone governs).
   ///      - I2 (strict de-risk): `v*B < d*V`, else {FillAction.Stop} (over max price).
   ///      Collateral values (`seizedValue`/`remainingCollateralValue`) round down and debt values
-  ///      (`repaidDebtValue`/`remainingDebtValue`) round up, so both checks are strict in the
+  ///      (`repaidDebtValue`/`remainingDebtValue`) round up, so the checks are strict in the
   ///      protocol's favour. `repaidDebtValue > 0` since `fillShares >= 1`.
   ///      `fullMulDiv(v, B, d) < V` is the exact integer form of `v/d < V/B` (i.e. `v*B < d*V`) with
   ///      no intermediate overflow.
   function _priceAction(
-    uint256 price,
-    uint256 totalBorrowAssets,
-    uint256 totalBorrowShares,
+    ConsumeInput memory inp,
     uint256 fillCollateral,
     uint256 fillShares,
     uint256 remainingPositionCollateral,
     uint256 remainingPositionShares
   ) private pure returns (FillAction) {
-    uint256 seizedValue = fillCollateral.mulDiv(price, ORACLE_PRICE_SCALE);
-    uint256 repaidDebtValue = fillShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
+    uint256 seizedValue = fillCollateral.mulDiv(inp.price, ORACLE_PRICE_SCALE);
+    uint256 repaidDebtValue = fillShares.toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
     if (seizedValue <= repaidDebtValue) return FillAction.Skip; // I1
+    // Consume-time bonus floor. Safe subtraction: I1 above guarantees seizedValue > repaidDebtValue.
+    if (seizedValue - repaidDebtValue < repaidDebtValue.mulDivUp(inp.minOfferBonusBps, BPS)) return FillAction.Skip;
 
-    uint256 remainingDebtValue = remainingPositionShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
-    uint256 remainingCollateralValue = remainingPositionCollateral.mulDiv(price, ORACLE_PRICE_SCALE);
+    uint256 remainingDebtValue = remainingPositionShares.toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
+    uint256 remainingCollateralValue = remainingPositionCollateral.mulDiv(inp.price, ORACLE_PRICE_SCALE);
     // I2: fullMulDiv(v, B, d) >= V  <=>  not strictly de-risking.
     if (FixedPointMathLib.fullMulDiv(seizedValue, remainingDebtValue, repaidDebtValue) >= remainingCollateralValue) {
       return FillAction.Stop;
@@ -508,11 +515,13 @@ library LibBorrowOffers {
   }
 
   /// @notice Evaluates whether `remainingCollateral`/`remainingDebtShares` (the whole remaining
-  ///         offer) would pass the I1/I2 gates against the current whole-position state.
+  ///         offer) would pass the I1, bonus-floor and I2 gates against the current whole-position
+  ///         state.
   /// @dev Pure helper for the `isConsumable` view. It evaluates the offer's price vs the current
   ///      LTV in isolation: it does not account for list ordering or the cumulative LTV change of
   ///      consuming earlier offers. Returns false if the position has no debt (nothing to liquidate)
-  ///      or the offer is degenerate.
+  ///      or the offer is degenerate. `minBonusBps` mirrors the consume-time floor in {_priceAction}
+  ///      so the view agrees with a real consume; pass 0 to gate on strict profitability only.
   function consumableAtPrice(
     uint256 remainingCollateral,
     uint256 remainingDebtShares,
@@ -520,7 +529,8 @@ library LibBorrowOffers {
     uint256 positionBorrowShares,
     uint256 price,
     uint256 totalBorrowAssets,
-    uint256 totalBorrowShares
+    uint256 totalBorrowShares,
+    uint256 minBonusBps
   ) internal pure returns (bool) {
     if (remainingCollateral == 0 || remainingDebtShares == 0) return false;
     if (positionBorrowShares == 0) return false;
@@ -529,6 +539,8 @@ library LibBorrowOffers {
     uint256 repaidDebtValue = remainingDebtShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
     if (repaidDebtValue == 0) return false;
     if (seizedValue <= repaidDebtValue) return false; // I1
+    // Consume-time bonus floor (safe subtraction: I1 above guarantees seizedValue > repaidDebtValue).
+    if (seizedValue - repaidDebtValue < repaidDebtValue.mulDivUp(minBonusBps, BPS)) return false;
 
     uint256 remainingDebtValue = positionBorrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
     uint256 remainingCollateralValue = positionCollateral.mulDiv(price, ORACLE_PRICE_SCALE);

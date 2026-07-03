@@ -162,7 +162,9 @@ contract BorrowOffersHandler is Test {
       totalBorrowAssets: TOTAL_BORROW_ASSETS,
       totalBorrowShares: TOTAL_BORROW_SHARES,
       positionCollateral: positionCollateral,
-      positionBorrowShares: positionBorrowShares
+      positionBorrowShares: positionBorrowShares,
+      // Invariant handler drives the raw list/consume mechanics with the bonus floor disabled (0).
+      minOfferBonusBps: 0
     });
   }
 

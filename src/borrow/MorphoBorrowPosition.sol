@@ -19,8 +19,11 @@ import {
   DEFAULT_OFFER_TIMELOCK,
   MIN_OFFER_TIMELOCK,
   MAX_OFFER_TIMELOCK,
-  MAX_OFFER_LIFESPAN
+  MAX_OFFER_LIFESPAN,
+  DEFAULT_MIN_OFFER_BONUS_BPS,
+  MAX_MIN_OFFER_BONUS_BPS
 } from "../libs/borrow/LibBorrowOffersConstants.sol";
+import {BPS} from "../libs/Constants.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 import {LibCommonErrors} from "../libs/common/LibCommonErrors.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
@@ -185,11 +188,13 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     _initializeV2();
   }
 
-  /// @dev Shared setup run by both {initialize} and {initializeV2}: seed the default offer timelock,
-  ///      initialize the offer list/slab bookkeeping, and grant `ROLE_ADMIN` to the governance owner.
+  /// @dev Shared setup run by both {initialize} and {initializeV2}: seed the default offer timelock
+  ///      and minimum offer bonus, initialize the offer list/slab bookkeeping, and grant
+  ///      `ROLE_ADMIN` to the governance owner.
   function _initializeV2() internal {
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     o.offerTimelock = DEFAULT_OFFER_TIMELOCK;
+    o.minOfferBonusBps = DEFAULT_MIN_OFFER_BONUS_BPS;
     LibBorrowOffers.initFreeList(o);
 
     // ROLE_ADMIN -> the PositionManager's governance owner(), falling back to the position owner
@@ -509,6 +514,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     Position memory position = MORPHO.position(_storage.marketId, borrower);
     Market memory market = MORPHO.market(_storage.marketId);
 
+    LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     LibBorrowOffers.ConsumeInput memory input = LibBorrowOffers.ConsumeInput({
       seizedTarget: seizedAssets,
       repaidSharesTarget: repaidShares,
@@ -516,9 +522,10 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
       totalBorrowAssets: uint256(market.totalBorrowAssets),
       totalBorrowShares: uint256(market.totalBorrowShares),
       positionCollateral: uint256(position.collateral),
-      positionBorrowShares: uint256(position.borrowShares)
+      positionBorrowShares: uint256(position.borrowShares),
+      minOfferBonusBps: o.minOfferBonusBps
     });
-    return LibBorrowOffers.borrowOffersStorage().consume(input);
+    return o.consume(input);
   }
 
   /// @dev Computes the repaid shares when the liquidator specifies the collateral to seize.
@@ -912,10 +919,11 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   /// @dev Gated to `PROPOSER_ROLE | ROLE_ADMIN | owner`. `activeAt` is fixed here with the timelock
   ///      effective NOW (after promoting any due pending change), so a later {setOfferTimelock}
   ///      cannot retroactively shorten this offer's veto window. The creation-time profitability
-  ///      check is a sanity filter at the current market state; the binding checks run per fill at
-  ///      consume time (price and accrued interest drift afterwards). Offer amounts are `uint128`
-  ///      (matching Morpho's `uint128` collateral and borrow totals), so the upper bound is enforced
-  ///      by the parameter type and only the `> 0` lower bound needs an explicit check.
+  ///      and minimum-bonus checks ({_checkOfferProfitable}) are admission filters at the current
+  ///      market state; the binding checks run per fill at consume time (price and accrued interest
+  ///      drift afterwards). Offer amounts are `uint128` (matching Morpho's `uint128` collateral
+  ///      and borrow totals), so the upper bound is enforced by the parameter type and only the
+  ///      `> 0` lower bound needs an explicit check.
   function proposeOffer(uint128 collateral, uint128 debtShares, uint40 expiresAt)
     external
     override
@@ -938,22 +946,36 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     // the subtraction cannot underflow.
     if (uint256(expiresAt) - activeAt > MAX_OFFER_LIFESPAN) revert LibBorrowErrors.OfferExpiryTooLong();
 
-    _checkOfferProfitable(collateral, debtShares);
+    _checkOfferProfitable(collateral, debtShares, o.minOfferBonusBps);
 
     id = o.insert(msg.sender, activeAt, expiresAt, collateral, debtShares);
   }
 
-  /// @dev Creation-time profitability sanity filter (`collateral value > debt value`) at the
-  ///      current (interest-accrued) market state. Factored out of {proposeOffer} to keep its stack
-  ///      shallow. Reverts {LibBorrowErrors.OfferNotProfitable} if the offer is not profitable now.
-  ///      Binding profitability is re-checked per fill at consume time.
-  function _checkOfferProfitable(uint128 collateral, uint128 debtShares) internal view {
+  /// @dev Creation-time profitability filter at the current (interest-accrued) market state.
+  ///      Factored out of {proposeOffer} to keep its stack shallow. Two checks:
+  ///      - Strict profitability: reverts {LibBorrowErrors.OfferNotProfitable} unless
+  ///        `collateral value > debt value`.
+  ///      - Minimum bonus: reverts {LibBorrowErrors.OfferBonusTooLow} unless the excess
+  ///        `offerValue - offerDebt` is at least `minBonusBps` basis points of the debt value
+  ///        (rounded up, so the floor is conservative). Anti-griefing admission filter: a
+  ///        barely-profitable offer would sort to the head of the book (lowest price first) and
+  ///        drag the profitability of every band liquidation down to near zero. With
+  ///        `minBonusBps == 0` the floor is disabled and only the strict check applies.
+  ///      Both are proposal-time filters against the state now; the same profitability and bonus
+  ///      floor are re-checked per fill at consume time (see {LibBorrowOffers._priceAction}), so a
+  ///      live offer whose bonus later drifts below the floor via price or accrued-interest
+  ///      movement is skipped by the consume walk rather than dragging the band's profitability
+  ///      down (a guardian can also revoke it).
+  function _checkOfferProfitable(uint128 collateral, uint128 debtShares, uint16 minBonusBps) internal view {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) =
       MORPHO.expectedMarketBalances(_storage.marketParams, _storage.marketId);
     uint256 offerValue = uint256(collateral).mulDiv(IOracle(_storage.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
     uint256 offerDebt = uint256(debtShares).toAssetsUp(totalBorrowAssets, totalBorrowShares);
     if (offerValue <= offerDebt) revert LibBorrowErrors.OfferNotProfitable();
+    if (offerValue - offerDebt < offerDebt.mulDivUp(minBonusBps, BPS)) {
+      revert LibBorrowErrors.OfferBonusTooLow();
+    }
   }
 
   /// @inheritdoc IBorrowOffers
@@ -1013,6 +1035,18 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     emit OfferTimelockScheduled(timelock, effectiveAt);
   }
 
+  /// @inheritdoc IBorrowOffers
+  /// @dev Gated to `ROLE_ADMIN | owner`. Effective immediately (no timelock; see the interface
+  ///      NatSpec for the rationale) and bounded to `[0, MAX_MIN_OFFER_BONUS_BPS]`, so a fallible
+  ///      admin cannot demand a bonus floor no realistic offer could clear. Enforced at both
+  ///      proposal and consume time; live offers keep standing but a raised floor gates their
+  ///      consumption too (guardians revoke any that should not stand).
+  function setMinOfferBonus(uint16 minOfferBonusBps_) external override onlyOwnerOrRoles(ROLE_ADMIN) {
+    if (minOfferBonusBps_ > MAX_MIN_OFFER_BONUS_BPS) revert LibBorrowErrors.MinOfferBonusOutOfRange();
+    LibBorrowOffers.borrowOffersStorage().minOfferBonusBps = minOfferBonusBps_;
+    emit MinOfferBonusSet(minOfferBonusBps_);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       OFFERS (VIEWS)                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -1027,6 +1061,11 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     if (o.pendingTimelockAt == 0) return (0, 0);
     return (o.pendingTimelock, o.pendingTimelockAt);
+  }
+
+  /// @inheritdoc IBorrowOffers
+  function minOfferBonus() external view override returns (uint16) {
+    return LibBorrowOffers.borrowOffersStorage().minOfferBonusBps;
   }
 
   /// @inheritdoc IBorrowOffers
@@ -1066,7 +1105,8 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
       uint256(position.borrowShares),
       IOracle(_storage.marketParams.oracle).price(),
       totalBorrowAssets,
-      totalBorrowShares
+      totalBorrowShares,
+      LibBorrowOffers.borrowOffersStorage().minOfferBonusBps
     );
   }
 
@@ -1081,6 +1121,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) =
       MORPHO.expectedMarketBalances(_storage.marketParams, _storage.marketId);
     Position memory position = MORPHO.position(_storage.marketId, address(this));
+    LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     LibBorrowOffers.ConsumeInput memory input = LibBorrowOffers.ConsumeInput({
       seizedTarget: seizedAssets,
       repaidSharesTarget: repaidShares,
@@ -1088,9 +1129,10 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
       totalBorrowAssets: totalBorrowAssets,
       totalBorrowShares: totalBorrowShares,
       positionCollateral: uint256(position.collateral),
-      positionBorrowShares: uint256(position.borrowShares)
+      positionBorrowShares: uint256(position.borrowShares),
+      minOfferBonusBps: o.minOfferBonusBps
     });
-    return LibBorrowOffers.borrowOffersStorage().previewConsume(input);
+    return o.previewConsume(input);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

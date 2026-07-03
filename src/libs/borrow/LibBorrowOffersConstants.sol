@@ -79,6 +79,34 @@ uint40 constant MAX_OFFER_TIMELOCK = 7 days;
 uint40 constant MAX_OFFER_LIFESPAN = 365 days;
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                      MINIMUM OFFER BONUS                   */
+/*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+/// @dev Default minimum offer bonus, in basis points, set at initialization (100 = 1%). A fill's
+///      collateral value must exceed the debt value it repays by at least this fraction of that
+///      debt value, enforced both when an offer is proposed and again per fill at consume time
+///      (see {MorphoBorrowPosition.proposeOffer} and {LibBorrowOffers}). This is an anti-griefing
+///      floor for the offer book: without it, a proposer could post barely-profitable offers that
+///      sort to the head of the book (lowest price first) and drag the profitability of every band
+///      liquidation down to near zero. Because the floor is re-checked at consume time, a live
+///      offer whose bonus later drifts below it (via price or accrued-interest movement) is simply
+///      skipped by liquidators rather than dragging the band down. Retunable by the admin within
+///      `[0, MAX_MIN_OFFER_BONUS_BPS]` via {setMinOfferBonus}.
+uint16 constant DEFAULT_MIN_OFFER_BONUS_BPS = 100;
+
+/// @dev Upper bound for the minimum offer bonus (1000 = 10%). A sanity ceiling in the same spirit
+///      as `MAX_OFFER_TIMELOCK`: a (trusted but fallible) admin cannot demand an absurd bonus floor
+///      that no realistic offer could clear. The floor gates both proposals and every fill, and it
+///      stacks under the strict de-risking check (I2): for a position at loan-to-value `LTV`, I2
+///      already caps any fill's bonus at `(1 - LTV) / LTV` measured as a fraction of the debt value
+///      (the same denomination the floor uses; equivalently `1 - LTV` measured as a fraction of the
+///      seized collateral value). So a floor near this ceiling can make the band unusable for
+///      high-LTV configurations until the admin lowers it again (the setter is instant): e.g. at
+///      `LTV = 0.9` the debt-value cap is only `~11.1%`, so a `10%` floor still just clears, while
+///      at `LTV >= 1 / 1.1 (~0.909)` a `10%` floor admits no consumable fill.
+uint16 constant MAX_MIN_OFFER_BONUS_BPS = 1_000;
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                        STORAGE SLOT                        */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

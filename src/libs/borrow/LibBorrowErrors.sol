@@ -101,6 +101,14 @@ library LibBorrowErrors {
   ///         profitability/de-risking checks are re-evaluated per fill at consume time.
   error OfferNotProfitable();
 
+  /// @notice Thrown at proposal time when the offer is profitable but its bonus (the excess of the
+  ///         collateral value over the debt value, as a fraction of the debt value) is below the
+  ///         admin-set minimum. Anti-griefing floor: keeps barely-profitable offers out of the
+  ///         book, where they would sort to the head and make band liquidations unattractive. The
+  ///         same floor is re-checked at consume time, where a below-floor fill is skipped (not
+  ///         reverted with this error).
+  error OfferBonusTooLow();
+
   /// @notice Thrown when an offer's `expiresAt` is not strictly after its computed `activeAt`,
   ///         i.e. the offer would have no consumable window.
   error OfferExpiryTooShort();
@@ -124,6 +132,10 @@ library LibBorrowErrors {
   /// @notice Thrown when {MorphoBorrowPosition.setOfferTimelock} is given a value outside
   ///         `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
   error OfferTimelockOutOfRange();
+
+  /// @notice Thrown when {MorphoBorrowPosition.setMinOfferBonus} is given a value above
+  ///         `MAX_MIN_OFFER_BONUS_BPS`.
+  error MinOfferBonusOutOfRange();
 
   /// @notice Thrown when the offer (band) liquidation path is entered but nothing is fillable
   ///         (empty / all-inactive / all-over-price / only-unprofitable list). A dedicated error
