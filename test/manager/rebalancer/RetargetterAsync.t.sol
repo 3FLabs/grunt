@@ -18,7 +18,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 /// @title RetargetterAsyncTest
 /// @notice Full ASYNC integration tests for the Retargetter: happy paths in both directions
 ///         (events and exact amounts), the loan clock, order wrappers, repayment and
-///         resolution gates, and adversarial flows (spec Sections 6 and 14).
+///         resolution gates, and adversarial flows.
 contract RetargetterAsyncTest is RetargetterBaseTest {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     ASYNC UP HAPPY PATH                    */

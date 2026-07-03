@@ -17,7 +17,7 @@ import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 
 /// @title RetargetterRebalanceTest
-/// @notice Tests for the Retargetter rebalance step and guardrail G2 (spec Section 6.5):
+/// @notice Tests for the Retargetter rebalance step and guardrail G2 (the direction rule):
 ///         the direction rule truth table (aggregate and per position), bad-debt reverts,
 ///         full-balance sentinel resolution, the emptied-book zero-LTV snapshot convention,
 ///         approval scrubbing, event fidelity, principal-cap self-correction, and the
@@ -299,9 +299,9 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   }
 
   /// @dev With the shared oracle at zero the whole book is bad debt: the aggregate itself
-  ///      reads the max-sentinel LTV, so the global gate fires first (spec 6.5 evaluates the
-  ///      global check before the per-module loop) and the revert is AboveTargetLtv rather
-  ///      than BadDebtPosition. The owner bypass skips both gates.
+  ///      reads the max-sentinel LTV, so the global gate fires first (the direction check
+  ///      runs the aggregate gate before the per-module loop) and the revert is
+  ///      AboveTargetLtv rather than BadDebtPosition. The owner bypass skips both gates.
   function test_rebalance_wholeBookBadDebt_revertsAboveTargetLtv() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
@@ -478,7 +478,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Once a rebalance moves the book to target, the live-recomputed principal cap
-  ///      collapses to zero and further consumption is blocked (spec 6.2, test plan item 2).
+  ///      collapses to zero and further consumption is blocked.
   function test_rebalance_principalCapSelfCorrects() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(6_000e18, 100);

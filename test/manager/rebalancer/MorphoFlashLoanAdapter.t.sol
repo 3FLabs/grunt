@@ -65,7 +65,7 @@ contract FlashLoanReceiverMock is IFlashLoanReceiver {
   }
 }
 
-/// @notice Unit tests for {MorphoFlashLoanAdapter} (spec Section 7.3 and Section 14 item 5).
+/// @notice Unit tests for {MorphoFlashLoanAdapter}.
 contract MorphoFlashLoanAdapterTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       TEST CONTRACTS                       */

@@ -7,10 +7,10 @@ import {LibRetargetterErrors} from "src/libs/manager/rebalancer/LibRetargetterEr
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title RetargetterQuoterTest
-/// @notice Unit and fuzz tests for the stateless RetargetterQuoter math (spec Section 9,
-///         test plan Section 14 item 1). Exact expectations are recomputed in the test from
-///         the same integer formulas; hand-derived spec fixtures anchor the values (including
-///         a guard against a plausible mis-derivation of the LTV-down denominator).
+/// @notice Unit and fuzz tests for the stateless RetargetterQuoter math. Exact expectations
+///         are recomputed in the test from the same integer formulas; hand-derived fixtures
+///         anchor the values (including a guard against a plausible mis-derivation of the
+///         LTV-down denominator).
 contract RetargetterQuoterTest is Test {
   using FixedPointMathLib for uint256;
 
@@ -138,8 +138,8 @@ contract RetargetterQuoterTest is Test {
   /*                     LTV-DOWN PRINCIPAL                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_ltvDownPrincipal_specErratumFixture() public view {
-    // Spec Section 9 erratum fixture: K = 20m, D = 11m, tau = 0.5, rb = 5%/yr, yr = 4%/yr,
+  function test_ltvDownPrincipal_extendedRatesFixture() public view {
+    // Extended-rates fixture: K = 20m, D = 11m, tau = 0.5, rb = 5%/yr, yr = 4%/yr,
     // yc = 0, dt = one month. A plausible mis-derivation drops the tau factor on the
     // request-yield term (denominator 1 + Rb - tau - Yr = 0.5008) and gets ~2_088_000 for
     // the principal; the correct denominator 1 + Rb - tau * (1 + Yr) = 0.5025 gives
@@ -157,12 +157,12 @@ contract RetargetterQuoterTest is Test {
     uint256 numerator = _driftedDebt(d, rb, dt) - _grownTarget(k, tau, 0, dt);
     uint256 denominator = (WAD + _scaled(rb, dt)) - tau.fullMulDiv(WAD + _scaled(yr, dt), WAD);
     uint256 expectedPrincipal = numerator.fullMulDiv(WAD, denominator);
-    assertEq(principal, expectedPrincipal, "erratum principal formula");
+    assertEq(principal, expectedPrincipal, "extended principal formula");
     assertEq(
-      collateralToFreeQuoted, expectedPrincipal.fullMulDivUp(WAD + _scaled(yr, dt), WAD), "erratum collateral formula"
+      collateralToFreeQuoted, expectedPrincipal.fullMulDivUp(WAD + _scaled(yr, dt), WAD), "extended collateral formula"
     );
 
-    // Spec anchors: ~2_081_260 principal and ~2_088_198 collateral to free
+    // Hand-derived anchors: ~2_081_260 principal and ~2_088_198 collateral to free
     assertApproxEqRel(principal, 2_081_260e18, 1e12, "principal anchor");
     assertApproxEqRel(collateralToFreeQuoted, 2_088_198e18, 1e12, "collateral anchor");
     // The mis-derived ~2_088_000 principal is rejected
@@ -226,7 +226,7 @@ contract RetargetterQuoterTest is Test {
   }
 
   function test_paidDuration_promotionBoundaries() public view {
-    // Spec 6.6 worked example (tick 1 day, threshold 10 hours): one day is owed until
+    // Worked example (tick 1 day, threshold 10 hours): one day is owed until
     // 1d10h, two days until 2d10h; promotion to k + 1 ticks happens exactly at
     // elapsed == k * tick + threshold.
     // k = 1: still one tick one second before the boundary
@@ -289,7 +289,7 @@ contract RetargetterQuoterTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_repaymentOwed_workedExample() public view {
-    // Spec 6.6: PT 1_000_000, YT 100_000, horizon 365 days, tick 1 day, threshold 10 hours,
+    // Worked example: PT 1_000_000, YT 100_000, horizon 365 days, tick 1 day, threshold 10 hours,
     // outstanding 3 days 11 hours: 4 ticks owed (promotion to 4 happened at 3d10h), yield
     // 100_000 * 4 / 365 = 1_095.89 rounds up to 1_096.
     uint256 owed = quoter.repaymentOwed(1_000_000, 100_000, 3 days + 11 hours, TICK, THRESHOLD, HORIZON);
