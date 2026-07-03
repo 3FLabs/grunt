@@ -113,3 +113,7 @@ bytes32 constant MODULE_TSLOT = 0x3766ddc68b0c7bb3c206ee7037a0b3dd14384ba84828df
 /// @dev Transient slot for the expected flash-loan amount.
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.amount")) - 1)
 bytes32 constant AMOUNT_TSLOT = 0xc37562d71acab34fa73520c0ed6a5ead38685eb8f5e228c3c887ece9e742319b;
+
+/// @dev Transient slot for the reentrancy guard flag (nonzero while a guarded call runs).
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.reentrancy")) - 1)
+bytes32 constant REENTRANCY_TSLOT = 0x9085860804617f26160a86c0245a6d09a1576cd7c916d029770b32608c92fe70;

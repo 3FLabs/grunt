@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IFund} from "src/interfaces/funds/IFund.sol";
+import {IRetargetter} from "src/interfaces/manager/rebalancer/IRetargetter.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -106,7 +107,7 @@ contract MockRetargetterFund is IFund {
     return _internalState;
   }
 
-  function cancel(Order calldata order) external override returns (State) {
+  function cancel(Order calldata order) public virtual override returns (State) {
     _checkOrder(order);
     State current = _state();
     if (current != State.ACCEPTED && current != State.PENDING) revert LibFundsErrors.InvalidState(current);
@@ -213,5 +214,19 @@ contract MockRetargetterFund is IFund {
     _settled = false;
     _recovering = false;
     _pendingInput = 0;
+  }
+}
+
+/// @title ReenteringMockFund
+/// @notice MockRetargetterFund whose cancel calls back into the calling Retargetter's
+///         cancelOrder before proceeding, exercising the reentrancy guard end to end. The
+///         test grants the fund the rebalancer role so the reentrant call passes
+///         authorization and reaches the guard.
+contract ReenteringMockFund is MockRetargetterFund {
+  constructor(address asset_, address share_) MockRetargetterFund(asset_, share_) {}
+
+  function cancel(Order calldata order) public override returns (State) {
+    IRetargetter(msg.sender).cancelOrder();
+    return super.cancel(order);
   }
 }

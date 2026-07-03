@@ -19,14 +19,15 @@ import {
   OPERATION_STORAGE_SLOT,
   WINDOW_TSLOT,
   MODULE_TSLOT,
-  AMOUNT_TSLOT
+  AMOUNT_TSLOT,
+  REENTRANCY_TSLOT
 } from "src/libs/manager/rebalancer/LibRetargetterConstants.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {Order, Mode} from "src/libs/funds/Order.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
-import {MockRetargetterFund} from "test/mock/manager/rebalancer/MockRetargetterFund.sol";
+import {MockRetargetterFund, ReenteringMockFund} from "test/mock/manager/rebalancer/MockRetargetterFund.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
@@ -80,8 +81,8 @@ contract RetargetterTest is RetargetterBaseTest {
 
     address implementation = UpgradeableBeacon(beacon).implementation();
     assertGt(implementation.code.length, 0, "implementation deployed");
-    assertEq(Retargetter(implementation).QUOTER(), address(retargetterQuoter), "quoter immutable");
-    assertEq(Retargetter(implementation).REQUEST_FACTORY(), address(requestFactory), "request factory immutable");
+    assertEq(Retargetter(implementation).quoter(), address(retargetterQuoter), "quoter immutable");
+    assertEq(Retargetter(implementation).requestFactory(), address(requestFactory), "request factory immutable");
   }
 
   function test_factory_implementationCannotBeInitialized() public {
@@ -827,6 +828,33 @@ contract RetargetterTest is RetargetterBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      REENTRANCY GUARD                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice The transient guard blocks reentry through an external call made by a guarded
+  ///         function: a whitelisted fund holding the rebalancer role (so the reentrant call
+  ///         passes authorization and reaches the guard) reenters cancelOrder from inside
+  ///         cancel and the whole call reverts Reentrancy.
+  function test_nonReentrant_blocksReentrantCall() public {
+    ReenteringMockFund reenteringFund = new ReenteringMockFund(address(debtToken), address(collateralToken));
+    vm.startPrank(owner);
+    retargetter.setFund(address(reenteringFund), true);
+    retargetter.grantRoles(address(reenteringFund), RETARGETTER_REBALANCER_ROLE);
+    vm.stopPrank();
+
+    _seedPosition(10_000e18, 5_000e18);
+    vm.startPrank(rebalancer);
+    retargetter.startRetargetting(
+      address(positionManager), 0, 100, address(reenteringFund), REQUEST_NAME, REQUEST_SYMBOL
+    );
+    retargetter.create(_order(Mode.DEPOSIT, 100e18, 100e18, bytes32(uint256(1))));
+
+    vm.expectRevert(LibRetargetterErrors.Reentrancy.selector);
+    retargetter.cancelOrder();
+    vm.stopPrank();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       STORAGE LAYOUT                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -841,6 +869,7 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(WINDOW_TSLOT, bytes32(uint256(keccak256("retargetter.transient.window")) - 1), "window tslot");
     assertEq(MODULE_TSLOT, bytes32(uint256(keccak256("retargetter.transient.module")) - 1), "module tslot");
     assertEq(AMOUNT_TSLOT, bytes32(uint256(keccak256("retargetter.transient.amount")) - 1), "amount tslot");
+    assertEq(REENTRANCY_TSLOT, bytes32(uint256(keccak256("retargetter.transient.reentrancy")) - 1), "reentrancy tslot");
   }
 
   function test_storageLayout_operationPacking() public {
