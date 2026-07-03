@@ -29,6 +29,7 @@ import {
   MAX_TICK_DURATION,
   MAX_YIELD_CAP_BPS,
   MAX_PRINCIPAL_BUFFER_BPS,
+  MAX_AUTHORIZED_ACCOUNTS,
   REPAYMENT_DEADLINE_OFFSET,
   FULL_BALANCE_SENTINEL,
   WINDOW_TSLOT,
@@ -38,6 +39,7 @@ import {
 import {BPS} from "../../libs/Constants.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
 import {LibTransientSlot} from "../../libs/common/LibTransientSlot.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {Multicallable} from "lib/solady/src/utils/Multicallable.sol";
@@ -83,6 +85,7 @@ contract Retargetter is
   using LibChecks for address;
   using LibStorage for RetargetterOperation;
   using LibTransientSlot for bytes32;
+  using EnumerableSetLib for EnumerableSetLib.AddressSet;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         IMMUTABLES                         */
@@ -156,8 +159,15 @@ contract Retargetter is
   /// @inheritdoc IRetargetter
   /// @dev The deployed Request gets the maximum 90-day repayment deadline (treated as
   ///      effectively infinite; see REPAYMENT_DEADLINE_OFFSET for the acknowledgment) and a
-  ///      zero mint-to-repaid delay (the minimum-one-tick rule already guarantees lenders a
-  ///      full tick of yield). The Retargetter becomes its owner, puller and consumer.
+  ///      zero mint-to-repaid delay. That delay exists to keep a Request consumer from minting
+  ///      disproportionate yield tokens right before repayment; here the minting paths are
+  ///      boxed in instead: the yield gates cap yield proportional to principal, the principal
+  ///      gates cap principal at the live quoter cap (so every pulled asset is capital the
+  ///      operation actually uses), the minimum-one-tick rule guarantees lenders a full tick
+  ///      of yield, and the consumption window closes capital entry at the tick threshold or
+  ///      the first pull of funds, whichever comes first. A nonzero delay would instead let a
+  ///      late authorized mint push settlement back. The Retargetter becomes the Request's
+  ///      owner, puller and consumer.
   function startRetargetting(
     address positionManager,
     uint256 principal,
@@ -205,8 +215,8 @@ contract Retargetter is
   /// @dev The yield gate compares the offer's ratio (partial fills keep it), division-free:
   ///      `expectedReturn * BPS <= amount * operationMaxYieldBps`. The gate is flat because
   ///      repayment itself is duration-prorated by the tick formula. The principal gate is
-  ///      cumulative through the Request's PT supply, which is the complete consumption
-  ///      accounting since the Retargetter exposes no authorizeMinting passthrough.
+  ///      cumulative through the Request's PT supply plus the outstanding mint authorizations,
+  ///      which together are the complete capital accounting for the Request.
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)
@@ -215,27 +225,50 @@ contract Retargetter is
   {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
-    if (offer.expectedReturn * BPS > offer.amount * operation_.operationMaxYieldBps) {
-      revert LibRetargetterErrors.YieldTooHigh();
-    }
-    (uint128 ptSupply,) = ITokenController(request).totalSupplies();
-    if (ptSupply + ptAmount > maxPrincipal(operation_.positionManager)) {
-      revert LibRetargetterErrors.PrincipalCapExceeded();
-    }
-    // The first consume starts the loan clock; later consumes accrue from the same origin
-    if (operation_.startedAt == 0) {
-      // Safe: block.timestamp fits in uint40 for ~35,000 years
-      // forge-lint: disable-next-line(unsafe-typecast)
-      operation_.startedAt = uint40(block.timestamp);
-    }
+    operation_.checkOffer(
+      request, offer.amount, offer.expectedReturn, ptAmount, maxPrincipal(operation_.positionManager)
+    );
     ytAmount = IRequest(request).consume(offer, signature, ptAmount);
     emit OfferConsumed(request, offer.maker, ptAmount, ytAmount);
   }
 
   /// @inheritdoc IRetargetter
+  /// @dev Shares consume's gates: the flat yield-ratio gate on the authorized amounts and the
+  ///      principal gate counting the PT supply plus every outstanding authorization (the
+  ///      account's current one is replaced, not added to). A nonzero authorization starts the
+  ///      loan clock, must land inside the consumption window and is capped in count by
+  ///      MAX_AUTHORIZED_ACCOUNTS; the zero-amount revocation skips every gate because it
+  ///      only shrinks exposure and must stay available after the window closes.
+  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount)
+    external
+    onlyOwnerOrRoles(CONSUMER_ROLE)
+    nonReentrant
+  {
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    address request = operation_.checkRequest();
+    // Replace semantics: drop the account from the set so the principal gate sizes the new
+    // amounts as fresh capital; a full revocation (both amounts zero) skips every gate, since
+    // it only shrinks exposure and must stay available once the window has closed
+    EnumerableSetLib.AddressSet storage accounts = operation_.authorizedAccounts;
+    accounts.remove(to);
+    if (ptAmount != 0 || ytAmount != 0) {
+      operation_.checkOffer(request, ptAmount, ytAmount, ptAmount, maxPrincipal(operation_.positionManager));
+      // The capacity bound keeps every loop over the set within gas reach; see the constant
+      accounts.add(to, MAX_AUTHORIZED_ACCOUNTS);
+    }
+    IRequest(request).authorizeMinting(to, ptAmount, ytAmount);
+    emit MintingAuthorized(request, to, ptAmount, ytAmount);
+  }
+
+  /// @inheritdoc IRetargetter
   /// @dev Naturally bounded by the Request's balance, which the principal cap already bounded.
   function pullRequestFunds(uint256 amount) external onlyOwnerOrRebalancer nonReentrant {
-    address request = LibStorage.operationStorage().checkRequest();
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    address request = operation_.checkRequest();
+    // Pulling is the point of no return for the funding round: capital entry shuts and every
+    // pending authorization is revoked, so funds being deployed can no longer be diluted
+    operation_.closeConsumption(request);
+    if (amount == FULL_BALANCE_SENTINEL) amount = LibStorage.assetsStorage().debtAsset.balanceOf(request);
     IRequestInteractions(request).pullFunds(amount, "");
     emit RequestFundsPulled(request, amount);
   }
@@ -247,9 +280,9 @@ contract Retargetter is
   ///      funds cannot overpay YT holders. The open upper bound at setRepaid keeps third-party
   ///      donations to the Request from blocking repayment. Once the Request passes its
   ///      90-day deadline it auto-expires and this function reverts AlreadyRepaid; proceeds
-  ///      settling after that point should be delivered to lenders through owner
-  ///      rescue(debtAsset, request) before holders redeem, not folded into the position.
-  ///      The expiry bypassing the local repayment flow is an acknowledged limitation;
+  ///      settling after that point cannot be delivered to lenders locally. The expiry
+  ///      bypassing the local repayment flow is an acknowledged limitation and, like the
+  ///      expiry itself, delivery of late proceeds runs through the governed upgrade path;
   ///      see REPAYMENT_DEADLINE_OFFSET for the remediation posture.
   function repay() external onlyOwnerOrRebalancer nonReentrant returns (uint256 owedAmount) {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
@@ -282,7 +315,10 @@ contract Retargetter is
   ///      state-mutating sync so a past-deadline Request resolves instead of wedging), no
   ///      pending order (an ENDED or force-ended order is cleared here), and residual within
   ///      the configured tolerance on both bound assets (dust donations below the tolerance
-  ///      cannot grief settlement; anything above is unblocked by owner rescue).
+  ///      cannot grief settlement; anything above is folded into the position with a
+  ///      full-balance rebalance leg, except a debt-asset donation beyond the outstanding
+  ///      module debt, which the owner instead tolerates by raising the asset's residual
+  ///      exponent so it folds into the next operation).
   function resolve() external onlyOwnerOrRebalancer nonReentrant {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
@@ -563,44 +599,28 @@ contract Retargetter is
 
   /// @inheritdoc IRetargetter
   /// @dev The pair is fixed, so token compatibility is checked once here instead of at every
-  ///      operation start.
-  function addFund(address fund) external onlyOwner nonReentrant {
-    fund.checkContract();
-    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
-    if (IFund(fund).asset() != assets_.debtAsset || IFund(fund).share() != assets_.collateralAsset) {
-      revert LibRetargetterErrors.AssetMismatch();
+  ///      operation start. Removal is blocked while the fund is bound to the active operation.
+  function setFund(address fund, bool whitelisted) external onlyOwner nonReentrant {
+    if (whitelisted) {
+      fund.checkContract();
+      RetargetterAssets storage assets_ = LibStorage.assetsStorage();
+      if (IFund(fund).asset() != assets_.debtAsset || IFund(fund).share() != assets_.collateralAsset) {
+        revert LibRetargetterErrors.AssetMismatch();
+      }
+    } else if (LibStorage.operationStorage().fund == fund) {
+      revert LibRetargetterErrors.OperationActive();
     }
-    LibStorage.whitelistsStorage().funds[fund] = true;
-    emit FundAdded(fund);
-  }
-
-  /// @inheritdoc IRetargetter
-  function removeFund(address fund) external onlyOwner nonReentrant {
-    if (LibStorage.operationStorage().fund == fund) revert LibRetargetterErrors.OperationActive();
-    LibStorage.whitelistsStorage().funds[fund] = false;
-    emit FundRemoved(fund);
-  }
-
-  /// @inheritdoc IRetargetter
-  function addFlashLoanModule(address module) external onlyOwner nonReentrant {
-    module.checkContract();
-    LibStorage.whitelistsStorage().flashLoanModules[module] = true;
-    emit FlashLoanModuleAdded(module);
+    LibStorage.whitelistsStorage().funds[fund] = whitelisted;
+    emit FundSet(fund, whitelisted);
   }
 
   /// @inheritdoc IRetargetter
   /// @dev Removable any time: an open window binds its module for the transaction through
   ///      the transient slots, not the whitelist.
-  function removeFlashLoanModule(address module) external onlyOwner nonReentrant {
-    LibStorage.whitelistsStorage().flashLoanModules[module] = false;
-    emit FlashLoanModuleRemoved(module);
-  }
-
-  /// @inheritdoc IRetargetter
-  /// @dev Using it mid-operation on operation assets is an explicit owner override.
-  function rescue(address token, address to) external onlyOwner nonReentrant returns (uint256 amount) {
-    amount = token.safeTransferAll(to);
-    emit Rescued(token, to, amount);
+  function setFlashLoanModule(address module, bool whitelisted) external onlyOwner nonReentrant {
+    if (whitelisted) module.checkContract();
+    LibStorage.whitelistsStorage().flashLoanModules[module] = whitelisted;
+    emit FlashLoanModuleSet(module, whitelisted);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -657,35 +677,21 @@ contract Retargetter is
       revert LibRetargetterErrors.BadDebtPosition(positionManager);
     }
     (uint256 target,) = IPositionManager(positionManager).config();
-    uint256 current = debt.divWad(collateralQuoted);
     RetargetterConfig storage config_ = LibStorage.configStorage();
     // The estimates pack into a single slot, so one copy into memory beats a storage
     // pointer re-reading the slot for every field passed to the quoter
     YieldEstimates memory estimates = config_.estimates;
-    uint256 principal;
-    if (current < target) {
-      principal = IRetargetterQuoter(QUOTER)
-        .ltvUpPrincipal(
-          collateralQuoted,
-          debt,
-          target,
-          estimates.requestYieldRate,
-          estimates.borrowRate,
-          estimates.collateralYieldRate,
-          estimates.subscriptionDuration
-        );
-    } else if (current > target) {
-      (principal,) = IRetargetterQuoter(QUOTER)
-        .ltvDownPrincipal(
-          collateralQuoted,
-          debt,
-          target,
-          estimates.requestYieldRate,
-          estimates.borrowRate,
-          estimates.collateralYieldRate,
-          estimates.redemptionDuration
-        );
-    }
+    uint256 principal = IRetargetterQuoter(QUOTER)
+      .retargetPrincipal(
+        collateralQuoted,
+        debt,
+        target,
+        estimates.requestYieldRate,
+        estimates.borrowRate,
+        estimates.collateralYieldRate,
+        estimates.subscriptionDuration,
+        estimates.redemptionDuration
+      );
     return principal * (BPS + config_.principalBufferBps) / BPS;
   }
 
@@ -694,6 +700,11 @@ contract Retargetter is
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     operation_.checkRequest();
     return _owed(operation_);
+  }
+
+  /// @inheritdoc IRetargetter
+  function authorizedAccounts() external view returns (address[] memory accounts) {
+    return LibStorage.operationStorage().authorizedAccounts.values();
   }
 
   /// @inheritdoc IRetargetter
@@ -757,7 +768,7 @@ contract Retargetter is
   }
 
   /// @dev Reverts unless the position manager's assets equal the bound pair. The fund's
-  ///      tokens were validated against the pair at addFund and the Request is created with
+  ///      tokens were validated against the pair at setFund and the Request is created with
   ///      the debt asset, so a matching position manager makes the whole operation match.
   function _checkPair(address positionManager) internal view {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
@@ -767,9 +778,10 @@ contract Retargetter is
     }
   }
 
-  /// @dev Current owed amount on the operation's Request. PT supply is exactly what consume
-  ///      issued, so with nothing consumed (startedAt still zero) both supplies are zero and
-  ///      the owed amount is zero regardless of the elapsed time.
+  /// @dev Current owed amount on the operation's Request. The supplies only grow through
+  ///      consume and authorized mints, both reachable only once the loan clock has started,
+  ///      so with startedAt still zero both supplies are zero and the owed amount is zero
+  ///      regardless of the elapsed time.
   function _owed(RetargetterOperation storage operation_) internal view returns (uint256) {
     (uint128 ptSupply, uint128 ytSupply) = ITokenController(operation_.request).totalSupplies();
     RetargetterConfig storage config_ = LibStorage.configStorage();
@@ -788,9 +800,11 @@ contract Retargetter is
   ///      the power of its configured residual exponent, checked with a single shift. The
   ///      zero default keeps the gate exact; a small tolerance (for example 2^20 on a
   ///      6-decimal asset, about one token) stops dust donations from griefing settlement.
-  ///      Everything above must have returned to the position manager, to the Request, or
-  ///      been rescued by the owner; tolerated dust stays here and folds into the next
-  ///      operation through the full-balance sentinels.
+  ///      Everything above must have returned to the position manager or the Request, or be
+  ///      folded into the position through the full-balance rebalance legs; a debt-asset
+  ///      donation beyond what those legs can repay is tolerated by the owner raising the
+  ///      asset's residual exponent instead. Tolerated dust stays here and folds into the
+  ///      next operation through the full-balance sentinels.
   function _checkResidual() internal view {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     RetargetterConfig storage config_ = LibStorage.configStorage();

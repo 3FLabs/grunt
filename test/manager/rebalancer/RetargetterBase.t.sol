@@ -9,6 +9,7 @@ import {RetargetterQuoter} from "src/manager/rebalancer/RetargetterQuoter.sol";
 import {MorphoFlashLoanAdapter} from "src/manager/rebalancer/MorphoFlashLoanAdapter.sol";
 import {RetargetterConfig, YieldEstimates} from "src/interfaces/manager/rebalancer/IRetargetter.sol";
 import {RequestFactory} from "src/request/RequestFactory.sol";
+import {IRequest} from "src/interfaces/request/IRequest.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {Order, Mode} from "src/libs/funds/Order.sol";
 import {
@@ -40,6 +41,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   address public consumer;
+  address public broker;
   Vm.Wallet internal maker;
   uint256 internal makerNonce;
 
@@ -75,6 +77,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     super.setUp();
 
     consumer = makeAddr("consumer");
+    broker = makeAddr("broker");
     maker = vm.createWallet("maker");
 
     requestFactory = new RequestFactory(owner);
@@ -89,8 +92,8 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     vm.startPrank(owner);
     retargetter.grantRoles(rebalancer, RETARGETTER_REBALANCER_ROLE);
     retargetter.grantRoles(consumer, RETARGETTER_CONSUMER_ROLE);
-    retargetter.addFund(address(fund));
-    retargetter.addFlashLoanModule(address(flashLoanAdapter));
+    retargetter.setFund(address(fund), true);
+    retargetter.setFlashLoanModule(address(flashLoanAdapter), true);
     positionManager.grantRoles(address(retargetter), _ROLE_REBALANCER);
     // One basis point absorbs the Morpho rounding dust, no cooldown between steps
     positionManager.setRebalanceConfig(1, 0);
@@ -201,6 +204,31 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     debtToken.approve(request, offerAmount);
     vm.prank(consumer);
     ytAmount = retargetter.consume(offer, signature, ptAmount);
+  }
+
+  /// @dev Sets (or revokes) a mint authorization on the active operation as the consumer role.
+  function _authorize(address to, uint128 ptAmount, uint128 ytAmount) internal {
+    vm.prank(consumer);
+    retargetter.authorizeMinting(to, ptAmount, ytAmount);
+  }
+
+  /// @dev Funds the broker and mints its outstanding authorization on the Request.
+  function _mintAsBroker(address request, uint256 amount) internal {
+    _mintDebt(broker, amount);
+    vm.startPrank(broker);
+    debtToken.approve(request, amount);
+    IRequest(request).mint(type(uint128).max, 0);
+    vm.stopPrank();
+  }
+
+  /// @dev Sums the still-unminted authorized principal over the registered accounts, the same
+  ///      derivation the gates use.
+  function _outstandingAuthorizedPt(address request) internal view returns (uint256 total) {
+    address[] memory accounts = retargetter.authorizedAccounts();
+    for (uint256 i; i < accounts.length; ++i) {
+      (uint128 ptAmount,) = IRequest(request).mintAuthorization(accounts[i]);
+      total += ptAmount;
+    }
   }
 
   /// @dev Builds a Retargetter-owned order.

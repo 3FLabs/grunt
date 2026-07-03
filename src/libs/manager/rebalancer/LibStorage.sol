@@ -3,8 +3,12 @@ pragma solidity ^0.8.22;
 
 import {RetargetterConfig} from "../../../interfaces/manager/rebalancer/IRetargetter.sol";
 import {IFund} from "../../../interfaces/funds/IFund.sol";
+import {IRequest} from "../../../interfaces/request/IRequest.sol";
+import {ITokenController} from "../../../interfaces/request/ITokenController.sol";
 import {Order, Mode, State} from "../../funds/Order.sol";
 import {LibRetargetterErrors} from "./LibRetargetterErrors.sol";
+import {BPS} from "../../Constants.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {
   ASSETS_STORAGE_SLOT,
   CONFIG_STORAGE_SLOT,
@@ -38,8 +42,11 @@ struct RetargetterWhitelists {
 ///      stored order is partial: `owner` and `receiver` are always the Retargetter (enforced
 ///      at create) so {LibStorage.order} rebuilds the full Order in memory.
 /// @param positionManager The operation's position manager
-/// @param startedAt The loan clock origin, set at the first consume (0 until then)
+/// @param startedAt The loan clock origin, set at the first consume or nonzero mint
+///        authorization (0 until then)
 /// @param operationMaxYieldBps The effective yield cap, fixed at start
+/// @param consumptionClosed Whether capital entry is shut for good; set by the first pull of
+///        funds, which also revokes every pending mint authorization
 /// @param request The Request deployed for the operation
 /// @param fund The operation's venue, owner-whitelisted at start
 /// @param orderMode The stored order's mode
@@ -47,10 +54,15 @@ struct RetargetterWhitelists {
 /// @param orderInput The stored order's input amount
 /// @param orderOutput The stored order's output amount
 /// @param orderSalt The stored order's salt
+/// @param authorizedAccounts The accounts holding a registered mint authorization; the live
+///        amounts are re-read from the Request per account, revocation removes its account
+///        eagerly, a completed mint is pruned lazily by the next write-path computation, and
+///        resolve empties the set
 struct RetargetterOperation {
   address positionManager;
   uint40 startedAt;
   uint16 operationMaxYieldBps;
+  bool consumptionClosed;
   address request;
   address fund;
   Mode orderMode;
@@ -58,6 +70,7 @@ struct RetargetterOperation {
   uint256 orderInput;
   uint256 orderOutput;
   bytes32 orderSalt;
+  EnumerableSetLib.AddressSet authorizedAccounts;
 }
 
 /// @title LibStorage
@@ -65,6 +78,8 @@ struct RetargetterOperation {
 /// @notice Library providing the ERC-7201 storage accessors and the storage-only operations
 ///         for the Retargetter.
 library LibStorage {
+  using EnumerableSetLib for EnumerableSetLib.AddressSet;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       STORAGE ACCESS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -128,6 +143,90 @@ library LibStorage {
     clearOrder(self);
   }
 
+  /// @dev Capital gates shared by consume and authorizeMinting. Reverts YieldTooHigh when the
+  ///      offered yield-to-principal ratio exceeds the operation's cap (division-free, so
+  ///      partial fills keep the offer's ratio) and PrincipalCapExceeded when the committed
+  ///      principal (the PT supply, the outstanding authorizations after pruning, and the new
+  ///      amount) exceeds the live cap, then runs {checkConsumptionWindow}.
+  /// @param self The storage pointer to the operation
+  /// @param request The operation's Request
+  /// @param amount The offered principal the yield ratio is quoted on
+  /// @param expectedReturn The offered yield on that principal
+  /// @param ptAmount The principal actually being committed
+  /// @param principalCap The live principal cap
+  function checkOffer(
+    RetargetterOperation storage self,
+    address request,
+    uint256 amount,
+    uint256 expectedReturn,
+    uint256 ptAmount,
+    uint256 principalCap
+  ) internal {
+    if (expectedReturn * BPS > amount * self.operationMaxYieldBps) {
+      revert LibRetargetterErrors.YieldTooHigh();
+    }
+    (uint128 ptSupply,) = ITokenController(request).totalSupplies();
+    if (ptSupply + pruneNullAuthorizations(self, request) + ptAmount > principalCap) {
+      revert LibRetargetterErrors.PrincipalCapExceeded();
+    }
+    checkConsumptionWindow(self);
+  }
+
+  /// @dev Consumption-window gate and loan clock: reverts once the window has closed (funds
+  ///      were pulled, or the tick threshold elapsed since the origin); otherwise the first
+  ///      capital commitment (consume or nonzero mint authorization) starts the clock. The
+  ///      window exists because repayment prices every yield token from the origin: capital
+  ///      arriving later would be overpaid for time it never covered and, on a default, would
+  ///      dilute the earlier lenders' recovery. It binds everyone, owner included, and a zero
+  ///      threshold collapses the window to the origin timestamp itself.
+  /// @param self The storage pointer to the operation
+  function checkConsumptionWindow(RetargetterOperation storage self) internal {
+    if (self.consumptionClosed) revert LibRetargetterErrors.ConsumptionWindowClosed();
+    uint256 startedAt = self.startedAt;
+    if (startedAt == 0) {
+      // Safe: block.timestamp fits in uint40 for ~35,000 years
+      // forge-lint: disable-next-line(unsafe-typecast)
+      self.startedAt = uint40(block.timestamp);
+    } else if (block.timestamp > startedAt + configStorage().tickThreshold) {
+      revert LibRetargetterErrors.ConsumptionWindowClosed();
+    }
+  }
+
+  /// @dev Ends the funding round: consume and new authorizations reject from here on, and
+  ///      every pending mint authorization is revoked on the Request while the set empties
+  ///      (back to front, each removal a plain pop). Runs on every pull of funds and is
+  ///      idempotent; once capital is being deployed it can no longer be diluted.
+  /// @param self The storage pointer to the operation
+  /// @param request The operation's Request
+  function closeConsumption(RetargetterOperation storage self, address request) internal {
+    self.consumptionClosed = true;
+    EnumerableSetLib.AddressSet storage accounts = self.authorizedAccounts;
+    for (uint256 remaining = accounts.length(); remaining > 0; --remaining) {
+      address account = accounts.at(remaining - 1);
+      IRequest(request).authorizeMinting(account, 0, 0);
+      accounts.remove(account);
+    }
+  }
+
+  /// @dev Removes authorizations that read all-zero on the Request (minted, their amount now
+  ///      sits in the PT supply) while summing the live ones. Iterates back to front so the
+  ///      swap-pop removal only moves accounts that were already counted.
+  /// @param self The storage pointer to the operation
+  /// @param request The operation's Request
+  /// @return outstanding The outstanding authorized principal after pruning
+  function pruneNullAuthorizations(RetargetterOperation storage self, address request)
+    internal
+    returns (uint256 outstanding)
+  {
+    EnumerableSetLib.AddressSet storage accounts = self.authorizedAccounts;
+    for (uint256 i = accounts.length(); i > 0; --i) {
+      address account = accounts.at(i - 1);
+      (uint128 ptAmount, uint128 ytAmount) = IRequest(request).mintAuthorization(account);
+      if (ptAmount == 0 && ytAmount == 0) accounts.remove(account);
+      else outstanding += ptAmount;
+    }
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          SETTERS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -153,15 +252,21 @@ library LibStorage {
     self.orderSalt = bytes32(0);
   }
 
-  /// @dev Clears the operation addresses, the loan clock and the yield cap; the order fields
-  ///      are cleared separately as orders end.
+  /// @dev Clears the operation addresses, the loan clock, the yield cap and the
+  ///      mint-authorization account set (emptied back to front, each removal a plain pop);
+  ///      the order fields are cleared separately as orders end.
   /// @param self The storage pointer to the operation
   function clearOperation(RetargetterOperation storage self) internal {
     self.positionManager = address(0);
     self.startedAt = 0;
     self.operationMaxYieldBps = 0;
+    self.consumptionClosed = false;
     self.request = address(0);
     self.fund = address(0);
+    EnumerableSetLib.AddressSet storage accounts = self.authorizedAccounts;
+    for (uint256 remaining = accounts.length(); remaining > 0; --remaining) {
+      accounts.remove(accounts.at(remaining - 1));
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

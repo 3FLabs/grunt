@@ -135,6 +135,35 @@ contract RetargetterQuoterTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     DIRECTION DISPATCH                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_retargetPrincipal_routesByDirection() public view {
+    // Under-leveraged: routes to the LTV-up formula over the subscription duration
+    assertEq(
+      quoter.retargetPrincipal(10_000e18, 5_000e18, 0.7e18, 0.04e18, 0.05e18, 0.03e18, 30 days, 7 days),
+      quoter.ltvUpPrincipal(10_000e18, 5_000e18, 0.7e18, 0.04e18, 0.05e18, 0.03e18, 30 days),
+      "up route uses the subscription duration"
+    );
+    // Over-leveraged: routes to the LTV-down formula over the redemption duration
+    (uint256 downPrincipal,) = quoter.ltvDownPrincipal(10_000e18, 8_000e18, 0.7e18, 0.04e18, 0.05e18, 0.03e18, 7 days);
+    assertEq(
+      quoter.retargetPrincipal(10_000e18, 8_000e18, 0.7e18, 0.04e18, 0.05e18, 0.03e18, 30 days, 7 days),
+      downPrincipal,
+      "down route uses the redemption duration"
+    );
+    // Exactly at target: no principal in either direction
+    assertEq(
+      quoter.retargetPrincipal(10_000e18, 7_000e18, 0.7e18, 0.04e18, 0.05e18, 0.03e18, 30 days, 7 days), 0, "at target"
+    );
+  }
+
+  function test_retargetPrincipal_revertsOnZeroCollateral() public {
+    vm.expectRevert(FixedPointMathLib.DivWadFailed.selector);
+    quoter.retargetPrincipal(0, 1e18, 0.7e18, 0, 0, 0, 0, 0);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     LTV-DOWN PRINCIPAL                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

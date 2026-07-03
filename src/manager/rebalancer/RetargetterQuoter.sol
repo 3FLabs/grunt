@@ -32,6 +32,11 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///      rho = 1). Realized drift is absorbed at settlement by the remediation step (LTV-down)
 ///      or leaves a bounded deviation from target that a later operation corrects (LTV-up).
 ///
+///      Direction dispatch (`retargetPrincipal`): the current ratio D / K picks the flow,
+///      routing under-leveraged positions to the LTV-up formula over the subscription window
+///      and over-leveraged ones to the LTV-down formula over the redemption window; a
+///      position exactly at target needs no principal.
+///
 ///      LTV-up sizing (`ltvUpPrincipal`), for under-leveraged positions (D / K < t): borrow x,
 ///      subscribe it into new collateral, and at settlement borrow the bridge repayment
 ///      `x * (1 + Yr)` as new position debt to close the loan. At settlement the existing
@@ -105,6 +110,29 @@ contract RetargetterQuoter is IRetargetterQuoter {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRetargetterQuoter
+  function retargetPrincipal(
+    uint256 collateralQuoted,
+    uint256 debt,
+    uint256 targetLtv,
+    uint256 requestYieldRate,
+    uint256 borrowRate,
+    uint256 collateralYieldRate,
+    uint256 subscriptionDuration,
+    uint256 redemptionDuration
+  ) external pure returns (uint256 principal) {
+    uint256 current = debt.divWad(collateralQuoted);
+    if (current < targetLtv) {
+      principal = ltvUpPrincipal(
+        collateralQuoted, debt, targetLtv, requestYieldRate, borrowRate, collateralYieldRate, subscriptionDuration
+      );
+    } else if (current > targetLtv) {
+      (principal,) = ltvDownPrincipal(
+        collateralQuoted, debt, targetLtv, requestYieldRate, borrowRate, collateralYieldRate, redemptionDuration
+      );
+    }
+  }
+
+  /// @inheritdoc IRetargetterQuoter
   function ltvUpPrincipal(
     uint256 collateralQuoted,
     uint256 debt,
@@ -113,7 +141,7 @@ contract RetargetterQuoter is IRetargetterQuoter {
     uint256 borrowRate,
     uint256 collateralYieldRate,
     uint256 duration
-  ) external pure returns (uint256 principal) {
+  ) public pure returns (uint256 principal) {
     uint256 grownTarget = _grownTarget(collateralQuoted, targetLtv, collateralYieldRate, duration);
     uint256 driftedDebt = _driftedDebt(debt, borrowRate, duration);
     if (grownTarget <= driftedDebt) return 0;
@@ -132,7 +160,7 @@ contract RetargetterQuoter is IRetargetterQuoter {
     uint256 borrowRate,
     uint256 collateralYieldRate,
     uint256 duration
-  ) external pure returns (uint256 principal, uint256 collateralToFreeQuoted) {
+  ) public pure returns (uint256 principal, uint256 collateralToFreeQuoted) {
     uint256 driftedDebt = _driftedDebt(debt, borrowRate, duration);
     uint256 grownTarget = _grownTarget(collateralQuoted, targetLtv, collateralYieldRate, duration);
     if (driftedDebt <= grownTarget) return (0, 0);

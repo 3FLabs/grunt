@@ -46,6 +46,13 @@ uint16 constant MAX_YIELD_CAP_BPS = 5000;
 /// @custom:value 2,000
 uint16 constant MAX_PRINCIPAL_BUFFER_BPS = 2000;
 
+/// @dev Maximum number of accounts holding a registered mint authorization at once. Bounds
+///      every loop over the authorization set (pruning, revocation at the first pull of
+///      funds, clearing at resolve), so a consumer handing out dust authorizations cannot
+///      grow the set until those loops run out of gas and wedge settlement.
+/// @custom:value 16
+uint256 constant MAX_AUTHORIZED_ACCOUNTS = 16;
+
 /// @dev Repayment deadline offset applied to every deployed Request (the maximum the
 ///      Request accepts). Acknowledged limitation: past the deadline the Request auto-expires
 ///      and bypasses the local repayment checks, so 90 days is sized as an effectively
@@ -61,8 +68,9 @@ uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 /*                        REBALANCING                         */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Sentinel amount resolved to the Retargetter's full balance of the corresponding
-///      asset on rebalance input legs (collateral, debt, SUPPLY, REPAY).
+/// @dev Sentinel amount resolved to the full balance of the corresponding asset: the
+///      Retargetter's on rebalance input legs (collateral, debt, SUPPLY, REPAY) and the
+///      Request's on pullRequestFunds.
 /// @custom:value 2^256 - 1
 uint256 constant FULL_BALANCE_SENTINEL = type(uint256).max;
 

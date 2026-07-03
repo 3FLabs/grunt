@@ -45,6 +45,11 @@ library LibRetargetterErrors {
   /// @notice Thrown when an offer's yield ratio exceeds the operation's yield cap.
   error YieldTooHigh();
 
+  /// @notice Thrown when consuming an offer or setting a nonzero mint authorization after the
+  ///         consumption window has closed (the tick threshold elapsed since the loan clock
+  ///         origin, or funds were already pulled).
+  error ConsumptionWindowClosed();
+
   /// @notice Thrown when computing a principal cap on a position with no collateral and no debt.
   error EmptyPosition();
 

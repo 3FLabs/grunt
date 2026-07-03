@@ -20,10 +20,10 @@ import {
 
 /// @title RetargetterHandler
 /// @notice Foundry invariant-test handler driving the Retargetter through bounded, fuzz-driven
-///         actions: ASYNC operation lifecycle (start, consume, pull, repay, resolve), the mock
-///         fund order lifecycle (create, commit, settle, unlock, cancel, recover), guarded
-///         rebalances, SYNC flash-loan windows, and owner/environment perturbations (force
-///         repay, rescue, warp, share price, estimates, target LTV).
+///         actions: ASYNC operation lifecycle (start, consume, authorize, pull, repay,
+///         resolve), the mock fund order lifecycle (create, commit, settle, unlock, cancel,
+///         recover), guarded rebalances, SYNC flash-loan windows, and owner/environment
+///         perturbations (force repay, warp, share price, estimates, target LTV).
 /// @dev Every action bounds its inputs, early-returns on unmet preconditions and wraps the
 ///      target call in try/catch so the fuzzer explores freely (fail_on_revert = false).
 ///      Ghost variables record cross-call facts the invariant suite asserts afterwards.
@@ -64,6 +64,9 @@ contract RetargetterHandler is Test {
   address public makerAddr;
   uint256 internal makerKey;
 
+  /// @notice The handler-owned broker receiving mint authorizations.
+  address public brokerAddr;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      GHOST VARIABLES                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -94,6 +97,10 @@ contract RetargetterHandler is Test {
 
   /// @notice Set if a successful consume left the PT supply above the live principal cap.
   bool public capViolatedAtConsume;
+
+  /// @notice Set if a successful authorization left the committed principal (PT supply plus
+  ///         outstanding authorizations) above the live principal cap.
+  bool public capViolatedAtAuthorize;
 
   /// @notice Set if the active operation's startedAt changed after being recorded nonzero.
   bool public startedAtMutated;
@@ -150,6 +157,7 @@ contract RetargetterHandler is Test {
     Vm.Wallet memory wallet = vm.createWallet("invariantMaker");
     makerAddr = wallet.addr;
     makerKey = wallet.privateKey;
+    brokerAddr = makeAddr("invariantBroker");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -242,6 +250,54 @@ contract RetargetterHandler is Test {
     } catch {}
   }
 
+  /// @notice Sets, replaces or revokes the broker's mint authorization with amounts spread
+  ///         around both caps so every gate and the revocation path get exercised.
+  function act_authorizeMinting(uint256 amountSeed, uint256 yieldSeed) external trackStartedAt {
+    if (!retargetter.isActive()) return;
+    (, address request,,, uint16 operationCap,,) = retargetter.operation();
+    if (request == address(0)) return;
+
+    uint128 ptAmount = uint128(_bound(amountSeed, 0, 10_000e18));
+    uint256 ratioBps = _bound(yieldSeed, 0, uint256(operationCap) * 2 + 100);
+    uint128 ytAmount = uint128(uint256(ptAmount) * ratioBps / BPS);
+
+    vm.prank(consumer);
+    try retargetter.authorizeMinting(brokerAddr, ptAmount, ytAmount) {
+      if (ptAmount == 0 && ytAmount == 0) return;
+      // The position did not move during the call, so the committed principal the gate just
+      // admitted must still fit under the live cap
+      (uint128 ptSupply,) = ITokenController(request).totalSupplies();
+      try retargetter.maxPrincipal(address(positionManager)) returns (uint256 capNow) {
+        if (uint256(ptSupply) + _outstandingAuthorizedPt(request) > capNow) capViolatedAtAuthorize = true;
+      } catch {}
+    } catch {}
+  }
+
+  /// @notice The broker funds and mints whatever authorization it currently holds.
+  function act_mintAuthorized() external trackStartedAt {
+    if (!retargetter.isActive()) return;
+    (, address request,,,,,) = retargetter.operation();
+    if (request == address(0)) return;
+    (uint128 ptAuth,) = IRequest(request).mintAuthorization(brokerAddr);
+    if (ptAuth == 0) return;
+
+    debtToken.mint(brokerAddr, ptAuth);
+    vm.startPrank(brokerAddr);
+    debtToken.approve(request, ptAuth);
+    try IRequest(request).mint(type(uint128).max, 0) {} catch {}
+    vm.stopPrank();
+  }
+
+  /// @dev Sums the still-unminted authorized principal over the registered accounts, the same
+  ///      derivation the gates use.
+  function _outstandingAuthorizedPt(address request) internal view returns (uint256 total) {
+    address[] memory accounts = retargetter.authorizedAccounts();
+    for (uint256 i; i < accounts.length; ++i) {
+      (uint128 ptAmount,) = IRequest(request).mintAuthorization(accounts[i]);
+      total += ptAmount;
+    }
+  }
+
   /// @notice Pulls consumed funds from the Request, bounded by its balance.
   function act_pull(uint256 amountSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
@@ -276,7 +332,7 @@ contract RetargetterHandler is Test {
   }
 
   /// @notice Owner override settling the Request with an amount bounded by the Retargetter's
-  ///         balance and open bounds, so a rescued-away shortfall never wedges the operation.
+  ///         balance and open bounds, so a missing shortfall never wedges the operation.
   function act_forceRepay(uint256 amountSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
     uint256 amount = _bound(amountSeed, 0, debtToken.balanceOf(address(retargetter)));
@@ -446,13 +502,6 @@ contract RetargetterHandler is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   ENVIRONMENT ACTIONS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Owner sweep of one bound asset to the owner.
-  function act_rescue(bool collateral) external trackStartedAt {
-    address token = collateral ? address(collateralToken) : address(debtToken);
-    vm.prank(owner);
-    try retargetter.rescue(token, owner) {} catch {}
-  }
 
   /// @notice Warps time forward so interest accrues and repayment ticks promote.
   function act_warp(uint256 secondsSeed) external trackStartedAt {

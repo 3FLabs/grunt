@@ -14,6 +14,31 @@ pragma solidity ^0.8.22;
 ///      - durations are in seconds; rate-times-duration products are `rate * duration / 365 days`
 ///      - principals round down, owed yield rounds up (lenders are never underpaid by a wei)
 interface IRetargetterQuoter {
+  /// @notice Computes the retargetting principal for a position, direction auto-detected.
+  /// @dev Routes on the current ratio `debt / collateralQuoted`: below target dispatches to
+  ///      `ltvUpPrincipal` with the subscription duration, above target to `ltvDownPrincipal`
+  ///      with the redemption duration, and exactly at target returns zero. Reverts on zero
+  ///      collateral.
+  /// @param collateralQuoted The aggregate collateral value in debt-asset units
+  /// @param debt The aggregate debt in debt-asset units
+  /// @param targetLtv The target loan-to-value ratio (WAD)
+  /// @param requestYieldRate The bridge-loan yield rate (WAD per 365 days)
+  /// @param borrowRate The venue borrow rate on existing debt (WAD per 365 days)
+  /// @param collateralYieldRate The collateral yield rate (WAD per 365 days)
+  /// @param subscriptionDuration The expected subscription settlement duration in seconds
+  /// @param redemptionDuration The expected redemption settlement duration in seconds
+  /// @return principal The bridge-loan principal in debt-asset units (rounded down)
+  function retargetPrincipal(
+    uint256 collateralQuoted,
+    uint256 debt,
+    uint256 targetLtv,
+    uint256 requestYieldRate,
+    uint256 borrowRate,
+    uint256 collateralYieldRate,
+    uint256 subscriptionDuration,
+    uint256 redemptionDuration
+  ) external pure returns (uint256 principal);
+
   /// @notice Computes the borrow principal that brings an under-leveraged position to target.
   /// @dev Sized so the position sits exactly at target once the subscription settles and the
   ///      bridge repayment is drawn as new debt, accounting for debt drift, collateral yield

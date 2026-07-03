@@ -299,60 +299,57 @@ contract RetargetterTest is RetargetterBaseTest {
   /*                        WHITELISTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_addFund_revertNonOwner() public {
+  function test_setFund_revertNonOwner() public {
     MockRetargetterFund fund2 = new MockRetargetterFund(address(debtToken), address(collateralToken));
 
     vm.prank(rebalancer);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.addFund(address(fund2));
+    retargetter.setFund(address(fund2), true);
+
+    vm.prank(user);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.setFund(address(fund), false);
   }
 
-  function test_addFund_revertNonContract() public {
+  function test_setFund_revertNonContract() public {
     address nonContract = makeAddr("nonContract");
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, nonContract));
-    retargetter.addFund(nonContract);
+    retargetter.setFund(nonContract, true);
   }
 
-  function test_addFund_revertAssetMismatch() public {
+  function test_setFund_revertAssetMismatch() public {
     // Swapped tokens: asset() returns the collateral asset, share() the debt asset
     MockRetargetterFund swappedFund = new MockRetargetterFund(address(collateralToken), address(debtToken));
 
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
-    retargetter.addFund(address(swappedFund));
+    retargetter.setFund(address(swappedFund), true);
   }
 
-  function test_addFund_emitsAndWhitelists() public {
+  function test_setFund_emitsAndWhitelists() public {
     MockRetargetterFund fund2 = new MockRetargetterFund(address(debtToken), address(collateralToken));
     assertFalse(retargetter.isFund(address(fund2)), "not whitelisted before");
 
     vm.prank(owner);
     vm.expectEmit(address(retargetter));
-    emit IRetargetter.FundAdded(address(fund2));
-    retargetter.addFund(address(fund2));
-
+    emit IRetargetter.FundSet(address(fund2), true);
+    retargetter.setFund(address(fund2), true);
     assertTrue(retargetter.isFund(address(fund2)), "whitelisted after");
-  }
 
-  function test_removeFund_emitsAndRemoves() public {
-    vm.prank(user);
-    vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.removeFund(address(fund));
-
+    // Removal skips the token-compatibility checks and emits the same event, flag down
     vm.prank(owner);
     vm.expectEmit(address(retargetter));
-    emit IRetargetter.FundRemoved(address(fund));
-    retargetter.removeFund(address(fund));
-
-    assertFalse(retargetter.isFund(address(fund)), "removed");
+    emit IRetargetter.FundSet(address(fund2), false);
+    retargetter.setFund(address(fund2), false);
+    assertFalse(retargetter.isFund(address(fund2)), "removed after");
   }
 
-  function test_removeFund_revertOperationActiveForBoundFund() public {
+  function test_setFund_revertOperationActiveForBoundFund() public {
     MockRetargetterFund fund2 = new MockRetargetterFund(address(debtToken), address(collateralToken));
     vm.prank(owner);
-    retargetter.addFund(address(fund2));
+    retargetter.setFund(address(fund2), true);
 
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(6_000e18, 100);
@@ -360,94 +357,68 @@ contract RetargetterTest is RetargetterBaseTest {
     // The operation's fund cannot be removed while the operation is active
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.removeFund(address(fund));
+    retargetter.setFund(address(fund), false);
 
-    // A different whitelisted fund can still be removed
+    // Re-whitelisting the bound fund is a harmless no-op, and other funds stay removable
     vm.prank(owner);
-    retargetter.removeFund(address(fund2));
+    retargetter.setFund(address(fund), true);
+    vm.prank(owner);
+    retargetter.setFund(address(fund2), false);
     assertFalse(retargetter.isFund(address(fund2)), "other fund removed");
     assertTrue(retargetter.isFund(address(fund)), "bound fund still whitelisted");
   }
 
-  function test_addFlashLoanModule_revertNonOwnerAndNonContract() public {
+  function test_setFlashLoanModule_revertNonOwnerAndNonContract() public {
     address module = makeAddr("module");
 
     vm.prank(rebalancer);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.addFlashLoanModule(address(fund));
+    retargetter.setFlashLoanModule(address(fund), true);
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, module));
-    retargetter.addFlashLoanModule(module);
+    retargetter.setFlashLoanModule(module, true);
   }
 
-  function test_addFlashLoanModule_emitsAndWhitelists() public {
+  function test_setFlashLoanModule_emitsAndWhitelists() public {
     // Any contract address works: the module whitelist only checks code presence
     address module = address(new MockERC20("Module", "MOD", 18));
     assertFalse(retargetter.isFlashLoanModule(module), "not whitelisted before");
 
     vm.prank(owner);
     vm.expectEmit(address(retargetter));
-    emit IRetargetter.FlashLoanModuleAdded(module);
-    retargetter.addFlashLoanModule(module);
+    emit IRetargetter.FlashLoanModuleSet(module, true);
+    retargetter.setFlashLoanModule(module, true);
 
     assertTrue(retargetter.isFlashLoanModule(module), "whitelisted after");
   }
 
-  function test_removeFlashLoanModule_emitsAndRemoves() public {
+  function test_setFlashLoanModule_emitsAndRemoves() public {
     assertTrue(retargetter.isFlashLoanModule(address(flashLoanAdapter)), "fixture adapter whitelisted");
 
     vm.prank(user);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.removeFlashLoanModule(address(flashLoanAdapter));
+    retargetter.setFlashLoanModule(address(flashLoanAdapter), false);
 
+    // Removal skips the code-presence check, so even a destroyed module can be delisted
     vm.prank(owner);
     vm.expectEmit(address(retargetter));
-    emit IRetargetter.FlashLoanModuleRemoved(address(flashLoanAdapter));
-    retargetter.removeFlashLoanModule(address(flashLoanAdapter));
+    emit IRetargetter.FlashLoanModuleSet(address(flashLoanAdapter), false);
+    retargetter.setFlashLoanModule(address(flashLoanAdapter), false);
 
     assertFalse(retargetter.isFlashLoanModule(address(flashLoanAdapter)), "removed");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                           RESCUE                           */
+  /*                     NO ESCAPE HATCH                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_rescue_revertNonOwner() public {
-    vm.prank(rebalancer);
-    vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.rescue(address(debtToken), rebalancer);
-
-    vm.prank(user);
-    vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.rescue(address(debtToken), user);
-  }
-
-  function test_rescue_sweepsFullBalance() public {
-    address recipient = makeAddr("recipient");
-    _mintDebt(address(retargetter), 123e18);
-
+  function test_noRescueSurface_selectorReverts() public {
+    // The Retargetter deliberately exposes no token sweep: dust lives within the residual
+    // tolerance and anything above folds into the position through the rebalance sentinels
     vm.prank(owner);
-    vm.expectEmit(address(retargetter));
-    emit IRetargetter.Rescued(address(debtToken), recipient, 123e18);
-    uint256 amount = retargetter.rescue(address(debtToken), recipient);
-
-    assertEq(amount, 123e18, "returned amount");
-    assertEq(debtToken.balanceOf(recipient), 123e18, "recipient credited");
-    assertEq(debtToken.balanceOf(address(retargetter)), 0, "retargetter emptied");
-  }
-
-  function test_rescue_thirdPartyToken() public {
-    address recipient = makeAddr("recipient");
-    MockERC20 stray = new MockERC20("Stray Token", "STRAY", 18);
-    stray.setBalance(address(retargetter), 42e18);
-
-    vm.prank(owner);
-    uint256 amount = retargetter.rescue(address(stray), recipient);
-
-    assertEq(amount, 42e18, "returned amount");
-    assertEq(stray.balanceOf(recipient), 42e18, "recipient credited");
-    assertEq(stray.balanceOf(address(retargetter)), 0, "retargetter emptied");
+    (bool success,) = address(retargetter).call(abi.encodeWithSignature("rescue(address,address)", debtToken, owner));
+    assertFalse(success, "no rescue selector");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -501,8 +472,8 @@ contract RetargetterTest is RetargetterBaseTest {
     (,,, startedAt,,,) = retargetter.operation();
     assertEq(startedAt, startTime + 3 days, "startedAt is the first consume time");
 
-    // Later consumes leave the origin untouched
-    vm.warp(startTime + 5 days);
+    // Later consumes inside the consumption window leave the origin untouched
+    vm.warp(startTime + 3 days + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
     (,,, startedAt,,,) = retargetter.operation();
     assertEq(startedAt, startTime + 3 days, "startedAt unchanged by later consumes");
@@ -766,6 +737,34 @@ contract RetargetterTest is RetargetterBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    MINT AUTHORIZATIONS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_authorizeMinting_revertNoActiveOperation() public {
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.NoActiveOperation.selector);
+    retargetter.authorizeMinting(broker, 1_000e18, 10e18);
+  }
+
+  function test_authorizeMinting_revertUnauthorized() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(6_000e18, 100);
+
+    // The rebalancer role does not include the consumer surface
+    vm.prank(rebalancer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.authorizeMinting(broker, 1_000e18, 10e18);
+
+    vm.prank(user);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.authorizeMinting(broker, 1_000e18, 10e18);
+  }
+
+  function test_authorizedAccounts_emptyWithoutOperation() public view {
+    assertEq(retargetter.authorizedAccounts().length, 0, "no registered accounts");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     PULL REQUEST FUNDS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -850,8 +849,14 @@ contract RetargetterTest is RetargetterBaseTest {
     address request = _startAsync(6_000e18, 100);
     vm.warp(startTime + 1 days);
     _consume(request, 1_000e18, 10e18, 1_000e18);
+    _authorize(broker, 500e18, 5e18);
     vm.prank(rebalancer);
     retargetter.create(_order(Mode.REDEEM, 123e18, 456e18, bytes32(uint256(42))));
+
+    // The mint-authorization set registers through the enumerable view
+    address[] memory accounts = retargetter.authorizedAccounts();
+    assertEq(accounts.length, 1, "one registered account");
+    assertEq(accounts[0], broker, "broker registered");
 
     // Slot A: positionManager (bits 0..159) | startedAt (160..199) | operationMaxYieldBps (200..215)
     uint256 slotA = uint256(vm.load(address(retargetter), OPERATION_STORAGE_SLOT));
@@ -882,6 +887,16 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(
       vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 5)), bytes32(uint256(42)), "order salt"
     );
+
+    // Pulling funds flips the consumption-closed bit (216..223) and nothing else in slot A
+    vm.prank(rebalancer);
+    retargetter.pullRequestFunds(1);
+    slotA = uint256(vm.load(address(retargetter), OPERATION_STORAGE_SLOT));
+    assertEq(address(uint160(slotA)), address(positionManager), "position manager bits unchanged");
+    assertEq(uint40(slotA >> 160), uint40(startTime + 1 days), "startedAt bits unchanged");
+    assertEq(uint16(slotA >> 200), 100, "operation max yield bits unchanged");
+    assertEq(uint8(slotA >> 216), 1, "consumption closed bit set");
+    assertEq(slotA >> 224, 0, "slot A upper bits clean after the pull");
   }
 
   function test_storageLayout_assetsPacking() public view {

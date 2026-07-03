@@ -14,6 +14,7 @@ import {ITokenController} from "src/interfaces/request/ITokenController.sol";
 import {IVaultController} from "src/interfaces/request/IVaultController.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 
 /// @title RetargetterAsyncTest
 /// @notice Full ASYNC integration tests for the Retargetter: happy paths in both directions
@@ -207,27 +208,323 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     assertEq(uint256(startedAt), block.timestamp, "first consume starts the clock");
     uint256 clockOrigin = uint256(startedAt);
 
-    // Two days elapsed: paidTicks = floor((2 days + 1 day - 10 hours) / 1 day) = 2
-    vm.warp(block.timestamp + 2 days);
-    uint256 expectedOwed = 3_000e18 + _ceilDiv(uint256(30e18) * 2 days, 365 days);
-    assertEq(retargetter.owed(), expectedOwed, "owed after two ticks");
-    assertEq(
-      retargetter.owed(),
-      retargetterQuoter.repaymentOwed(
-        3_000e18, 30e18, 2 days, DEFAULT_TICK_DURATION, DEFAULT_TICK_THRESHOLD, DEFAULT_HORIZON
-      ),
-      "owed matches the quoter on a two-day elapsed duration"
-    );
-
-    // A second consume grows the supplies but does not reset the clock
+    // A second consume inside the consumption window grows the supplies but does not reset
+    // the clock
+    vm.warp(block.timestamp + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
     (,,, startedAt,,,) = retargetter.operation();
     assertEq(uint256(startedAt), clockOrigin, "second consume keeps the origin");
+
+    // Two days elapsed: paidTicks = floor((2 days + 1 day - 10 hours) / 1 day) = 2
+    vm.warp(clockOrigin + 2 days);
+    uint256 expectedOwed = 4_000e18 + _ceilDiv(uint256(40e18) * 2 days, 365 days);
+    assertEq(retargetter.owed(), expectedOwed, "owed accrues both supplies from the origin");
     assertEq(
       retargetter.owed(),
-      4_000e18 + _ceilDiv(uint256(40e18) * 2 days, 365 days),
-      "owed accrues the new supplies from the original origin"
+      retargetterQuoter.repaymentOwed(
+        4_000e18, 40e18, 2 days, DEFAULT_TICK_DURATION, DEFAULT_TICK_THRESHOLD, DEFAULT_HORIZON
+      ),
+      "owed matches the quoter on a two-day elapsed duration"
     );
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     CONSUMPTION WINDOW                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Consumption stays open through the tick threshold and closes right after, with
+  ///         no owner bypass: late capital would be overpaid from the loan clock origin.
+  function test_consume_windowClosesAtTickThreshold() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    uint256 origin = block.timestamp;
+
+    // Still open exactly at the threshold boundary
+    vm.warp(origin + DEFAULT_TICK_THRESHOLD);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+
+    // Closed one second past it; the gate fires before the Request is ever called, so the
+    // offer needs no signature
+    vm.warp(origin + DEFAULT_TICK_THRESHOLD + 1);
+    Offer memory offer = _createOffer(1_000e18, 10e18);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.consume(offer, "", 1_000e18);
+
+    // The owner has no bypass
+    vm.prank(owner);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.consume(offer, "", 1_000e18);
+  }
+
+  /// @notice The window is measured from the loan clock origin, not the operation start, so a
+  ///         late first consume simply starts its window late.
+  function test_consume_windowStartsAtFirstConsumeNotOperationStart() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+
+    // Days between start and the first consume: fine, the window is not running yet
+    vm.warp(block.timestamp + 3 days);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+
+    // And from that first consume the threshold applies
+    vm.warp(block.timestamp + DEFAULT_TICK_THRESHOLD + 1);
+    Offer memory offer = _createOffer(1_000e18, 10e18);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.consume(offer, "", 1_000e18);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    MINT AUTHORIZATIONS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice A nonzero authorization starts the loan clock, lands on the Request, registers
+  ///         the account, and its principal occupies the cap until minted or revoked.
+  function test_authorizeMinting_startsClockAndCountsTowardCap() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    (,,, uint40 startedAt,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), 0, "clock unset before the authorization");
+
+    vm.prank(consumer);
+    vm.expectEmit(address(retargetter));
+    emit IRetargetter.MintingAuthorized(request, broker, 2_000e18, 20e18);
+    retargetter.authorizeMinting(broker, 2_000e18, 20e18);
+
+    (,,, startedAt,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), block.timestamp, "authorization starts the loan clock");
+    assertEq(_outstandingAuthorizedPt(request), 2_000e18, "outstanding authorized principal");
+    (uint128 ptAuth, uint128 ytAuth) = IRequest(request).mintAuthorization(broker);
+    assertEq(uint256(ptAuth), 2_000e18, "request-side principal authorization");
+    assertEq(uint256(ytAuth), 20e18, "request-side yield authorization");
+
+    // The commitment occupies the principal cap: consume can fill up to it, not past it
+    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    Offer memory offer = _createOffer(cap, cap / 200);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    retargetter.consume(offer, "", cap - 2_000e18 + 1);
+    _consume(request, cap, cap / 200, cap - 2_000e18);
+  }
+
+  /// @notice The broker mints on the Request directly: the authorization clears, the account
+  ///         is lazily pruned by the next write path, and the minted capital settles exactly
+  ///         like consumed capital.
+  function test_authorizeMinting_brokerMintsAndOperationSettles() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    _authorize(broker, 2_000e18, 20e18);
+
+    _mintAsBroker(request, 2_000e18);
+    assertEq(_outstandingAuthorizedPt(request), 0, "mint cleared the outstanding principal");
+    assertEq(retargetter.authorizedAccounts().length, 1, "minted account lingers until pruned");
+    (uint128 ptSupply, uint128 ytSupply) = ITokenController(request).totalSupplies();
+    assertEq(uint256(ptSupply), 2_000e18, "principal supply minted");
+    assertEq(uint256(ytSupply), 20e18, "yield supply minted");
+    assertEq(debtToken.balanceOf(request), 2_000e18, "broker capital landed on the request");
+
+    // The next write path prunes the minted account from the set
+    _consume(request, 100e18, 1e18, 100e18);
+    assertEq(retargetter.authorizedAccounts().length, 0, "minted account pruned");
+
+    // Trustless settlement of the whole supply: principal plus one tick of yield
+    uint256 owedNow = retargetter.owed();
+    assertEq(owedNow, 2_100e18 + _ceilDiv(uint256(21e18) * 1 days, 365 days), "one tick owed");
+    _mintDebt(address(retargetter), owedNow - 2_100e18);
+    vm.prank(rebalancer);
+    assertEq(retargetter.repay(), owedNow, "trustless repay covers the minted capital");
+    vm.prank(rebalancer);
+    retargetter.resolve();
+    assertFalse(retargetter.isActive(), "operation resolved");
+  }
+
+  /// @notice Yield gates on authorization: a ratio above the cap and the classic
+  ///         zero-principal yield extraction shape both revert; the exact boundary passes.
+  function test_authorizeMinting_revertYieldTooHigh() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(6_000e18, 100);
+
+    // One wei of yield above the 1% operation cap
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.YieldTooHigh.selector);
+    retargetter.authorizeMinting(broker, 1_000e18, 10e18 + 1);
+
+    // Zero principal with any yield is the exact shape the gate exists for
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.YieldTooHigh.selector);
+    retargetter.authorizeMinting(broker, 0, 1);
+
+    // The boundary ratio passes
+    _authorize(broker, 1_000e18, 10e18);
+  }
+
+  /// @notice Replacing an account's authorization releases the old amount first, and distinct
+  ///         accounts accumulate against the cap.
+  function test_authorizeMinting_capAccountingAcrossAccounts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+
+    _authorize(broker, 3_000e18, 0);
+    assertEq(_outstandingAuthorizedPt(request), 3_000e18, "first authorization outstanding");
+
+    // Replacing at the full cap passes because the account's old amount is released first
+    _authorize(broker, uint128(cap), 0);
+    assertEq(_outstandingAuthorizedPt(request), cap, "replaced, not added");
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    retargetter.authorizeMinting(broker, uint128(cap + 1), 0);
+
+    // A second account accumulates on top of the first
+    _authorize(broker, 3_000e18, 0);
+    address secondBroker = makeAddr("secondBroker");
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    retargetter.authorizeMinting(secondBroker, uint128(cap - 3_000e18 + 1), 0);
+    _authorize(secondBroker, uint128(cap - 3_000e18), 0);
+    assertEq(_outstandingAuthorizedPt(request), cap, "both accounts outstanding");
+    assertEq(retargetter.authorizedAccounts().length, 2, "both accounts registered");
+  }
+
+  /// @notice The registered-account set is capped: the seventeenth distinct account reverts,
+  ///         and revoking one frees a slot.
+  function test_authorizeMinting_accountCapBoundsTheSet() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(6_000e18, 100);
+
+    for (uint256 i; i < 16; ++i) {
+      _authorize(makeAddr(string(abi.encodePacked("capBroker", i))), 1e18, 0);
+    }
+    vm.prank(consumer);
+    vm.expectRevert(EnumerableSetLib.ExceedsCapacity.selector);
+    retargetter.authorizeMinting(broker, 1e18, 0);
+
+    // Revoking any registered account frees a slot for a new one
+    _authorize(makeAddr(string(abi.encodePacked("capBroker", uint256(0)))), 0, 0);
+    _authorize(broker, 1e18, 0);
+    assertEq(retargetter.authorizedAccounts().length, 16, "set back at capacity");
+  }
+
+  /// @notice Pulling funds ends the funding round: every pending authorization is revoked and
+  ///         swept from the set, the revoked brokers' mints are no-ops, and neither consume
+  ///         nor a nonzero authorization can enter afterwards, threshold notwithstanding.
+  function test_pullRequestFunds_closesConsumptionAndRevokes() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    _consume(request, 2_000e18, 20e18, 2_000e18);
+    address secondBroker = makeAddr("secondBroker");
+    address thirdBroker = makeAddr("thirdBroker");
+    _authorize(broker, 1_000e18, 10e18);
+    _authorize(secondBroker, 500e18, 5e18);
+    _authorize(thirdBroker, 250e18, 0);
+
+    vm.prank(rebalancer);
+    retargetter.pullRequestFunds(1_000e18);
+
+    // Every pending authorization died with the pull
+    assertEq(retargetter.authorizedAccounts().length, 0, "authorization set swept");
+    (uint128 ptAuth, uint128 ytAuth) = IRequest(request).mintAuthorization(broker);
+    assertEq(uint256(ptAuth), 0, "first principal authorization revoked");
+    assertEq(uint256(ytAuth), 0, "first yield authorization revoked");
+    (ptAuth,) = IRequest(request).mintAuthorization(secondBroker);
+    assertEq(uint256(ptAuth), 0, "second principal authorization revoked");
+    (ptAuth,) = IRequest(request).mintAuthorization(thirdBroker);
+    assertEq(uint256(ptAuth), 0, "third principal authorization revoked");
+    _mintAsBroker(request, 1_000e18);
+    (uint128 ptSupply,) = ITokenController(request).totalSupplies();
+    assertEq(uint256(ptSupply), 2_000e18, "revoked broker minted nothing");
+
+    // Capital entry is shut even though the tick threshold has not elapsed
+    Offer memory offer = _createOffer(1_000e18, 10e18);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.consume(offer, "", 1_000e18);
+    vm.prank(owner);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.authorizeMinting(broker, 1_000e18, 10e18);
+
+    // Revocation calls stay harmless no-ops, and so does a second pull (idempotent close)
+    _authorize(broker, 0, 0);
+    vm.prank(rebalancer);
+    retargetter.pullRequestFunds(500e18);
+    assertEq(debtToken.balanceOf(address(retargetter)), 1_500e18, "second pull still moves funds");
+  }
+
+  /// @notice A pulled (closed) operation does not poison the next one: resolve resets the
+  ///         flag, so the following operation can consume again.
+  function test_resolve_reopensConsumptionForNextOperation() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(1_000e18, 100);
+    _consume(request, 100e18, 1, 100e18);
+    vm.prank(rebalancer);
+    retargetter.pullRequestFunds(MAX_SENTINEL);
+
+    // Settle: return the pulled principal plus the one-tick yield wei, then resolve
+    debtToken.mint(address(retargetter), 1);
+    vm.prank(rebalancer);
+    assertEq(retargetter.repay(), 100e18 + 1, "owed settled");
+    vm.prank(rebalancer);
+    retargetter.resolve();
+
+    // The next operation starts with the window open
+    address secondRequest = _startAsync(1_000e18, 100);
+    _consume(secondRequest, 100e18, 1e18, 100e18);
+    (,,, uint40 startedAt,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), block.timestamp, "fresh loan clock on the next operation");
+  }
+
+  /// @notice The full-balance sentinel pulls the Request's whole balance and the emitted
+  ///         amount is the resolved one.
+  function test_pullRequestFunds_sentinelPullsFullBalance() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    _consume(request, 2_500e18, 25e18, 2_500e18);
+
+    vm.prank(rebalancer);
+    vm.expectEmit(address(retargetter));
+    emit IRetargetter.RequestFundsPulled(request, 2_500e18);
+    retargetter.pullRequestFunds(MAX_SENTINEL);
+
+    assertEq(debtToken.balanceOf(address(retargetter)), 2_500e18, "full balance pulled");
+    assertEq(debtToken.balanceOf(request), 0, "request emptied");
+  }
+
+  /// @notice Nonzero authorizations respect the consumption window; revocation stays open past
+  ///         it, removes the account eagerly, and a revoked broker's mint is a harmless no-op.
+  function test_authorizeMinting_windowGateAndLateRevocation() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    _authorize(broker, 2_000e18, 20e18);
+    uint256 origin = block.timestamp;
+
+    // Still open exactly at the threshold boundary
+    vm.warp(origin + DEFAULT_TICK_THRESHOLD);
+    _authorize(broker, 2_500e18, 20e18);
+
+    // One second past: increases are shut, for the owner too
+    vm.warp(origin + DEFAULT_TICK_THRESHOLD + 1);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.authorizeMinting(broker, 3_000e18, 20e18);
+    vm.prank(owner);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.authorizeMinting(broker, 3_000e18, 20e18);
+
+    // Revocation stays open past the window and removes the account eagerly
+    vm.prank(owner);
+    vm.expectEmit(address(retargetter));
+    emit IRetargetter.MintingAuthorized(request, broker, 0, 0);
+    retargetter.authorizeMinting(broker, 0, 0);
+    assertEq(retargetter.authorizedAccounts().length, 0, "revoked account removed");
+    assertEq(_outstandingAuthorizedPt(request), 0, "nothing outstanding after revocation");
+
+    // The revoked broker's mint is the Request's zero-authorization no-op
+    _mintAsBroker(request, 2_500e18);
+    (uint128 ptSupply, uint128 ytSupply) = ITokenController(request).totalSupplies();
+    assertEq(uint256(ptSupply), 0, "nothing minted after revocation");
+    assertEq(uint256(ytSupply), 0, "no yield minted after revocation");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -459,8 +756,9 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     assertFalse(orderLive, "force-ended order cleared by resolve");
   }
 
-  /// @notice One donated wei of either bound asset blocks resolve until the owner rescues it.
-  function test_resolve_residualBalance_revertsUntilOwnerRescues() public {
+  /// @notice One donated wei of either bound asset blocks resolve until it is folded into the
+  ///         position through the full-balance rebalance sentinels (there is no owner sweep).
+  function test_resolve_residualBalance_revertsUntilFoldedIntoPosition() public {
     _startDefault();
     vm.prank(rebalancer);
     retargetter.repay();
@@ -469,17 +767,17 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.ResidualBalance.selector, address(collateralToken), 1));
     retargetter.resolve();
-    vm.prank(owner);
-    retargetter.rescue(address(collateralToken), owner);
-    assertEq(collateralToken.balanceOf(owner), 1, "collateral wei rescued");
+    vm.prank(rebalancer);
+    retargetter.rebalance(_rebalancingData(MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL));
+    assertEq(collateralToken.balanceOf(address(retargetter)), 0, "collateral wei folded as supply");
 
     debtToken.mint(address(retargetter), 1);
     vm.prank(rebalancer);
     vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.ResidualBalance.selector, address(debtToken), 1));
     retargetter.resolve();
-    vm.prank(owner);
-    retargetter.rescue(address(debtToken), owner);
-    assertEq(debtToken.balanceOf(owner), 1, "debt wei rescued");
+    vm.prank(rebalancer);
+    retargetter.rebalance(_rebalancingData(0, MAX_SENTINEL, RebalancingOperationType.REPAY, MAX_SENTINEL));
+    assertEq(debtToken.balanceOf(address(retargetter)), 0, "debt wei folded as repayment");
 
     vm.prank(rebalancer);
     retargetter.resolve();
@@ -541,6 +839,10 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _consume(request, 100e18, 1, 100e18);
     (,,, uint40 startedAt,,,) = retargetter.operation();
     assertGt(uint256(startedAt), 0, "clock running");
+    // An unminted leftover authorization dies with the repaid Request and must not survive
+    // into the next operation
+    _authorize(broker, 50e18, 0);
+    assertEq(retargetter.authorizedAccounts().length, 1, "authorization registered");
 
     // Donate the single owed yield wei so the trustless repay settles with zero residual
     debtToken.mint(request, 1);
@@ -567,6 +869,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     assertEq(order.input, 0, "order input cleared");
     assertEq(order.output, 0, "order output cleared");
     assertEq(order.salt, bytes32(0), "order salt cleared");
+    assertEq(retargetter.authorizedAccounts().length, 0, "authorized account set cleared");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

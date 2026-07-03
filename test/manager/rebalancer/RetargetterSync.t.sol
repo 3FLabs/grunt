@@ -450,7 +450,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     WrongAmountFlashLoanModule wrongAmountModule = new WrongAmountFlashLoanModule();
     vm.prank(owner);
-    retargetter.addFlashLoanModule(address(wrongAmountModule));
+    retargetter.setFlashLoanModule(address(wrongAmountModule), true);
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
@@ -467,7 +467,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     // funds needed), the replay after it returns must hit the zeroed module slot
     ReplayingFlashLoanModule replayingModule = new ReplayingFlashLoanModule();
     vm.prank(owner);
-    retargetter.addFlashLoanModule(address(replayingModule));
+    retargetter.setFlashLoanModule(address(replayingModule), true);
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);

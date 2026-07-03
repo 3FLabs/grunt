@@ -43,7 +43,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
 
     targetContract(address(handler));
 
-    bytes4[] memory selectors = new bytes4[](19);
+    bytes4[] memory selectors = new bytes4[](20);
     selectors[0] = RetargetterHandler.act_startAsync.selector;
     selectors[1] = RetargetterHandler.act_consume.selector;
     selectors[2] = RetargetterHandler.act_pull.selector;
@@ -58,11 +58,12 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
     selectors[11] = RetargetterHandler.act_failAndRecover.selector;
     selectors[12] = RetargetterHandler.act_rebalance.selector;
     selectors[13] = RetargetterHandler.act_syncRetarget.selector;
-    selectors[14] = RetargetterHandler.act_rescue.selector;
-    selectors[15] = RetargetterHandler.act_warp.selector;
-    selectors[16] = RetargetterHandler.act_setSharePrice.selector;
-    selectors[17] = RetargetterHandler.act_setEstimates.selector;
-    selectors[18] = RetargetterHandler.act_setTargetLtv.selector;
+    selectors[14] = RetargetterHandler.act_warp.selector;
+    selectors[15] = RetargetterHandler.act_setSharePrice.selector;
+    selectors[16] = RetargetterHandler.act_setEstimates.selector;
+    selectors[17] = RetargetterHandler.act_setTargetLtv.selector;
+    selectors[18] = RetargetterHandler.act_authorizeMinting.selector;
+    selectors[19] = RetargetterHandler.act_mintAuthorized.selector;
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
 
     vm.label(address(handler), "RetargetterHandler");
@@ -73,7 +74,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice RT-1: One operation at a time with a consistent shape. An active operation always
-  ///         carries a Request and a fund, and the fund is still whitelisted (removeFund
+  ///         carries a Request and a fund, and the fund is still whitelisted (setFund
   ///         reverts while it is bound to the active operation).
   function invariant_oneOperationAtATime() public view {
     if (!retargetter.isActive()) return;
@@ -144,5 +145,11 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   ///         operation is active and no order is stored.
   function invariant_syncLeavesNoState() public view {
     assertFalse(handler.syncStatePersisted(), "RT-9: a SYNC window left persistent state behind");
+  }
+
+  /// @notice RT-10: The committed principal (PT supply plus outstanding mint authorizations)
+  ///         never exceeds the live cap at the moment an authorization is granted.
+  function invariant_authorizeRespectsLiveCap() public view {
+    assertFalse(handler.capViolatedAtAuthorize(), "RT-10: authorize admitted committed principal above the live cap");
   }
 }

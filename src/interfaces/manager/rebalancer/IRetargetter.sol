@@ -22,7 +22,9 @@ struct YieldEstimates {
 /// @notice Owner-set global configuration of a Retargetter instance.
 /// @param horizon The yield annualization basis in seconds, in [90 days, 366 days]
 /// @param tickDuration The repayment granularity in seconds, in [1, 30 days]
-/// @param tickThreshold The grace before promoting to the next tick, strictly below tickDuration
+/// @param tickThreshold The grace before promoting to the next tick, strictly below
+///        tickDuration; doubles as the consumption window length (capital entry closes this
+///        long after the loan clock origin)
 /// @param maxYieldBps The owner ceiling on per-operation yield caps, at most 5000
 /// @param principalBufferBps The headroom over the computed principal cap, at most 2000
 /// @param collateralResidualExponent The settlement tolerance for the collateral asset:
@@ -71,6 +73,13 @@ interface IRetargetter {
   /// @param ptAmount The principal amount consumed
   /// @param ytAmount The yield amount minted to the maker
   event OfferConsumed(address indexed request, address indexed maker, uint256 ptAmount, uint256 ytAmount);
+
+  /// @notice Emitted when a mint authorization is set or revoked on the operation's Request.
+  /// @param request The operation's Request
+  /// @param to The account whose authorization was set
+  /// @param ptAmount The authorized principal amount (zero when revoking)
+  /// @param ytAmount The authorized yield amount (zero when revoking)
+  event MintingAuthorized(address indexed request, address indexed to, uint128 ptAmount, uint128 ytAmount);
 
   /// @notice Emitted when funds are pulled from the operation's Request.
   /// @param request The operation's Request
@@ -132,21 +141,15 @@ interface IRetargetter {
   /// @param flashLoanAmount The flash-loan size
   event SyncRetargettingExecuted(address indexed positionManager, address indexed module, uint256 flashLoanAmount);
 
-  /// @notice Emitted when a fund is whitelisted.
-  /// @param fund The whitelisted fund
-  event FundAdded(address indexed fund);
+  /// @notice Emitted when a fund's whitelist entry is set.
+  /// @param fund The fund
+  /// @param whitelisted Whether the fund is now whitelisted
+  event FundSet(address indexed fund, bool whitelisted);
 
-  /// @notice Emitted when a fund is removed from the whitelist.
-  /// @param fund The removed fund
-  event FundRemoved(address indexed fund);
-
-  /// @notice Emitted when a flash-loan module is whitelisted.
-  /// @param module The whitelisted module
-  event FlashLoanModuleAdded(address indexed module);
-
-  /// @notice Emitted when a flash-loan module is removed from the whitelist.
-  /// @param module The removed module
-  event FlashLoanModuleRemoved(address indexed module);
+  /// @notice Emitted when a flash-loan module's whitelist entry is set.
+  /// @param module The module
+  /// @param whitelisted Whether the module is now whitelisted
+  event FlashLoanModuleSet(address indexed module, bool whitelisted);
 
   /// @notice Emitted when the yield estimates are updated.
   /// @param estimates The new estimates
@@ -155,12 +158,6 @@ interface IRetargetter {
   /// @notice Emitted when the configuration is updated.
   /// @param config The new configuration
   event ConfigSet(RetargetterConfig config);
-
-  /// @notice Emitted when the owner sweeps a token out of the Retargetter.
-  /// @param token The swept token
-  /// @param to The recipient
-  /// @param amount The swept amount
-  event Rescued(address indexed token, address indexed to, uint256 amount);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        ASYNC FLOW                          */
@@ -184,15 +181,42 @@ interface IRetargetter {
   ) external returns (address request);
 
   /// @notice Consumes a signed lender offer against the operation's Request.
-  /// @dev The first consume starts the loan clock.
+  /// @dev The first consume (or nonzero mint authorization) starts the loan clock. From then
+  ///      on capital only enters while the consumption window is open (the tick threshold past
+  ///      the origin, and never once funds were pulled), for everyone including the owner:
+  ///      repayment prices every yield token from the origin, so capital arriving later would
+  ///      be overpaid for time it never covered and, on a default, would dilute the earlier
+  ///      lenders' recovery.
   /// @param offer The signed offer
   /// @param signature The maker's EIP-712 signature
   /// @param ptAmount The principal amount to consume
   /// @return ytAmount The yield amount minted to the maker
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount) external returns (uint256 ytAmount);
 
+  /// @notice Sets (or revokes) a mint authorization on the operation's Request.
+  /// @dev A nonzero authorization is a principal commitment: it passes the same flat
+  ///      yield-ratio gate as consume, counts toward the live principal cap until the account
+  ///      mints or the authorization is revoked, starts the loan clock, and must land inside
+  ///      the consumption window (open through the tick threshold and shut by the first pull
+  ///      of funds, which also revokes every authorization still pending). Setting both
+  ///      amounts to zero revokes the account's authorization and stays possible at any time,
+  ///      window open or closed: an unminted authorization can still be minted on the Request
+  ///      directly, so the operator revokes leftovers once the funding round is over. A mint
+  ///      front-running that revocation or the settlement itself is bounded by the yield gate
+  ///      and the prorated accrual, and requires the consumer to have authorized the account
+  ///      in the first place.
+  /// @param to The account allowed to call the Request's mint
+  /// @param ptAmount The principal tokens to authorize; the account transfers this much asset
+  ///        when it mints
+  /// @param ytAmount The yield tokens to authorize
+  function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount) external;
+
   /// @notice Pulls consumed funds from the operation's Request to the Retargetter.
-  /// @param amount The amount to pull
+  /// @dev Pulling ends the funding round: every pending mint authorization is revoked and
+  ///      capital entry (consume or new authorizations) stays closed for the rest of the
+  ///      operation, so funds being deployed can no longer be diluted by late lenders.
+  /// @param amount The amount to pull; the full-balance sentinel `type(uint256).max` resolves
+  ///        to the Request's whole balance
   function pullRequestFunds(uint256 amount) external;
 
   /// @notice Creates a fund order owned by and payable to the Retargetter.
@@ -268,30 +292,20 @@ interface IRetargetter {
   /// @param estimates_ The new estimates
   function setEstimates(YieldEstimates calldata estimates_) external;
 
-  /// @notice Whitelists a fund after checking its tokens match the bound pair.
-  /// @param fund The fund to whitelist
-  function addFund(address fund) external;
+  /// @notice Sets a fund's whitelist entry.
+  /// @dev Whitelisting checks the fund is a contract and its tokens match the bound pair;
+  ///      removal skips those checks but reverts while the fund is bound to the active
+  ///      operation.
+  /// @param fund The fund
+  /// @param whitelisted Whether the fund should be whitelisted
+  function setFund(address fund, bool whitelisted) external;
 
-  /// @notice Removes a fund from the whitelist; reverts while it is bound to the
-  ///         active operation.
-  /// @param fund The fund to remove
-  function removeFund(address fund) external;
-
-  /// @notice Whitelists a flash-loan module.
-  /// @param module The module to whitelist
-  function addFlashLoanModule(address module) external;
-
-  /// @notice Removes a flash-loan module from the whitelist.
-  /// @param module The module to remove
-  function removeFlashLoanModule(address module) external;
-
-  /// @notice Sweeps the Retargetter's full balance of a token to a recipient.
-  /// @dev Owner escape hatch for donations above the residual tolerance and for stuck
-  ///      third-party tokens.
-  /// @param token The token to sweep
-  /// @param to The recipient
-  /// @return amount The swept amount
-  function rescue(address token, address to) external returns (uint256 amount);
+  /// @notice Sets a flash-loan module's whitelist entry.
+  /// @dev Whitelisting checks the module is a contract; removal skips the check and works
+  ///      any time.
+  /// @param module The module
+  /// @param whitelisted Whether the module should be whitelisted
+  function setFlashLoanModule(address module, bool whitelisted) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
@@ -308,7 +322,8 @@ interface IRetargetter {
   /// @return positionManager The operation's position manager (zero when inactive)
   /// @return request The operation's Request (zero inside a SYNC window)
   /// @return fund The operation's fund
-  /// @return startedAt The loan clock origin (zero until the first consume)
+  /// @return startedAt The loan clock origin (zero until the first consume or nonzero mint
+  ///         authorization)
   /// @return operationMaxYieldBps The effective per-operation yield cap
   /// @return order The stored fund order rebuilt in memory
   /// @return orderLive Whether a fund order is stored
@@ -338,6 +353,14 @@ interface IRetargetter {
 
   /// @notice Returns the current amount owed on the active operation's Request.
   function owed() external view returns (uint256);
+
+  /// @notice Returns the accounts holding a registered mint authorization for the operation.
+  /// @dev Revocation and the first pull of funds remove accounts eagerly; an account whose
+  ///      authorization was minted lingers until the next consume or nonzero authorization
+  ///      prunes it lazily. The outstanding authorized principal is the sum of the Request's
+  ///      mintAuthorization over these accounts.
+  /// @return accounts The registered accounts
+  function authorizedAccounts() external view returns (address[] memory accounts);
 
   /// @notice Returns the current configuration.
   function config() external view returns (RetargetterConfig memory);
