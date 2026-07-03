@@ -9,8 +9,8 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 /// @title RetargetterQuoterTest
 /// @notice Unit and fuzz tests for the stateless RetargetterQuoter math (spec Section 9,
 ///         test plan Section 14 item 1). Exact expectations are recomputed in the test from
-///         the same integer formulas; spec fixtures anchor the values against the PDF
-///         (including the Example 5.1 erratum).
+///         the same integer formulas; hand-derived spec fixtures anchor the values (including
+///         a guard against a plausible mis-derivation of the LTV-down denominator).
 contract RetargetterQuoterTest is Test {
   using FixedPointMathLib for uint256;
 
@@ -140,9 +140,10 @@ contract RetargetterQuoterTest is Test {
 
   function test_ltvDownPrincipal_specErratumFixture() public view {
     // Spec Section 9 erratum fixture: K = 20m, D = 11m, tau = 0.5, rb = 5%/yr, yr = 4%/yr,
-    // yc = 0, dt = one month. PDF Example 5.1 drops the tau factor on its yr * dt term and
-    // gets ~2_088_000 for the principal; the correct denominator 1 + Rb - tau * (1 + Yr)
-    // = 0.5025 gives 1_045_833.33 / 0.5025 = 2_081_260.
+    // yc = 0, dt = one month. A plausible mis-derivation drops the tau factor on the
+    // request-yield term (denominator 1 + Rb - tau - Yr = 0.5008) and gets ~2_088_000 for
+    // the principal; the correct denominator 1 + Rb - tau * (1 + Yr) = 0.5025 gives
+    // 1_045_833.33 / 0.5025 = 2_081_260.
     uint256 k = 20_000_000e18;
     uint256 d = 11_000_000e18;
     uint256 tau = 0.5e18;
@@ -164,8 +165,8 @@ contract RetargetterQuoterTest is Test {
     // Spec anchors: ~2_081_260 principal and ~2_088_198 collateral to free
     assertApproxEqRel(principal, 2_081_260e18, 1e12, "principal anchor");
     assertApproxEqRel(collateralToFreeQuoted, 2_088_198e18, 1e12, "collateral anchor");
-    // The PDF's wrong ~2_088_000 principal is rejected
-    assertLt(principal, 2_082_000e18, "not the PDF value");
+    // The mis-derived ~2_088_000 principal is rejected
+    assertLt(principal, 2_082_000e18, "not the mis-derived value");
   }
 
   function test_ltvDownPrincipal_returnsZeroAtOrBelowTarget() public view {
