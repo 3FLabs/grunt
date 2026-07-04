@@ -37,7 +37,11 @@ import {BPS, RAY} from "../../libs/Constants.sol";
 ///        the borrower is delinquent, so REDEEM orders support partial unlocks
 ///        (UNLOCKING -> PROCESSING -> UNLOCKING -> ... -> ENDED).
 ///      - No recovery flow: deposits are atomic (succeed or revert), and queued withdrawals cannot
-///        be canceled upstream. Orders stuck in PROCESSING can be force-ended by an operator.
+///        be canceled upstream. A REDEEM stuck on an expired unpaid batch (delinquent borrower)
+///        can be force-ended by an operator to unblock the depositor; because the batch claim
+///        survives and may be paid later (pushable by anyone via the permissionless
+///        `executeWithdrawal`), the owner-gated `rescueTokens()` exists to retrieve those
+///        otherwise-locked late proceeds — see IWildcatFund.rescueTokens for the full rationale.
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may
 ///        differ from the state returned by the public state() function. The state() function
 ///        queries the market to determine state transitions (e.g., PROCESSING -> UNLOCKING when a

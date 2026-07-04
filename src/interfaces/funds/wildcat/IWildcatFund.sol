@@ -118,10 +118,26 @@ interface IWildcatFund is IFund {
   function forceEnd(Order calldata order) external;
 
   /// @notice Transfers the fund's full balance of `token` to `to`.
-  /// @dev Can only be called by the owner, and only while no order is in flight
-  ///      (internal state EMPTY or ENDED). At rest the fund holds no assets, so any
-  ///      balance is stray: donations, market-token dust from wrapping rounding, or
-  ///      late withdrawal-batch payments claimed after a force-end.
+  /// @dev Necessary companion to `forceEnd()`. Wildcat withdrawals are uncancelable and a
+  ///      force-ended REDEEM's batch claim survives the order: when the borrower later repays,
+  ///      anyone can push those proceeds into this contract via the permissionless
+  ///      `market.executeWithdrawal(fund, expiry)`. By design they are unreachable through the
+  ///      normal path — the order is archived, and `unlock()` credits orders strictly from
+  ///      their own batch's counter, so a later order can never sweep them. Without this
+  ///      function, late payments of a force-ended order would be permanently locked here.
+  ///      Secondary uses: market-token dust from half-up wrap/unwrap rounding, donations.
+  ///
+  ///      Safety: only callable by the owner, and only while no order is in flight (internal
+  ///      state EMPTY or ENDED). The fund holds nothing at rest by construction, and an active
+  ///      REDEEM's proceeds are credited via the market's per-batch counter rather than
+  ///      balances, so there is no state in which this can touch an in-flight order's funds.
+  ///
+  ///      Trust note: proceeds of a force-ended order economically belong to that order's
+  ///      receiver (the depositor contract). Rescuing them is a governance/ops remediation
+  ///      performed outside the depositor's intent accounting — an on-chain auto-forward to
+  ///      the receiver was considered and rejected, since an unattributed transfer into the
+  ///      depositor bypasses its balance-snapshot accounting just the same and would still
+  ///      require manual remediation of the affected intent.
   /// @param token The token to rescue.
   /// @param to The recipient of the rescued tokens.
   function rescueTokens(address token, address to) external;
