@@ -9,7 +9,11 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {IWildcatFund} from "../../interfaces/funds/wildcat/IWildcatFund.sol";
-import {IWildcatMarket, WithdrawalBatch} from "../../interfaces/integrations/wildcat/IWildcatMarket.sol";
+import {
+  IWildcatMarket,
+  WithdrawalBatch,
+  AccountWithdrawalStatus
+} from "../../interfaces/integrations/wildcat/IWildcatMarket.sol";
 import {IWildcat4626Wrapper} from "../../interfaces/integrations/wildcat/IWildcat4626Wrapper.sol";
 import {IWrappedAsset} from "../../interfaces/funds/IWrappedAsset.sol";
 import {Order, State, Mode, LibOrder} from "../../libs/funds/Order.sol";
@@ -433,6 +437,40 @@ contract WildcatFund is IWildcatFund, OwnableRoles, Initializable {
   /// @inheritdoc IWildcatFund
   function currentBatchExpiry() external view override returns (uint32) {
     return _wildcatFundStorage().batchExpiry;
+  }
+
+  /// @inheritdoc IWildcatFund
+  function pendingDepositShares() external view override returns (uint256) {
+    WildcatFundStorage storage $ = _wildcatFundStorage();
+    // depositReceived is only set by a DEPOSIT commit and reset on create, so no mode check
+    // is needed; it is delivered (and the order ended) by unlock().
+    return $.internalState == State.PROCESSING ? $.depositReceived : 0;
+  }
+
+  /// @inheritdoc IWildcatFund
+  function pendingRedeemAssets() external view override returns (uint256) {
+    WildcatFundStorage storage $ = _wildcatFundStorage();
+    uint32 _expiry = $.batchExpiry;
+    // batchExpiry is only set by a REDEEM commit and reset on create (always non-zero once
+    // queued), so a zero expiry means no in-flight REDEEM order.
+    if ($.internalState != State.PROCESSING || _expiry == 0) return 0;
+
+    IWildcatMarket _market = IWildcatMarket($.market);
+    WithdrawalBatch memory _batch = _market.getWithdrawalBatch(_expiry);
+    AccountWithdrawalStatus memory _status = _market.getAccountWithdrawalStatus(address(this), _expiry);
+    if (_batch.scaledTotalAmount == 0) return 0;
+
+    // Paid to the fund so far (claimable and/or already pushed here), minus what was
+    // already forwarded to the receiver.
+    uint256 _paidToUs = uint256(_batch.normalizedAmountPaid).mulDiv(_status.scaledAmount, _batch.scaledTotalAmount);
+    uint256 _pending = _paidToUs - $.batchPaidOut;
+
+    // The fund's pro-rata share of the batch's unpaid remainder, valued at the current
+    // scaleFactor (unpaid scaled amounts keep accruing interest until burned).
+    uint256 _scaledRemaining = uint256(_status.scaledAmount)
+      .mulDiv(_batch.scaledTotalAmount - _batch.scaledAmountBurned, _batch.scaledTotalAmount);
+
+    return _pending + _scaledRemaining.mulDiv(_market.scaleFactor(), RAY);
   }
 
   /// @inheritdoc IFund

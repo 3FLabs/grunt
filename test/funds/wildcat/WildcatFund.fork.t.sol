@@ -100,8 +100,9 @@ contract WildcatFundForkTest is Test {
     assertEq(uint256(committedState), uint256(State.PROCESSING), "committed");
     assertEq(committed, input, "committed amount");
 
-    // Deposits are synchronous: immediately unlockable
+    // Deposits are synchronous: immediately unlockable, with the in-flight shares visible
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+    assertApproxEqAbs(fund.pendingDepositShares(), expectedShares, 1, "pending deposit visible");
 
     (State unlockedState, uint256 shares) = fund.unlock(order);
     assertEq(uint256(unlockedState), uint256(State.ENDED), "ended");
@@ -142,6 +143,9 @@ contract WildcatFundForkTest is Test {
     uint32 expiry = fund.currentBatchExpiry();
     assertEq(expiry, uint32(block.timestamp + market.withdrawalBatchDuration()), "batch expiry");
 
+    // The in-flight claim (excluded from totalAssets) is visible via pendingRedeemAssets
+    assertApproxEqAbs(fund.pendingRedeemAssets(), expectedAssets, 2, "pending redeem visible");
+
     // Before expiry the order is not claimable
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before expiry");
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
@@ -162,6 +166,7 @@ contract WildcatFundForkTest is Test {
     // Queued amount keeps accruing interest until the batch is paid, so the payout is at least
     // the value at commit time.
     assertGe(assetsOut, expectedAssets, "payout >= value at commit");
+    assertEq(fund.pendingRedeemAssets(), 0, "nothing pending after settlement");
   }
 
   function test_Fork_Redeem_SweepsThirdPartyExecutedWithdrawals() public {

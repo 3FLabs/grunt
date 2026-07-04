@@ -139,4 +139,22 @@ interface IWildcatFund is IFund {
   /// @notice The withdrawal batch expiry of the current (or most recent) REDEEM order.
   /// @dev Zero when the current order is a DEPOSIT or no withdrawal has been queued yet.
   function currentBatchExpiry() external view returns (uint32);
+
+  /// @notice The ERC-4626 wrapper shares held by the fund for the in-flight DEPOSIT order.
+  /// @dev Non-zero only between commit() and unlock() of a DEPOSIT order. These shares are
+  ///      not yet reflected in `totalAssets()` (which is derived from the wrapped share
+  ///      supply), so off-chain NAV can add this leg for a complete picture.
+  function pendingDepositShares() external view returns (uint256);
+
+  /// @notice The estimated underlying value still owed to the in-flight REDEEM order.
+  /// @dev Non-zero only between commit() and the final unlock() of a REDEEM order. Sums:
+  ///      - proceeds already paid to the batch for this fund but not yet forwarded to the
+  ///        receiver (claimable or pushed by third-party `executeWithdrawal` calls), and
+  ///      - the fund's pro-rata share of the batch's unpaid remainder, valued at the current
+  ///        scaleFactor (queued withdrawals keep accruing interest until paid, so this leg
+  ///        grows over time and the final payout may exceed this estimate).
+  ///      This value backs the redeeming order (its shares are already burned), so it is
+  ///      intentionally excluded from `totalAssets()`. Returns 0 after a forceEnd even if a
+  ///      stranded claim remains (retrievable via `rescueTokens()`).
+  function pendingRedeemAssets() external view returns (uint256);
 }

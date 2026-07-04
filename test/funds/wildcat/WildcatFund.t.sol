@@ -686,6 +686,98 @@ contract WildcatFundTest is Test {
     assertEq(fund.maxRedeem(address(this)), 1000 * ONE_USDC, "wrapped share balance");
   }
 
+  function test_PendingDepositShares_LifecycleVisibility() public {
+    assertEq(fund.pendingDepositShares(), 0, "empty fund");
+
+    uint256 input = 1000 * ONE_USDC;
+    Order memory order = _depositOrder(input, input);
+    fund.create(order);
+    assertEq(fund.pendingDepositShares(), 0, "accepted, not committed");
+
+    usdc.approve(address(fund), input);
+    fund.commit(order);
+    assertEq(fund.pendingDepositShares(), input, "in flight between commit and unlock");
+
+    fund.unlock(order);
+    assertEq(fund.pendingDepositShares(), 0, "delivered");
+  }
+
+  function test_PendingDepositShares_ZeroDuringRedeem() public {
+    uint256 shares = 1000 * ONE_USDC;
+    _depositFor(shares);
+
+    Order memory order = _redeemOrder(shares, shares);
+    fund.create(order);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    assertEq(fund.pendingDepositShares(), 0, "redeem order has no pending deposit");
+  }
+
+  function test_PendingRedeemAssets_LifecycleVisibility() public {
+    uint256 shares = 1000 * ONE_USDC;
+    _depositFor(shares);
+    assertEq(fund.pendingRedeemAssets(), 0, "no redeem in flight");
+
+    Order memory order = _redeemOrder(shares, shares);
+    fund.create(order);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    // Full amount pending right after commit (unpaid batch valued at current scaleFactor)
+    assertEq(fund.pendingRedeemAssets(), shares, "full amount pending after commit");
+
+    uint32 expiry = fund.currentBatchExpiry();
+    vm.warp(expiry + 1);
+
+    // 40% paid: pending = paid-but-unforwarded (400) + unpaid remainder (600)
+    market.payBatch(expiry, shares * 40 / 100);
+    assertEq(fund.pendingRedeemAssets(), shares, "paid leg + unpaid remainder");
+
+    // Forward the paid 40% to the receiver: only the unpaid remainder is left pending
+    fund.unlock(order);
+    assertEq(fund.pendingRedeemAssets(), shares * 60 / 100, "unpaid remainder after partial unlock");
+
+    // Third-party push does not change the pending total (paid leg counted until forwarded)
+    market.payBatch(expiry, shares * 60 / 100);
+    vm.prank(outsider);
+    market.executeWithdrawal(address(fund), expiry);
+    assertEq(fund.pendingRedeemAssets(), shares * 60 / 100, "pushed proceeds still pending until forwarded");
+
+    fund.unlock(order);
+    assertEq(fund.pendingRedeemAssets(), 0, "fully settled");
+  }
+
+  function test_PendingRedeemAssets_GrowsWithScaleFactor() public {
+    uint256 shares = 1000 * ONE_USDC;
+    _depositFor(shares);
+
+    Order memory order = _redeemOrder(shares, shares);
+    fund.create(order);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    // Interest keeps accruing on the unpaid batch: pending value grows with scaleFactor
+    market.setScaleFactor(RAY * 11 / 10);
+    assertEq(fund.pendingRedeemAssets(), shares * 11 / 10, "unpaid remainder accrues interest");
+  }
+
+  function test_PendingRedeemAssets_ZeroAfterForceEnd() public {
+    uint256 shares = 1000 * ONE_USDC;
+    _depositFor(shares);
+
+    Order memory order = _redeemOrder(shares, shares);
+    fund.create(order);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    vm.warp(fund.currentBatchExpiry() + 1);
+    vm.prank(operator);
+    fund.forceEnd(order);
+
+    assertEq(fund.pendingRedeemAssets(), 0, "no active order after forceEnd");
+  }
+
   function test_State_ArchivedOrdersReturnEnded() public {
     Order memory firstOrder = _depositOrder(1000 * ONE_USDC, 1000 * ONE_USDC);
     _runDepositLifecycle(firstOrder);
