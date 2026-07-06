@@ -2,24 +2,26 @@
 pragma solidity ^0.8.22;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {BorrowOffersHarness} from "test/mock/borrow/BorrowOffersHarness.sol";
 import {LibBorrowOffers} from "src/libs/borrow/LibBorrowOffers.sol";
 import {LibBorrowErrors} from "src/libs/borrow/LibBorrowErrors.sol";
-import {Offer} from "src/interfaces/borrow/IBorrowOffers.sol";
-import {MAX_OFFERS, NULL} from "src/libs/borrow/LibBorrowOffersConstants.sol";
+import {IBorrowOffers, Offer} from "src/interfaces/borrow/IBorrowOffers.sol";
+import {MAX_OFFERS} from "src/libs/borrow/LibBorrowOffersConstants.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
 
 /// @title LibBorrowOffersTest
 /// @author 3F Protocol
 /// @notice Direct, Morpho-independent tests of the {LibBorrowOffers} data structure via
 ///         {BorrowOffersHarness}: one massive sequential lifecycle test that drives the slab +
-///         doubly-linked list + free-list through fill / drain / revoke-in-the-middle / recycle /
-///         consume / expire, plus targeted fuzz tests for sort-order, slot recycling and
-///         consume-safety. Structural integrity is asserted after every mutation.
+///         liveness bitmap through fill / drain / revoke / lowest-id-recycle / consume / expire,
+///         plus targeted tests for the sorted-at-consume walk (ascending-price drain, Skip vs Stop)
+///         and preview/consume equivalence fuzz. Structural integrity (bitmap <=> slab agreement)
+///         is asserted after every mutation.
 /// @dev The companion {LibBorrowOffersInvariantTest} runs the same structural assertions over
 ///      fuzzer-generated operation sequences; this file pins down deterministic, high-coverage
 ///      scenarios that a bounded invariant run might not reliably hit (e.g. exactly filling the
-///      slab, then revoking head/tail/middle, then recycling all freed slots).
+///      slab, then revoking and recycling specific ids).
 contract LibBorrowOffersTest is Test {
   BorrowOffersHarness internal h;
 
@@ -27,7 +29,7 @@ contract LibBorrowOffersTest is Test {
 
   // Fixed favorable market snapshot (see BorrowOffersHandler for the rationale): unit price, 1:1
   // share:asset totals (exact conversions), and a position ratio (4) above every offer ratio so
-  // profitable offers are also strictly de-risking and the list genuinely drains under consume.
+  // profitable offers are also strictly de-risking and the book genuinely drains under consume.
   uint256 internal constant PRICE = ORACLE_PRICE_SCALE;
   uint256 internal constant TOTAL_BORROW_ASSETS = 1e27;
   uint256 internal constant TOTAL_BORROW_SHARES = 1e27;
@@ -44,81 +46,90 @@ contract LibBorrowOffersTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Single end-to-end run that stresses every transition of the data structure: fill to
-  ///         capacity, reject overflow, unlink at head/tail/middle, recycle freed slots in the
-  ///         middle, consume (partial + full + multi-offer), prune on expiry, fully drain, then
-  ///         recycle again. The structure is asserted consistent (and, where applicable, sorted)
-  ///         after every step.
+  ///         capacity (ids assigned lowest-first), reject overflow, remove low/middle/high ids,
+  ///         recycle freed ids lowest-first, consume (cheapest offers drain first), prune on
+  ///         expiry, fully drain, then recycle again. The structure is asserted consistent after
+  ///         every step.
   function test_dataStructure_massiveLifecycle() public {
     uint40 t0 = uint40(block.timestamp);
     uint40 active = t0 + TIMELOCK;
     uint40 expiry = active + 30 days;
 
-    // --- Phase 1: fill the slab to MAX_OFFERS with varied (all < position-ratio) ratios. ---
+    // --- Phase 1: fill the slab to MAX_OFFERS; allocation hands out ids 0, 1, 2, ... in order. ---
     for (uint256 i; i < MAX_OFFERS; ++i) {
       uint128 debtShares = 1e18;
-      // collateral 1.1e18 .. 2.65e18 => ratio 1.1 .. 2.65, all strictly below the position ratio (4).
+      // collateral 1.1e18 .. 2.65e18 => ratio 1.1 .. 2.65, all strictly below the position ratio
+      // (4), so every offer is profitable and strictly de-risking. Higher id => higher ratio =>
+      // pricier in shares-per-collateral terms... cheaper for the owner; the consume walk visits
+      // the LOWEST-collateral (lowest bonus) offer first.
       uint128 collateral = uint128(1.1e18 + i * 5e16);
-      h.insert(address(uint160(0xAAAA + i)), active, expiry, collateral, debtShares);
+      uint8 id = h.insert(address(uint160(0xAAAA + i)), active, expiry, collateral, debtShares);
+      assertEq(id, uint8(i), "lowest free id allocated");
       _assertStructure();
     }
-    assertEq(harnessCount(), uint8(MAX_OFFERS), "slab filled");
-    assertEq(h.nextFresh(), uint8(MAX_OFFERS), "all slots fresh-allocated");
-    _assertSorted();
+    assertEq(h.count(), MAX_OFFERS, "slab filled");
+    assertEq(h.liveBits(), type(uint32).max, "all bits set");
 
     // --- Phase 2: a further insert reverts (slab full). ---
     vm.expectRevert(LibBorrowErrors.TooManyOffers.selector);
     h.insert(address(0xBEEF), active, expiry, 2e18, 1e18);
 
-    // --- Phase 3: unlink at the head, the tail, and several middle positions. ---
-    uint8[] memory order = _forwardIds();
-    h.removeOffer(order[0]); // head
+    // --- Phase 3: remove at the low end, the high end, and several middle ids. ---
+    h.removeOffer(0);
     _assertStructure();
-    h.removeOffer(order[order.length - 1]); // tail
+    h.removeOffer(uint8(MAX_OFFERS - 1));
     _assertStructure();
-    h.removeOffer(order[order.length / 2]); // middle
+    h.removeOffer(16);
     _assertStructure();
-    order = _forwardIds();
-    h.removeOffer(order[3]); // near-head middle
+    h.removeOffer(3);
     _assertStructure();
-    h.removeOffer(order[order.length - 4]); // near-tail middle
+    h.removeOffer(27);
     _assertStructure();
-    assertEq(harnessCount(), uint8(MAX_OFFERS) - 5, "five unlinked");
-    assertEq(h.nextFresh(), uint8(MAX_OFFERS), "high-water mark unchanged by removals");
+    assertEq(h.count(), MAX_OFFERS - 5, "five removed");
+    // A removed id is no longer removable.
+    vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
+    h.removeOffer(16);
 
-    // --- Phase 4: recreate in the middle; these must recycle freed slab slots (no fresh growth). ---
+    // --- Phase 4: recreate; each insert must recycle the LOWEST freed id (0, 3, 16, 27, 31). ---
+    uint8[5] memory expectedIds = [0, 3, 16, 27, uint8(MAX_OFFERS - 1)];
     for (uint256 i; i < 5; ++i) {
       uint128 collateral = uint128(1.5e18 + i * 1e17);
       uint8 id = h.insert(address(uint160(0xCCCC + i)), active, expiry, collateral, 1e18);
-      assertTrue(id < MAX_OFFERS, "recycled id within slab");
+      assertEq(id, expectedIds[i], "lowest freed id recycled");
       _assertStructure();
     }
-    assertEq(harnessCount(), uint8(MAX_OFFERS), "refilled to capacity");
-    assertEq(h.nextFresh(), uint8(MAX_OFFERS), "no fresh growth: slots were recycled");
-    _assertSorted();
+    assertEq(h.count(), MAX_OFFERS, "refilled to capacity");
 
-    // --- Phase 5: activate, then consume a moderate target (partial + full fills, some removals). ---
+    // --- Phase 5: activate, then consume a moderate target. The walk is sorted by effective
+    //     price at consume time, so the id-1 offer (collateral 1.15e18, the cheapest live one now
+    //     that the original id-0 was replaced by a 1.5e18 offer) drains first, then id 2
+    //     (1.2e18) partially, and no other offer is touched. ---
     vm.warp(active + 1);
-    uint8 before = harnessCount();
     (uint256 seized, uint256 repaid) = h.consume(_input(2e18, 0));
-    assertGt(seized, 0, "collateral seized");
+    assertEq(seized, 2e18, "seize target met exactly");
     assertGt(repaid, 0, "shares repaid");
-    assertLt(harnessCount(), before, "consume removed at least one offer");
+    assertFalse(h.isLive(1), "cheapest offer exhausted and removed");
+    assertEq(h.slabAt(2).remainingCollateral, 1.2e18 - (2e18 - 1.15e18), "second-cheapest partially filled");
+    // The partial fill's debt shares round up: ceil(0.85e18 * 1e18 / 1.2e18).
+    uint256 partialFillShares = (uint256(0.85e18) * 1e18 + 1.2e18 - 1) / 1.2e18;
+    assertEq(h.slabAt(2).remainingDebtShares, 1e18 - partialFillShares, "partial fill decremented debt shares");
+    assertEq(h.count(), MAX_OFFERS - 1, "exactly one offer removed");
     _assertStructure();
 
     // --- Phase 6: warp past expiry; a large consume prunes every remaining (now expired) offer. ---
     vm.warp(expiry + 1);
-    h.consume(_input(POSITION_COLLATERAL, 0));
+    (seized, repaid) = h.consume(_input(POSITION_COLLATERAL, 0));
+    assertEq(seized, 0, "nothing consumable after expiry");
     _assertStructure();
-    assertEq(harnessCount(), 0, "all expired offers pruned");
-    assertEq(h.head(), NULL, "empty head");
-    assertEq(h.tail(), NULL, "empty tail");
+    assertEq(h.count(), 0, "all expired offers pruned");
+    assertEq(h.liveBits(), 0, "bitmap empty");
 
-    // --- Phase 7: after a full drain, inserts recycle and the structure remains valid. ---
+    // --- Phase 7: after a full drain, inserts start over at id 0 and the structure stays valid. ---
     uint40 active2 = uint40(block.timestamp) + TIMELOCK;
     uint8 recycled = h.insert(address(0xD00D), active2, active2 + 1 days, 2e18, 1e18);
-    assertTrue(recycled < MAX_OFFERS, "recycled after full drain");
+    assertEq(recycled, 0, "allocation restarts at the lowest id");
     _assertStructure();
-    assertEq(harnessCount(), 1, "one live offer again");
+    assertEq(h.count(), 1, "one live offer again");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -126,18 +137,17 @@ contract LibBorrowOffersTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice A never-initialized harness reproduces the post-upgrade / pre-initializeV2 dormant
-  ///         window: the offer namespace is all-zero, so `count == 0` but `head == 0` (a real slab
-  ///         index, NOT the NULL sentinel). Every reader must degrade gracefully (empty / zero)
-  ///         instead of panicking or looping on the zeroed slab.
+  ///         window: the offer namespace is all-zero. With the liveness bitmap this state is
+  ///         structurally an empty book (`liveBits == 0`), so every reader must degrade gracefully
+  ///         (empty / zero). Kept as a regression test even though no explicit guard exists
+  ///         anymore.
   function test_dormantWindow_allReadersSafe() public {
     BorrowOffersHarness fresh = new BorrowOffersHarness(); // no init(): storage entirely zero
     assertEq(fresh.count(), 0, "count zero");
-    assertEq(fresh.head(), 0, "head is 0 (not NULL) in the dormant window");
+    assertEq(fresh.liveBits(), 0, "no live bits");
 
-    // listOffers (and the external offers() view) must return an empty array, not Panic(0x32).
     assertEq(fresh.listOffers().length, 0, "listOffers empty");
 
-    // consume / previewConsume short-circuit on count==0.
     LibBorrowOffers.ConsumeInput memory inp = _input(1e18, 0);
     (uint256 ps, uint256 pd) = fresh.previewConsume(inp);
     assertEq(ps, 0, "preview seize 0");
@@ -148,74 +158,258 @@ contract LibBorrowOffersTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      BITMAP GEOMETRY                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice `liveBits` is a `uint32`, so the slab cap must fit it (the natspec contract on
+  ///         {MAX_OFFERS}).
+  function test_maxOffersFitsBitmapWidth() public pure {
+    assertLe(MAX_OFFERS, 32, "MAX_OFFERS must fit the uint32 liveBits bitmap");
+  }
+
+  function test_removeOffer_revertsOutOfRangeAndNonLive() public {
+    // Out-of-range id.
+    vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
+    h.removeOffer(uint8(MAX_OFFERS));
+    vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
+    h.removeOffer(type(uint8).max);
+    // In-range but never-allocated id.
+    vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
+    h.removeOffer(0);
+  }
+
+  function test_removeOffer_clearsSlotCompletely() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint8 id = h.insert(address(0xAAAA), active, active + 1 days, 2e18, 1e18);
+    h.removeOffer(id);
+    assertFalse(h.isLive(id), "bit cleared");
+    Offer memory slot = h.slabAt(id);
+    assertEq(slot.proposer, address(0), "proposer zeroed");
+    assertEq(slot.activeAt, 0, "activeAt zeroed");
+    assertEq(slot.expiresAt, 0, "expiresAt zeroed");
+    assertEq(slot.remainingCollateral, 0, "collateral zeroed");
+    assertEq(slot.remainingDebtShares, 0, "debt shares zeroed");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                  SORTED-AT-CONSUME WALK                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice The consume walk drains offers in ascending effective-price order regardless of the
+  ///         order (and slab ids) they were inserted with. Asserted via the OfferConsumed event
+  ///         sequence and the exact per-offer fills.
+  function test_consume_drainsAscendingPrice() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    // Insert shuffled: collateral (price) per id: id0=1.8, id1=1.2, id2=2.2, id3=1.5 (shares 1e18
+    // each, unit price => whole-offer price == collateral). Ascending price: id1, id3, id0, id2.
+    h.insert(address(0xA0), active, expiry, 1.8e18, 1e18);
+    h.insert(address(0xA1), active, expiry, 1.2e18, 1e18);
+    h.insert(address(0xA2), active, expiry, 2.2e18, 1e18);
+    h.insert(address(0xA3), active, expiry, 1.5e18, 1e18);
+    vm.warp(active + 1);
+
+    // Target spans the three cheapest (1.2 + 1.5 + 1.8 = 4.5e18) and half of the priciest.
+    vm.recordLogs();
+    (uint256 seized,) = h.consume(_input(5.6e18, 0));
+    assertEq(seized, 5.6e18, "target met");
+
+    // Full event check: ids in ascending price order, exact fill values, exhausted flags. The
+    // partial fill charges ceil(1.1e18 * 1e18 / 2.2e18) = 0.5e18 debt shares.
+    uint8[4] memory expectedOrder = [1, 3, 0, 2];
+    uint128[4] memory expectedColl = [uint128(1.2e18), 1.5e18, 1.8e18, 1.1e18];
+    uint128[4] memory expectedShares = [uint128(1e18), 1e18, 1e18, 0.5e18];
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    uint256 n;
+    for (uint256 i; i < logs.length; ++i) {
+      if (logs[i].topics[0] != IBorrowOffers.OfferConsumed.selector) continue;
+      assertEq(uint256(logs[i].topics[1]), expectedOrder[n], "consumed in ascending price order");
+      (uint128 collFilled, uint128 sharesFilled, bool exhausted) = abi.decode(logs[i].data, (uint128, uint128, bool));
+      assertEq(collFilled, expectedColl[n], "event collateral fill");
+      assertEq(sharesFilled, expectedShares[n], "event debt-share fill");
+      assertEq(exhausted, n < 3, "event exhausted flag");
+      ++n;
+    }
+    assertEq(n, 4, "four offers touched");
+
+    // The three cheapest are exhausted; the priciest is partially filled with the remainder, on
+    // BOTH sides of the write-back (collateral and debt shares).
+    assertFalse(h.isLive(1), "cheapest exhausted");
+    assertFalse(h.isLive(3), "second exhausted");
+    assertFalse(h.isLive(0), "third exhausted");
+    assertEq(h.slabAt(2).remainingCollateral, 2.2e18 - 1.1e18, "priciest partially filled");
+    assertEq(h.slabAt(2).remainingDebtShares, 1e18 - 0.5e18, "partial fill decremented debt shares");
+    _assertStructure();
+  }
+
+  /// @notice A below-floor (but still profitable) offer at the cheap end of the book is skipped,
+  ///         not consumed and not pruned, and does NOT block a pricier offer that clears the floor.
+  function test_consume_skipsBelowFloor_consumesPricier() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    // Offer A: price 1.005 (0.5% bonus, below the 1% floor). Offer B: price 1.5 (50% bonus).
+    // A sorts first (cheapest); the walk must skip it and still consume B.
+    uint8 a = h.insert(address(0xA0), active, expiry, 1.005e18, 1e18);
+    uint8 b = h.insert(address(0xB0), active, expiry, 1.5e18, 1e18);
+    vm.warp(active + 1);
+
+    LibBorrowOffers.ConsumeInput memory inp = _input(POSITION_COLLATERAL, 0);
+    inp.minOfferBonusBps = 100; // 1% consume-time floor
+    (uint256 seized,) = h.consume(inp);
+
+    assertEq(seized, 1.5e18, "only the above-floor offer consumed");
+    assertTrue(h.isLive(a), "below-floor offer left in the book");
+    assertEq(h.slabAt(a).remainingCollateral, 1.005e18, "below-floor offer untouched");
+    assertFalse(h.isLive(b), "above-floor offer exhausted");
+    _assertStructure();
+  }
+
+  /// @notice An over-max-price offer (I2 failure) STOPS the walk: with the walk sorted ascending
+  ///         in price, nothing later can qualify, so pricier offers after it are untouched even
+  ///         when the target has room left.
+  function test_consume_stopsAtOverPrice_nothingLaterConsumed() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    // Position ratio 4 => I2 admits only prices strictly below ~4. Offers at 2 (ok), 5 and 6
+    // (both over). The walk must consume the first and stop at the second.
+    uint8 ok = h.insert(address(0xA0), active, expiry, 2e18, 1e18);
+    uint8 over1 = h.insert(address(0xB0), active, expiry, 5e18, 1e18);
+    uint8 over2 = h.insert(address(0xC0), active, expiry, 6e18, 1e18);
+    vm.warp(active + 1);
+
+    (uint256 seized,) = h.consume(_input(POSITION_COLLATERAL, 0));
+
+    assertEq(seized, 2e18, "only the in-price offer consumed");
+    assertFalse(h.isLive(ok), "in-price offer exhausted");
+    assertTrue(h.isLive(over1), "over-price offer untouched (Stop)");
+    assertEq(h.slabAt(over1).remainingCollateral, 5e18, "over-price offer amounts unchanged");
+    assertTrue(h.isLive(over2), "nothing after the Stop consumed");
+    assertEq(h.slabAt(over2).remainingCollateral, 6e18, "later offer amounts unchanged");
+    _assertStructure();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         FUZZ TESTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Inserting offers in arbitrary order keeps the list sorted (descending debt/collateral)
-  ///         and structurally consistent. Sort order is a guaranteed property on the insert-only
-  ///         path (consume can later drift it, which is why the invariant suite omits it).
-  function testFuzz_insertOnly_maintainsSortAndStructure(uint96[12] memory collSeeds, uint96[12] memory shareSeeds)
-    public
-  {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
-    uint40 expiry = active + 30 days;
-    for (uint256 i; i < collSeeds.length; ++i) {
-      uint128 debtShares = uint128(_bound(shareSeeds[i], 1, 1e21));
-      uint128 collateral = uint128(_bound(collSeeds[i], uint256(debtShares) + 1, uint256(debtShares) * 5));
-      h.insert(address(uint160(0x100 + i)), active, expiry, collateral, debtShares);
-      _assertStructure();
-      _assertSorted();
-    }
-    assertEq(harnessCount(), uint8(collSeeds.length), "all inserted");
-  }
-
-  /// @notice A long, fuzzer-seeded interleaving of inserts and removals never leaks a slab slot:
-  ///         the high-water mark stays bounded, freed slots are recycled, and live + free always
-  ///         partition `[0, nextFresh)`.
+  /// @notice A long, fuzzer-seeded interleaving of inserts and removals keeps the bitmap and the
+  ///         slab in exact agreement, always allocates the lowest free id, and never exceeds the
+  ///         cap.
   function testFuzz_allocFreeRecycling(uint256 seed) public {
     uint40 active = uint40(block.timestamp) + TIMELOCK;
     uint40 expiry = active + 1 days;
     for (uint256 i; i < 80; ++i) {
       seed = uint256(keccak256(abi.encode(seed, i)));
-      if (seed % 3 == 0 && harnessCount() > 0) {
-        h.removeOffer(_liveIdAt(uint8(seed % harnessCount())));
-      } else if (harnessCount() < MAX_OFFERS) {
+      if (seed % 3 == 0 && h.count() > 0) {
+        h.removeOffer(_liveIdAt(uint8(seed % h.count())));
+      } else if (h.count() < MAX_OFFERS) {
         uint128 debtShares = uint128(_bound(seed, 1, 1e21));
         uint128 collateral =
           uint128(_bound(uint256(keccak256(abi.encode(seed, "c"))), uint256(debtShares) + 1, uint256(debtShares) * 5));
-        h.insert(address(uint160(seed | 1)), active, expiry, collateral, debtShares);
+        uint8 id = h.insert(address(uint160(seed | 1)), active, expiry, collateral, debtShares);
+        assertEq(id, _lowestFreeIdBefore(id), "lowest free id allocated");
       }
       _assertStructure();
     }
   }
 
-  /// @notice Consuming an arbitrary target against a built-up list never corrupts the structure, and
-  ///         `previewConsume` predicts the realized `(seized, repaid)` exactly.
-  function testFuzz_consumeNeverCorrupts(
-    uint96[10] memory collSeeds,
-    uint96[10] memory shareSeeds,
+  /// @notice KEY equivalence fuzz: for random mixed books (profitable, below-floor, unprofitable,
+  ///         over-price, expired, inactive offers) and a random target, `previewConsume` predicts
+  ///         the realized `(seized, repaid)` exactly, the walk never overshoots the target, and the
+  ///         post-consume storage is consistent (expired pruned, inactive untouched, every live
+  ///         slot in agreement with the bitmap).
+  function testFuzz_previewEqualsConsume_writeBackConsistent(
+    uint96[12] memory collSeeds,
+    uint96[12] memory shareSeeds,
+    uint8[12] memory kindSeeds,
     uint256 targetSeed,
-    bool seizeMode
+    bool seizeMode,
+    uint256 floorSeed
   ) public {
     uint40 active = uint40(block.timestamp) + TIMELOCK;
-    uint40 expiry = active + 30 days;
     for (uint256 i; i < collSeeds.length; ++i) {
       uint128 debtShares = uint128(_bound(shareSeeds[i], 1, 1e20));
-      // ratio (1, 3] so every offer is profitable and strictly de-risking (position ratio 4).
-      uint128 collateral = uint128(_bound(collSeeds[i], uint256(debtShares) + 1, uint256(debtShares) * 3));
-      h.insert(address(uint160(0x200 + i)), active, expiry, collateral, debtShares);
+      uint256 kind = kindSeeds[i] % 5;
+      uint128 collateral;
+      uint40 activeAt = active;
+      uint40 expiresAt = active + 30 days;
+      if (kind == 0) {
+        // Profitable and de-risking: ratio (1, 3].
+        collateral = uint128(_bound(collSeeds[i], uint256(debtShares) + 1, uint256(debtShares) * 3));
+      } else if (kind == 1) {
+        // Unprofitable: ratio (0, 1].
+        collateral = uint128(_bound(collSeeds[i], 1, uint256(debtShares)));
+      } else if (kind == 2) {
+        // Over max price: ratio (4, 6] (position ratio is 4).
+        collateral = uint128(_bound(collSeeds[i], uint256(debtShares) * 4 + 1, uint256(debtShares) * 6));
+      } else if (kind == 3) {
+        // Expires the second it becomes active: expired by consume time.
+        collateral = uint128(_bound(collSeeds[i], uint256(debtShares) + 1, uint256(debtShares) * 3));
+        expiresAt = active + 1;
+      } else {
+        // Not yet active at consume time.
+        collateral = uint128(_bound(collSeeds[i], uint256(debtShares) + 1, uint256(debtShares) * 3));
+        activeAt = active + 60 days;
+        expiresAt = active + 90 days;
+      }
+      h.insert(address(uint160(0x200 + i)), activeAt, expiresAt, collateral, debtShares);
     }
-    vm.warp(active + 1); // activate
+    vm.warp(active + 2); // kind-3 offers are expired, kind-4 not yet active
 
     LibBorrowOffers.ConsumeInput memory inp =
       seizeMode ? _input(_bound(targetSeed, 1, 5e21), 0) : _input(0, _bound(targetSeed, 1, 2e21));
+    inp.minOfferBonusBps = _bound(floorSeed, 0, 1_000);
 
-    // previewConsume is a view: it predicts the result for the exact current state.
+    // Snapshot the pre-consume book.
+    Offer[] memory before = new Offer[](MAX_OFFERS);
+    bool[] memory liveBefore = new bool[](MAX_OFFERS);
+    for (uint8 id; id < MAX_OFFERS; ++id) {
+      before[id] = h.slabAt(id);
+      liveBefore[id] = h.isLive(id);
+    }
+
+    // previewConsume is a view: it must predict the consume result for the exact same state.
     (uint256 predSeized, uint256 predShares) = h.previewConsume(inp);
+    vm.recordLogs();
     (uint256 actSeized, uint256 actShares) = h.consume(inp);
-
     assertEq(actSeized, predSeized, "preview seized != actual");
     assertEq(actShares, predShares, "preview shares != actual");
+
+    // The walk never overshoots the liquidator target.
+    if (seizeMode) assertLe(actSeized, inp.seizedTarget, "seize target overshot");
+    else assertLe(actShares, inp.repaidSharesTarget, "share target overshot");
+
+    // The OfferConsumed events are the walk's own account of its fills: they must sum to the
+    // returned totals, fire in ascending-price order (on the pre-consume amounts), and match the
+    // post-consume storage exactly (partial fills decrement BOTH sides; an exhausted offer had one
+    // side filled completely and its slot deleted).
+    _assertConsumedEventsMatchState(before, actSeized, actShares);
+
+    // Post-consume storage consistency, offer by offer.
+    uint256 seizedAccounted;
+    for (uint8 id; id < MAX_OFFERS; ++id) {
+      Offer memory afterOffer = h.slabAt(id);
+      if (!liveBefore[id]) continue;
+      if (block.timestamp >= before[id].expiresAt) {
+        // Expired: pruned by the consume write-back.
+        assertFalse(h.isLive(id), "expired offer not pruned");
+      } else if (block.timestamp < before[id].activeAt) {
+        // Inactive: untouched.
+        assertTrue(h.isLive(id), "inactive offer must stay");
+        assertEq(afterOffer.remainingCollateral, before[id].remainingCollateral, "inactive offer mutated");
+      } else if (h.isLive(id)) {
+        // Still live: untouched or partially filled, never zeroed on either side.
+        assertLe(afterOffer.remainingCollateral, before[id].remainingCollateral, "collateral grew");
+        assertLe(afterOffer.remainingDebtShares, before[id].remainingDebtShares, "debt shares grew");
+        assertGt(afterOffer.remainingCollateral, 0, "live offer with zero collateral");
+        assertGt(afterOffer.remainingDebtShares, 0, "live offer with zero debt shares");
+        seizedAccounted += before[id].remainingCollateral - afterOffer.remainingCollateral;
+      } else {
+        // Consumed to exhaustion: at most its whole remaining collateral was seized.
+        seizedAccounted += before[id].remainingCollateral;
+      }
+    }
+    assertLe(actSeized, seizedAccounted, "seized more than the touched offers held");
     _assertStructure();
   }
 
@@ -223,129 +417,100 @@ contract LibBorrowOffersTest is Test {
   /*                STRUCTURAL ASSERTION HELPERS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @dev Decodes the recorded OfferConsumed events and asserts they agree with the pre-consume
+  ///      snapshot, the post-consume storage and the returned totals (see the fuzz call site).
+  function _assertConsumedEventsMatchState(Offer[] memory before, uint256 actSeized, uint256 actShares) internal {
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    uint256 sumColl;
+    uint256 sumShares;
+    uint256 prevId = type(uint256).max; // sentinel: no previous consumed offer yet
+    for (uint256 i; i < logs.length; ++i) {
+      if (logs[i].topics[0] != IBorrowOffers.OfferConsumed.selector) continue;
+      uint256 id = uint256(logs[i].topics[1]);
+      (uint128 collFilled, uint128 sharesFilled, bool exhausted) = abi.decode(logs[i].data, (uint128, uint128, bool));
+      sumColl += collFilled;
+      sumShares += sharesFilled;
+      assertGt(collFilled, 0, "event with zero collateral fill");
+      assertGt(sharesFilled, 0, "event with zero share fill");
+
+      // Ascending-price order: descending debtShares/collateral on the pre-consume amounts.
+      if (prevId != type(uint256).max) {
+        assertGe(
+          uint256(before[prevId].remainingDebtShares) * before[id].remainingCollateral,
+          uint256(before[id].remainingDebtShares) * before[prevId].remainingCollateral,
+          "events not in ascending price order"
+        );
+      }
+      prevId = id;
+
+      Offer memory afterOffer = h.slabAt(uint8(id));
+      if (exhausted) {
+        assertFalse(h.isLive(uint8(id)), "exhausted offer still live");
+        assertLe(collFilled, before[id].remainingCollateral, "fill exceeds offered collateral");
+        assertLe(sharesFilled, before[id].remainingDebtShares, "fill exceeds offered debt shares");
+        assertTrue(
+          collFilled == before[id].remainingCollateral || sharesFilled == before[id].remainingDebtShares,
+          "exhausted offer had neither side filled completely"
+        );
+      } else {
+        assertTrue(h.isLive(uint8(id)), "partially-filled offer not live");
+        assertEq(
+          before[id].remainingCollateral - afterOffer.remainingCollateral, collFilled, "collateral write-back != fill"
+        );
+        assertEq(
+          before[id].remainingDebtShares - afterOffer.remainingDebtShares, sharesFilled, "debt-share write-back != fill"
+        );
+      }
+    }
+    assertEq(sumColl, actSeized, "event fills do not sum to seized total");
+    assertEq(sumShares, actShares, "event fills do not sum to repaid total");
+  }
+
   /// @dev Full structural integrity check (mirrors {LibBorrowOffersInvariantTest}'s invariants):
-  ///      forward/backward walks agree with `count`, pointers are consistent, the free-list and live
-  ///      list partition `[0, nextFresh)`, slot markers match membership, and bounds hold.
+  ///      the bitmap and the slab agree slot by slot (bit set <=> live, non-degenerate offer; bit
+  ///      clear <=> fully zeroed slot), no bits beyond `MAX_OFFERS`, and `count`/`listOffers`
+  ///      match the bitmap population.
   function _assertStructure() internal view {
-    uint8[] memory fwd = _forwardIds();
-    uint8[] memory bwd = _backwardIds();
-    uint8[] memory free = _freeIds();
+    uint256 bits = h.liveBits();
+    assertEq(bits >> MAX_OFFERS, 0, "bits set beyond MAX_OFFERS");
 
-    // counts
-    assertEq(fwd.length, harnessCount(), "count != forward length");
-    assertEq(bwd.length, fwd.length, "backward length != forward length");
-    assertEq(uint256(fwd.length) + uint256(free.length), h.nextFresh(), "live + free != nextFresh");
-    assertLe(harnessCount(), uint8(MAX_OFFERS), "count > MAX_OFFERS");
-    assertLe(h.nextFresh(), uint8(MAX_OFFERS), "nextFresh > MAX_OFFERS");
-
-    // head/tail nullity + ends
-    if (fwd.length == 0) {
-      assertEq(h.head(), NULL, "head not NULL when empty");
-      assertEq(h.tail(), NULL, "tail not NULL when empty");
-    } else {
-      assertEq(h.head(), fwd[0], "head != first");
-      assertEq(h.tail(), fwd[fwd.length - 1], "tail != last");
+    uint256 live;
+    for (uint8 id; id < MAX_OFFERS; ++id) {
+      Offer memory slot = h.slabAt(id);
+      if (bits & (uint256(1) << id) != 0) {
+        ++live;
+        assertTrue(slot.proposer != address(0), "live offer zero proposer");
+        assertTrue(slot.remainingCollateral > 0 && slot.remainingDebtShares > 0, "degenerate live offer");
+      } else {
+        assertEq(slot.proposer, address(0), "freed slot non-zero proposer");
+        assertEq(slot.remainingCollateral, 0, "freed slot non-zero collateral");
+        assertEq(slot.remainingDebtShares, 0, "freed slot non-zero debt shares");
+        assertEq(slot.activeAt, 0, "freed slot non-zero activeAt");
+        assertEq(slot.expiresAt, 0, "freed slot non-zero expiresAt");
+      }
     }
-
-    // pointer consistency + backward is reverse of forward
-    for (uint256 i; i < fwd.length; ++i) {
-      Offer memory o = h.slabAt(fwd[i]);
-      if (i == 0) assertEq(o.prev, NULL, "head.prev != NULL");
-      else assertEq(o.prev, fwd[i - 1], "prev mismatch");
-      if (i == fwd.length - 1) assertEq(o.next, NULL, "tail.next != NULL");
-      else assertEq(o.next, fwd[i + 1], "next mismatch");
-      assertEq(bwd[bwd.length - 1 - i], fwd[i], "backward not reverse of forward");
-
-      // live markers + no degenerate live offer
-      assertTrue(o.proposer != address(0), "live offer zero proposer");
-      assertTrue(o.remainingCollateral > 0 && o.remainingDebtShares > 0, "degenerate live offer");
-    }
-
-    // partition: disjoint + covers [0, nextFresh)
-    bool[] memory seen = new bool[](MAX_OFFERS);
-    for (uint256 i; i < fwd.length; ++i) {
-      assertFalse(seen[fwd[i]], "id twice in live list");
-      seen[fwd[i]] = true;
-    }
-    for (uint256 i; i < free.length; ++i) {
-      assertFalse(seen[free[i]], "id in both live and free");
-      seen[free[i]] = true;
-      assertEq(h.slabAt(free[i]).proposer, address(0), "freed slot non-zero proposer");
-    }
-    uint8 nf = h.nextFresh();
-    for (uint8 i; i < nf; ++i) {
-      assertTrue(seen[i], "allocated index missing from both lists");
-    }
+    assertEq(h.count(), live, "count != live slots");
+    assertEq(h.listOffers().length, live, "listOffers length != live slots");
   }
 
-  /// @dev Asserts the active list is sorted by descending `debtShares / collateral` (ascending
-  ///      price): each node's ratio is >= the next node's. Cross-multiplied to avoid division;
-  ///      products are uint128 * uint128 < 2**256.
-  function _assertSorted() internal view {
-    uint8[] memory ids = _forwardIds();
-    for (uint256 i; i + 1 < ids.length; ++i) {
-      Offer memory a = h.slabAt(ids[i]);
-      Offer memory b = h.slabAt(ids[i + 1]);
-      assertGe(
-        uint256(a.remainingDebtShares) * b.remainingCollateral,
-        uint256(b.remainingDebtShares) * a.remainingCollateral,
-        "list not sorted by descending debt/collateral"
-      );
+  /// @dev Returns the nth (0-based, ascending id) live slab id.
+  function _liveIdAt(uint8 nth) internal view returns (uint8) {
+    uint256 seen;
+    for (uint8 id; id < MAX_OFFERS; ++id) {
+      if (!h.isLive(id)) continue;
+      if (seen == nth) return id;
+      ++seen;
     }
+    revert("nth live offer out of range");
   }
 
-  function harnessCount() internal view returns (uint8) {
-    return h.count();
-  }
-
-  function _forwardIds() internal view returns (uint8[] memory ids) {
-    uint8[] memory tmp = new uint8[](MAX_OFFERS + 1);
-    uint256 n;
-    uint8 cur = h.head();
-    while (cur != NULL) {
-      require(n <= MAX_OFFERS, "forward walk overran (cycle)");
-      tmp[n++] = cur;
-      cur = h.slabAt(cur).next;
+  /// @dev Recomputes the lowest id that was free before `justAllocated` was handed out (i.e. no
+  ///      smaller id may be free now).
+  function _lowestFreeIdBefore(uint8 justAllocated) internal view returns (uint8) {
+    for (uint8 id; id < justAllocated; ++id) {
+      if (!h.isLive(id)) return id; // a smaller free id existed: the allocator misbehaved
     }
-    ids = _trim(tmp, n);
-  }
-
-  function _backwardIds() internal view returns (uint8[] memory ids) {
-    uint8[] memory tmp = new uint8[](MAX_OFFERS + 1);
-    uint256 n;
-    uint8 cur = h.tail();
-    while (cur != NULL) {
-      require(n <= MAX_OFFERS, "backward walk overran (cycle)");
-      tmp[n++] = cur;
-      cur = h.slabAt(cur).prev;
-    }
-    ids = _trim(tmp, n);
-  }
-
-  function _freeIds() internal view returns (uint8[] memory ids) {
-    uint8[] memory tmp = new uint8[](MAX_OFFERS + 1);
-    uint256 n;
-    uint8 cur = h.freeHead();
-    while (cur != NULL) {
-      require(n <= MAX_OFFERS, "free walk overran (cycle)");
-      tmp[n++] = cur;
-      cur = h.slabAt(cur).next;
-    }
-    ids = _trim(tmp, n);
-  }
-
-  function _liveIdAt(uint8 nth) internal view returns (uint8 cur) {
-    cur = h.head();
-    for (uint8 k; k < nth; ++k) {
-      cur = h.slabAt(cur).next;
-    }
-  }
-
-  function _trim(uint8[] memory tmp, uint256 n) internal pure returns (uint8[] memory ids) {
-    ids = new uint8[](n);
-    for (uint256 i; i < n; ++i) {
-      ids[i] = tmp[i];
-    }
+    return justAllocated;
   }
 
   function _input(uint256 seizedTarget, uint256 repaidSharesTarget)
@@ -361,8 +526,9 @@ contract LibBorrowOffersTest is Test {
       totalBorrowShares: TOTAL_BORROW_SHARES,
       positionCollateral: POSITION_COLLATERAL,
       positionBorrowShares: POSITION_BORROW_SHARES,
-      // These data-structure tests exercise the list/consume mechanics with the bonus floor
-      // disabled (0); the floor's own behavior is covered in MorphoBorrowPositionOffers.t.sol.
+      // These data-structure tests exercise the book/consume mechanics with the bonus floor
+      // disabled (0) unless a test sets it explicitly; the floor's end-to-end behavior is covered
+      // in MorphoBorrowPositionOffers.t.sol.
       minOfferBonusBps: 0
     });
   }

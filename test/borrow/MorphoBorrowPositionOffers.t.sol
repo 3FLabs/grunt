@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
 import {IBorrowOffers, Offer} from "src/interfaces/borrow/IBorrowOffers.sol";
@@ -12,7 +13,6 @@ import {
   PROPOSER_ROLE,
   GUARDIAN_ROLE,
   MAX_OFFERS,
-  NULL,
   DEFAULT_OFFER_TIMELOCK,
   MIN_OFFER_TIMELOCK,
   MAX_OFFER_TIMELOCK,
@@ -428,18 +428,19 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   /// @notice Dormant window (v1 proxy upgraded to v2 logic but initializeV2 not yet run): the offer
-  ///         namespace is all-zero, so head == 0 (not NULL). The band path must revert
-  ///         NoConsumableOffer (spec section 12.3), NOT an arithmetic panic from a count underflow.
+  ///         namespace is all-zero, which the liveness bitmap reads structurally as an empty book
+  ///         (`liveBits == 0`). The band path must revert NoConsumableOffer (spec section 12.3).
+  ///         Kept as a regression test even though no explicit guard exists anymore.
   function test_dispatch_dormantWindow_revertsNoConsumableNotPanic() public {
     _enterBand(0.7e18);
-    // Zero the offer namespace to model an un-migrated v1 proxy (head==0, count==0, timelock==0).
+    // Zero the offer namespace to model an un-migrated v1 proxy (liveBits==0, timelock==0).
     vm.store(address(pos), OFFERS_SLOT, bytes32(0));
     assertEq(pos.offerCount(), 0, "offer storage zeroed");
     vm.expectRevert(LibBorrowErrors.NoConsumableOffer.selector);
     pos.preLiquidate(address(pos), 1e18, 0, "");
   }
 
-  /// @notice previewConsume must not loop forever in the dormant window (head==0, slab[0].next==0).
+  /// @notice previewConsume returns (0, 0) in the dormant window (all-zero namespace == empty book).
   function test_previewConsume_dormantWindow_returnsZero() public {
     _enterBand(0.7e18);
     vm.store(address(pos), OFFERS_SLOT, bytes32(0));
@@ -448,9 +449,8 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(d, 0, "no shares");
   }
 
-  /// @notice The offers() view must return an empty array (not Panic 0x32) in the dormant window:
-  ///         count==0 but head==0 (a real slab index, not NULL), so without the listOffers guard the
-  ///         walk would write past the length-0 result array.
+  /// @notice The offers() view must return an empty array in the dormant window: the all-zero
+  ///         namespace has `liveBits == 0`, so there are no set bits to walk.
   function test_offers_dormantWindow_returnsEmptyNotPanic() public {
     _enterBand(0.7e18);
     vm.store(address(pos), OFFERS_SLOT, bytes32(0));
@@ -597,23 +597,58 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(pos.offerCount(), 0, "A pruned, B exhausted");
   }
 
-  function test_consume_ordering_headIsMostOwnerFavorable() public {
+  /// @notice Nothing about price order is stored (the offers() view lists by ascending slab id);
+  ///         the consume walk sorts by effective price at consume time and drains cheapest-first.
+  ///         Asserted end-to-end: propose in non-sorted order, consume across one-and-a-half
+  ///         offers, and check both the OfferConsumed event sequence and the per-offer state.
+  function test_consume_ordering_drainsCheapestFirst() public {
     _enterBand(0.7e18);
     _enableProposer(proposer);
     uint256 shares = _positionShares() / 8;
-    // Propose in non-sorted order; list must end up ascending in price (head = lowest I).
-    _proposeAtPrice(shares, 1.3e18);
-    _proposeAtPrice(shares, 1.1e18);
-    _proposeAtPrice(shares, 1.2e18);
+    // Propose in non-sorted price order: id 0 at 1.3, id 1 at 1.1, id 2 at 1.2.
+    uint8 pricey = _proposeAtPrice(shares, 1.3e18);
+    uint8 cheap = _proposeAtPrice(shares, 1.1e18);
+    uint8 mid = _proposeAtPrice(shares, 1.2e18);
+    _warpActive();
 
+    // The view lists by slab id (insertion order here), not by price.
     Offer[] memory list = pos.offers();
     assertEq(list.length, 3, "3 offers");
-    // ascending price <=> descending debtShares/collateral
-    for (uint256 i = 1; i < list.length; ++i) {
-      uint256 prevRatio = uint256(list[i - 1].remainingDebtShares) * list[i].remainingCollateral;
-      uint256 curRatio = uint256(list[i].remainingDebtShares) * list[i - 1].remainingCollateral;
-      assertGe(prevRatio, curRatio, "head more owner-favorable (higher debt/coll)");
+    assertEq(list[0].remainingCollateral, pos.offer(pricey).remainingCollateral, "offers() is id-ordered");
+    assertEq(list[1].remainingCollateral, pos.offer(cheap).remainingCollateral, "offers() is id-ordered");
+
+    // Target: all of the cheapest offer plus half of the mid one; the pricey offer must stay whole.
+    uint128 cheapColl = pos.offer(cheap).remainingCollateral;
+    uint128 cheapShares = pos.offer(cheap).remainingDebtShares;
+    uint128 midColl = pos.offer(mid).remainingCollateral;
+    uint128 midShares = pos.offer(mid).remainingDebtShares;
+    uint128 priceyColl = pos.offer(pricey).remainingCollateral;
+    // The mid fill charges debt shares rounded up against the fill's collateral fraction.
+    uint256 midFillShares = (uint256(midColl / 2) * midShares + midColl - 1) / midColl;
+    vm.recordLogs();
+    (uint256 seized,) = pos.preLiquidate(address(pos), cheapColl + midColl / 2, 0, "");
+    assertEq(seized, uint256(cheapColl) + midColl / 2, "target met");
+
+    // OfferConsumed events fire in ascending-price order with exact fill values: cheap (whole
+    // offer, exhausted), then mid (half its collateral, rounded-up shares, still live).
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    uint256 n;
+    for (uint256 i; i < logs.length; ++i) {
+      if (logs[i].emitter != address(pos) || logs[i].topics[0] != IBorrowOffers.OfferConsumed.selector) continue;
+      assertEq(uint256(logs[i].topics[1]), n == 0 ? cheap : mid, "consumed in ascending price order");
+      (uint128 collFilled, uint128 sharesFilled, bool exhausted) = abi.decode(logs[i].data, (uint128, uint128, bool));
+      assertEq(collFilled, n == 0 ? cheapColl : midColl / 2, "event collateral fill");
+      assertEq(sharesFilled, n == 0 ? cheapShares : uint128(midFillShares), "event debt-share fill");
+      assertEq(exhausted, n == 0, "event exhausted flag");
+      ++n;
     }
+    assertEq(n, 2, "two offers touched");
+
+    assertEq(pos.offer(cheap).proposer, address(0), "cheapest exhausted and removed");
+    assertEq(pos.offer(mid).remainingCollateral, midColl - midColl / 2, "mid offer partially filled");
+    assertEq(pos.offer(mid).remainingDebtShares, midShares - midFillShares, "mid offer debt shares decremented");
+    assertEq(pos.offer(pricey).remainingCollateral, priceyColl, "pricey untouched");
+    assertEq(pos.offerCount(), 2, "only the cheapest removed");
   }
 
   function test_consume_toZeroDebt_closesPosition() public {
@@ -1013,11 +1048,16 @@ contract MorphoBorrowPositionOffersTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice A reentrant onPreLiquidate that re-enters preLiquidate cannot double-consume the same
-  ///         offer: the fills are committed as effects before the Morpho repay.
+  ///         offer: the fills are committed as effects before the Morpho repay. The attack targets
+  ///         the WHOLE offer, so an effects-after-interaction regression would let the reentrant
+  ///         call consume the (then still undecremented) offer a second time and fail the exact
+  ///         seize assertion below.
   function test_reentrancy_cannotDoubleConsume() public {
     _enterBand(0.7e18);
     _enableProposer(proposer);
-    uint256 shares = _positionShares() / 2;
+    // A small offer (an eighth of the debt) keeps the position inside the band after the outer
+    // fill, so the reentrant call genuinely reaches the offer path (and not PositionHealthy).
+    uint256 shares = _positionShares() / 8;
     uint8 id = _proposeAtPrice(shares, 1.2e18);
     _warpActive();
 
@@ -1025,13 +1065,16 @@ contract MorphoBorrowPositionOffersTest is Test {
     loanToken.setBalance(address(attacker), 1_000_000e18);
 
     Offer memory o = pos.offer(id);
-    uint128 half = o.remainingCollateral / 2;
-    // The attacker tries to re-consume during the callback; the second consume sees the decremented
-    // offer. The call must not revert from double-spend and must not over-seize.
-    attacker.attack(half);
-    // Offer's remaining collateral reflects exactly the two non-overlapping fills (no double-spend).
-    uint256 totalSeized = attacker.totalSeized();
-    assertLe(totalSeized, o.remainingCollateral, "did not seize more than offered");
+    attacker.attack(o.remainingCollateral);
+
+    // The outer call seized exactly the offer; the reentrant call found an already-emptied book
+    // and reverted NoConsumableOffer (proving it observed the committed effects).
+    assertEq(attacker.totalSeized(), o.remainingCollateral, "seized exactly the offered collateral, once");
+    assertTrue(attacker.reentered(), "callback did re-enter");
+    assertEq(attacker.reentryRevertSelector(), LibBorrowErrors.NoConsumableOffer.selector, "reentry saw empty book");
+    assertEq(pos.offerCount(), 0, "offer exhausted and removed");
+    assertEq(pos.offer(id).proposer, address(0), "offer slot zeroed");
+    assertGt(_ltvWad(), SAFE_LTV, "position still in band (reentry reached the offer path)");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1079,13 +1122,15 @@ contract MorphoBorrowPositionOffersTest is Test {
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
 /// @notice Liquidator mock whose onPreLiquidate callback re-enters preLiquidate once, to prove the
-///         effects-before-interaction ordering prevents double-consuming an offer.
+///         effects-before-interaction ordering prevents double-consuming an offer. Records whether
+///         the reentrant call succeeded (adding to `totalSeized`) or the selector it reverted with.
 contract ReentrantLiquidator is IPreLiquidationCallback {
   MorphoBorrowPosition internal pos;
   MockERC20 internal loanToken;
   uint256 public totalSeized;
   uint128 internal seizeAmount;
-  bool internal reentered;
+  bool public reentered;
+  bytes4 public reentryRevertSelector;
 
   constructor(MorphoBorrowPosition _pos, MockERC20 _loanToken) {
     pos = _pos;
@@ -1105,7 +1150,9 @@ contract ReentrantLiquidator is IPreLiquidationCallback {
       // Re-enter once with the same target; must operate on already-decremented offers.
       try pos.preLiquidate(address(pos), seizeAmount, 0, "") returns (uint256 seized, uint256) {
         totalSeized += seized;
-      } catch {}
+      } catch (bytes memory reason) {
+        if (reason.length >= 4) reentryRevertSelector = bytes4(reason);
+      }
     }
   }
 }

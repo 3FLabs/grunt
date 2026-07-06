@@ -10,8 +10,8 @@ import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol
 /// @title BorrowOffersHandler
 /// @author 3F Protocol
 /// @notice Invariant-test handler that drives random insert / revoke / consume / time-warp actions
-///         against a {BorrowOffersHarness}, so the slab + doubly-linked list + free-list are pushed
-///         through long, adversarial operation sequences while the structural invariants are checked.
+///         against a {BorrowOffersHarness}, so the slab + liveness bitmap are pushed through long,
+///         adversarial operation sequences while the structural invariants are checked.
 /// @dev The actions feed only states the real {MorphoBorrowPosition.proposeOffer} can reach:
 ///      amounts are bounded `> 0`, `expiresAt > activeAt`, and `activeAt = now + timelock`.
 ///
@@ -78,10 +78,10 @@ contract BorrowOffersHandler is Test {
     ghostInserts++;
   }
 
-  /// @notice Revokes the nth live offer (picked from the active list), exercising unlink at the
-  ///         head, in the middle, and at the tail across the run.
+  /// @notice Revokes the nth live offer (picked from the bitmap), exercising removals at low,
+  ///         middle and high slab ids across the run.
   function act_revoke(uint256 idxSeed) external {
-    uint8 liveCount = h.count();
+    uint256 liveCount = h.count();
     if (liveCount == 0) return;
     uint8 nth = uint8(_bound(idxSeed, 0, liveCount - 1));
     h.removeOffer(_liveIdAt(nth));
@@ -168,11 +168,14 @@ contract BorrowOffersHandler is Test {
     });
   }
 
-  /// @dev Walks the active list to the nth (0-based) live id from the head.
-  function _liveIdAt(uint8 nth) internal view returns (uint8 cur) {
-    cur = h.head();
-    for (uint8 k = 0; k < nth; ++k) {
-      cur = h.slabAt(cur).next;
+  /// @dev Returns the nth (0-based, ascending id) live slab id from the bitmap.
+  function _liveIdAt(uint8 nth) internal view returns (uint8) {
+    uint256 seen;
+    for (uint8 id = 0; id < MAX_OFFERS; ++id) {
+      if (!h.isLive(id)) continue;
+      if (seen == nth) return id;
+      ++seen;
     }
+    revert("nth live offer out of range");
   }
 }

@@ -38,16 +38,12 @@ uint256 constant GUARDIAN_ROLE = 1 << 2;
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
 /// @dev Maximum number of simultaneously-live offers. Bounds both the storage slab and the
-///      worst-case consume/insert walk, so liquidation gas is bounded regardless of proposer
-///      behaviour. Must be `<= 255` so that offer ids (slab indices) and the {NULL} sentinel fit
-///      in a `uint8`. 32 is a deliberate, conservative cap: large enough for realistic lender
-///      activity on a single position, small enough that a full O(N) walk stays cheap.
+///      worst-case consume walk, so liquidation gas is bounded regardless of proposer behaviour.
+///      Must be `<= 32` so the one-bit-per-slot liveness bitmap fits the `uint32 liveBits` field of
+///      {LibBorrowOffers.BorrowOffersStorage} (asserted in tests). 32 is a deliberate, conservative
+///      cap: large enough for realistic lender activity on a single position, small enough that a
+///      full O(N) load-and-sort stays cheap.
 uint256 constant MAX_OFFERS = 32;
-
-/// @dev Sentinel for "no offer" in the `uint8` head/tail/prev/next/free-list links. `0xFF` (255)
-///      can never be a real id because ids are constrained to `[0, MAX_OFFERS)` and
-///      `MAX_OFFERS <= 255`.
-uint8 constant NULL = 0xFF;
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                    TIMELOCK / EXPIRY BOUNDS               */

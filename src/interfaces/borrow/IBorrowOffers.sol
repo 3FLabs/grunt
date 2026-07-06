@@ -14,14 +14,17 @@ pragma solidity ^0.8.22;
 ///      debt-repayment quantity and a clean shares-mode Morpho settlement (no assets-mode
 ///      `borrowShares` underflow). See BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md §14 (Decision B).
 ///
-///      Packing (2 storage slots, exact):
-///      - slot 1: `proposer` (160) + `activeAt` (40) + `expiresAt` (40) + `prev` (8) + `next` (8)
+///      Packing (2 storage slots):
+///      - slot 1: `proposer` (160) + `activeAt` (40) + `expiresAt` (40)
 ///      - slot 2: `remainingCollateral` (128) + `remainingDebtShares` (128)
 ///      The `uint128` amounts are sound because Morpho stores `Position.collateral` and the market
 ///      borrow totals as `uint128`.
+///
+///      Liveness is tracked by the `liveBits` bitmap in {LibBorrowOffers.BorrowOffersStorage} (bit
+///      set <=> the slab slot holds a live offer), not by any field of this struct; a freed slot is
+///      fully zeroed. A live offer always has a non-zero proposer and both remaining amounts > 0.
 struct Offer {
-  /// @dev The account that posted the offer (accountability; also used by views). An all-zero
-  ///      `proposer` marks a freed / never-allocated slab slot (i.e. "not a live offer").
+  /// @dev The account that posted the offer (accountability; also used by views).
   address proposer;
   /// @dev Absolute timestamp at which the offer becomes consumable. Fixed at proposal time as
   ///      `proposalTime + effectiveTimelockAtProposal`, so a later timelock change cannot re-time
@@ -29,10 +32,6 @@ struct Offer {
   uint40 activeAt;
   /// @dev Absolute expiry. The offer is consumable only while `now < expiresAt`.
   uint40 expiresAt;
-  /// @dev Doubly-linked-list previous pointer ({NULL} at head). Slab index.
-  uint8 prev;
-  /// @dev Doubly-linked-list next pointer ({NULL} at tail); also threads the free-list when freed.
-  uint8 next;
   /// @dev Collateral tokens still offered.
   uint128 remainingCollateral;
   /// @dev Morpho borrow shares still requested for the remaining collateral.
@@ -70,6 +69,8 @@ interface IBorrowOffers {
   event OfferRevoked(uint8 indexed id, address indexed by);
 
   /// @notice Emitted for each chunk consumed from an offer during a band pre-liquidation.
+  /// @dev Emitted after the whole consume walk completes (effects are aggregated per offer), in
+  ///      ascending order of the offers' effective price at walk entry, not in slab-id order.
   /// @param id The slab id of the consumed offer.
   /// @param collateralFilled The collateral tokens seized from this offer in this chunk.
   /// @param debtSharesFilled The borrow shares repaid against this offer in this chunk.
@@ -161,7 +162,8 @@ interface IBorrowOffers {
   /// @notice Returns a single offer by id. A non-live id returns a zeroed {Offer}.
   function offer(uint8 id) external view returns (Offer memory);
 
-  /// @notice Returns all live offers, ordered head -> tail (most owner-favorable first).
+  /// @notice Returns all live offers, in ascending slab-id order (NOT price order; the consume
+  ///         walk sorts by effective price at consume time).
   function offers() external view returns (Offer[] memory);
 
   /// @notice Returns whether an offer would currently pass the consume gates (active, not expired,

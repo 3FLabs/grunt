@@ -23,7 +23,6 @@ import {
   DEFAULT_MIN_OFFER_BONUS_BPS,
   MAX_MIN_OFFER_BONUS_BPS
 } from "../libs/borrow/LibBorrowOffersConstants.sol";
-import {BPS} from "../libs/Constants.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 import {LibCommonErrors} from "../libs/common/LibCommonErrors.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
@@ -46,7 +45,7 @@ import {IPositionManager} from "../interfaces/manager/IPositionManager.sol";
 ///      {Offer}s (a quantity of collateral for a quantity of debt-share repayment); liquidators
 ///      consume them through the *same* `preLiquidate` entrypoint when the LTV is in
 ///      `(safeLtv, liquidationLtv]`. The `LTV > liquidationLtv` proportional path is unchanged. All
-///      offer storage, the slab/linked-list, the timelock and the fill/consume math live in
+///      offer storage, the slab/bitmap bookkeeping, the timelock and the fill/consume math live in
 ///      {LibBorrowOffers}; the base auth mixin is Solady `OwnableRoles` (storage-safe over a plain
 ///      `Ownable`: `OwnableRoles is Ownable`, same `_OWNER_SLOT`, roles live in keccak-derived slots
 ///      that cannot collide with the owner slot, the `Initializable` slot, the existing
@@ -189,13 +188,13 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   }
 
   /// @dev Shared setup run by both {initialize} and {initializeV2}: seed the default offer timelock
-  ///      and minimum offer bonus, initialize the offer list/slab bookkeeping, and grant
-  ///      `ROLE_ADMIN` to the governance owner.
+  ///      and minimum offer bonus, initialize the offer-book bookkeeping, and grant `ROLE_ADMIN` to
+  ///      the governance owner.
   function _initializeV2() internal {
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     o.offerTimelock = DEFAULT_OFFER_TIMELOCK;
     o.minOfferBonusBps = DEFAULT_MIN_OFFER_BONUS_BPS;
-    LibBorrowOffers.initFreeList(o);
+    LibBorrowOffers.initOfferBook(o);
 
     // ROLE_ADMIN -> the PositionManager's governance owner(), falling back to the position owner
     // (the PositionManager) if that lookup fails.
@@ -469,9 +468,10 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   }
 
   /// @dev The offer/band pre-liquidation path. Reached only when `safeLtv < LTV <= liquidationLtv`.
-  ///      Walks the sorted offer list (most owner-favorable first), consuming chunks that are each
-  ///      profitable (I1) and strictly LTV-decreasing (I2), then settles once with a shares-mode
-  ///      Morpho repay reusing the same `onMorphoRepay` callback as the proportional path.
+  ///      Walks the consumable offers sorted by effective price (most owner-favorable first),
+  ///      consuming chunks that are each profitable (I1) and strictly LTV-decreasing (I2), then
+  ///      settles once with a shares-mode Morpho repay reusing the same `onMorphoRepay` callback as
+  ///      the proportional path.
   ///
   ///      Market/position state is read once at entry (post-accrual, so exact: it matches Morpho's
   ///      internal totals) and passed to {LibBorrowOffers.consume}, which applies all offer
@@ -956,14 +956,15 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      - Strict profitability: reverts {LibBorrowErrors.OfferNotProfitable} unless
   ///        `collateral value > debt value`.
   ///      - Minimum bonus: reverts {LibBorrowErrors.OfferBonusTooLow} unless the excess
-  ///        `offerValue - offerDebt` is at least `minBonusBps` basis points of the debt value
-  ///        (rounded up, so the floor is conservative). Anti-griefing admission filter: a
-  ///        barely-profitable offer would sort to the head of the book (lowest price first) and
-  ///        drag the profitability of every band liquidation down to near zero. With
-  ///        `minBonusBps == 0` the floor is disabled and only the strict check applies.
-  ///      Both are proposal-time filters against the state now; the same profitability and bonus
-  ///      floor are re-checked per fill at consume time (see {LibBorrowOffers._priceAction}), so a
-  ///      live offer whose bonus later drifts below the floor via price or accrued-interest
+  ///        `offerValue - offerDebt` is at least `minBonusBps` basis points of the debt value.
+  ///        Anti-griefing admission filter: a barely-profitable offer would be consumed first
+  ///        (lowest price first) and drag the profitability of every band liquidation down to near
+  ///        zero. With `minBonusBps == 0` the floor is disabled and only the strict check applies.
+  ///      Both gates evaluate {LibBorrowOffers.passesI1AndFloor} (the single implementation of the
+  ///      floor's inequality and rounding); the strict I1 comparison is split out first only to
+  ///      pick the right error. They are proposal-time filters against the state now; the same
+  ///      checks are re-evaluated per fill at consume time (see {LibBorrowOffers._priceAction}), so
+  ///      a live offer whose bonus later drifts below the floor via price or accrued-interest
   ///      movement is skipped by the consume walk rather than dragging the band's profitability
   ///      down (a guardian can also revoke it).
   function _checkOfferProfitable(uint128 collateral, uint128 debtShares, uint16 minBonusBps) internal view {
@@ -973,13 +974,13 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     uint256 offerValue = uint256(collateral).mulDiv(IOracle(_storage.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
     uint256 offerDebt = uint256(debtShares).toAssetsUp(totalBorrowAssets, totalBorrowShares);
     if (offerValue <= offerDebt) revert LibBorrowErrors.OfferNotProfitable();
-    if (offerValue - offerDebt < offerDebt.mulDivUp(minBonusBps, BPS)) {
+    if (!LibBorrowOffers.passesI1AndFloor(offerValue, offerDebt, minBonusBps)) {
       revert LibBorrowErrors.OfferBonusTooLow();
     }
   }
 
   /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `GUARDIAN_ROLE | ROLE_ADMIN | owner`. Removes each id from the active list
+  /// @dev Gated to `GUARDIAN_ROLE | ROLE_ADMIN | owner`. Removes each id from the offer book
   ///      (the guardian veto inside the timelock window, and the kill switch for a bad standing
   ///      offer at any later stage). Self-revoke by a plain proposer is deliberately not offered:
   ///      the role table keeps revoke to guardian/admin/owner, who can already remove any offer.
@@ -1070,7 +1071,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
 
   /// @inheritdoc IBorrowOffers
   function offerCount() external view override returns (uint256) {
-    return LibBorrowOffers.borrowOffersStorage().count;
+    return LibBorrowOffers.borrowOffersStorage().liveCount();
   }
 
   /// @inheritdoc IBorrowOffers
@@ -1089,9 +1090,8 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
 
   /// @inheritdoc IBorrowOffers
   function isConsumable(uint8 id) external view override returns (bool) {
-    if (id >= MAX_OFFERS) return false;
+    if (!LibBorrowOffers.borrowOffersStorage().isLive(id)) return false;
     Offer memory offerData = LibBorrowOffers.borrowOffersStorage().slab[id];
-    if (offerData.proposer == address(0)) return false;
     if (block.timestamp < offerData.activeAt || block.timestamp >= offerData.expiresAt) return false;
 
     BorrowPositionStorage storage _storage = _borrowPositionStorage();

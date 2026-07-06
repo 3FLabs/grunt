@@ -2,24 +2,30 @@
 pragma solidity ^0.8.22;
 
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {LibBit} from "lib/solady/src/utils/LibBit.sol";
 import {SharesMathLib} from "./SharesMathLib.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
 import {LibBorrowErrors} from "./LibBorrowErrors.sol";
 import {IBorrowOffers, Offer} from "../../interfaces/borrow/IBorrowOffers.sol";
-import {MAX_OFFERS, NULL, BORROW_OFFERS_STORAGE_SLOT} from "./LibBorrowOffersConstants.sol";
+import {MAX_OFFERS, BORROW_OFFERS_STORAGE_SLOT} from "./LibBorrowOffersConstants.sol";
 import {BPS} from "../Constants.sol";
 
 /// @title LibBorrowOffers
 /// @author 3F Protocol
-/// @notice Storage, data structure, timelock, fill math and the consume walk for the offer-based
+/// @notice Storage, slab bookkeeping, timelock, fill math and the consume walk for the offer-based
 ///         pre-liquidation feature of {MorphoBorrowPosition}.
 /// @dev All functions are `internal`, so they are inlined into {MorphoBorrowPosition}: `msg.sender`,
 ///      `block.timestamp` and emitted events are exactly as if the code lived in the contract. The
 ///      library owns its own ERC-7201 namespace (`"borrow.offers.main"`), kept separate from the
 ///      existing market/LTV storage so the upgrade is storage-safe.
 ///
+///      Offers are held in a fixed slab with a one-bit-per-slot liveness bitmap (`liveBits`); no
+///      order is maintained in storage. The consume walk loads the consumable offers into memory,
+///      sorts them by effective price at that instant (exact, unlike the storage-order-drift of a
+///      sorted-at-insert list), and fills cheapest-first.
+///
 ///      Core invariants (binding, re-checked per consumed chunk; see
-///      BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md §4 / §10):
+///      BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md sections 4 / 10):
 ///      - I1 (profitability): each fill seizes collateral worth strictly more than the debt value
 ///        it repays (`v > d`).
 ///      - I2 (strict de-risking): each fill strictly lowers the position LTV, i.e. `v*B < d*V`,
@@ -27,7 +33,7 @@ import {BPS} from "../Constants.sol";
 ///        values *before* the fill.
 ///      Conservative rounding (debt value up, seized value down, `B` up, `V` down) makes both
 ///      checks strict in the protocol's favour and is load-bearing for Morpho's own health check at
-///      the knife edge (see §11.4).
+///      the knife edge (see section 11.4).
 library LibBorrowOffers {
   using FixedPointMathLib for uint256;
   using SharesMathLib for uint256;
@@ -37,27 +43,22 @@ library LibBorrowOffers {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Offer container, stored at {BORROW_OFFERS_STORAGE_SLOT}.
-  /// @dev Layout (slot 0 packs to 176 bits; the fixed-size `slab` array starts at slot 1):
-  ///      `offerTimelock`(40) + `pendingTimelock`(40) + `pendingTimelockAt`(40) + `head`(8) +
-  ///      `tail`(8) + `freeHead`(8) + `count`(8) + `nextFresh`(8) + `minOfferBonusBps`(16).
+  /// @dev Layout (slot 0 packs to 168 bits; the fixed-size `slab` array starts at slot 1):
+  ///      `offerTimelock`(40) + `pendingTimelock`(40) + `pendingTimelockAt`(40) + `liveBits`(32) +
+  ///      `minOfferBonusBps`(16).
   ///
-  ///      Slab allocation uses a high-water mark (`nextFresh`) plus a recycled free-list
-  ///      (`freeHead`, threaded through `Offer.next`). This is a deliberate, gas-favourable
-  ///      deviation from a fully pre-threaded free-list: it avoids ~`MAX_OFFERS` cold SSTOREs at
-  ///      initialization while keeping ids inside `uint8`. A slab slot is in exactly one state at a
-  ///      time: live (reachable from `head` via `next`), free (reachable from `freeHead` via
-  ///      `next`), or never-allocated (index `>= nextFresh`).
+  ///      `liveBits` is the single source of truth for liveness: bit `i` set <=> `slab[i]` holds a
+  ///      live offer. A cleared bit's slab slot is fully zeroed (freed slots are `delete`d), and an
+  ///      all-zero namespace (the post-upgrade, pre-`initializeV2` window) structurally reads as an
+  ///      empty book. Allocation picks the lowest cleared bit, so ids stay within
+  ///      `[0, MAX_OFFERS)` and freed ids are reused.
   struct BorrowOffersStorage {
     // --- timelock (itself timelocked; see {promoteTimelock} / {effectiveTimelock}) ---
     uint40 offerTimelock; // current effective timelock; 0 only in the pre-initializeV2 window
     uint40 pendingTimelock; // scheduled next value (meaningful only when pendingTimelockAt != 0)
     uint40 pendingTimelockAt; // when pendingTimelock becomes effective; 0 == no pending change
-    // --- list / slab bookkeeping ---
-    uint8 head; // most owner-favorable consumable offer; NULL when empty
-    uint8 tail; // least owner-favorable; enables O(1) append during sorted insert
-    uint8 freeHead; // head of the recycled free-list; NULL when none recycled
-    uint8 count; // number of live offers
-    uint8 nextFresh; // next never-allocated slab index (high-water mark)
+    // --- slab bookkeeping ---
+    uint32 liveBits; // bit i set <=> slab[i] is a live offer
     // --- proposal admission ---
     uint16 minOfferBonusBps; // minimum offer bonus in basis points; 0 only pre-initializeV2 or if disabled
     Offer[MAX_OFFERS] slab; // ids are slab indices (uint8)
@@ -78,13 +79,26 @@ library LibBorrowOffers {
     uint256 minOfferBonusBps; // consume-time bonus floor (basis points); 0 => only strict I1 applies
   }
 
+  /// @notice In-memory image of one consumable offer during the load / sort / walk pipeline.
+  /// @dev Loaded by {_loadConsumable}, mutated in place by {_walk} (memory structs are passed by
+  ///      reference), and written back to storage by {consume}. The remaining amounts are the
+  ///      running values (post-fill after the walk); the filled amounts are the walk's output for
+  ///      the write-back and the {IBorrowOffers.OfferConsumed} event.
+  struct WalkOffer {
+    uint8 id; // slab index
+    uint128 remainingCollateral;
+    uint128 remainingDebtShares;
+    uint128 filledCollateral; // 0 <=> the walk did not touch this offer
+    uint128 filledShares;
+  }
+
   /// @dev Per-offer decision returned by {_computeFill}.
   ///      - Consume: fill `(fillCollateral, fillDebtShares)` is profitable and strictly de-risking.
-  ///      - Skip: offer is unprofitable / unfillable for this target; advance, leave it in the list
-  ///        (or prune it if it is a degenerate zero-remaining slot).
-  ///      - Stop: offer is over the max price, or the liquidator target is met / no capacity; since
-  ///        the list is sorted ascending in price and not consuming freezes the LTV, nothing later
-  ///        can qualify, so the walk halts.
+  ///      - Skip: offer is unprofitable / below the bonus floor / unfillable for this target;
+  ///        advance to the next offer, leave it in the book.
+  ///      - Stop: offer is over the max price, or the liquidator target is met / no capacity; the
+  ///        walk visits offers in ascending price order and not consuming freezes the LTV, so
+  ///        nothing later can qualify and the walk halts.
   enum FillAction {
     Skip,
     Stop,
@@ -102,16 +116,10 @@ library LibBorrowOffers {
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Initializes the list/slab bookkeeping for a fresh offer setup.
-  /// @dev Leaves `offerTimelock` and `minOfferBonusBps` untouched (set by the caller). With the
-  ///      high-water-mark allocator, all slots start as never-allocated, so only the
-  ///      head/tail/free/counters need resetting.
-  function initFreeList(BorrowOffersStorage storage s) internal {
-    s.head = NULL;
-    s.tail = NULL;
-    s.freeHead = NULL;
-    s.count = 0;
-    s.nextFresh = 0;
+  /// @notice Resets the offer-book bookkeeping for a fresh offer setup.
+  /// @dev Leaves `offerTimelock` and `minOfferBonusBps` untouched (set by the caller).
+  function initOfferBook(BorrowOffersStorage storage s) internal {
+    s.liveBits = 0;
     s.pendingTimelock = 0;
     s.pendingTimelockAt = 0;
   }
@@ -146,14 +154,11 @@ library LibBorrowOffers {
   /*                     INSERT / REMOVE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Allocates a slab slot, stores the offer and splices it into the sorted active list,
-  ///         then emits {IBorrowOffers.OfferProposed}.
-  /// @dev Sort key: descending `debtShares / collateral` (equivalently ascending price `I`), so the
-  ///      head is the most owner-favorable offer. The order is a best-effort consumption
-  ///      optimization, not a safety invariant: the price `I` also depends on the live oracle price
-  ///      and accrued interest (common to all offers) and on partial-fill rounding, so the list can
-  ///      drift marginally out of order. Safety comes solely from the per-fill I1/I2 checks.
-  /// @return id The slab id assigned.
+  /// @notice Allocates a slab slot, stores the offer and emits {IBorrowOffers.OfferProposed}.
+  /// @dev No ordering is maintained in storage; the consume walk sorts the book by effective price
+  ///      in memory at consume time. Amount validation (`> 0`) is done by the caller
+  ///      ({MorphoBorrowPosition.proposeOffer}).
+  /// @return id The slab id assigned (the lowest free index).
   function insert(
     BorrowOffersStorage storage s,
     address proposer,
@@ -164,133 +169,178 @@ library LibBorrowOffers {
   ) internal returns (uint8 id) {
     id = _alloc(s);
 
-    // Find the first existing offer with a strictly smaller ratio and insert the new offer before
-    // it. Ratio compare without division: existing >= new  <=>  cDebt * collateral >= debtShares *
-    // cColl. Walk while existing >= new; stop at the first existing strictly smaller than new.
-    // Products are uint128 * uint128 < 2**256, so no overflow.
-    uint8 cursor = s.head;
-    uint8 prev = NULL;
-    while (cursor != NULL) {
-      Offer storage cursorOffer = s.slab[cursor];
-      if (uint256(cursorOffer.remainingDebtShares) * collateral < uint256(debtShares) * cursorOffer.remainingCollateral)
-      {
-        break;
-      }
-      prev = cursor;
-      cursor = cursorOffer.next;
-    }
-
     Offer storage newOffer = s.slab[id];
     newOffer.proposer = proposer;
     newOffer.activeAt = activeAt;
     newOffer.expiresAt = expiresAt;
     newOffer.remainingCollateral = collateral;
     newOffer.remainingDebtShares = debtShares;
-    newOffer.prev = prev;
-    newOffer.next = cursor;
-
-    if (prev == NULL) s.head = id;
-    else s.slab[prev].next = id;
-    if (cursor == NULL) s.tail = id;
-    else s.slab[cursor].prev = id;
 
     emit IBorrowOffers.OfferProposed(id, proposer, collateral, debtShares, activeAt, expiresAt);
   }
 
   /// @notice Removes a live offer by id (used by `revokeOffers`).
-  /// @dev Reverts {LibBorrowErrors.OfferNotFound} for an out-of-range id or a non-live slot
-  ///      (`proposer == address(0)`, which marks a freed / never-allocated slab slot). A live offer
-  ///      always has a non-zero proposer.
+  /// @dev Reverts {LibBorrowErrors.OfferNotFound} for an out-of-range id or a non-live slot.
+  ///      Clearing the slot refunds gas and keeps the "freed slot is fully zeroed" convention.
   function removeOffer(BorrowOffersStorage storage s, uint8 id) internal {
-    if (id >= MAX_OFFERS) revert LibBorrowErrors.OfferNotFound();
-    if (s.slab[id].proposer == address(0)) revert LibBorrowErrors.OfferNotFound();
-    _unlinkAndFree(s, id);
+    if (!isLive(s, id)) revert LibBorrowErrors.OfferNotFound();
+    s.liveBits = uint32(s.liveBits & ~(uint256(1) << id));
+    delete s.slab[id];
   }
 
-  /// @dev Allocates a slab slot: recycle from the free-list first, else take the next never-used
-  ///      index, else revert {LibBorrowErrors.TooManyOffers}. Increments the live count.
+  /// @dev Allocates the lowest free slab index and marks it live, or reverts
+  ///      {LibBorrowErrors.TooManyOffers} when all `MAX_OFFERS` slots are live.
   function _alloc(BorrowOffersStorage storage s) private returns (uint8 id) {
-    uint8 recycledId = s.freeHead;
-    if (recycledId != NULL) {
-      id = recycledId;
-      s.freeHead = s.slab[recycledId].next;
-    } else {
-      uint8 freshId = s.nextFresh;
-      if (freshId >= MAX_OFFERS) revert LibBorrowErrors.TooManyOffers();
-      id = freshId;
-      s.nextFresh = freshId + 1;
-    }
-    s.count += 1;
-  }
-
-  /// @dev Unlinks `id` from the active list, clears its slot and pushes it onto the free-list.
-  ///      Clearing the slot (a) zeroes `proposer` so the slot reads as non-live and (b) refunds gas.
-  function _unlinkAndFree(BorrowOffersStorage storage s, uint8 id) private {
-    Offer storage offer = s.slab[id];
-    uint8 prevId = offer.prev;
-    uint8 nextId = offer.next;
-
-    if (prevId == NULL) s.head = nextId;
-    else s.slab[prevId].next = nextId;
-    if (nextId == NULL) s.tail = prevId;
-    else s.slab[nextId].prev = prevId;
-
-    s.count -= 1;
-
-    offer.proposer = address(0);
-    offer.activeAt = 0;
-    offer.expiresAt = 0;
-    offer.remainingCollateral = 0;
-    offer.remainingDebtShares = 0;
-    offer.prev = NULL;
-    offer.next = s.freeHead; // thread the free-list through `next`
-    s.freeHead = id;
+    uint256 liveBits = s.liveBits;
+    uint256 freeBits = ~liveBits & ((uint256(1) << MAX_OFFERS) - 1);
+    if (freeBits == 0) revert LibBorrowErrors.TooManyOffers();
+    id = uint8(LibBit.ffs(freeBits));
+    s.liveBits = uint32(liveBits | (uint256(1) << id));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          CONSUME                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Walks the sorted list from the head, consuming profitable, strictly-de-risking chunks
-  ///         until the liquidator target is met or a stop condition fires.
-  /// @dev Effects-before-interaction: all offer mutations (decrements, unlinks, prunes) are applied
-  ///      here, before the caller performs the single Morpho `repay`. A reentrant `preLiquidate`
-  ///      (via `onPreLiquidate`) therefore observes already-decremented offers and cannot
-  ///      double-consume an authorization.
+  /// @notice Loads the consumable offers, walks them cheapest-first consuming profitable,
+  ///         strictly-de-risking chunks until the liquidator target is met or a stop condition
+  ///         fires, then writes all effects back to storage.
+  /// @dev Same load + walk as {previewConsume}; only the write-back differs, so preview and
+  ///      consume cannot disagree against the same state.
   ///
-  ///      Stop conditions (any one halts the walk): liquidator target met; position collateral
-  ///      exhausted; position debt exhausted; end of list; head-of-remaining over the max price.
+  ///      Every expired offer in the book is pruned, even ones past the walk's halt point (the
+  ///      sorted-at-insert predecessor only pruned expired offers its cursor reached). Expired
+  ///      offers are never consumable, so this widens housekeeping only, and it still rolls back
+  ///      with the transaction when the caller reverts on a fruitless walk (`NoConsumableOffer`).
+  ///
+  ///      Effects-before-interaction: all offer mutations (decrements, deletions, expiry prunes)
+  ///      are persisted here, before the caller performs the single Morpho `repay`. A reentrant
+  ///      `preLiquidate` (via `onPreLiquidate`) therefore observes already-decremented offers and
+  ///      cannot double-consume an authorization.
   /// @return totalSeized Total collateral to seize (offer-native units).
   /// @return totalDebtShares Total borrow shares to repay (offer-native units).
   function consume(BorrowOffersStorage storage s, ConsumeInput memory inp)
     internal
     returns (uint256 totalSeized, uint256 totalDebtShares)
   {
-    // No live offers: return (0, 0) so the caller reverts NoConsumableOffer. This guard is also
-    // what makes the post-upgrade window safe (spec section 12.3): a proxy that has not yet run
-    // `initializeV2` has an all-zero offer namespace, so `head == 0` (a valid slab index) rather
-    // than the NULL sentinel; without this guard the walk would process the zeroed slab[0], treat
-    // it as expired, and underflow `count` in _unlinkAndFree. `count` is the source of truth for
-    // live offers, so `count == 0` cleanly captures both the genuinely-empty and the uninitialized
-    // state.
-    if (s.count == 0) return (0, 0);
+    (WalkOffer[] memory offers, uint256 walkLength, uint256 pruneBits) = _loadConsumable(s);
+    (totalSeized, totalDebtShares) = _walk(inp, offers, walkLength);
 
-    uint8 current = s.head;
-    while (current != NULL) {
-      Offer storage offer = s.slab[current];
-      uint8 next = offer.next; // capture before any unlink mutates the links
+    // Write-back (effects). `clearBits` accumulates every slot to un-live: expired offers pruned
+    // at load plus offers the walk exhausted.
+    uint256 clearBits = pruneBits;
+    while (pruneBits != 0) {
+      uint256 id = LibBit.ffs(pruneBits);
+      pruneBits &= pruneBits - 1; // clear the lowest set bit
+      delete s.slab[id];
+    }
+    for (uint256 i; i < walkLength; ++i) {
+      WalkOffer memory walkOffer = offers[i];
+      if (walkOffer.filledCollateral == 0) continue; // untouched by the walk
+      bool exhausted = (walkOffer.remainingCollateral == 0 || walkOffer.remainingDebtShares == 0);
+      if (exhausted) {
+        clearBits |= uint256(1) << walkOffer.id;
+        delete s.slab[walkOffer.id];
+      } else {
+        Offer storage offer = s.slab[walkOffer.id];
+        offer.remainingCollateral = walkOffer.remainingCollateral;
+        offer.remainingDebtShares = walkOffer.remainingDebtShares;
+      }
+      emit IBorrowOffers.OfferConsumed(walkOffer.id, walkOffer.filledCollateral, walkOffer.filledShares, exhausted);
+    }
+    if (clearBits != 0) s.liveBits = uint32(s.liveBits & ~clearBits);
+  }
 
-      // EXPIRED: opportunistically prune and continue.
+  /// @notice Read-only simulation of {consume} for the same inputs (the `previewConsume` helper).
+  /// @dev Shares {_loadConsumable} and {_walk} with {consume} verbatim; it can only differ from a
+  ///      real consume through the write-back it skips.
+  function previewConsume(BorrowOffersStorage storage s, ConsumeInput memory inp)
+    internal
+    view
+    returns (uint256 totalSeized, uint256 totalDebtShares)
+  {
+    (WalkOffer[] memory offers, uint256 walkLength,) = _loadConsumable(s);
+    return _walk(inp, offers, walkLength);
+  }
+
+  /// @dev Loads every live, active, non-expired offer into memory and sorts the result by
+  ///      effective price, ascending (cheapest for the liquidator first). Expired offers are
+  ///      reported in `pruneBits` for {consume} to delete (a view cannot prune); not-yet-active
+  ///      offers are left in place silently (their veto window has not elapsed).
+  /// @return offers Array sized for all live offers; only the first `walkLength` entries are used.
+  /// @return walkLength Number of loaded (consumable) offers.
+  /// @return pruneBits Bitmap of expired offer ids to delete.
+  function _loadConsumable(BorrowOffersStorage storage s)
+    private
+    view
+    returns (WalkOffer[] memory offers, uint256 walkLength, uint256 pruneBits)
+  {
+    uint256 bits = s.liveBits;
+    offers = new WalkOffer[](LibBit.popCount(bits));
+    while (bits != 0) {
+      uint256 id = LibBit.ffs(bits);
+      bits &= bits - 1; // clear the lowest set bit
+      Offer storage offer = s.slab[id];
       if (block.timestamp >= offer.expiresAt) {
-        _unlinkAndFree(s, current);
-        current = next;
+        pruneBits |= uint256(1) << id;
         continue;
       }
-      // NOT YET ACTIVE: skip, leave in the list (its veto window has not elapsed).
-      if (block.timestamp < offer.activeAt) {
-        current = next;
-        continue;
+      if (block.timestamp < offer.activeAt) continue;
+      WalkOffer memory walkOffer = offers[walkLength];
+      walkOffer.id = uint8(id);
+      walkOffer.remainingCollateral = offer.remainingCollateral;
+      walkOffer.remainingDebtShares = offer.remainingDebtShares;
+      unchecked {
+        ++walkLength;
       }
+    }
+    _sortByPrice(offers, walkLength);
+  }
+
+  /// @dev Sorts `offers[0..n)` by effective price, ascending: descending
+  ///      `remainingDebtShares / remainingCollateral` (more debt repaid per collateral unit ==
+  ///      cheaper collateral for the liquidator == more owner-favorable). Insertion sort over the
+  ///      struct pointers; `n <= MAX_OFFERS` bounds the cost. The strict comparator makes the sort
+  ///      stable, so equal-price offers keep their ascending-id load order.
+  function _sortByPrice(WalkOffer[] memory offers, uint256 n) private pure {
+    for (uint256 i = 1; i < n; ++i) {
+      WalkOffer memory key = offers[i];
+      uint256 j = i;
+      while (j > 0 && _cheaperThan(key, offers[j - 1])) {
+        offers[j] = offers[j - 1];
+        unchecked {
+          --j;
+        }
+      }
+      offers[j] = key;
+    }
+  }
+
+  /// @dev Returns whether `a`'s effective price is strictly lower than `b`'s. Ratio compare without
+  ///      division: `a.debtShares / a.collateral > b.debtShares / b.collateral` cross-multiplied.
+  ///      Products are uint128 * uint128 < 2**256, so no overflow.
+  function _cheaperThan(WalkOffer memory a, WalkOffer memory b) private pure returns (bool) {
+    return
+      uint256(a.remainingDebtShares) * b.remainingCollateral > uint256(b.remainingDebtShares) * a.remainingCollateral;
+  }
+
+  /// @dev The shared consume/preview walk over the sorted consumable offers: fills cheapest-first
+  ///      until the liquidator target is met, the position is exhausted, or an over-price offer
+  ///      stops the walk (offers are visited in ascending price order and not consuming freezes the
+  ///      LTV, so nothing later can qualify). Pure over memory: fills are recorded by mutating the
+  ///      {WalkOffer}s in place (memory structs are references), which {consume} then persists.
+  ///
+  ///      Stop conditions (any one halts the walk): liquidator target met; position collateral
+  ///      exhausted; position debt exhausted; all offers visited; offer over the max price.
+  /// @return totalSeized Total collateral to seize (offer-native units).
+  /// @return totalDebtShares Total borrow shares to repay (offer-native units).
+  function _walk(ConsumeInput memory inp, WalkOffer[] memory offers, uint256 walkLength)
+    private
+    pure
+    returns (uint256 totalSeized, uint256 totalDebtShares)
+  {
+    for (uint256 i; i < walkLength; ++i) {
+      WalkOffer memory walkOffer = offers[i];
 
       uint256 remainingPositionShares = inp.positionBorrowShares - totalDebtShares;
       uint256 remainingPositionCollateral = inp.positionCollateral - totalSeized;
@@ -298,30 +348,19 @@ library LibBorrowOffers {
       if (remainingPositionShares == 0 || remainingPositionCollateral == 0) break;
 
       (FillAction action, uint256 fillCollateral, uint256 fillShares) =
-        _computeFill(inp, offer.remainingCollateral, offer.remainingDebtShares, totalSeized, totalDebtShares);
+        _computeFill(inp, walkOffer.remainingCollateral, walkOffer.remainingDebtShares, totalSeized, totalDebtShares);
 
       if (action == FillAction.Stop) break;
-      if (action == FillAction.Skip) {
-        // A degenerate zero-remaining slot is pruned; an unprofitable-but-meaningful offer is left
-        // in place (it sits at the head and never blocks: its price is fixed by offer terms, so
-        // lowering the LTV never makes it profitable).
-        if (offer.remainingCollateral == 0 || offer.remainingDebtShares == 0) _unlinkAndFree(s, current);
-        current = next;
-        continue;
-      }
+      if (action == FillAction.Skip) continue;
 
-      // CONSUME (effects). `fillCollateral <= remainingCollateral` and `fillShares <=
-      // remainingDebtShares` by construction, so the uint128 casts and subtractions cannot
-      // overflow/underflow.
-      uint128 newCollateral = offer.remainingCollateral - uint128(fillCollateral);
-      uint128 newDebtShares = offer.remainingDebtShares - uint128(fillShares);
-      bool exhausted = (newCollateral == 0 || newDebtShares == 0);
-      offer.remainingCollateral = newCollateral;
-      offer.remainingDebtShares = newDebtShares;
+      // CONSUME. `fillCollateral <= remainingCollateral` and `fillShares <= remainingDebtShares`
+      // by construction, so the uint128 casts and subtractions cannot overflow/underflow.
+      walkOffer.remainingCollateral -= uint128(fillCollateral);
+      walkOffer.remainingDebtShares -= uint128(fillShares);
+      walkOffer.filledCollateral = uint128(fillCollateral);
+      walkOffer.filledShares = uint128(fillShares);
       totalSeized += fillCollateral;
       totalDebtShares += fillShares;
-      emit IBorrowOffers.OfferConsumed(current, uint128(fillCollateral), uint128(fillShares), exhausted);
-      if (exhausted) _unlinkAndFree(s, current);
 
       // Liquidator target met?
       if (inp.seizedTarget != 0) {
@@ -329,58 +368,6 @@ library LibBorrowOffers {
       } else {
         if (totalDebtShares >= inp.repaidSharesTarget) break;
       }
-      current = next;
-    }
-  }
-
-  /// @notice Read-only simulation of {consume} for the same inputs (the `previewConsume` helper).
-  /// @dev Mirrors {consume}'s control flow exactly minus the writes/events, so the returned totals
-  ///      match what a real consume would produce against the same state. Expired / degenerate
-  ///      offers are skipped (not pruned) since this is a view.
-  function previewConsume(BorrowOffersStorage storage s, ConsumeInput memory inp)
-    internal
-    view
-    returns (uint256 totalSeized, uint256 totalDebtShares)
-  {
-    // Same guard as {consume}: no live offers (or the uninitialized window state where head == 0)
-    // returns (0, 0) instead of walking a zeroed slab (which would loop forever here).
-    if (s.count == 0) return (0, 0);
-
-    uint8 current = s.head;
-    while (current != NULL) {
-      Offer memory offer = s.slab[current];
-      uint8 next = offer.next;
-
-      if (block.timestamp >= offer.expiresAt) {
-        current = next;
-        continue;
-      }
-      if (block.timestamp < offer.activeAt) {
-        current = next;
-        continue;
-      }
-
-      uint256 remainingPositionShares = inp.positionBorrowShares - totalDebtShares;
-      uint256 remainingPositionCollateral = inp.positionCollateral - totalSeized;
-      if (remainingPositionShares == 0 || remainingPositionCollateral == 0) break;
-
-      (FillAction action, uint256 fillCollateral, uint256 fillShares) =
-        _computeFill(inp, offer.remainingCollateral, offer.remainingDebtShares, totalSeized, totalDebtShares);
-
-      if (action == FillAction.Stop) break;
-      if (action == FillAction.Skip) {
-        current = next;
-        continue;
-      }
-
-      totalSeized += fillCollateral;
-      totalDebtShares += fillShares;
-      if (inp.seizedTarget != 0) {
-        if (totalSeized >= inp.seizedTarget) break;
-      } else {
-        if (totalDebtShares >= inp.repaidSharesTarget) break;
-      }
-      current = next;
     }
   }
 
@@ -411,7 +398,8 @@ library LibBorrowOffers {
     uint256 totalSeized,
     uint256 totalDebtShares
   ) private pure returns (FillAction, uint256, uint256) {
-    // Degenerate slot (a remaining amount is zero): cannot be filled; the walk prunes it.
+    // Degenerate zero-remaining amounts cannot be filled. Unreachable belt-and-braces: admission
+    // requires both amounts > 0 and the walk deletes an offer the moment a side hits zero.
     if (remainingCollateral == 0 || remainingDebtShares == 0) return (FillAction.Skip, 0, 0);
 
     uint256 remainingPositionCollateral = inp.positionCollateral - totalSeized;
@@ -449,23 +437,17 @@ library LibBorrowOffers {
   }
 
   /// @dev Evaluates the binding per-fill checks on the final fill amounts (pure). The local
-  ///      names map to the spec notation (BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md §4 / §10):
-  ///      `seizedValue` = v, `repaidDebtValue` = d, `remainingDebtValue` = B,
+  ///      names map to the spec notation (BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md sections 4 /
+  ///      10): `seizedValue` = v, `repaidDebtValue` = d, `remainingDebtValue` = B,
   ///      `remainingCollateralValue` = V.
-  ///      - I1 (profitable): `seizedValue > repaidDebtValue`, else {FillAction.Skip}.
-  ///      - Bonus floor: the fill's bonus (`v - d`, as a fraction of the debt value `d`) must be at
-  ///        least `minBonusBps` (rounded up, matching the proposal-time floor in
-  ///        {MorphoBorrowPosition._checkOfferProfitable}), else {FillAction.Skip}. The offer's price
-  ///        is fixed by its terms, so like an unprofitable offer it is skipped (not stopped): the
-  ///        list is sorted ascending in price, so a below-floor head can be followed by
-  ///        higher-bonus offers that still qualify. `minBonusBps == 0` disables it (the required
-  ///        excess is 0, so the check never fires and I1 alone governs).
-  ///      - I2 (strict de-risk): `v*B < d*V`, else {FillAction.Stop} (over max price).
+  ///      - I1 + bonus floor ({passesI1AndFloor}): not met => {FillAction.Skip}. The offer's price
+  ///        is fixed by its terms, so an unprofitable or below-floor offer is skipped (not
+  ///        stopped): the walk is sorted ascending in price, and a below-floor offer can be
+  ///        followed by higher-bonus offers that still qualify.
+  ///      - I2 ({strictlyDeRisks}): not met => {FillAction.Stop} (over max price).
   ///      Collateral values (`seizedValue`/`remainingCollateralValue`) round down and debt values
   ///      (`repaidDebtValue`/`remainingDebtValue`) round up, so the checks are strict in the
   ///      protocol's favour. `repaidDebtValue > 0` since `fillShares >= 1`.
-  ///      `fullMulDiv(v, B, d) < V` is the exact integer form of `v/d < V/B` (i.e. `v*B < d*V`) with
-  ///      no intermediate overflow.
   function _priceAction(
     ConsumeInput memory inp,
     uint256 fillCollateral,
@@ -475,14 +457,11 @@ library LibBorrowOffers {
   ) private pure returns (FillAction) {
     uint256 seizedValue = fillCollateral.mulDiv(inp.price, ORACLE_PRICE_SCALE);
     uint256 repaidDebtValue = fillShares.toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
-    if (seizedValue <= repaidDebtValue) return FillAction.Skip; // I1
-    // Consume-time bonus floor. Safe subtraction: I1 above guarantees seizedValue > repaidDebtValue.
-    if (seizedValue - repaidDebtValue < repaidDebtValue.mulDivUp(inp.minOfferBonusBps, BPS)) return FillAction.Skip;
+    if (!passesI1AndFloor(seizedValue, repaidDebtValue, inp.minOfferBonusBps)) return FillAction.Skip;
 
     uint256 remainingDebtValue = remainingPositionShares.toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
     uint256 remainingCollateralValue = remainingPositionCollateral.mulDiv(inp.price, ORACLE_PRICE_SCALE);
-    // I2: fullMulDiv(v, B, d) >= V  <=>  not strictly de-risking.
-    if (FixedPointMathLib.fullMulDiv(seizedValue, remainingDebtValue, repaidDebtValue) >= remainingCollateralValue) {
+    if (!strictlyDeRisks(seizedValue, repaidDebtValue, remainingDebtValue, remainingCollateralValue)) {
       return FillAction.Stop;
     }
 
@@ -490,24 +469,66 @@ library LibBorrowOffers {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                    CANONICAL CHECKS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice The canonical I1 (strict profitability) + minimum-bonus-floor check: the seized
+  ///         collateral value must exceed the repaid debt value by at least `minBonusBps` basis
+  ///         points of that debt value.
+  /// @dev Single source of truth for the floor's inequality and rounding (`mulDivUp`, so the floor
+  ///      is conservative), shared by the consume walk ({_priceAction}), the `isConsumable` view
+  ///      ({consumableAtPrice}) and the proposal-time admission filter
+  ///      ({MorphoBorrowPosition._checkOfferProfitable}). `minBonusBps == 0` disables the floor
+  ///      (the required excess is 0) and only strict I1 governs.
+  function passesI1AndFloor(uint256 seizedValue, uint256 repaidDebtValue, uint256 minBonusBps)
+    internal
+    pure
+    returns (bool)
+  {
+    if (seizedValue <= repaidDebtValue) return false; // I1
+    // Safe subtraction: I1 above guarantees seizedValue > repaidDebtValue.
+    return seizedValue - repaidDebtValue >= repaidDebtValue.mulDivUp(minBonusBps, BPS);
+  }
+
+  /// @notice The canonical I2 (strict de-risking) check: seizing value `v` against debt value `d`
+  ///         strictly lowers the LTV of a position holding collateral value `V` and debt value `B`
+  ///         iff `v*B < d*V`.
+  /// @dev `fullMulDiv(v, B, d) < V` is the exact integer form of `v/d < V/B` with no intermediate
+  ///      overflow. `repaidDebtValue` must be non-zero (guaranteed by callers: it is a rounded-up
+  ///      conversion of at least one share).
+  function strictlyDeRisks(
+    uint256 seizedValue,
+    uint256 repaidDebtValue,
+    uint256 remainingDebtValue,
+    uint256 remainingCollateralValue
+  ) internal pure returns (bool) {
+    return FixedPointMathLib.fullMulDiv(seizedValue, remainingDebtValue, repaidDebtValue) < remainingCollateralValue;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns all live offers ordered head -> tail.
+  /// @notice Returns whether `id` is a currently-live offer (in range and its `liveBits` bit set).
+  function isLive(BorrowOffersStorage storage s, uint8 id) internal view returns (bool) {
+    return id < MAX_OFFERS && s.liveBits & (uint256(1) << id) != 0;
+  }
+
+  /// @notice Returns the number of currently-live offers.
+  function liveCount(BorrowOffersStorage storage s) internal view returns (uint256) {
+    return LibBit.popCount(s.liveBits);
+  }
+
+  /// @notice Returns all live offers, in ascending slab-id order (NOT price order; the consume
+  ///         walk sorts by effective price at consume time).
   function listOffers(BorrowOffersStorage storage s) internal view returns (Offer[] memory out) {
-    uint8 liveCount = s.count;
-    out = new Offer[](liveCount);
-    // Same dormant-window guard as {consume} / {previewConsume}: a proxy that has not yet run
-    // `initializeV2` has an all-zero offer namespace, so `head == 0` (a valid slab index) rather than
-    // the NULL sentinel. Returning the (empty) array now avoids walking the zeroed slab and writing
-    // past the length-0 result, which would Panic. `count` is the source of truth for live offers.
-    if (liveCount == 0) return out;
-    uint8 current = s.head;
+    uint256 bits = s.liveBits;
+    out = new Offer[](LibBit.popCount(bits));
     uint256 i;
-    while (current != NULL) {
-      Offer storage offer = s.slab[current];
-      out[i] = offer;
-      current = offer.next;
+    while (bits != 0) {
+      uint256 id = LibBit.ffs(bits);
+      bits &= bits - 1; // clear the lowest set bit
+      out[i] = s.slab[id];
       unchecked {
         ++i;
       }
@@ -517,11 +538,12 @@ library LibBorrowOffers {
   /// @notice Evaluates whether `remainingCollateral`/`remainingDebtShares` (the whole remaining
   ///         offer) would pass the I1, bonus-floor and I2 gates against the current whole-position
   ///         state.
-  /// @dev Pure helper for the `isConsumable` view. It evaluates the offer's price vs the current
-  ///      LTV in isolation: it does not account for list ordering or the cumulative LTV change of
-  ///      consuming earlier offers. Returns false if the position has no debt (nothing to liquidate)
-  ///      or the offer is degenerate. `minBonusBps` mirrors the consume-time floor in {_priceAction}
-  ///      so the view agrees with a real consume; pass 0 to gate on strict profitability only.
+  /// @dev Pure helper for the `isConsumable` view, built from the same {passesI1AndFloor} /
+  ///      {strictlyDeRisks} checks as the consume walk so the view agrees with a real consume. It
+  ///      evaluates the offer's price vs the current LTV in isolation: it does not account for the
+  ///      cumulative LTV change of consuming cheaper offers first. Returns false if the position
+  ///      has no debt (nothing to liquidate) or the offer is degenerate; pass `minBonusBps == 0` to
+  ///      gate on strict profitability only.
   function consumableAtPrice(
     uint256 remainingCollateral,
     uint256 remainingDebtShares,
@@ -537,14 +559,13 @@ library LibBorrowOffers {
 
     uint256 seizedValue = remainingCollateral.mulDiv(price, ORACLE_PRICE_SCALE);
     uint256 repaidDebtValue = remainingDebtShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
-    if (repaidDebtValue == 0) return false;
-    if (seizedValue <= repaidDebtValue) return false; // I1
-    // Consume-time bonus floor (safe subtraction: I1 above guarantees seizedValue > repaidDebtValue).
-    if (seizedValue - repaidDebtValue < repaidDebtValue.mulDivUp(minBonusBps, BPS)) return false;
+    if (!passesI1AndFloor(seizedValue, repaidDebtValue, minBonusBps)) return false;
 
-    uint256 remainingDebtValue = positionBorrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
-    uint256 remainingCollateralValue = positionCollateral.mulDiv(price, ORACLE_PRICE_SCALE);
-    // I2: strictly de-risking iff fullMulDiv(v, B, d) < V.
-    return FixedPointMathLib.fullMulDiv(seizedValue, remainingDebtValue, repaidDebtValue) < remainingCollateralValue;
+    return strictlyDeRisks(
+      seizedValue,
+      repaidDebtValue,
+      positionBorrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares),
+      positionCollateral.mulDiv(price, ORACLE_PRICE_SCALE)
+    );
   }
 }

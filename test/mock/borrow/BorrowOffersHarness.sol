@@ -7,16 +7,16 @@ import {Offer} from "src/interfaces/borrow/IBorrowOffers.sol";
 /// @title BorrowOffersHarness
 /// @author 3F Protocol
 /// @notice Thin, Morpho-independent wrapper that exposes the internal {LibBorrowOffers}
-///         data-structure operations and raw storage, so the slab + doubly-linked list + free-list
-///         can be exercised and asserted directly by tests, in isolation from the position contract
-///         and the oracle/market machinery.
+///         data-structure operations and raw storage, so the slab + liveness bitmap can be
+///         exercised and asserted directly by tests, in isolation from the position contract and
+///         the oracle/market machinery.
 /// @dev {LibBorrowOffers} writes to its fixed ERC-7201 slot. In a standalone contract that slot is
 ///      simply this harness's own storage, so every operation behaves exactly as it does inside
 ///      {MorphoBorrowPosition} (the library functions are `internal` and inline here unchanged).
 ///
-///      This is a test-only surface: `insert` is the raw library splice (no profitability / expiry
-///      validation, which live in `MorphoBorrowPosition.proposeOffer`). Tests are responsible for
-///      feeding it the same kind of values the real entrypoint would (amounts > 0,
+///      This is a test-only surface: `insert` is the raw library allocation (no profitability /
+///      expiry validation, which live in `MorphoBorrowPosition.proposeOffer`). Tests are
+///      responsible for feeding it the same kind of values the real entrypoint would (amounts > 0,
 ///      `expiresAt > activeAt`), so the structure is exercised over states the production contract
 ///      can actually reach.
 contract BorrowOffersHarness {
@@ -26,14 +26,14 @@ contract BorrowOffersHarness {
   /*                        MUTATIONS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Seeds the effective timelock and resets the list/slab bookkeeping (mirrors the v2 init).
+  /// @notice Seeds the effective timelock and resets the offer-book bookkeeping (mirrors the v2 init).
   function init(uint40 timelock) external {
     LibBorrowOffers.BorrowOffersStorage storage s = LibBorrowOffers.borrowOffersStorage();
     s.offerTimelock = timelock;
-    LibBorrowOffers.initFreeList(s);
+    LibBorrowOffers.initOfferBook(s);
   }
 
-  /// @notice Allocates a slab slot and splices a new offer into the sorted active list.
+  /// @notice Allocates a slab slot (lowest free id) and stores a new offer.
   function insert(address proposer, uint40 activeAt, uint40 expiresAt, uint128 collateral, uint128 debtShares)
     external
     returns (uint8 id)
@@ -60,36 +60,31 @@ contract BorrowOffersHarness {
     return LibBorrowOffers.borrowOffersStorage().previewConsume(inp);
   }
 
-  function head() external view returns (uint8) {
-    return LibBorrowOffers.borrowOffersStorage().head;
+  /// @notice Returns the raw liveness bitmap (bit i set <=> slab[i] is a live offer).
+  function liveBits() external view returns (uint32) {
+    return LibBorrowOffers.borrowOffersStorage().liveBits;
   }
 
-  function tail() external view returns (uint8) {
-    return LibBorrowOffers.borrowOffersStorage().tail;
+  /// @notice Returns the number of live offers (bitmap population count).
+  function count() external view returns (uint256) {
+    return LibBorrowOffers.borrowOffersStorage().liveCount();
   }
 
-  function freeHead() external view returns (uint8) {
-    return LibBorrowOffers.borrowOffersStorage().freeHead;
-  }
-
-  function count() external view returns (uint8) {
-    return LibBorrowOffers.borrowOffersStorage().count;
-  }
-
-  function nextFresh() external view returns (uint8) {
-    return LibBorrowOffers.borrowOffersStorage().nextFresh;
+  /// @notice Returns whether `id` is a live offer.
+  function isLive(uint8 id) external view returns (bool) {
+    return LibBorrowOffers.borrowOffersStorage().isLive(id);
   }
 
   function offerTimelock() external view returns (uint40) {
     return LibBorrowOffers.borrowOffersStorage().offerTimelock;
   }
 
-  /// @notice Returns the raw slab slot at `i` (live, freed, or never-allocated).
+  /// @notice Returns the raw slab slot at `i` (live or freed).
   function slabAt(uint8 i) external view returns (Offer memory) {
     return LibBorrowOffers.borrowOffersStorage().slab[i];
   }
 
-  /// @notice Returns all live offers, ordered head -> tail.
+  /// @notice Returns all live offers, in ascending slab-id order.
   function listOffers() external view returns (Offer[] memory) {
     return LibBorrowOffers.borrowOffersStorage().listOffers();
   }
