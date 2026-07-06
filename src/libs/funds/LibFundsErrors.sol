@@ -76,6 +76,14 @@ library LibFundsErrors {
   /// @notice Thrown when the CDO routes a withdrawal to the instant path instead of the normal epoch-gated queue.
   error InstantWithdrawDetected();
 
+  /// @notice Thrown when the Midas vault targeted by the order is paused,
+  ///         so any order accepted now would be guaranteed to revert at commit time.
+  error MidasVaultPaused();
+
+  /// @notice Thrown when the payment token is not registered on the Midas vault.
+  /// @param token The unsupported token address.
+  error TokenNotSupported(address token);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

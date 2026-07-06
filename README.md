@@ -38,6 +38,9 @@ src/
 │   │   ├── USCCFund.sol             # Superstate USCC integration
 │   │   ├── USCCFundFactory.sol      # Beacon proxy factory
 │   │   └── SuperstateRestrictedWrappedAsset.sol # WrappedAsset with Superstate allowlist
+│   ├── midas/
+│   │   ├── MidasFund.sol            # Midas mToken (mGLOBAL, etc.) integration
+│   │   └── MidasFundFactory.sol     # Beacon proxy factory
 │   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.) with virtual isAllowed hook
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
@@ -112,6 +115,9 @@ This section provides a consolidated view of all roles across contracts and how 
 | **ParetoFund** | Owner | Protocol Admin | Resolve stuck orders |
 | | Operator | Operations Bot | Resolve stuck orders |
 | | Depositor | Facility | Create/cancel/commit/unlock orders |
+| **MidasFund** | Owner | Protocol Admin | Resolve stuck orders, set settlement modes/vaults/referrer |
+| | Operator | Operations Bot | Resolve stuck orders, set settlement modes/vaults/referrer |
+| | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
