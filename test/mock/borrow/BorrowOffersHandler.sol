@@ -108,8 +108,9 @@ contract BorrowOffersHandler is Test {
   }
 
   /// @notice Consumes against a position whose ratio (1.5) sits between offer ratios, so the walk
-  ///         de-risks the head portion then hits the I2 (over-max-price) Stop mid-list. Exercises a
-  ///         partial drain that leaves a valid tail behind.
+  ///         de-risks the cheap portion then hits an over-max-price offer (one that would no
+  ///         longer strictly lower the LTV) and stops mid-book. Exercises a partial drain that
+  ///         leaves live offers behind.
   function act_consumeLowRatioPosition(uint256 targetSeed) external {
     uint256 target = _bound(targetSeed, 1, 1e22);
     (uint256 seized, uint256 repaid) = h.consume(_inputFull(target, 0, PRICE, 1.5e24, POSITION_BORROW_SHARES));
@@ -118,7 +119,7 @@ contract BorrowOffersHandler is Test {
     ghostRepaid += repaid;
   }
 
-  /// @notice Consumes at a crashed price, so every offer fails I1 (unprofitable) and is skipped:
+  /// @notice Consumes at a crashed price, so every offer is unprofitable and is skipped:
   ///         the walk traverses the whole active list, pruning only expired slots, and the structure
   ///         must be untouched otherwise. Exercises the full-list Skip-and-keep traversal.
   function act_consumeLowPrice(uint256 targetSeed) external {

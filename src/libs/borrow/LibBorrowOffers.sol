@@ -26,14 +26,13 @@ import {BPS} from "../Constants.sol";
 ///
 ///      Core invariants (binding, re-checked per consumed chunk; see
 ///      BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md sections 4 / 10):
-///      - I1 (profitability): each fill seizes collateral worth strictly more than the debt value
-///        it repays (`v > d`).
-///      - I2 (strict de-risking): each fill strictly lowers the position LTV, i.e. `v*B < d*V`,
-///        equivalently `fullMulDiv(v, B, d) < V`, where `B`/`V` are the running debt/collateral
-///        values *before* the fill.
-///      Conservative rounding (debt value up, seized value down, `B` up, `V` down) makes both
-///      checks strict in the protocol's favour and is load-bearing for Morpho's own health check at
-///      the knife edge (see section 11.4).
+///      - Profitability ({isProfitableAboveBonusFloor}): each fill seizes collateral worth
+///        strictly more than the debt value it repays, with at least the minimum bonus on top.
+///      - Strict de-risking ({strictlyLowersLtv}): each fill strictly lowers the position LTV,
+///        comparing against the running debt/collateral values *before* the fill.
+///      Conservative rounding (debt values up, collateral values down) makes both checks strict in
+///      the protocol's favour and is load-bearing for Morpho's own health check at the knife edge
+///      (see section 11.4).
 library LibBorrowOffers {
   using FixedPointMathLib for uint256;
   using SharesMathLib for uint256;
@@ -76,7 +75,7 @@ library LibBorrowOffers {
     uint256 totalBorrowShares; // market total borrow shares (post-accrual)
     uint256 positionCollateral; // position collateral at entry
     uint256 positionBorrowShares; // position borrow shares at entry
-    uint256 minOfferBonusBps; // consume-time bonus floor (basis points); 0 => only strict I1 applies
+    uint256 minOfferBonusBps; // consume-time bonus floor (basis points); 0 => only strict profitability applies
   }
 
   /// @notice In-memory image of one consumable offer during the load / sort / walk pipeline.
@@ -384,8 +383,8 @@ library LibBorrowOffers {
   ///      cannot underpay), clamped to the remaining share target and to the position's remaining
   ///      shares.
   ///
-  ///      The binding checks (I1 profitability, the consume-time bonus floor, I2 strict de-risk)
-  ///      and their conservative (protocol-favorable) rounding are evaluated in {_priceAction}.
+  ///      The binding checks (profitability, the consume-time bonus floor, strict de-risking) and
+  ///      their conservative (protocol-favorable) rounding are evaluated in {_priceAction}.
   ///
   ///      The position's remaining collateral/shares before this fill (`remainingPositionCollateral`
   ///      / `remainingPositionShares`) are derived from `inp` and the running totals here rather than
@@ -426,8 +425,9 @@ library LibBorrowOffers {
     if (fillShares > remainingPositionShares) fillShares = remainingPositionShares;
     if (fillShares == 0) return (FillAction.Skip, 0, 0); // cannot charge any shares for this collateral
 
-    // I1, the bonus floor and I2 are evaluated in a separate frame ({_priceAction}) to keep this
-    // function's stack within the limits of the non-via-IR pipeline. `inp` is passed by reference
+    // The profitability, bonus-floor and de-risking checks are evaluated in a separate frame
+    // ({_priceAction}) to keep this function's stack within the limits of the non-via-IR
+    // pipeline. `inp` is passed by reference
     // (one stack slot) rather than unpacking its price/totals/floor fields, which keeps the callee
     // shallow enough to add the bonus-floor check without spilling.
     FillAction action =
@@ -436,15 +436,12 @@ library LibBorrowOffers {
     return (action, 0, 0);
   }
 
-  /// @dev Evaluates the binding per-fill checks on the final fill amounts (pure). The local
-  ///      names map to the spec notation (BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md sections 4 /
-  ///      10): `seizedValue` = v, `repaidDebtValue` = d, `remainingDebtValue` = B,
-  ///      `remainingCollateralValue` = V.
-  ///      - I1 + bonus floor ({passesI1AndFloor}): not met => {FillAction.Skip}. The offer's price
-  ///        is fixed by its terms, so an unprofitable or below-floor offer is skipped (not
-  ///        stopped): the walk is sorted ascending in price, and a below-floor offer can be
-  ///        followed by higher-bonus offers that still qualify.
-  ///      - I2 ({strictlyDeRisks}): not met => {FillAction.Stop} (over max price).
+  /// @dev Evaluates the binding per-fill checks on the final fill amounts (pure).
+  ///      - Profitability + bonus floor ({isProfitableAboveBonusFloor}): not met =>
+  ///        {FillAction.Skip}. The offer's price is fixed by its terms, so an unprofitable or
+  ///        below-floor offer is skipped (not stopped): the walk is sorted ascending in price, and
+  ///        a below-floor offer can be followed by higher-bonus offers that still qualify.
+  ///      - Strict de-risking ({strictlyLowersLtv}): not met => {FillAction.Stop} (over max price).
   ///      Collateral values (`seizedValue`/`remainingCollateralValue`) round down and debt values
   ///      (`repaidDebtValue`/`remainingDebtValue`) round up, so the checks are strict in the
   ///      protocol's favour. `repaidDebtValue > 0` since `fillShares >= 1`.
@@ -457,11 +454,11 @@ library LibBorrowOffers {
   ) private pure returns (FillAction) {
     uint256 seizedValue = fillCollateral.mulDiv(inp.price, ORACLE_PRICE_SCALE);
     uint256 repaidDebtValue = fillShares.toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
-    if (!passesI1AndFloor(seizedValue, repaidDebtValue, inp.minOfferBonusBps)) return FillAction.Skip;
+    if (!isProfitableAboveBonusFloor(seizedValue, repaidDebtValue, inp.minOfferBonusBps)) return FillAction.Skip;
 
     uint256 remainingDebtValue = remainingPositionShares.toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
     uint256 remainingCollateralValue = remainingPositionCollateral.mulDiv(inp.price, ORACLE_PRICE_SCALE);
-    if (!strictlyDeRisks(seizedValue, repaidDebtValue, remainingDebtValue, remainingCollateralValue)) {
+    if (!strictlyLowersLtv(seizedValue, repaidDebtValue, remainingDebtValue, remainingCollateralValue)) {
       return FillAction.Stop;
     }
 
@@ -472,31 +469,34 @@ library LibBorrowOffers {
   /*                    CANONICAL CHECKS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice The canonical I1 (strict profitability) + minimum-bonus-floor check: the seized
-  ///         collateral value must exceed the repaid debt value by at least `minBonusBps` basis
+  /// @notice The canonical profitability check with the minimum-bonus floor: the seized collateral
+  ///         value must strictly exceed the repaid debt value, by at least `minBonusBps` basis
   ///         points of that debt value.
   /// @dev Single source of truth for the floor's inequality and rounding (`mulDivUp`, so the floor
   ///      is conservative), shared by the consume walk ({_priceAction}), the `isConsumable` view
   ///      ({consumableAtPrice}) and the proposal-time admission filter
   ///      ({MorphoBorrowPosition._checkOfferProfitable}). `minBonusBps == 0` disables the floor
-  ///      (the required excess is 0) and only strict I1 governs.
-  function passesI1AndFloor(uint256 seizedValue, uint256 repaidDebtValue, uint256 minBonusBps)
+  ///      (the required excess is 0) and only strict profitability governs.
+  function isProfitableAboveBonusFloor(uint256 seizedValue, uint256 repaidDebtValue, uint256 minBonusBps)
     internal
     pure
     returns (bool)
   {
-    if (seizedValue <= repaidDebtValue) return false; // I1
-    // Safe subtraction: I1 above guarantees seizedValue > repaidDebtValue.
+    if (seizedValue <= repaidDebtValue) return false; // not strictly profitable
+    // Safe subtraction: strict profitability above guarantees seizedValue > repaidDebtValue.
     return seizedValue - repaidDebtValue >= repaidDebtValue.mulDivUp(minBonusBps, BPS);
   }
 
-  /// @notice The canonical I2 (strict de-risking) check: seizing value `v` against debt value `d`
-  ///         strictly lowers the LTV of a position holding collateral value `V` and debt value `B`
-  ///         iff `v*B < d*V`.
-  /// @dev `fullMulDiv(v, B, d) < V` is the exact integer form of `v/d < V/B` with no intermediate
+  /// @notice The canonical strict de-risking check: a fill that seizes `seizedValue` of collateral
+  ///         to repay `repaidDebtValue` of debt strictly lowers the LTV of a position holding
+  ///         `remainingCollateralValue` against `remainingDebtValue` iff
+  ///         `seizedValue * remainingDebtValue < repaidDebtValue * remainingCollateralValue`
+  ///         (the fill's collateral-per-debt ratio sits below the position's, so removing it
+  ///         leaves the remainder better collateralized).
+  /// @dev `fullMulDiv` is the exact integer form of that product comparison with no intermediate
   ///      overflow. `repaidDebtValue` must be non-zero (guaranteed by callers: it is a rounded-up
   ///      conversion of at least one share).
-  function strictlyDeRisks(
+  function strictlyLowersLtv(
     uint256 seizedValue,
     uint256 repaidDebtValue,
     uint256 remainingDebtValue,
@@ -536,10 +536,10 @@ library LibBorrowOffers {
   }
 
   /// @notice Evaluates whether `remainingCollateral`/`remainingDebtShares` (the whole remaining
-  ///         offer) would pass the I1, bonus-floor and I2 gates against the current whole-position
-  ///         state.
-  /// @dev Pure helper for the `isConsumable` view, built from the same {passesI1AndFloor} /
-  ///      {strictlyDeRisks} checks as the consume walk so the view agrees with a real consume. It
+  ///         offer) would pass the profitability, bonus-floor and de-risking gates against the
+  ///         current whole-position state.
+  /// @dev Pure helper for the `isConsumable` view, built from the same {isProfitableAboveBonusFloor}
+  ///      / {strictlyLowersLtv} checks as the consume walk so the view agrees with a real consume. It
   ///      evaluates the offer's price vs the current LTV in isolation: it does not account for the
   ///      cumulative LTV change of consuming cheaper offers first. Returns false if the position
   ///      has no debt (nothing to liquidate) or the offer is degenerate; pass `minBonusBps == 0` to
@@ -559,9 +559,9 @@ library LibBorrowOffers {
 
     uint256 seizedValue = remainingCollateral.mulDiv(price, ORACLE_PRICE_SCALE);
     uint256 repaidDebtValue = remainingDebtShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
-    if (!passesI1AndFloor(seizedValue, repaidDebtValue, minBonusBps)) return false;
+    if (!isProfitableAboveBonusFloor(seizedValue, repaidDebtValue, minBonusBps)) return false;
 
-    return strictlyDeRisks(
+    return strictlyLowersLtv(
       seizedValue,
       repaidDebtValue,
       positionBorrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares),

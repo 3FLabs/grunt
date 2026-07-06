@@ -93,7 +93,8 @@ uint16 constant DEFAULT_MIN_OFFER_BONUS_BPS = 100;
 /// @dev Upper bound for the minimum offer bonus (1000 = 10%). A sanity ceiling in the same spirit
 ///      as `MAX_OFFER_TIMELOCK`: a (trusted but fallible) admin cannot demand an absurd bonus floor
 ///      that no realistic offer could clear. The floor gates both proposals and every fill, and it
-///      stacks under the strict de-risking check (I2): for a position at loan-to-value `LTV`, I2
+///      stacks under the strict de-risking check (each fill must strictly lower the LTV): for a
+///      position at loan-to-value `LTV`, that check
 ///      already caps any fill's bonus at `(1 - LTV) / LTV` measured as a fraction of the debt value
 ///      (the same denomination the floor uses; equivalently `1 - LTV` measured as a fraction of the
 ///      seized collateral value). So a floor near this ceiling can make the band unusable for

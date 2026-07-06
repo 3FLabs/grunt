@@ -485,12 +485,13 @@ contract MorphoBorrowPositionOffersTest is Test {
     (uint256 seized, uint256 repaid) = pos.preLiquidate(address(pos), o.remainingCollateral, 0, "");
 
     assertEq(seized, o.remainingCollateral, "seized full offer collateral");
-    // Liquidator receives collateral worth strictly more than the loan it paid (I1).
+    // Liquidator receives collateral worth strictly more than the loan it paid (the profitability
+    // invariant).
     uint256 seizedValue = seized * oracle.price() / SCALE;
     assertGt(seizedValue, repaid, "profitable: collateral value > repaid");
     assertEq(collateralToken.balanceOf(liquidator) - collBefore, seized, "got collateral");
     assertEq(loanBefore - loanToken.balanceOf(liquidator), repaid, "paid loan");
-    // LTV strictly decreased (I2).
+    // LTV strictly decreased (the strict de-risking invariant).
     assertLt(_ltvWad(), ltvBefore, "LTV decreased");
     assertEq(pos.offerCount(), 0, "offer exhausted and removed");
   }
@@ -958,7 +959,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     Offer memory o = pos.offer(id);
     (uint256 seized, uint256 repaid) = pos.preLiquidate(address(pos), o.remainingCollateral, 0, "");
     assertEq(seized, o.remainingCollateral, "consumed epsilon-bonus offer");
-    assertGt(seized * oracle.price() / SCALE, repaid, "still profitable (I1)");
+    assertGt(seized * oracle.price() / SCALE, repaid, "still profitable");
     assertEq(pos.offerCount(), 0, "offer exhausted and removed");
   }
 

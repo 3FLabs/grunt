@@ -264,14 +264,14 @@ contract LibBorrowOffersTest is Test {
     _assertStructure();
   }
 
-  /// @notice An over-max-price offer (I2 failure) STOPS the walk: with the walk sorted ascending
-  ///         in price, nothing later can qualify, so pricier offers after it are untouched even
-  ///         when the target has room left.
+  /// @notice An over-max-price offer (one whose fill would not strictly lower the LTV) STOPS the
+  ///         walk: with the walk sorted ascending in price, nothing later can qualify, so pricier
+  ///         offers after it are untouched even when the target has room left.
   function test_consume_stopsAtOverPrice_nothingLaterConsumed() public {
     uint40 active = uint40(block.timestamp) + TIMELOCK;
     uint40 expiry = active + 30 days;
-    // Position ratio 4 => I2 admits only prices strictly below ~4. Offers at 2 (ok), 5 and 6
-    // (both over). The walk must consume the first and stop at the second.
+    // Position ratio 4 => strict de-risking admits only prices strictly below ~4. Offers at 2
+    // (ok), 5 and 6 (both over). The walk must consume the first and stop at the second.
     uint8 ok = h.insert(address(0xA0), active, expiry, 2e18, 1e18);
     uint8 over1 = h.insert(address(0xB0), active, expiry, 5e18, 1e18);
     uint8 over2 = h.insert(address(0xC0), active, expiry, 6e18, 1e18);

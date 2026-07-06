@@ -469,9 +469,9 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
 
   /// @dev The offer/band pre-liquidation path. Reached only when `safeLtv < LTV <= liquidationLtv`.
   ///      Walks the consumable offers sorted by effective price (most owner-favorable first),
-  ///      consuming chunks that are each profitable (I1) and strictly LTV-decreasing (I2), then
-  ///      settles once with a shares-mode Morpho repay reusing the same `onMorphoRepay` callback as
-  ///      the proportional path.
+  ///      consuming chunks that are each profitable and strictly LTV-decreasing, then settles once
+  ///      with a shares-mode Morpho repay reusing the same `onMorphoRepay` callback as the
+  ///      proportional path.
   ///
   ///      Market/position state is read once at entry (post-accrual, so exact: it matches Morpho's
   ///      internal totals) and passed to {LibBorrowOffers.consume}, which applies all offer
@@ -480,7 +480,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      sidesteps the assets-mode `borrowShares` underflow: `totalDebtShares <= position.borrowShares`
   ///      by construction, so Morpho's `borrowShares -= totalDebtShares` cannot underflow.
   ///
-  ///      Morpho health (I3): the branch is entered with `LTV <= liquidationLtv <= market LLTV`, so
+  ///      Morpho health: the branch is entered with `LTV <= liquidationLtv <= market LLTV`, so
   ///      `_isHealthy(LLTV)` holds; every fill strictly lowers LTV, so the post-withdraw state that
   ///      Morpho re-checks inside `withdrawCollateral` retains margin. The conservative rounding in
   ///      the fill math is load-bearing at the knife edge.
@@ -960,9 +960,10 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///        Anti-griefing admission filter: a barely-profitable offer would be consumed first
   ///        (lowest price first) and drag the profitability of every band liquidation down to near
   ///        zero. With `minBonusBps == 0` the floor is disabled and only the strict check applies.
-  ///      Both gates evaluate {LibBorrowOffers.passesI1AndFloor} (the single implementation of the
-  ///      floor's inequality and rounding); the strict I1 comparison is split out first only to
-  ///      pick the right error. They are proposal-time filters against the state now; the same
+  ///      Both gates evaluate {LibBorrowOffers.isProfitableAboveBonusFloor} (the single
+  ///      implementation of the floor's inequality and rounding); the strict profitability
+  ///      comparison is split out first only to pick the right error. They are proposal-time
+  ///      filters against the state now; the same
   ///      checks are re-evaluated per fill at consume time (see {LibBorrowOffers._priceAction}), so
   ///      a live offer whose bonus later drifts below the floor via price or accrued-interest
   ///      movement is skipped by the consume walk rather than dragging the band's profitability
@@ -974,7 +975,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     uint256 offerValue = uint256(collateral).mulDiv(IOracle(_storage.marketParams.oracle).price(), ORACLE_PRICE_SCALE);
     uint256 offerDebt = uint256(debtShares).toAssetsUp(totalBorrowAssets, totalBorrowShares);
     if (offerValue <= offerDebt) revert LibBorrowErrors.OfferNotProfitable();
-    if (!LibBorrowOffers.passesI1AndFloor(offerValue, offerDebt, minBonusBps)) {
+    if (!LibBorrowOffers.isProfitableAboveBonusFloor(offerValue, offerDebt, minBonusBps)) {
       revert LibBorrowErrors.OfferBonusTooLow();
     }
   }
