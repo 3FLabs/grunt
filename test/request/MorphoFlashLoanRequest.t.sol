@@ -908,8 +908,8 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
         .execute(
           actualDebtBorrowed,
           MorphoFlashLoanRequest.SetRequestParams({
-            intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
-          }),
+          intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
+        }),
           address(syncWithdrawal),
           withdrawPayload
         );
