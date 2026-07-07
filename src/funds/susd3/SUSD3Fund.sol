@@ -284,11 +284,12 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     bytes32 _currentOrderId = $.currentOrderId;
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
 
-    (State _currentState,) = _state(order);
+    (State _currentState, uint256 _unlockableAmount) = _state(order);
     if (_currentState != State.UNLOCKING) revert LibFundsErrors.InvalidState(_currentState);
 
-    (State _newState, uint256 _amount) =
-      order.mode == Mode.DEPOSIT ? _unlockDeposit($, order.receiver) : _unlockRedeem($, order.receiver);
+    (State _newState, uint256 _amount) = order.mode == Mode.DEPOSIT
+      ? _unlockDeposit($, order.receiver, _unlockableAmount)
+      : _unlockRedeem($, order.receiver, _unlockableAmount);
 
     $.internalState = _newState;
 
@@ -450,31 +451,38 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   /// @dev Delivers a synchronous DEPOSIT: wraps the sUSD3 received at commit and mints it to `receiver`.
   /// @param $ The fund storage pointer.
   /// @param receiver The order receiver.
+  /// @param received The sUSD3 shares received at commit and confirmed unlockable by `_state`.
   /// @return The new state (ENDED) and the wrapped-share amount minted.
-  function _unlockDeposit(SUSD3FundStorage storage $, address receiver) internal returns (State, uint256) {
+  function _unlockDeposit(SUSD3FundStorage storage $, address receiver, uint256 received)
+    internal
+    returns (State, uint256)
+  {
     address _susd3 = $.susd3;
     address _wrappedShare = $.wrappedShare;
-    uint256 _received = $.depositReceived;
 
-    _susd3.safeApproveWithRetry(_wrappedShare, _received);
-    IWrappedAsset(_wrappedShare).mint(receiver, _received);
+    _susd3.safeApproveWithRetry(_wrappedShare, received);
+    IWrappedAsset(_wrappedShare).mint(receiver, received);
     _susd3.safeApproveWithRetry(_wrappedShare, 0);
 
-    return (State.ENDED, _received);
+    return (State.ENDED, received);
   }
 
   /// @dev Claims a matured REDEEM: redeems as much of the cooldown as sUSD3 currently allows, unwraps
   ///      USD3 -> USDC, and sends USDC to `receiver`. Returns to PROCESSING when a remainder is left.
   /// @param $ The fund storage pointer.
   /// @param receiver The order receiver.
+  /// @param maxRedeem_ The cached sUSD3.maxRedeem(this) value returned by `_state`.
   /// @return The new state (ENDED if fully drained, else PROCESSING) and the USDC amount delivered.
-  function _unlockRedeem(SUSD3FundStorage storage $, address receiver) internal returns (State, uint256) {
+  function _unlockRedeem(SUSD3FundStorage storage $, address receiver, uint256 maxRedeem_)
+    internal
+    returns (State, uint256)
+  {
     address _susd3 = $.susd3;
     address _usd3 = $.usd3;
     address _asset = $.asset;
 
     uint256 _remaining = $.pendingRedeemShares;
-    uint256 _toRedeem = _remaining.min(ISUSD3(_susd3).maxRedeem(address(this)));
+    uint256 _toRedeem = _remaining.min(maxRedeem_);
 
     // sUSD3 -> USD3
     uint256 _usd3Out;
@@ -499,7 +507,7 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     return (_left == 0 ? State.ENDED : State.PROCESSING, _amount);
   }
 
-  /// @dev Internal function that returns both the dynamic state and the associated amount.
+  /// @dev Internal function that returns both the dynamic state and the unlockable amount.
   ///      Queries sUSD3 to determine the PROCESSING -> UNLOCKING transition.
   ///
   ///      For PROCESSING + DEPOSIT:
@@ -510,8 +518,9 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   ///        PROCESSING until an operator lowers the threshold via resolve().
   ///
   ///      For PROCESSING + REDEEM:
-  ///      - UNLOCKING once `sUSD3.maxRedeem(this) > 0`, which is true only after the cooldown has
-  ///        matured and while the withdrawal is not blocked by unrealized losses / the backing floor.
+  ///      - UNLOCKING once `sUSD3.maxRedeem(this) > 0`, returning that maxRedeem value for unlock().
+  ///        This is true only after the cooldown has matured and while the withdrawal is not blocked by
+  ///        unrealized losses / the backing floor.
   ///
   ///      For all other states (including RECOVERING), returns internalState directly.
   function _state(Order calldata order) internal view returns (State, uint256) {
@@ -527,7 +536,8 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
         return _ready ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
       } else {
         // order.mode == Mode.REDEEM
-        return ISUSD3($.susd3).maxRedeem(address(this)) > 0 ? (State.UNLOCKING, 0) : (State.PROCESSING, 0);
+        uint256 _maxRedeem = ISUSD3($.susd3).maxRedeem(address(this));
+        return _maxRedeem > 0 ? (State.UNLOCKING, _maxRedeem) : (State.PROCESSING, 0);
       }
     }
 
