@@ -115,8 +115,10 @@ This section provides a consolidated view of all roles across contracts and how 
 | **ParetoFund** | Owner | Protocol Admin | Resolve stuck orders |
 | | Operator | Operations Bot | Resolve stuck orders |
 | | Depositor | Facility | Create/cancel/commit/unlock orders |
-| **MidasFund** | Owner | Protocol Admin | Resolve stuck orders, set settlement modes/vaults/referrer |
-| | Operator | Operations Bot | Resolve stuck orders, set settlement modes/vaults/referrer |
+| **MidasFund** | Owner | Protocol Admin | Resolve stuck orders, confirm holdbacks, set vaults/referrer |
+| | Operator | Operations Bot | Resolve stuck orders, set referrer |
+| | Holdback | Operations EOA | Confirm holdback payments (required for every order) |
+| | Vault Manager | Operations EOA | Set deposit/redemption vaults |
 | | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |

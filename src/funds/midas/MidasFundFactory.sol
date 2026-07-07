@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import {MidasFund} from "./MidasFund.sol";
-import {SettlementMode} from "../../interfaces/funds/midas/IMidasFund.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
@@ -13,11 +12,12 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 /// @dev Deploys a MidasFund implementation and an UpgradeableBeacon in the constructor.
 ///      Each `createFund` call deploys an ERC1967 beacon proxy and initializes it atomically.
 ///      Multiple funds can be deployed for the same mToken to run several settlements
-///      (or settlement modes) concurrently, all sharing the same WrappedAsset.
+///      concurrently, all sharing the same WrappedAsset.
 ///      Post-deployment:
 ///      - the WrappedAsset owner must grant ISSUER_ROLE to the new fund;
 ///      - Midas must greenlist the new fund (and the WrappedAsset, once) when the vault
-///        greenlist is enabled or the mToken is permissioned (e.g. mGLOBAL).
+///        greenlist is enabled or the mToken is permissioned (e.g. mGLOBAL);
+///      - the fund owner grants HOLDBACK_ROLE / VAULT_MANAGER_ROLE to the relevant accounts.
 contract MidasFundFactory {
   using LibClone for address;
   using LibChecks for address;
@@ -39,8 +39,6 @@ contract MidasFundFactory {
   /// @param redemptionVault The Midas RedemptionVault proxy address.
   /// @param wrappedShare The WrappedAsset contract wrapping the mToken.
   /// @param asset The payment token used for deposits and redemptions (e.g. USDC).
-  /// @param depositSettlementMode The settlement mode used for DEPOSIT orders.
-  /// @param redeemSettlementMode The settlement mode used for REDEEM orders.
   /// @return fund The address of the newly deployed fund.
   function createFund(
     address owner,
@@ -48,22 +46,10 @@ contract MidasFundFactory {
     address depositVault,
     address redemptionVault,
     address wrappedShare,
-    address asset,
-    SettlementMode depositSettlementMode,
-    SettlementMode redeemSettlementMode
+    address asset
   ) external returns (address fund) {
     fund = MIDAS_FUND_BEACON.deployERC1967BeaconProxy();
-    MidasFund(fund)
-      .initialize(
-        owner,
-        depositor,
-        depositVault,
-        redemptionVault,
-        wrappedShare,
-        asset,
-        depositSettlementMode,
-        redeemSettlementMode
-      );
+    MidasFund(fund).initialize(owner, depositor, depositVault, redemptionVault, wrappedShare, asset);
     emit FundCreated(fund, depositVault, redemptionVault);
   }
 }

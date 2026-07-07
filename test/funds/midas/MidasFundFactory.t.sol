@@ -4,9 +4,7 @@ pragma solidity ^0.8.22;
 import {Test} from "forge-std/Test.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
 import {MidasFund} from "src/funds/midas/MidasFund.sol";
-import {SettlementMode} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
-import {Mode} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
@@ -77,7 +75,7 @@ contract MidasFundFactoryTest is Test {
     vm.expectEmit(true, true, true, false, address(factory));
     emit FundCreated(expectedFundAddress, address(depositVault), address(redemptionVault));
 
-    address fundAddress = _createFund(SettlementMode.INSTANT, SettlementMode.INSTANT);
+    address fundAddress = _createFund();
     assertEq(fundAddress, expectedFundAddress, "fund");
     MidasFund fund = MidasFund(fundAddress);
     assertEq(fund.asset(), address(usdc), "asset");
@@ -86,27 +84,18 @@ contract MidasFundFactoryTest is Test {
     assertEq(fund.depositVault(), address(depositVault), "deposit vault");
     assertEq(fund.redemptionVault(), address(redemptionVault), "redemption vault");
     assertEq(fund.owner(), owner, "owner");
+    assertFalse(fund.holdbackPending(), "no holdback pending");
   }
 
   function test_Factory_ConfiguresRoles() public {
-    address fundAddress = _createFund(SettlementMode.INSTANT, SettlementMode.INSTANT);
+    address fundAddress = _createFund();
     MidasFund fund = MidasFund(fundAddress);
     assertEq(fund.rolesOf(depositor), DEPOSITOR_ROLE, "depositor");
   }
 
-  function test_Factory_ConfiguresSettlementModes() public {
-    MidasFund fund = MidasFund(_createFund(SettlementMode.REQUEST, SettlementMode.INSTANT));
-    assertEq(uint256(fund.settlementMode(Mode.DEPOSIT)), uint256(SettlementMode.REQUEST), "deposit mode");
-    assertEq(uint256(fund.settlementMode(Mode.REDEEM)), uint256(SettlementMode.INSTANT), "redeem mode");
-
-    MidasFund fund2 = MidasFund(_createFund(SettlementMode.INSTANT, SettlementMode.REQUEST));
-    assertEq(uint256(fund2.settlementMode(Mode.DEPOSIT)), uint256(SettlementMode.INSTANT), "deposit mode 2");
-    assertEq(uint256(fund2.settlementMode(Mode.REDEEM)), uint256(SettlementMode.REQUEST), "redeem mode 2");
-  }
-
   function test_Factory_MultipleDeployments() public {
-    address fundOne = _createFund(SettlementMode.INSTANT, SettlementMode.INSTANT);
-    address fundTwo = _createFund(SettlementMode.INSTANT, SettlementMode.INSTANT);
+    address fundOne = _createFund();
+    address fundTwo = _createFund();
 
     assertTrue(fundOne != fundTwo, "distinct funds");
   }
@@ -114,70 +103,29 @@ contract MidasFundFactoryTest is Test {
   function test_Factory_RevertsInvalidDepositor() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     factory.createFund(
-      owner,
-      address(1),
-      address(depositVault),
-      address(redemptionVault),
-      address(wrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
+      owner, address(1), address(depositVault), address(redemptionVault), address(wrappedShare), address(usdc)
     );
   }
 
   function test_Factory_RevertsInvalidDepositVault() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner,
-      depositor,
-      address(1),
-      address(redemptionVault),
-      address(wrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
-    );
+    factory.createFund(owner, depositor, address(1), address(redemptionVault), address(wrappedShare), address(usdc));
   }
 
   function test_Factory_RevertsInvalidRedemptionVault() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner,
-      depositor,
-      address(depositVault),
-      address(1),
-      address(wrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
-    );
+    factory.createFund(owner, depositor, address(depositVault), address(1), address(wrappedShare), address(usdc));
   }
 
   function test_Factory_RevertsInvalidWrappedShare() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner,
-      depositor,
-      address(depositVault),
-      address(redemptionVault),
-      address(1),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
-    );
+    factory.createFund(owner, depositor, address(depositVault), address(redemptionVault), address(1), address(usdc));
   }
 
   function test_Factory_RevertsInvalidAsset() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
     factory.createFund(
-      owner,
-      depositor,
-      address(depositVault),
-      address(redemptionVault),
-      address(wrappedShare),
-      address(1),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
+      owner, depositor, address(depositVault), address(redemptionVault), address(wrappedShare), address(1)
     );
   }
 
@@ -189,14 +137,7 @@ contract MidasFundFactoryTest is Test {
 
     vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
     factory.createFund(
-      owner,
-      depositor,
-      address(depositVault),
-      address(redemptionVault),
-      address(otherWrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
+      owner, depositor, address(depositVault), address(redemptionVault), address(otherWrappedShare), address(usdc)
     );
   }
 
@@ -207,27 +148,13 @@ contract MidasFundFactoryTest is Test {
 
     vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
     factory.createFund(
-      owner,
-      depositor,
-      address(depositVault),
-      address(otherRedemptionVault),
-      address(wrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
+      owner, depositor, address(depositVault), address(otherRedemptionVault), address(wrappedShare), address(usdc)
     );
   }
 
-  function _createFund(SettlementMode depositMode, SettlementMode redeemMode) internal returns (address) {
+  function _createFund() internal returns (address) {
     return factory.createFund(
-      owner,
-      depositor,
-      address(depositVault),
-      address(redemptionVault),
-      address(wrappedShare),
-      address(usdc),
-      depositMode,
-      redeemMode
+      owner, depositor, address(depositVault), address(redemptionVault), address(wrappedShare), address(usdc)
     );
   }
 }

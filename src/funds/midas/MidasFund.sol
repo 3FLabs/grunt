@@ -8,8 +8,8 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
-import {IMidasFund, SettlementMode} from "../../interfaces/funds/midas/IMidasFund.sol";
-import {IMidasVault, MidasRequestStatus} from "../../interfaces/integrations/midas/IMidasVault.sol";
+import {IMidasFund} from "../../interfaces/funds/midas/IMidasFund.sol";
+import {IMidasVault} from "../../interfaces/integrations/midas/IMidasVault.sol";
 import {IMidasDepositVault} from "../../interfaces/integrations/midas/IMidasDepositVault.sol";
 import {IMidasRedemptionVault} from "../../interfaces/integrations/midas/IMidasRedemptionVault.sol";
 import {IMidasDataFeed} from "../../interfaces/integrations/midas/IMidasDataFeed.sol";
@@ -28,13 +28,15 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - ACCEPTED / PENDING orders can be canceled back to EMPTY via cancel() before any assets/shares are committed.
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
-///        on token balances and Midas request statuses to determine state transitions.
-///      - Settlement is configurable per direction (INSTANT or REQUEST) and can be changed by the
-///        owner/operator while no order is live. INSTANT orders settle synchronously at commit()
-///        and are immediately unlockable; REQUEST orders wait for a Midas vault admin approval.
-///      - Midas request rejections are NOT refunded on-chain: the committed input is returned
-///        off-band by the Midas admin, after which the order is recoverable (the state() function
-///        reports RECOVERING once the returned balance covers the effective input).
+///        on token balances and holdback confirmation to determine state transitions.
+///      - Settlement is always instant: commit() settles synchronously via `depositInstant` /
+///        `redeemInstant`.
+///      - Holdback (every order): after the instant settlement the order remains PROCESSING
+///        until an account with the HOLDBACK_ROLE confirms the off-band holdback payment via
+///        confirmHoldback() — for deposits the remaining mTokens airdropped by Midas once the
+///        official NAV is published, for redeems the holdback amount returned in the payment
+///        token. unlock() then sweeps the fund's full output-token balance (instant settlement
+///        plus holdback) to the receiver.
 ///      - The Midas vault API is base-18 denominated; this contract converts the payment token
 ///        amounts from/to native decimals at the boundary.
 ///      - IMPORTANT (operations): both this fund AND the WrappedAsset must be greenlisted by Midas
@@ -56,6 +58,12 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
 
   /// @notice Role for depositor.
   uint256 internal constant DEPOSITOR_ROLE = _ROLE_1;
+
+  /// @notice Role for confirming holdback payments (can be held by an EOA distinct from the operator).
+  uint256 internal constant HOLDBACK_ROLE = _ROLE_2;
+
+  /// @notice Role for managing the Midas vaults (can be held by an EOA distinct from the operator).
+  uint256 internal constant VAULT_MANAGER_ROLE = _ROLE_3;
 
   /// @notice Maximum allowed deviation between order output and current rate (in basis points).
   /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
@@ -79,13 +87,12 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @param asset The payment token used for deposits and redemptions (e.g. USDC).
   /// @param wrappedShare The WrappedAsset contract that wraps the mToken.
   /// @param assetScale The factor converting asset native decimals to base-18 (10 ** (18 - decimals)).
-  /// @param depositSettlementMode The settlement mode used for DEPOSIT orders.
-  /// @param redeemSettlementMode The settlement mode used for REDEEM orders.
   /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
+  /// @param holdbackPaid Whether the holdback payment of the current order has been confirmed
+  ///        (every order requires a holdback confirmation before unlocking).
   /// @param currentOrderId The order ID of the current (or most recent) order.
   /// @param referrerId The Midas referrer id forwarded on deposits.
-  /// @param requestId The Midas request id of the current order (REQUEST settlement only).
   /// @param resolvedInput The resolved input amount (if hasResolvedAmounts is true).
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
@@ -96,13 +103,11 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     address asset;
     address wrappedShare;
     uint256 assetScale;
-    SettlementMode depositSettlementMode;
-    SettlementMode redeemSettlementMode;
     State internalState;
     bool hasResolvedAmounts;
+    bool holdbackPaid;
     bytes32 currentOrderId;
     bytes32 referrerId;
-    uint256 requestId;
     uint256 resolvedInput;
     uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
@@ -141,9 +146,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     address depositVault_,
     address redemptionVault_,
     address wrappedShare_,
-    address asset_,
-    SettlementMode depositSettlementMode_,
-    SettlementMode redeemSettlementMode_
+    address asset_
   ) public override initializer {
     owner_.checkNotZero();
     depositor_.checkContract();
@@ -184,8 +187,6 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     $.asset = asset_;
     $.wrappedShare = wrappedShare_;
     $.assetScale = 10 ** (_MTOKEN_DECIMALS - _assetDecimals);
-    $.depositSettlementMode = depositSettlementMode_;
-    $.redeemSettlementMode = redeemSettlementMode_;
 
     _initializeOwner(owner_);
     _setRoles(depositor_, DEPOSITOR_ROLE);
@@ -220,6 +221,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
     $.hasResolvedAmounts = false;
+    $.holdbackPaid = false;
     $.resolvedInput = 0;
     $.resolvedOutput = 0;
 
@@ -250,11 +252,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No partial commits, always goes to PROCESSING.
-  ///      Under INSTANT settlement the Midas vault settles synchronously, so the order is
-  ///      immediately reported as UNLOCKING by state(). Under REQUEST settlement the committed
-  ///      input leaves the fund immediately and the output is delivered when a Midas vault admin
-  ///      approves the request.
+  /// @dev No partial commits, always goes to PROCESSING. The Midas vault settles synchronously
+  ///      (`depositInstant` / `redeemInstant`), but the order stays PROCESSING until the
+  ///      holdback payment is confirmed via confirmHoldback().
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -263,59 +263,44 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     if ($.internalState != State.ACCEPTED) revert LibFundsErrors.InvalidState($.internalState);
 
-    SettlementMode _settlementMode;
-    uint256 _requestId;
-
     if (order.mode == Mode.DEPOSIT) {
       address _asset = $.asset;
       address _depositVault = $.depositVault;
       _checkVaultAccess(_depositVault, $.wrappedShare);
-      _settlementMode = $.depositSettlementMode;
 
       // Pull the payment token from the depositor and let the vault pull it (base-18 amounts).
       _asset.safeTransferFrom(msg.sender, address(this), order.input);
       _asset.safeApproveWithRetry(_depositVault, order.input);
 
-      uint256 _amountBase18 = order.input * $.assetScale;
-      if (_settlementMode == SettlementMode.INSTANT) {
-        // order.output is the minimum mToken amount (already base-18); mints to this contract.
-        IMidasDepositVault(_depositVault).depositInstant(_asset, _amountBase18, order.output, $.referrerId);
-      } else {
-        _requestId = IMidasDepositVault(_depositVault).depositRequest(_asset, _amountBase18, $.referrerId);
-        $.requestId = _requestId;
-      }
+      // order.output is the minimum mToken amount (already base-18); mints to this contract.
+      IMidasDepositVault(_depositVault).depositInstant(_asset, order.input * $.assetScale, order.output, $.referrerId);
       _asset.safeApproveWithRetry(_depositVault, 0);
     } else {
       address _mToken = $.mToken;
       address _redemptionVault = $.redemptionVault;
       _checkVaultAccess(_redemptionVault, $.wrappedShare);
-      _settlementMode = $.redeemSettlementMode;
 
       // Burn WrappedAsset from depositor (unwraps mToken to this contract), then let the
       // vault burn/pull it (approval covers both the escrow pull and the fee transfer).
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
       _mToken.safeApproveWithRetry(_redemptionVault, order.input);
 
-      if (_settlementMode == SettlementMode.INSTANT) {
-        // order.output is the minimum asset amount in native decimals; scale it to base-18.
-        IMidasRedemptionVault(_redemptionVault).redeemInstant($.asset, order.input, order.output * $.assetScale);
-      } else {
-        _requestId = IMidasRedemptionVault(_redemptionVault).redeemRequest($.asset, order.input);
-        $.requestId = _requestId;
-      }
+      // order.output is the minimum asset amount in native decimals; scale it to base-18.
+      IMidasRedemptionVault(_redemptionVault).redeemInstant($.asset, order.input, order.output * $.assetScale);
       _mToken.safeApproveWithRetry(_redemptionVault, 0);
     }
 
     $.internalState = State.PROCESSING;
 
-    emit OrderCommitted(_currentOrderId, order.mode, _settlementMode, order.input, _requestId);
+    emit OrderCommitted(_currentOrderId, order.mode, order.input);
 
     return (State.PROCESSING, order.input);
   }
 
   /// @inheritdoc IFund
   /// @dev No partial unlocks, always goes to ENDED. The unlocked amount is the fund's full
-  ///      output-token balance (which covers the effective output threshold).
+  ///      output-token balance (which covers the effective output threshold and the confirmed
+  ///      holdback payment).
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -345,8 +330,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED. Recovery relies on the committed input
-  ///      being returned to this contract off-band (Midas request rejections are not refunded
-  ///      on-chain; the Midas admin returns funds via `withdrawToken`).
+  ///      being returned to this contract off-band by the Midas admin (e.g. via `withdrawToken`).
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -423,29 +407,18 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function setSettlementMode(Mode mode, SettlementMode settlementMode_)
-    external
-    override
-    onlyOwnerOrRoles(OPERATOR_ROLE)
-  {
+  function confirmHoldback(bytes32 orderId) external override onlyOwnerOrRoles(HOLDBACK_ROLE) {
     MidasFundStorage storage $ = _midasFundStorage();
-    _checkNoLiveOrder($);
+    if (orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
+    if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
+    if ($.holdbackPaid) revert LibFundsErrors.HoldbackNotPending();
+    $.holdbackPaid = true;
 
-    if (mode == Mode.DEPOSIT) {
-      $.depositSettlementMode = settlementMode_;
-    } else {
-      $.redeemSettlementMode = settlementMode_;
-    }
-
-    emit SettlementModeUpdated(mode, settlementMode_, msg.sender);
+    emit HoldbackConfirmed(orderId, msg.sender);
   }
 
   /// @inheritdoc IMidasFund
-  function setDepositVault(address depositVault_, SettlementMode depositSettlementMode_)
-    external
-    override
-    onlyOwnerOrRoles(OPERATOR_ROLE)
-  {
+  function setDepositVault(address depositVault_) external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
     depositVault_.checkContract();
 
     MidasFundStorage storage $ = _midasFundStorage();
@@ -456,18 +429,12 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     _checkVaultAccess(depositVault_, $.wrappedShare);
 
     $.depositVault = depositVault_;
-    $.depositSettlementMode = depositSettlementMode_;
 
     emit DepositVaultUpdated(depositVault_, msg.sender);
-    emit SettlementModeUpdated(Mode.DEPOSIT, depositSettlementMode_, msg.sender);
   }
 
   /// @inheritdoc IMidasFund
-  function setRedemptionVault(address redemptionVault_, SettlementMode redeemSettlementMode_)
-    external
-    override
-    onlyOwnerOrRoles(OPERATOR_ROLE)
-  {
+  function setRedemptionVault(address redemptionVault_) external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
     redemptionVault_.checkContract();
 
     MidasFundStorage storage $ = _midasFundStorage();
@@ -478,10 +445,8 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     _checkVaultAccess(redemptionVault_, $.wrappedShare);
 
     $.redemptionVault = redemptionVault_;
-    $.redeemSettlementMode = redeemSettlementMode_;
 
     emit RedemptionVaultUpdated(redemptionVault_, msg.sender);
-    emit SettlementModeUpdated(Mode.REDEEM, redeemSettlementMode_, msg.sender);
   }
 
   /// @inheritdoc IMidasFund
@@ -511,19 +476,14 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function settlementMode(Mode mode) external view override returns (SettlementMode) {
+  function holdbackPending() external view override returns (bool) {
     MidasFundStorage storage $ = _midasFundStorage();
-    return mode == Mode.DEPOSIT ? $.depositSettlementMode : $.redeemSettlementMode;
+    return $.internalState == State.PROCESSING && !$.holdbackPaid;
   }
 
   /// @inheritdoc IMidasFund
   function referrerId() external view override returns (bytes32) {
     return _midasFundStorage().referrerId;
-  }
-
-  /// @inheritdoc IMidasFund
-  function activeRequestId() external view override returns (uint256) {
-    return _midasFundStorage().requestId;
   }
 
   /// @inheritdoc IFund
@@ -578,18 +538,15 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Internal function that returns both the dynamic state and the associated amount.
-  ///      This function returns the dynamic state based on token balances and Midas request
-  ///      statuses, which may differ from internalState.
+  ///      This function returns the dynamic state based on token balances and the holdback
+  ///      confirmation, which may differ from internalState.
   ///
-  ///      For PROCESSING state:
-  ///      - REQUEST settlement first inspects the Midas request status:
-  ///        - PENDING → PROCESSING (awaiting Midas vault admin approval)
-  ///        - CANCELED → RECOVERING once the returned input balance covers the effective input
-  ///          (rejections are refunded off-band by the Midas admin), PROCESSING otherwise
-  ///        - PROCESSED → falls through to the output balance check below
-  ///      - The output balance check (also the INSTANT settlement path):
-  ///        - Deposit: mToken balance >= effective output → UNLOCKING
-  ///        - Redeem: asset balance >= effective output → UNLOCKING
+  ///      For PROCESSING state (settlement is always instant, so the output is normally already
+  ///      in the fund right after commit):
+  ///      - Deposit: mToken balance >= effective output AND holdback confirmed via
+  ///        confirmHoldback() → UNLOCKING
+  ///      - Redeem: asset balance >= effective output AND holdback confirmed via
+  ///        confirmHoldback() → UNLOCKING
   ///
   ///      For RECOVERING state (set manually via recovering() after an off-band refund):
   ///      - Deposit: asset balance >= effective input → RECOVERING, PROCESSING otherwise
@@ -627,23 +584,15 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     }
 
     if (_internalState == State.PROCESSING) {
-      SettlementMode _settlementMode = order.mode == Mode.DEPOSIT ? $.depositSettlementMode : $.redeemSettlementMode;
-
-      if (_settlementMode == SettlementMode.REQUEST) {
-        MidasRequestStatus _status = _getRequestStatus(order.mode, $);
-        if (_status == MidasRequestStatus.PENDING) {
-          return (State.PROCESSING, 0);
-        }
-        if (_status == MidasRequestStatus.CANCELED) {
-          // Rejected by Midas; the input is returned off-band by the Midas admin.
-          uint256 _recoverable = _inputBalance(order.mode, $);
-          return _recoverable >= _effectiveInput ? (State.RECOVERING, _recoverable) : (State.PROCESSING, 0);
-        }
-        // PROCESSED falls through to the output balance check.
-      }
-
       uint256 _amount = _outputBalance(order.mode, $);
-      return _amount >= _effectiveOutput ? (State.UNLOCKING, _amount) : (State.PROCESSING, 0);
+      if (_amount < _effectiveOutput) return (State.PROCESSING, 0);
+
+      // The order stays PROCESSING until the off-band holdback payment is confirmed
+      // (deposits: remaining mToken airdrop; redeems: holdback in the payment token),
+      // so the unlock sweeps both the instant settlement and the holdback.
+      if (!$.holdbackPaid) return (State.PROCESSING, 0);
+
+      return (State.UNLOCKING, _amount);
     }
 
     if (_internalState == State.RECOVERING) {
@@ -652,19 +601,6 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
-  }
-
-  /// @dev Returns the Midas request status of the current order.
-  /// @param _mode The order mode (DEPOSIT or REDEEM).
-  /// @param $ The fund storage reference.
-  function _getRequestStatus(Mode _mode, MidasFundStorage storage $) internal view returns (MidasRequestStatus) {
-    if (_mode == Mode.DEPOSIT) {
-      (,, MidasRequestStatus _status,,,) = IMidasDepositVault($.depositVault).mintRequests($.requestId);
-      return _status;
-    }
-
-    (,, MidasRequestStatus _status,,,) = IMidasRedemptionVault($.redemptionVault).redeemRequests($.requestId);
-    return _status;
   }
 
   /// @dev Returns this contract's balance of the order's output token

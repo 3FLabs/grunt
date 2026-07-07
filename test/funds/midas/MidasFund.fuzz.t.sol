@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
-import {SettlementMode} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
@@ -68,14 +67,7 @@ contract MidasFundFuzzTest is Test {
 
     factory = new MidasFundFactory(owner);
     address fundAddr = factory.createFund(
-      owner,
-      address(this),
-      address(depositVault),
-      address(redemptionVault),
-      address(wrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
+      owner, address(this), address(depositVault), address(redemptionVault), address(wrappedShare), address(usdc)
     );
     fund = MidasFund(fundAddr);
 
@@ -101,7 +93,14 @@ contract MidasFundFuzzTest is Test {
     usdc.approve(address(fund), inputAmount);
     fund.commit(order);
 
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+    // Every order stays PROCESSING until the holdback payment is confirmed.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until confirmed");
+    assertTrue(fund.holdbackPending(), "holdback pending");
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
 
     (State newState, uint256 amount) = fund.unlock(order);
 
@@ -111,11 +110,34 @@ contract MidasFundFuzzTest is Test {
     assertEq(uint256(newState), uint256(State.ENDED), "ended");
   }
 
+  function testFuzz_DepositHoldback_SweepsAirdrop(uint96 input, uint96 airdropSeed) public {
+    uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
+    uint256 airdropAmount = bound(uint256(airdropSeed), 1, type(uint96).max);
+    uint256 expectedMToken = inputAmount * ASSET_SCALE;
+
+    Order memory order = _depositOrder(inputAmount, expectedMToken);
+    fund.create(order);
+    usdc.mint(address(this), inputAmount);
+    usdc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // The off-band mToken airdrop arrives; the order remains gated until confirmed.
+    mGlobal.mint(address(fund), airdropAmount);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated");
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+
+    (, uint256 amount) = fund.unlock(order);
+    assertEq(amount, expectedMToken + airdropAmount, "instant mint + airdrop wrapped");
+    assertEq(wrappedShare.balanceOf(address(this)), expectedMToken + airdropAmount, "wrapper covers full balance");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                  FUZZ: REDEEM INSTANT UNLOCK               */
+  /*             FUZZ: REDEEM HOLDBACK LIFECYCLE                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_RedeemInstantUnlock_Succeeds(uint96 input) public {
+  function testFuzz_RedeemHoldbackLifecycle_Succeeds(uint96 input) public {
     uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
     uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
 
@@ -126,7 +148,14 @@ contract MidasFundFuzzTest is Test {
     wrappedShare.approve(address(fund), mTokenAmount);
     fund.commit(order);
 
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+    // Every redeem stays PROCESSING until the holdback payment is confirmed.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until confirmed");
+    assertTrue(fund.holdbackPending(), "holdback pending");
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
 
     (State newState, uint256 amount) = fund.unlock(order);
 
@@ -136,64 +165,28 @@ contract MidasFundFuzzTest is Test {
     assertEq(uint256(newState), uint256(State.ENDED), "ended");
   }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*               FUZZ: DEPOSIT REQUEST LIFECYCLE              */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function testFuzz_DepositRequestLifecycle(uint96 input) public {
-    vm.prank(owner);
-    fund.setSettlementMode(Mode.DEPOSIT, SettlementMode.REQUEST);
-
-    uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
-    uint256 expectedMToken = inputAmount * ASSET_SCALE;
-
-    Order memory order = _depositOrder(inputAmount, expectedMToken);
-    fund.create(order);
-
-    usdc.mint(address(this), inputAmount);
-    usdc.approve(address(fund), inputAmount);
-    fund.commit(order);
-
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing while pending");
-
-    depositVault.approveDepositRequest(fund.activeRequestId());
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after approval");
-
-    (State newState, uint256 amount) = fund.unlock(order);
-    assertEq(amount, expectedMToken, "amount");
-    assertEq(wrappedShare.balanceOf(address(this)), expectedMToken, "wrapper minted");
-    assertEq(uint256(newState), uint256(State.ENDED), "ended");
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*             FUZZ: REDEEM REQUEST REJECT/RECOVER            */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function testFuzz_RedeemRequestReject_Recovers(uint96 input) public {
+  function testFuzz_RedeemHoldback_SweepsPayment(uint96 input, uint96 holdbackSeed) public {
     uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
+    uint256 holdbackAmount = bound(uint256(holdbackSeed), 1, type(uint96).max);
     uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
 
     _depositAndUnlock(inputUsdc);
-
-    vm.prank(owner);
-    fund.setSettlementMode(Mode.REDEEM, SettlementMode.REQUEST);
 
     Order memory order = _redeemOrder(mTokenAmount, inputUsdc);
     fund.create(order);
     wrappedShare.approve(address(fund), mTokenAmount);
     fund.commit(order);
 
-    redemptionVault.rejectRedeemRequest(fund.activeRequestId());
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before refund");
+    // The off-band holdback payment arrives; the order remains gated until confirmed.
+    usdc.mint(address(fund), holdbackAmount);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated");
 
-    // Midas admin returns the escrowed mToken off-band
-    redemptionVault.withdrawToken(address(mGlobal), address(fund), mTokenAmount);
-    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering after refund");
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
 
-    (State newState, uint256 amount) = fund.recover(order);
-    assertEq(amount, mTokenAmount, "amount");
-    assertEq(wrappedShare.balanceOf(address(this)), mTokenAmount, "wrapper returned");
-    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    (, uint256 amount) = fund.unlock(order);
+    assertEq(amount, inputUsdc + holdbackAmount, "full balance swept");
+    assertEq(usdc.balanceOf(address(this)), inputUsdc + holdbackAmount, "proceeds + holdback received");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -255,6 +248,8 @@ contract MidasFundFuzzTest is Test {
     usdc.mint(address(this), inputAmount);
     usdc.approve(address(fund), inputAmount);
     fund.commit(order);
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
     fund.unlock(order);
 
     Order memory nextOrder = _depositOrderWithSalt(nextInputAmount, nextInputAmount * ASSET_SCALE, keccak256("next"));
@@ -295,12 +290,15 @@ contract MidasFundFuzzTest is Test {
     usdc.mint(address(this), usdcAmount);
     usdc.approve(address(fund), usdcAmount);
     fund.commit(order);
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
     fund.unlock(order);
   }
 }
 
 contract MidasFundInvariantTest is StdInvariant, Test {
   uint256 private constant OPERATOR_ROLE = 1 << 0;
+  uint256 private constant HOLDBACK_ROLE = 1 << 2;
 
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -350,14 +348,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
 
     factory = new MidasFundFactory(owner);
     address fundAddr = factory.createFund(
-      owner,
-      address(handler),
-      address(depositVault),
-      address(redemptionVault),
-      address(wrappedShare),
-      address(usdc),
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
+      owner, address(handler), address(depositVault), address(redemptionVault), address(wrappedShare), address(usdc)
     );
     fund = MidasFund(fundAddr);
 
@@ -367,24 +358,23 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     wrappedShare.grantRoles(address(handler), SENDER_ROLE);
 
     vm.prank(owner);
-    fund.grantRoles(address(handler), OPERATOR_ROLE);
+    fund.grantRoles(address(handler), OPERATOR_ROLE | HOLDBACK_ROLE);
 
     handler.initialize(fund, usdc, mGlobal, wrappedShare, depositVault, redemptionVault);
 
-    bytes4[] memory selectors = new bytes4[](13);
+    bytes4[] memory selectors = new bytes4[](12);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_cancel.selector;
     selectors[3] = handler.act_commit.selector;
-    selectors[4] = handler.act_approveRequest.selector;
-    selectors[5] = handler.act_rejectRequest.selector;
-    selectors[6] = handler.act_refund.selector;
-    selectors[7] = handler.act_resolve.selector;
-    selectors[8] = handler.act_recovering.selector;
-    selectors[9] = handler.act_cancelRecovering.selector;
-    selectors[10] = handler.act_unlock.selector;
-    selectors[11] = handler.act_recover.selector;
-    selectors[12] = handler.act_setSettlementMode.selector;
+    selectors[4] = handler.act_refund.selector;
+    selectors[5] = handler.act_resolve.selector;
+    selectors[6] = handler.act_recovering.selector;
+    selectors[7] = handler.act_cancelRecovering.selector;
+    selectors[8] = handler.act_unlock.selector;
+    selectors[9] = handler.act_recover.selector;
+    selectors[10] = handler.act_payHoldback.selector;
+    selectors[11] = handler.act_confirmHoldback.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -405,6 +395,13 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     assertEq(fund.totalAssets(), supply / ASSET_SCALE, "totalAssets mismatch");
   }
 
+  function invariant_HoldbackGateBlocksUnlocking() public view {
+    // An order (either mode) awaiting its holdback confirmation must never report UNLOCKING.
+    if (!fund.holdbackPending()) return;
+    Order memory order = handler.getOrder();
+    assertTrue(uint256(fund.state(order)) != uint256(State.UNLOCKING), "gated order reports UNLOCKING");
+  }
+
   function invariant_StateMatchesModel() public view {
     State stage = handler.internalState();
     if (stage == State.EMPTY) return;
@@ -423,8 +420,8 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     }
 
     if (stage == State.PROCESSING) {
-      // Dynamic checks may already report UNLOCKING (output delivered) or RECOVERING
-      // (rejected request refunded off-band).
+      // Dynamic checks may already report UNLOCKING (output delivered and, for redeems,
+      // holdback confirmed) or RECOVERING (off-band refund received).
       assertTrue(
         uint256(actual) == uint256(State.PROCESSING) || uint256(actual) == uint256(State.UNLOCKING)
           || uint256(actual) == uint256(State.RECOVERING),

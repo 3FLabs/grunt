@@ -4,24 +4,18 @@ pragma solidity ^0.8.22;
 import {Test} from "forge-std/Test.sol";
 import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
-import {SettlementMode} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {IERC20} from "src/interfaces/integrations/IERC20.sol";
-import {IMidasVault, MidasRequestStatus} from "src/interfaces/integrations/midas/IMidasVault.sol";
-import {IMidasDepositVault} from "src/interfaces/integrations/midas/IMidasDepositVault.sol";
-import {IMidasRedemptionVault} from "src/interfaces/integrations/midas/IMidasRedemptionVault.sol";
+import {IMidasVault} from "src/interfaces/integrations/midas/IMidasVault.sol";
 import {IMidasDataFeed} from "src/interfaces/integrations/midas/IMidasDataFeed.sol";
 
 /// @dev Admin surface of the Midas vaults used in fork tests (not part of the src interfaces).
 interface IMidasVaultAdminFork {
-  function approveRequest(uint256 requestId, uint256 newRate) external;
-  function rejectRequest(uint256 requestId) external;
   function unpauseFn(bytes4 fn) external;
   function fnPaused(bytes4 fn) external view returns (bool);
-  function requestRedeemer() external view returns (address);
 }
 
 /// @dev Minimal OZ AccessControl surface of the MidasAccessControl contract.
@@ -34,9 +28,8 @@ interface IMidasAccessControlFork {
 /// @dev Live mGLOBAL config at the pinned block:
 ///      - deposit vault (WithAave): instantFee 0, minAmount 0, unlimited daily limit,
 ///        minMTokenAmountForFirstDeposit = 114_000e18 mGLOBAL (deposits must clear it),
-///        BOTH depositInstant and depositRequest are fn-paused on-chain → unpaused here
-///        by an impersonated vault admin.
-///      - Aave redemption vault: instantFee 50 (0.5%), redeemRequest fn-paused → unpaused here.
+///        depositInstant is fn-paused on-chain → unpaused here by an impersonated vault admin.
+///      - Aave redemption vault: instantFee 50 (0.5%).
 ///      - swapper redemption vault: instantFee 50, minAmount 1e18 mGLOBAL.
 ///      - mGLOBAL is permissioned: every transfer requires both parties to hold
 ///        M_GLOBAL_GREENLISTED_ROLE (mints only check the recipient, burns are unchecked).
@@ -62,12 +55,9 @@ contract MidasFundForkTest is Test {
 
   bytes32 constant GREENLISTED_ROLE = keccak256("M_GLOBAL_GREENLISTED_ROLE");
   bytes32 constant DEPOSIT_VAULT_ADMIN_ROLE = keccak256("M_GLOBAL_DEPOSIT_VAULT_ADMIN_ROLE");
-  bytes32 constant REDEMPTION_VAULT_ADMIN_ROLE = keccak256("M_GLOBAL_REDEMPTION_VAULT_ADMIN_ROLE");
 
-  /// @dev Selectors used by the Midas per-function pause registry.
+  /// @dev Selector used by the Midas per-function pause registry.
   bytes4 constant SEL_DEPOSIT_INSTANT = bytes4(keccak256("depositInstant(address,uint256,uint256,bytes32)"));
-  bytes4 constant SEL_DEPOSIT_REQUEST = bytes4(keccak256("depositRequest(address,uint256,bytes32)"));
-  bytes4 constant SEL_REDEEM_REQUEST = bytes4(keccak256("redeemRequest(address,uint256)"));
 
   uint256 constant ONE = 1e6; // USDC unit
   uint256 constant SCALE = 1e12; // USDC native → base-18
@@ -108,18 +98,10 @@ contract MidasFundForkTest is Test {
     wrappedShare = WrappedAsset(proxy);
     wrappedShare.initialize(owner, owner, MGLOBAL, "wmGLOBAL", "Wrapped mGLOBAL");
 
-    // Deploy fund via factory (INSTANT settlement on both directions by default)
+    // Deploy fund via factory
     factory = new MidasFundFactory(owner);
-    address fundAddress = factory.createFund(
-      owner,
-      address(this),
-      DEPOSIT_VAULT,
-      REDEMPTION_VAULT_AAVE,
-      address(wrappedShare),
-      USDC,
-      SettlementMode.INSTANT,
-      SettlementMode.INSTANT
-    );
+    address fundAddress =
+      factory.createFund(owner, address(this), DEPOSIT_VAULT, REDEMPTION_VAULT_AAVE, address(wrappedShare), USDC);
     fund = MidasFund(fundAddress);
 
     // Grant roles on wrappedShare
@@ -128,24 +110,17 @@ contract MidasFundForkTest is Test {
     wrappedShare.grantRoles(address(this), SENDER_ROLE);
     vm.stopPrank();
 
-    // Midas roles: greenlist the fund, the wrapper (mGLOBAL gates every transfer on both
-    // parties) and the Aave redemption vault (redeemRequest escrows mGLOBAL in the vault,
-    // which is NOT greenlisted on mainnet at the pinned block). Also set up a vault admin.
+    // Midas roles: greenlist the fund and the wrapper (mGLOBAL gates every transfer on both
+    // parties). Also set up a vault admin to unpause the fn-paused deposit entry point.
     IMidasAccessControlFork accessControl = IMidasAccessControlFork(MIDAS_ACCESS_CONTROL);
     vm.startPrank(MIDAS_DEFAULT_ADMIN);
     accessControl.grantRole(GREENLISTED_ROLE, address(fund));
     accessControl.grantRole(GREENLISTED_ROLE, address(wrappedShare));
-    accessControl.grantRole(GREENLISTED_ROLE, REDEMPTION_VAULT_AAVE);
     accessControl.grantRole(DEPOSIT_VAULT_ADMIN_ROLE, midasAdmin);
-    accessControl.grantRole(REDEMPTION_VAULT_ADMIN_ROLE, midasAdmin);
     vm.stopPrank();
 
-    // Unpause the fn-paused entry points the fund relies on (paused on mainnet at the
-    // pinned block: depositInstant + depositRequest on the deposit vault, redeemRequest
-    // on the Aave redemption vault).
+    // depositInstant is fn-paused on mainnet at the pinned block → unpause it.
     _unpauseFn(DEPOSIT_VAULT, SEL_DEPOSIT_INSTANT);
-    _unpauseFn(DEPOSIT_VAULT, SEL_DEPOSIT_REQUEST);
-    _unpauseFn(REDEMPTION_VAULT_AAVE, SEL_REDEEM_REQUEST);
 
     // Fund test contract with USDC
     _dealUSDC(address(this), 1_000_000 * ONE);
@@ -165,7 +140,18 @@ contract MidasFundForkTest is Test {
     IERC20(USDC).approve(address(fund), order.input);
     (State committed,) = fund.commit(order);
     assertEq(uint256(committed), uint256(State.PROCESSING), "processing returned by commit");
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after commit");
+
+    // Every order stays PROCESSING until the off-band holdback (the remaining mToken
+    // airdrop once the official NAV is published) is confirmed.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+    assertTrue(fund.holdbackPending(), "holdback pending");
+
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(order);
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
 
     (State state, uint256 amount) = fund.unlock(order);
     assertEq(uint256(state), uint256(State.ENDED), "ended");
@@ -175,70 +161,7 @@ contract MidasFundForkTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "state ENDED");
   }
 
-  function test_Fork_RequestDeposit_ApproveLifecycle() public {
-    vm.prank(owner);
-    fund.setSettlementMode(Mode.DEPOSIT, SettlementMode.REQUEST);
-
-    uint256 expectedShares = _expectedDepositShares(DEPOSIT_AMOUNT);
-    Order memory order = _depositOrder(DEPOSIT_AMOUNT, _haircut(expectedShares));
-    fund.create(order);
-
-    IERC20(USDC).approve(address(fund), order.input);
-    fund.commit(order);
-
-    // Committed input left the fund; the order waits for a Midas vault admin approval
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing after commit");
-    uint256 requestId = fund.activeRequestId();
-    (address sender,, MidasRequestStatus status,,, uint256 tokenOutRate) =
-      IMidasDepositVault(DEPOSIT_VAULT).mintRequests(requestId);
-    assertEq(sender, address(fund), "request sender is fund");
-    assertEq(uint256(status), uint256(MidasRequestStatus.PENDING), "request pending");
-
-    // Approve at the snapshotted rate → mints mGLOBAL directly to the fund
-    vm.prank(midasAdmin);
-    IMidasVaultAdminFork(DEPOSIT_VAULT).approveRequest(requestId, tokenOutRate);
-
-    (,, status,,,) = IMidasDepositVault(DEPOSIT_VAULT).mintRequests(requestId);
-    assertEq(uint256(status), uint256(MidasRequestStatus.PROCESSED), "request processed");
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after approval");
-
-    (State state, uint256 amount) = fund.unlock(order);
-    assertEq(uint256(state), uint256(State.ENDED), "ended");
-    assertApproxEqRel(amount, expectedShares, 0.001e18, "shares match deposit feed");
-    assertEq(wrappedShare.balanceOf(address(this)), amount, "wmGLOBAL balance");
-  }
-
-  function test_Fork_RequestDeposit_RejectAndRecover() public {
-    vm.prank(owner);
-    fund.setSettlementMode(Mode.DEPOSIT, SettlementMode.REQUEST);
-
-    Order memory order = _depositOrder(DEPOSIT_AMOUNT, _haircut(_expectedDepositShares(DEPOSIT_AMOUNT)));
-    fund.create(order);
-
-    IERC20(USDC).approve(address(fund), order.input);
-    fund.commit(order);
-    uint256 requestId = fund.activeRequestId();
-
-    // Midas admin rejects the request; the input is NOT refunded on-chain
-    vm.prank(midasAdmin);
-    IMidasVaultAdminFork(DEPOSIT_VAULT).rejectRequest(requestId);
-
-    (,, MidasRequestStatus status,,,) = IMidasDepositVault(DEPOSIT_VAULT).mintRequests(requestId);
-    assertEq(uint256(status), uint256(MidasRequestStatus.CANCELED), "request canceled");
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing (no refund yet)");
-
-    // Simulate the off-band refund by the Midas admin
-    _dealUSDC(address(fund), DEPOSIT_AMOUNT);
-    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering once refunded");
-
-    uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
-    (State state, uint256 amount) = fund.recover(order);
-    assertEq(uint256(state), uint256(State.ENDED), "ended");
-    assertEq(amount, DEPOSIT_AMOUNT, "full input recovered");
-    assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC returned to receiver");
-  }
-
-  function test_Fork_InstantRedeem_FullLifecycle() public {
+  function test_Fork_InstantRedeem_HoldbackLifecycle() public {
     uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
 
     // 0.5% instant fee is taken in mGLOBAL before conversion at the redemption feed
@@ -250,7 +173,18 @@ contract MidasFundForkTest is Test {
     // the payout by burning the vault's aEthUSDC (~5.75M available).
     wrappedShare.approve(address(fund), shares);
     fund.commit(order);
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after commit");
+
+    // The payout arrived, but every redeem stays PROCESSING until the holdback is confirmed.
+    assertGt(IERC20(USDC).balanceOf(address(fund)), 0, "payout delivered to the fund");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+    assertTrue(fund.holdbackPending(), "holdback pending");
+
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(order);
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
 
     uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
     (State state, uint256 amount) = fund.unlock(order);
@@ -261,50 +195,64 @@ contract MidasFundForkTest is Test {
     assertEq(wrappedShare.balanceOf(address(this)), 0, "all shares burned");
   }
 
-  function test_Fork_RequestRedeem_ApproveLifecycle() public {
+  function test_Fork_InstantRedeem_HoldbackPaymentSwept() public {
     uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
 
-    vm.prank(owner);
-    fund.setSettlementMode(Mode.REDEEM, SettlementMode.REQUEST);
-
-    // Request redemptions pay no instant fee (USDC token fee is 0 on the vault)
-    uint256 expectedAssets = _expectedRedeemAssets(shares, REDEMPTION_VAULT_AAVE);
-    Order memory order = _redeemOrder(shares, _haircut(expectedAssets));
+    uint256 expectedNet = _expectedRedeemAssets(shares * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
+    Order memory order = _redeemOrder(shares, _haircut(expectedNet));
     fund.create(order);
 
     wrappedShare.approve(address(fund), shares);
     fund.commit(order);
 
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing after commit");
-    uint256 requestId = fund.activeRequestId();
-    (address sender,, MidasRequestStatus status,, uint256 mTokenRate,) =
-      IMidasRedemptionVault(REDEMPTION_VAULT_AAVE).redeemRequests(requestId);
-    assertEq(sender, address(fund), "request sender is fund");
-    assertEq(uint256(status), uint256(MidasRequestStatus.PENDING), "request pending");
+    uint256 instantProceeds = IERC20(USDC).balanceOf(address(fund));
 
-    // Approval pulls USDC from the vault's requestRedeemer and pushes it to the fund
-    address redeemer = IMidasVaultAdminFork(REDEMPTION_VAULT_AAVE).requestRedeemer();
-    _dealUSDC(redeemer, 300_000 * ONE);
-    vm.prank(redeemer);
-    IERC20(USDC).approve(REDEMPTION_VAULT_AAVE, type(uint256).max);
+    // The off-band holdback payment (e.g. the 7% true-up) arrives at the fund.
+    uint256 holdbackAmount = 10_000 * ONE;
+    _dealUSDC(address(fund), instantProceeds + holdbackAmount);
 
-    vm.prank(midasAdmin);
-    IMidasVaultAdminFork(REDEMPTION_VAULT_AAVE).approveRequest(requestId, mTokenRate);
+    // Still gated: the balance alone does not release the order.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing despite full balance");
 
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after approval");
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
 
     uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
-    (State state, uint256 amount) = fund.unlock(order);
-    assertEq(uint256(state), uint256(State.ENDED), "ended");
-    assertApproxEqRel(amount, expectedAssets, 0.001e18, "assets match redemption feed");
+    (, uint256 amount) = fund.unlock(order);
+    assertEq(amount, instantProceeds + holdbackAmount, "instant proceeds + holdback swept");
     assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC received");
+  }
+
+  function test_Fork_Recovering_OffBandRefund() public {
+    // Instant deposit commit: the USDC leaves the fund, the mGLOBAL arrives synchronously.
+    Order memory order = _depositOrder(DEPOSIT_AMOUNT, _haircut(_expectedDepositShares(DEPOSIT_AMOUNT)));
+    fund.create(order);
+    IERC20(USDC).approve(address(fund), order.input);
+    fund.commit(order);
+
+    // Operator escape hatch: the deposit is unwound off-band by the Midas admin.
+    vm.prank(owner);
+    fund.recovering(order.toId(address(fund)));
+
+    // Without the refund the dynamic state falls back to PROCESSING.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before refund");
+
+    // Simulate the off-band USDC refund
+    _dealUSDC(address(fund), DEPOSIT_AMOUNT);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering once refunded");
+
+    uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, DEPOSIT_AMOUNT, "full input recovered");
+    assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC returned to receiver");
   }
 
   function test_Fork_SwapperVault_InstantRedeem() public {
     uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
 
     vm.prank(owner);
-    fund.setRedemptionVault(REDEMPTION_VAULT_SWAPPER, SettlementMode.INSTANT);
+    fund.setRedemptionVault(REDEMPTION_VAULT_SWAPPER);
 
     // The swapper vault holds <1 USDC at the pinned block; fund it directly so the
     // instant redemption settles from its own balance instead of the mTBILL swap route.
@@ -316,7 +264,11 @@ contract MidasFundForkTest is Test {
 
     wrappedShare.approve(address(fund), shares);
     fund.commit(order);
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after commit");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
 
     uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
     (State state, uint256 amount) = fund.unlock(order);
@@ -333,16 +285,7 @@ contract MidasFundForkTest is Test {
     wrappedShare2.initialize(owner, owner, MGLOBAL, "wmGLOBAL2", "Wrapped mGLOBAL 2");
 
     MidasFund fund2 = MidasFund(
-      factory.createFund(
-        owner,
-        address(this),
-        DEPOSIT_VAULT,
-        REDEMPTION_VAULT_AAVE,
-        address(wrappedShare2),
-        USDC,
-        SettlementMode.INSTANT,
-        SettlementMode.INSTANT
-      )
+      factory.createFund(owner, address(this), DEPOSIT_VAULT, REDEMPTION_VAULT_AAVE, address(wrappedShare2), USDC)
     );
 
     Order memory order = _depositOrder(DEPOSIT_AMOUNT, _haircut(_expectedDepositShares(DEPOSIT_AMOUNT)));
@@ -414,13 +357,15 @@ contract MidasFundForkTest is Test {
     return amount * 9990 / BPS;
   }
 
-  /// @dev Executes a full instant deposit cycle (create → commit → unlock) and returns
-  ///      the wrapped shares received.
+  /// @dev Executes a full instant deposit cycle (create → commit → confirm holdback →
+  ///      unlock) and returns the wrapped shares received.
   function _doFullDeposit(uint256 depositAmount) internal returns (uint256 shares) {
     Order memory order = _depositOrder(depositAmount, _haircut(_expectedDepositShares(depositAmount)));
     fund.create(order);
     IERC20(USDC).approve(address(fund), order.input);
     fund.commit(order);
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
     (, shares) = fund.unlock(order);
   }
 

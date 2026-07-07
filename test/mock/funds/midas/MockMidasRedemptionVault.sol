@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import {IMidasRedemptionVault} from "src/interfaces/integrations/midas/IMidasRedemptionVault.sol";
-import {MidasRequestStatus} from "src/interfaces/integrations/midas/IMidasVault.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 import {MockERC20} from "../../MockERC20.sol";
@@ -13,10 +12,7 @@ import {MockMidasDataFeed} from "./MockMidasDataFeed.sol";
 ///      - redeemInstant pulls and burns `amountMTokenIn` mToken from the caller and
 ///        synchronously pays out `amountMTokenIn * mTokenRate / tokenOutRate` (minus the
 ///        optional instant fee) in tokenOut native decimals, enforcing `minReceiveAmount`.
-///      - redeemRequest escrows the mToken in the vault and stores a PENDING request.
-///        Test helpers approve (burn escrow + push tokenOut to the requester) or reject
-///        the request. Rejections keep the mToken escrowed (mirroring Midas); use
-///        `withdrawToken` to simulate the off-band refund performed by the Midas admin.
+///      - `withdrawToken` simulates the off-band refund performed by the Midas admin.
 contract MockMidasRedemptionVault is IMidasRedemptionVault {
   using SafeTransferLib for address;
 
@@ -31,15 +27,6 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
     bool stable;
   }
 
-  struct RedeemRequest {
-    address sender;
-    address tokenOut;
-    MidasRequestStatus status;
-    uint256 amountMToken;
-    uint256 mTokenRate;
-    uint256 tokenOutRate;
-  }
-
   address internal _mToken;
   address internal _mTokenDataFeed;
   address internal _accessControl;
@@ -50,11 +37,9 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
   uint256 internal _minAmount;
   uint256 internal _instantFee;
   uint256 internal _instantDailyLimit = type(uint256).max;
-  uint256 internal _requestIdCounter = 1;
 
   mapping(bytes4 => bool) internal _fnPaused;
   mapping(address => TokenConfig) internal _tokensConfig;
-  mapping(uint256 => RedeemRequest) internal _redeemRequests;
 
   constructor(address mToken_, address mTokenDataFeed_, address accessControl_) {
     _mToken = mToken_;
@@ -116,10 +101,6 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
     return _instantDailyLimit;
   }
 
-  function currentRequestId() external view override returns (uint256) {
-    return _requestIdCounter;
-  }
-
   function tokensReceiver() external view override returns (address) {
     return address(this);
   }
@@ -139,60 +120,9 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
     _redeemInstant(tokenOut, amountMTokenIn, minReceiveAmount, recipient);
   }
 
-  function redeemRequest(address tokenOut, uint256 amountMTokenIn) external override returns (uint256 requestId) {
-    return _redeemRequest(tokenOut, amountMTokenIn, msg.sender);
-  }
-
-  function redeemRequest(address tokenOut, uint256 amountMTokenIn, address recipient)
-    external
-    override
-    returns (uint256 requestId)
-  {
-    return _redeemRequest(tokenOut, amountMTokenIn, recipient);
-  }
-
-  function redeemFiatRequest(uint256 amountMTokenIn) external override returns (uint256 requestId) {
-    return _redeemRequest(address(0), amountMTokenIn, msg.sender);
-  }
-
-  function redeemRequests(uint256 requestId)
-    external
-    view
-    override
-    returns (
-      address sender,
-      address tokenOut,
-      MidasRequestStatus status,
-      uint256 amountMToken,
-      uint256 mTokenRate,
-      uint256 tokenOutRate
-    )
-  {
-    RedeemRequest storage request = _redeemRequests[requestId];
-    return
-      (request.sender, request.tokenOut, request.status, request.amountMToken, request.mTokenRate, request.tokenOutRate);
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       TEST HELPERS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Approves a PENDING redeem request: burns the escrowed mToken and pushes
-  ///      `amountTokenOut` (tokenOut native decimals) to the requester.
-  function approveRedeemRequest(uint256 requestId, uint256 amountTokenOut) external {
-    RedeemRequest storage request = _redeemRequests[requestId];
-    require(request.status == MidasRequestStatus.PENDING, "MockRedemptionVault: not pending");
-    request.status = MidasRequestStatus.PROCESSED;
-    MockERC20(_mToken).burn(address(this), request.amountMToken);
-    MockERC20(request.tokenOut).mint(request.sender, amountTokenOut);
-  }
-
-  /// @dev Rejects a PENDING redeem request. The escrowed mToken stays in the vault.
-  function rejectRedeemRequest(uint256 requestId) external {
-    RedeemRequest storage request = _redeemRequests[requestId];
-    require(request.status == MidasRequestStatus.PENDING, "MockRedemptionVault: not pending");
-    request.status = MidasRequestStatus.CANCELED;
-  }
 
   /// @dev Mirrors the Midas admin `withdrawToken` used for off-band refunds.
   function withdrawToken(address token, address to, uint256 amount) external {
@@ -250,24 +180,6 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
 
     uint256 scale = 10 ** (18 - MockERC20(tokenOut).decimals());
     MockERC20(tokenOut).mint(recipient, amountOutBase18 / scale);
-  }
-
-  function _redeemRequest(address tokenOut, uint256 amountMTokenIn, address recipient)
-    internal
-    returns (uint256 requestId)
-  {
-    require(!_paused, "MockRedemptionVault: paused");
-    _mToken.safeTransferFrom(msg.sender, address(this), amountMTokenIn);
-
-    requestId = _requestIdCounter++;
-    _redeemRequests[requestId] = RedeemRequest({
-      sender: recipient,
-      tokenOut: tokenOut,
-      status: MidasRequestStatus.PENDING,
-      amountMToken: amountMTokenIn,
-      mTokenRate: _mTokenRate(),
-      tokenOutRate: tokenOut == address(0) ? _BASE18 : _tokenOutRate(tokenOut)
-    });
   }
 
   function _tokenOutRate(address tokenOut) internal view returns (uint256) {

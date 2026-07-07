@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import {IMidasDepositVault} from "src/interfaces/integrations/midas/IMidasDepositVault.sol";
-import {MidasRequestStatus} from "src/interfaces/integrations/midas/IMidasVault.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 import {MockERC20} from "../../MockERC20.sol";
@@ -13,10 +12,7 @@ import {MockMidasDataFeed} from "./MockMidasDataFeed.sol";
 ///      - depositInstant pulls `amountToken / scale` tokenIn (native decimals) from the caller
 ///        and synchronously mints `amountToken * tokenInRate / mTokenRate` mToken
 ///        (minus the optional instant fee), enforcing `minReceiveAmount`.
-///      - depositRequest pulls tokenIn and stores a PENDING request. Test helpers
-///        approve (mint mToken to the requester) or reject the request. Rejections are
-///        NOT refunded on-chain (mirroring Midas); use `withdrawToken` to simulate the
-///        off-band refund performed by the Midas admin.
+///      - `withdrawToken` simulates the off-band refund performed by the Midas admin.
 contract MockMidasDepositVault is IMidasDepositVault {
   using SafeTransferLib for address;
 
@@ -31,16 +27,6 @@ contract MockMidasDepositVault is IMidasDepositVault {
     bool stable;
   }
 
-  struct MintRequest {
-    address sender;
-    address tokenIn;
-    MidasRequestStatus status;
-    uint256 depositedUsdAmount;
-    uint256 usdAmountWithoutFees;
-    uint256 tokenOutRate;
-    uint256 mTokenAmount;
-  }
-
   address internal _mToken;
   address internal _mTokenDataFeed;
   address internal _accessControl;
@@ -52,13 +38,11 @@ contract MockMidasDepositVault is IMidasDepositVault {
   uint256 internal _instantFee;
   uint256 internal _instantDailyLimit = type(uint256).max;
   uint256 internal _minMTokenAmountForFirstDeposit;
-  uint256 internal _requestIdCounter = 1;
 
   bytes32 public lastReferrerId;
 
   mapping(bytes4 => bool) internal _fnPaused;
   mapping(address => TokenConfig) internal _tokensConfig;
-  mapping(uint256 => MintRequest) internal _mintRequests;
   mapping(address => uint256) internal _totalMinted;
 
   constructor(address mToken_, address mTokenDataFeed_, address accessControl_) {
@@ -121,10 +105,6 @@ contract MockMidasDepositVault is IMidasDepositVault {
     return _instantDailyLimit;
   }
 
-  function currentRequestId() external view override returns (uint256) {
-    return _requestIdCounter;
-  }
-
   function tokensReceiver() external view override returns (address) {
     return address(this);
   }
@@ -150,46 +130,6 @@ contract MockMidasDepositVault is IMidasDepositVault {
     _depositInstant(tokenIn, amountToken, minReceiveAmount, referrerId, recipient);
   }
 
-  function depositRequest(address tokenIn, uint256 amountToken, bytes32 referrerId)
-    external
-    override
-    returns (uint256 requestId)
-  {
-    return _depositRequest(tokenIn, amountToken, referrerId, msg.sender);
-  }
-
-  function depositRequest(address tokenIn, uint256 amountToken, bytes32 referrerId, address recipient)
-    external
-    override
-    returns (uint256 requestId)
-  {
-    return _depositRequest(tokenIn, amountToken, referrerId, recipient);
-  }
-
-  function mintRequests(uint256 requestId)
-    external
-    view
-    override
-    returns (
-      address sender,
-      address tokenIn,
-      MidasRequestStatus status,
-      uint256 depositedUsdAmount,
-      uint256 usdAmountWithoutFees,
-      uint256 tokenOutRate
-    )
-  {
-    MintRequest storage request = _mintRequests[requestId];
-    return (
-      request.sender,
-      request.tokenIn,
-      request.status,
-      request.depositedUsdAmount,
-      request.usdAmountWithoutFees,
-      request.tokenOutRate
-    );
-  }
-
   function minMTokenAmountForFirstDeposit() external view override returns (uint256) {
     return _minMTokenAmountForFirstDeposit;
   }
@@ -201,22 +141,6 @@ contract MockMidasDepositVault is IMidasDepositVault {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       TEST HELPERS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Approves a PENDING mint request: mints the snapshotted mToken amount to the requester.
-  function approveDepositRequest(uint256 requestId) external {
-    MintRequest storage request = _mintRequests[requestId];
-    require(request.status == MidasRequestStatus.PENDING, "MockDepositVault: not pending");
-    request.status = MidasRequestStatus.PROCESSED;
-    MockERC20(_mToken).mint(request.sender, request.mTokenAmount);
-    _totalMinted[request.sender] += request.mTokenAmount;
-  }
-
-  /// @dev Rejects a PENDING mint request. The deposited tokenIn is NOT refunded on-chain.
-  function rejectDepositRequest(uint256 requestId) external {
-    MintRequest storage request = _mintRequests[requestId];
-    require(request.status == MidasRequestStatus.PENDING, "MockDepositVault: not pending");
-    request.status = MidasRequestStatus.CANCELED;
-  }
 
   /// @dev Mirrors the Midas admin `withdrawToken` used for off-band refunds.
   function withdrawToken(address token, address to, uint256 amount) external {
@@ -282,30 +206,6 @@ contract MockMidasDepositVault is IMidasDepositVault {
 
     MockERC20(_mToken).mint(recipient, mintAmount);
     _totalMinted[recipient] += mintAmount;
-  }
-
-  function _depositRequest(address tokenIn, uint256 amountToken, bytes32 referrerId, address recipient)
-    internal
-    returns (uint256 requestId)
-  {
-    require(!_paused, "MockDepositVault: paused");
-    lastReferrerId = referrerId;
-    _pullTokenIn(tokenIn, amountToken);
-
-    uint256 tokenInRate = _tokenInRate(tokenIn);
-    uint256 mTokenRate = _mTokenRate();
-    uint256 usdAmount = amountToken * tokenInRate / _BASE18;
-
-    requestId = _requestIdCounter++;
-    _mintRequests[requestId] = MintRequest({
-      sender: recipient,
-      tokenIn: tokenIn,
-      status: MidasRequestStatus.PENDING,
-      depositedUsdAmount: usdAmount,
-      usdAmountWithoutFees: usdAmount,
-      tokenOutRate: mTokenRate,
-      mTokenAmount: amountToken * tokenInRate / mTokenRate
-    });
   }
 
   /// @dev Pulls `amountToken` (base-18) from the caller, converted to tokenIn native decimals.

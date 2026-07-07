@@ -84,6 +84,9 @@ library LibFundsErrors {
   /// @param token The unsupported token address.
   error TokenNotSupported(address token);
 
+  /// @notice Thrown when confirming a holdback that has already been confirmed.
+  error HoldbackNotPending();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

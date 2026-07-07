@@ -1,17 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-/// @notice The status of a Midas deposit/redemption request.
-/// @dev Mirrors Midas' `RequestStatus` enum (Pending, Processed, Canceled).
-enum MidasRequestStatus {
-  /// @notice The request is awaiting processing by a Midas vault admin.
-  PENDING,
-  /// @notice The request has been approved and settled.
-  PROCESSED,
-  /// @notice The request has been rejected by a Midas vault admin.
-  CANCELED
-}
-
 /// @title IMidasVault
 /// @author 3F Protocol
 /// @notice Shared interface of Midas `ManageableVault` (base of both DepositVault and RedemptionVault).
@@ -60,9 +49,6 @@ interface IMidasVault {
 
   /// @notice Returns the base-18 mToken daily limit for instant operations.
   function instantDailyLimit() external view returns (uint256);
-
-  /// @notice Returns the id that will be assigned to the next request.
-  function currentRequestId() external view returns (uint256);
 
   /// @notice Returns the address receiving deposited payment tokens.
   function tokensReceiver() external view returns (address);

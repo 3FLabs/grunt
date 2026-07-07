@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {IMidasVault, MidasRequestStatus} from "./IMidasVault.sol";
+import {IMidasVault} from "./IMidasVault.sol";
 
 /// @title IMidasDepositVault
 /// @author 3F Protocol
@@ -24,39 +24,6 @@ interface IMidasDepositVault is IMidasVault {
     bytes32 referrerId,
     address recipient
   ) external;
-
-  /// @notice Transfers `tokenIn` now and requests an mToken mint, settled later by a vault admin.
-  /// @dev The mToken is minted directly to the requester when the admin approves the request.
-  ///      A rejected request is NOT refunded on-chain (the payment token already left at request time).
-  /// @param tokenIn The payment token to deposit.
-  /// @param amountToken The base-18 amount of `tokenIn` to deposit (fee inclusive).
-  /// @param referrerId The Midas referrer id (bytes32(0) if none).
-  /// @return requestId The id of the created mint request.
-  function depositRequest(address tokenIn, uint256 amountToken, bytes32 referrerId) external returns (uint256 requestId);
-
-  /// @notice Same as `depositRequest` but the mToken is minted to `recipient` on approval.
-  function depositRequest(address tokenIn, uint256 amountToken, bytes32 referrerId, address recipient)
-    external
-    returns (uint256 requestId);
-
-  /// @notice Returns the mint request stored for `requestId`.
-  /// @return sender The mToken recipient of the request.
-  /// @return tokenIn The payment token deposited.
-  /// @return status The request status (PENDING, PROCESSED or CANCELED).
-  /// @return depositedUsdAmount The base-18 USD value deposited (fee inclusive).
-  /// @return usdAmountWithoutFees The base-18 USD value net of fees.
-  /// @return tokenOutRate The base-18 mToken/USD rate snapshotted at request time.
-  function mintRequests(uint256 requestId)
-    external
-    view
-    returns (
-      address sender,
-      address tokenIn,
-      MidasRequestStatus status,
-      uint256 depositedUsdAmount,
-      uint256 usdAmountWithoutFees,
-      uint256 tokenOutRate
-    );
 
   /// @notice Returns the extra base-18 mToken floor applied to a user's first deposit.
   function minMTokenAmountForFirstDeposit() external view returns (uint256);
