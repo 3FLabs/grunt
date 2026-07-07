@@ -5,6 +5,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
@@ -41,6 +42,7 @@ import {BPS} from "../../libs/Constants.sol";
 contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
+  using SafeCastLib for uint256;
   using LibChecks for address;
   using LibChecks for uint256;
   using LibOrder for Order;
@@ -85,8 +87,8 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     address asset;
     address wrappedShare;
     bytes32 currentOrderId;
-    uint256 depositReceived;
-    uint256 pendingRedeemShares;
+    uint128 depositReceived;
+    uint128 pendingRedeemShares;
     uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
@@ -257,14 +259,14 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
       _usd3.safeApproveWithRetry(_susd3, _usd3Out);
       uint256 _susd3Before = IERC20(_susd3).balanceOf(address(this));
       ISUSD3(_susd3).deposit(_usd3Out, address(this));
-      $.depositReceived = IERC20(_susd3).balanceOf(address(this)) - _susd3Before;
+      $.depositReceived = (IERC20(_susd3).balanceOf(address(this)) - _susd3Before).toUint128();
       _usd3.safeApproveWithRetry(_susd3, 0);
     } else {
       // Burn wrapped sUSD3 from depositor (unwraps to sUSD3 held by this contract), then start the
       // cooldown on the held shares (no approval/movement needed, owner == this contract).
       IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
       ISUSD3(_susd3).startCooldown(order.input);
-      $.pendingRedeemShares = order.input;
+      $.pendingRedeemShares = order.input.toUint128();
     }
 
     $.internalState = State.PROCESSING;
@@ -502,7 +504,7 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     _asset.safeTransfer(receiver, _amount);
 
     uint256 _left = _remaining - _toRedeem;
-    $.pendingRedeemShares = _left;
+    $.pendingRedeemShares = _left.toUint128();
 
     return (_left == 0 ? State.ENDED : State.PROCESSING, _amount);
   }

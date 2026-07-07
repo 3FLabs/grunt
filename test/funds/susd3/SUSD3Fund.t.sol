@@ -31,6 +31,7 @@ contract SUSD3FundTest is Test {
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant MIN_DEPOSIT = 1000e6;
   uint256 private constant COOLDOWN = 30 days;
+  uint256 private constant SUSD3_MAIN_STORAGE_SLOT = 0xd63cc11a02da632fb5b68467564e500e196a1d31a6574f58f51073894e8f0b00;
 
   // SUSD3Fund roles
   uint256 private constant OPERATOR_ROLE = 1 << 0;
@@ -105,6 +106,12 @@ contract SUSD3FundTest is Test {
     (, shares) = fund.unlock(o);
   }
 
+  function _packedPendingAmounts() internal view returns (uint128 depositReceived, uint128 pendingRedeemShares) {
+    uint256 raw = uint256(vm.load(address(fund), bytes32(SUSD3_MAIN_STORAGE_SLOT + 5)));
+    depositReceived = uint128(raw);
+    pendingRedeemShares = uint128(raw >> 128);
+  }
+
   /*//////////////////////////////////////////////////////////////
                           INITIALIZATION
   //////////////////////////////////////////////////////////////*/
@@ -166,6 +173,32 @@ contract SUSD3FundTest is Test {
     assertEq(susd3.balanceOf(address(fund)), 0, "no susd3 dust");
     // Wrapper custodies the sUSD3 1:1.
     assertEq(susd3.balanceOf(address(wrappedShare)), amount, "wrapper backing");
+  }
+
+  function test_Storage_DepositReceivedAndPendingRedeemSharesArePacked() public {
+    uint256 amount = 2000e6;
+    Order memory o = _depositOrder(amount, amount, "d1");
+
+    usdc.mint(address(this), amount);
+    usdc.approve(address(fund), amount);
+
+    fund.create(o);
+    fund.commit(o);
+
+    (uint128 depositReceived, uint128 pendingRedeemShares) = _packedPendingAmounts();
+    assertEq(uint256(depositReceived), amount, "depositReceived lower 128");
+    assertEq(uint256(pendingRedeemShares), 0, "pendingRedeemShares upper 128");
+
+    fund.unlock(o);
+
+    Order memory r = _redeemOrder(amount, amount, "r1");
+    wrappedShare.approve(address(fund), amount);
+    fund.create(r);
+    fund.commit(r);
+
+    (depositReceived, pendingRedeemShares) = _packedPendingAmounts();
+    assertEq(uint256(depositReceived), 0, "depositReceived reset lower 128");
+    assertEq(uint256(pendingRedeemShares), amount, "pendingRedeemShares upper 128");
   }
 
   function test_Deposit_PricePerShareNotOne() public {
