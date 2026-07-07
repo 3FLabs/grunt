@@ -26,6 +26,7 @@ contract SUSD3FundTest is Test {
   event OrderCanceled(bytes32 indexed orderId, Mode mode, address indexed owner);
   event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
   event RedeemCanceled(bytes32 indexed orderId);
+  event OrderResolved(bytes32 indexed orderId, uint256 input, uint256 output, address indexed caller);
 
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant MIN_DEPOSIT = 1000e6;
@@ -386,6 +387,64 @@ contract SUSD3FundTest is Test {
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.cancelRedeem(o);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                            RESOLVE
+  //////////////////////////////////////////////////////////////*/
+
+  function test_Resolve_StuckDeposit() public {
+    uint256 amount = 2000e6;
+    uint256 received = susd3.convertToShares(usd3.convertToShares(amount)); // 2000e6 at 1:1
+
+    // Optimistically high output → the deposit yields fewer shares than requested → order sticks.
+    Order memory o = _depositOrder(amount, received + 500e6, "d1");
+    usdc.mint(address(this), amount);
+    usdc.approve(address(fund), amount);
+    fund.create(o);
+    fund.commit(o);
+
+    assertEq(uint256(fund.state(o)), uint256(State.PROCESSING), "shortfall -> processing");
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(o);
+
+    // Operator lowers the threshold to the actual received amount → unstuck.
+    bytes32 id = o.toId(address(fund));
+    vm.expectEmit(true, false, false, true, address(fund));
+    emit OrderResolved(id, amount, received, operator);
+    vm.prank(operator);
+    fund.resolve(o, amount, received);
+
+    assertEq(uint256(fund.state(o)), uint256(State.UNLOCKING), "resolved -> unlocking");
+    (State s, uint256 out) = fund.unlock(o);
+    assertEq(uint256(s), uint256(State.ENDED), "ended");
+    assertEq(out, received, "delivered actual shares");
+    assertEq(wrappedShare.balanceOf(address(this)), received, "wsUSD3 to receiver");
+  }
+
+  function test_Resolve_RevertsWhenNotProcessing() public {
+    Order memory o = _depositOrder(2000e6, 2000e6, "d1");
+    fund.create(o); // ACCEPTED, not PROCESSING
+    vm.prank(operator);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
+    fund.resolve(o, 2000e6, 1000e6);
+  }
+
+  function test_Resolve_OnlyOperatorOrOwner() public {
+    uint256 amount = 2000e6;
+    Order memory o = _depositOrder(amount, amount, "d1");
+    usdc.mint(address(this), amount);
+    usdc.approve(address(fund), amount);
+    fund.create(o);
+    fund.commit(o);
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.resolve(o, amount, amount);
+
+    // Owner can also call it.
+    vm.prank(owner);
+    fund.resolve(o, amount, amount);
   }
 
   /*//////////////////////////////////////////////////////////////

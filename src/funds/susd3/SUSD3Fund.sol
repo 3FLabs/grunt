@@ -32,7 +32,8 @@ import {BPS} from "../../libs/Constants.sol";
 ///        claims once the cooldown has matured (`sUSD3.maxRedeem(this) > 0`).
 ///      - Recovery is operator-driven: cancelRedeem() cancels the cooldown (PROCESSING -> RECOVERING),
 ///        then recover() re-wraps the still-held sUSD3 back to the receiver. Only REDEEM orders recover;
-///        deposits are atomic and never enter RECOVERING.
+///        deposits are atomic and never enter RECOVERING. A DEPOSIT that yields fewer sUSD3 shares than
+///        `order.output` stays in PROCESSING until an operator lowers the threshold via resolve().
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may
 ///        differ from the state returned by the public state() function, which queries sUSD3 to detect
 ///        the PROCESSING -> UNLOCKING transition.
@@ -68,20 +69,24 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   /// @param usd3 The intermediate USD3 strategy address (sUSD3's underlying asset).
   /// @param asset The base accounting asset (USDC), USD3's underlying.
   /// @param wrappedShare The WrappedAsset contract that wraps the sUSD3 share token.
+  /// @param hasResolvedAmounts Whether the operator has overridden the DEPOSIT output threshold via resolve().
   /// @param currentOrderId The order ID of the current (or most recent) order.
   /// @param depositReceived The sUSD3 shares received during commit() for a DEPOSIT order.
   /// @param pendingRedeemShares The sUSD3 shares the fund holds for the live REDEEM order (source of
   ///        truth for the redeem remainder across partial unlocks and recovery).
+  /// @param resolvedOutput The output threshold set by resolve() (used when hasResolvedAmounts is true).
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
   struct SUSD3FundStorage {
     address susd3;
     State internalState;
+    bool hasResolvedAmounts;
     address usd3;
     address asset;
     address wrappedShare;
     bytes32 currentOrderId;
     uint256 depositReceived;
     uint256 pendingRedeemShares;
+    uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
   }
 
@@ -189,6 +194,8 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     $.internalState = State.ACCEPTED;
     $.depositReceived = 0;
     $.pendingRedeemShares = 0;
+    $.hasResolvedAmounts = false;
+    $.resolvedOutput = 0;
 
     emit OrderCreated(_orderId, order.mode, order.owner, order.receiver, order.input, order.output);
 
@@ -336,6 +343,24 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     emit RedeemCanceled(_orderId);
   }
 
+  /// @inheritdoc ISUSD3Fund
+  /// @dev Overrides the DEPOSIT output threshold for a stuck order. Only affects the DEPOSIT branch of
+  ///      state() (redeem uses `sUSD3.maxRedeem`, not a threshold). Does not change the order identity.
+  function resolve(Order calldata order, uint256 input, uint256 output)
+    external
+    override
+    onlyOwnerOrRoles(OPERATOR_ROLE)
+  {
+    SUSD3FundStorage storage $ = _susd3FundStorage();
+    if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
+    if (order.toId(address(this)) != $.currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
+
+    $.hasResolvedAmounts = true;
+    $.resolvedOutput = output;
+
+    emit OrderResolved($.currentOrderId, input, output, msg.sender);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -474,9 +499,11 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   ///      Queries sUSD3 to determine the PROCESSING -> UNLOCKING transition.
   ///
   ///      For PROCESSING + DEPOSIT:
-  ///      - UNLOCKING once the fund holds the staked sUSD3 (`depositReceived > 0`) AND any sUSD3
-  ///        deposit lock has elapsed (`block.timestamp >= sUSD3.lockedUntil(this)`). Immediate when no
-  ///        lock is configured; otherwise deferred until the lock expires.
+  ///      - UNLOCKING once the received sUSD3 meets the output threshold
+  ///        (`depositReceived >= hasResolvedAmounts ? resolvedOutput : order.output`) AND any sUSD3
+  ///        deposit lock has elapsed (`block.timestamp >= sUSD3.lockedUntil(this)`). A shortfall below
+  ///        the threshold (e.g. an adverse rate move between create and commit) keeps the order in
+  ///        PROCESSING until an operator lowers the threshold via resolve().
   ///
   ///      For PROCESSING + REDEEM:
   ///      - UNLOCKING once `sUSD3.maxRedeem(this) > 0`, which is true only after the cooldown has
@@ -490,8 +517,9 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
 
     if (_internalState == State.PROCESSING) {
       if (order.mode == Mode.DEPOSIT) {
+        uint256 _expectedOutput = $.hasResolvedAmounts ? $.resolvedOutput : order.output;
         uint256 _received = $.depositReceived;
-        bool _ready = _received > 0 && block.timestamp >= ISUSD3($.susd3).lockedUntil(address(this));
+        bool _ready = _received >= _expectedOutput && block.timestamp >= ISUSD3($.susd3).lockedUntil(address(this));
         return _ready ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
       }
       return ISUSD3($.susd3).maxRedeem(address(this)) > 0 ? (State.UNLOCKING, 0) : (State.PROCESSING, 0);

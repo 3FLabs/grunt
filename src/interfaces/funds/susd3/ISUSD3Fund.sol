@@ -57,6 +57,13 @@ interface ISUSD3Fund is IFund {
   /// @param orderId The unique identifier of the order moved to RECOVERING.
   event RedeemCanceled(bytes32 indexed orderId);
 
+  /// @notice Emitted when an operator resolves a stuck order by overriding its output threshold.
+  /// @param orderId The unique identifier of the resolved order.
+  /// @param input The new input amount set by the operator.
+  /// @param output The new output amount set by the operator.
+  /// @param caller The address that resolved the order.
+  event OrderResolved(bytes32 indexed orderId, uint256 input, uint256 output, address indexed caller);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -80,6 +87,17 @@ interface ISUSD3Fund is IFund {
   ///      the depositor calls `recover()` to re-wrap the held sUSD3 back to the receiver.
   /// @param order The redeem order to abort.
   function cancelRedeem(Order calldata order) external;
+
+  /// @notice Resolves the current order by overriding the output threshold used to detect UNLOCKING.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner. Must be in PROCESSING
+  ///      state for the current order. Used to unstick a DEPOSIT whose received sUSD3 shares fell short
+  ///      of `order.output` (e.g. an adverse rate move between create and commit): the resolved `output`
+  ///      becomes the effective threshold that `depositReceived` is compared against. Does not change
+  ///      the order identity; can be called multiple times, always overriding the previous resolution.
+  /// @param order The order to resolve (must match the current order id).
+  /// @param input The new input amount (emitted for off-chain tracking; not stored).
+  /// @param output The new output threshold.
+  function resolve(Order calldata order, uint256 input, uint256 output) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
