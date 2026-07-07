@@ -70,7 +70,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      after a drawdown: the reference stays at the old peak instead of resetting down.
   ///      Crystallizing on a positive basis even when the configured rate is zero (or no recipient
   ///      is set) mirrors the pre-existing behavior that gains realised before fees are enabled
-  ///      are never retroactively charged.
+  ///      are never retroactively charged. For a permanent loss (a drawdown or liquidation that
+  ///      will never recover past the old mark) the owner can force-advance the reference to the
+  ///      current state via `resetPerformanceReference` in `PositionManagerAdmin`.
   ///
   ///      The management fee assets deducted from the basis at crystallization cover only the
   ///      current accrual interval (`lastFeeAccrualTimestamp` advances every accrual). Management

@@ -44,6 +44,11 @@ interface IPositionManagerAdmin {
   /// @param performanceFee The performance fee rate
   event FeeDataSet(address feeRecipient, uint24 managementFee, uint24 performanceFee);
 
+  /// @notice Emitted when the performance reference is force-advanced to the current state.
+  /// @param lastTotalAssets The new reference NAV
+  /// @param lastDebt The new reference debt
+  event PerformanceReferenceReset(uint256 lastTotalAssets, uint256 lastDebt);
+
   /// @notice Emitted when a borrow module is added to the whitelist.
   /// @param module The address of the borrow module added
   event BorrowModuleAdded(address indexed module);
@@ -103,6 +108,21 @@ interface IPositionManagerAdmin {
   ///        levered-slice basis `LTV_prev * currentCollat - currentDebt`, less the management fee accrued
   ///        over the same period. See `FeeData` in `LibStorage` for the full derivation.
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
+
+  /// @notice Force-advances the performance reference (high-water mark) to the current state.
+  /// @dev Only callable by the owner. Escape hatch for a permanent drawdown or a realized
+  ///      liquidation loss: the held reference would otherwise suppress performance fees until the
+  ///      pool recovers past the old mark, which may never happen. Fees accrue first, so a positive
+  ///      pending basis crystallizes to the current recipient at the configured rate; the reset
+  ///      itself never charges past gains, it forgives the carried negative basis and future gains
+  ///      are charged from the current state onward.
+  ///
+  ///      Timing: the reset writes off ALL carried basis, including the debt interest accrued
+  ///      since the last crystallization (not just the loss being accepted), and the next positive
+  ///      accrual then overcharges by exactly that forgiven carry. Call this as soon as possible
+  ///      after a positive performance fee charge (when the pending carry is smallest), not deep
+  ///      into a flat-quote period.
+  function resetPerformanceReference() external;
 
   /// @notice Sets the rebalance configuration (max loss and cooldown).
   /// @dev Only callable by the owner. maxRebalanceLoss limits how much totalAssets can decrease

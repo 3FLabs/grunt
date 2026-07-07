@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
-import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {IPositionManagerAdmin, WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {
   RebalancingData,
   RebalancingOperation,
@@ -649,5 +649,151 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _accrue();
     assertEq(positionManager.balanceOf(feeRecipient), mgmtShares, "management fee minted while held");
     assertEq(_lastFeeAccrualTimestamp(), block.timestamp, "timestamp advances on every accrual");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              OWNER RESET (ESCAPE HATCH)                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice After a drawdown the owner can force-advance the reference to the current state,
+  ///         forgiving the carried negative basis so fees resume on gains from the trough onward
+  ///         (a permanent loss would otherwise suppress performance fees indefinitely).
+  function test_reset_forgivesCarryAfterDrawdown() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Crystallize at a peak, then draw down: the reference holds at the peak.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+    _accrue();
+    uint256 feeSharesAtPeak = positionManager.balanceOf(feeRecipient);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 95 / 100);
+    vm.warp(block.timestamp + 10 days);
+    assertLt(_pendingBasis(), 0, "carried basis is negative in the trough");
+
+    // Owner accepts the loss and resets: the reference re-anchors at the trough.
+    uint256 expectedAssets = positionManager.totalAssets();
+    uint256 expectedDebt = positionManager.debtAmount();
+    vm.expectEmit();
+    emit IPositionManagerAdmin.PerformanceReferenceReset(expectedAssets, expectedDebt);
+    vm.prank(owner);
+    positionManager.resetPerformanceReference();
+    assertEq(_lastTotalAssets(), expectedAssets, "reference NAV re-anchored at the current state");
+    assertEq(positionManager.lastDebt(), expectedDebt, "reference debt re-anchored at the current state");
+    assertEq(positionManager.balanceOf(feeRecipient), feeSharesAtPeak, "the reset itself mints nothing");
+
+    // A gain that stays below the old peak now crystallizes against the reset reference.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "gain above the reset reference produces a positive basis");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "fee charged from the trough onward");
+    assertGt(perfShares, 0, "fees resume without recovering past the old mark");
+  }
+
+  /// @notice The reset is owner-only.
+  function test_reset_onlyOwner() public {
+    vm.prank(minter);
+    vm.expectRevert();
+    positionManager.resetPerformanceReference();
+  }
+
+  /// @notice A positive pending basis crystallizes through the accrual inside the reset, at the
+  ///         configured rate and to the current recipient; the reset never forgives or double
+  ///         charges a pending gain.
+  function test_reset_positiveBasisCrystallizesBeforeReset() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
+    (,,, uint256 perfPending) = positionManager.pendingFees();
+    assertGt(perfPending, 0, "gain pending before the reset");
+
+    vm.prank(owner);
+    positionManager.resetPerformanceReference();
+    assertEq(positionManager.balanceOf(feeRecipient), perfPending, "pending gain crystallized by the accrual");
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference NAV at the current state");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt at the current state");
+
+    // Nothing left to charge at the same state.
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), perfPending, "no double charge after the reset");
+  }
+
+  /// @notice The management fee (time-based) settles through the accrual inside the reset and the
+  ///         accrual timestamp advances; the reset only touches the performance reference.
+  function test_reset_managementFeeSettlesAndTimestampAdvances() public {
+    _setFees(MGMT_FEE, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Drawdown plus elapsed time: the perf basis is negative but a management fee is pending.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 95 / 100);
+    vm.warp(block.timestamp + 30 days);
+    (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
+    assertGt(mgmtPending, 0, "management fee pending before the reset");
+    assertEq(perfPending, 0, "no perf fee pending in the trough");
+
+    vm.prank(owner);
+    positionManager.resetPerformanceReference();
+    assertEq(positionManager.balanceOf(feeRecipient), mgmtPending, "management fee settled through the reset");
+    assertEq(_lastFeeAccrualTimestamp(), block.timestamp, "accrual timestamp advances with the reset");
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference NAV re-anchored");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt re-anchored");
+  }
+
+  /// @notice A reset during PARTIAL bad debt anchors on the reduced good-debt universe: the
+  ///         excluded module's later recovery re-enters the basis as new gain and is charged
+  ///         (the reset accepted that module's loss).
+  function test_reset_duringPartialBadDebtAnchorsOnGoodDebtUniverse() public {
+    _setFees(0, PERF_FEE);
+
+    // Two modules at different LTVs: bp1 at 40%, bp2 at 68%.
+    SupplyQueueEntry[] memory queue1 = new SupplyQueueEntry[](1);
+    queue1[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue1);
+    _leveredDeposit(5_000e18, 2_000e18);
+
+    SupplyQueueEntry[] memory queue2 = new SupplyQueueEntry[](1);
+    queue2[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue2);
+    _leveredDeposit(5_000e18, 3_400e18);
+
+    // Price 0.65: bp2 (3_250 quoted vs 3_400 debt) is excluded, bp1 stays good.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 65 / 100);
+    vm.prank(owner);
+    positionManager.resetPerformanceReference();
+    assertEq(
+      positionManager.lastDebt(), borrowPosition1.totalBorrowed(), "reference anchors on the good-debt module only"
+    );
+    assertLt(positionManager.lastDebt(), positionManager.debtAmount(), "excluded debt stays out of the reference");
+
+    // Recovery: the excluded module re-enters above the reset reference and is charged as new gain.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    _accrue();
+    assertGt(positionManager.balanceOf(feeRecipient), 0, "re-entry above the reset reference is charged");
+  }
+
+  /// @notice A reset while every position is underwater writes the bootstrap sentinel: the next
+  ///         accrual reseeds the reference at the state it observes, skipping the performance fee.
+  function test_reset_duringBadDebtWritesSentinel() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
+    assertEq(positionManager.totalAssets(), 0, "all positions excluded as bad debt");
+    vm.prank(owner);
+    positionManager.resetPerformanceReference();
+    assertEq(positionManager.lastDebt(), 0, "sentinel written while underwater");
+    assertEq(_lastTotalAssets(), 0, "reference NAV zeroed while underwater");
+
+    // Recovery reseeds through the sentinel without charging, then gains charge normally.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "reseeding accrual skips the perf fee");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference reseeded");
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+    _accrue();
+    assertGt(positionManager.balanceOf(feeRecipient), 0, "post-reseed gains charge normally");
   }
 }

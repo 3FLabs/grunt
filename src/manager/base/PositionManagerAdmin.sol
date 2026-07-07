@@ -171,4 +171,23 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
     emit IPositionManagerAdmin.FeeDataSet(feeRecipient, managementFee, performanceFee);
   }
+
+  /// @inheritdoc IPositionManagerAdmin
+  /// @dev Accrues fees first: a positive pending basis crystallizes normally before the reference
+  ///      moves, so the reset never mints on past gains; it only forgives the carried negative
+  ///      basis going forward. The forgiven carry includes the debt interest accrued since the
+  ///      last crystallization, which the next positive accrual will no longer net (see the
+  ///      interface timing note: reset as soon as possible after a positive charge). While every
+  ///      position is excluded as bad debt the aggregates read (0, 0), so a reset writes the
+  ///      bootstrap sentinel and the next accrual reseeds the reference at whatever state it
+  ///      observes. When only some positions are excluded, the reset anchors on the reduced
+  ///      good-debt universe: an excluded module recovering later re-enters the basis as new gain
+  ///      and is charged (the reset accepted that module's loss).
+  function resetPerformanceReference() external override onlyOwner {
+    (uint256 currentTotalAssets, uint256 currentDebt) = _accrueFees();
+    PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
+    _storage.lastTotalAssets = currentTotalAssets;
+    _storage.lastDebt = currentDebt;
+    emit IPositionManagerAdmin.PerformanceReferenceReset(currentTotalAssets, currentDebt);
+  }
 }
