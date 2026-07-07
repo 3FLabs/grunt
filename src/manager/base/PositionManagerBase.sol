@@ -92,13 +92,15 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      performance fee for this period is zero and only the management fee accrues. The
   ///      `lastDebt` slot is seeded in `_accrueFees` from the current debt.
   ///
-  ///      Bad-debt recovery edge case: when every borrow module is underwater
-  ///      (`debt > collateral`), `LibView.totalAssets()` excludes them all, so an accrual snapshots
-  ///      `lastTotalAssets = 0` and `lastDebt = 0`. Because `lastDebt == 0` doubles as the bootstrap
-  ///      sentinel, the first accrual after a subsequent recovery skips the performance fee and only
-  ///      reseeds `lastDebt`. In effect, gains realised across the
-  ///      `good -> bad-debt checkpoint -> recovery` transition are not performance-fee charged;
-  ///      performance fees only apply to gains after the recovery checkpoint.
+  ///      Bad-debt episode: when every borrow module is underwater (`debt > collateral`),
+  ///      `LibView.totalAssets()` excludes them all and the aggregates are zero. The basis is then
+  ///      zero (not positive), so accruals hold the pre-episode reference, and flows that stay
+  ///      underwater on both sides hold it too (see `LibStorage.rebaseSnapshot`); a recovery is
+  ///      therefore measured against the pre-episode high-water mark, not forgiven. Only a flow
+  ///      that brings the pool back above water re-anchors the reference at its post-flow state,
+  ///      and gains recovered beyond that point are charged. `lastDebt == 0` still doubles as the
+  ///      bootstrap sentinel (reached via full repayment or the carry clamp in `rebaseSnapshot`):
+  ///      the first accrual after it skips the performance fee and reseeds the reference.
   /// @return totalAssets_ The current total assets across all borrow modules (`collateralQuoted - debt`)
   /// @return totalSupply_ The current total supply of shares (before fee minting)
   /// @return currentDebt The current aggregate debt across non-bad-debt positions

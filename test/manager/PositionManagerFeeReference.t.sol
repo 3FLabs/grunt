@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
+import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {
   RebalancingData,
@@ -210,6 +211,104 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
     _accrue();
     assertGt(positionManager.balanceOf(feeRecipient), 0, "gain above the pre-dip reference is charged");
+  }
+
+  /// @notice A flow executed while every position is underwater must hold the reference (there is
+  ///         no good-debt state to re-anchor on), so the recovery after the dip is still measured
+  ///         against the pre-dip high-water mark instead of being re-charged from the trough.
+  function test_badDebt_flowDuringDipHoldsReference() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    uint256 refDebt = positionManager.lastDebt();
+    uint256 refTotalAssets = _lastTotalAssets();
+
+    // Crash far below water: every position is excluded as bad debt.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
+    assertEq(positionManager.totalAssets(), 0, "all positions excluded as bad debt");
+
+    // A dust deposit during the dip is a flow through the rebase (it mints zero shares at zero
+    // NAV, i.e. a donation), and must not collapse the reference to the trough.
+    _leveredDeposit(1, 0);
+    assertEq(positionManager.lastDebt(), refDebt, "reference debt held across the underwater flow");
+    assertEq(_lastTotalAssets(), refTotalAssets, "reference NAV held across the underwater flow");
+
+    // Recovery back to the starting quote: still at the reference-implied high-water mark.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "recovery after the dip is not re-charged");
+
+    // A genuine gain above the pre-dip reference still crystallizes.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    _accrue();
+    assertGt(positionManager.balanceOf(feeRecipient), 0, "gain above the pre-dip reference is charged");
+  }
+
+  /// @notice Pins the documented limitation: a rescue flow that brings the pool back above water
+  ///         re-anchors the reference at the post-flow state (the pre-flow basis is not measurable
+  ///         against empty aggregates), so the recovery beyond that point is charged.
+  function test_badDebt_rescueFlowReanchorsAtPostFlowState() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Crash below water, then rescue by repaying 2_000 debt: 4_000 quoted vs 3_000 debt is back
+    // above water.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
+    uint256 repay = 2_000e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: repay
+    });
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: repay, operations: ops});
+    _mintDebt(rebalancer, repay);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), repay);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // Reference re-anchored at the post-rescue state.
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt re-anchored");
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference NAV re-anchored");
+  }
+
+  /// @notice Partial bad debt: one module dropping out of (and back into) the good-debt aggregate
+  ///         around a flow must not manufacture a spurious positive basis on its recovery.
+  function test_badDebt_partialModuleExclusionNoSpuriousFee() public {
+    _setFees(0, PERF_FEE);
+
+    // Two modules at different LTVs: bp1 at 40%, bp2 at 68%.
+    SupplyQueueEntry[] memory queue1 = new SupplyQueueEntry[](1);
+    queue1[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue1);
+    _leveredDeposit(5_000e18, 2_000e18);
+
+    SupplyQueueEntry[] memory queue2 = new SupplyQueueEntry[](1);
+    queue2[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue2);
+    _leveredDeposit(5_000e18, 3_400e18);
+
+    // Price 0.65: bp2 (3_250 quoted vs 3_400 debt) is excluded, bp1 stays good.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 65 / 100);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no fee on the partial drawdown");
+
+    // A flow against the reduced universe (routed to the healthy module).
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue1);
+    _leveredDeposit(100e18, 0);
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "flow does not crystallize");
+
+    // The excluded module re-enters the aggregates on recovery: no spurious positive basis.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    assertLe(_pendingBasis(), 0, "module re-entry does not manufacture a gain");
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no fee on the module re-entry");
+
+    // A genuine gain still crystallizes.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
+    _accrue();
+    assertGt(positionManager.balanceOf(feeRecipient), 0, "genuine gain above the reference charges");
   }
 
   /// @notice Bootstrap sentinel: a full debt repayment zeroes `lastDebt`; the next accrual must
@@ -432,6 +531,101 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
       mgmtPending + perfPending,
       "crystallizing accrual matches pendingFees"
     );
+  }
+
+  /// @notice A positive basis crystallizes at a zero rate while no fee recipient is set: the
+  ///         reference advances, so enabling fees later never retroactively charges prior gains.
+  function test_advance_noRecipientForgivesPriorGains() public {
+    // No fee data configured at all: feeRecipient is address(0).
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+
+    // Enabling fees accrues under the old (recipient-less) config first: the positive basis
+    // advances the reference without minting.
+    _setFees(0, PERF_FEE);
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no mint while the recipient was unset");
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference advanced at a zero rate");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt advanced");
+
+    // No new gains: nothing to charge under the newly enabled fee.
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "prior gains are not retroactively charged");
+
+    // Only gains made after enabling are charged.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 130 / 100);
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "post-enable gain produces a positive basis");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "fee covers only post-enable gains");
+  }
+
+  /// @notice A positive basis crystallizes at a zero rate while performanceFee == 0 (management
+  ///         fee only): the reference advances, so raising the rate later is not retroactive.
+  function test_advance_zeroPerformanceRateStillAdvances() public {
+    _setFees(MGMT_FEE, 0);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
+    vm.warp(block.timestamp + 10 days);
+    _accrue();
+
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference advanced despite zero perf rate");
+    uint256 mgmtOnlyShares = positionManager.balanceOf(feeRecipient);
+    assertGt(mgmtOnlyShares, 0, "management fee still minted");
+
+    // Raising the performance rate afterwards charges nothing for the already-advanced gain.
+    _setFees(MGMT_FEE, PERF_FEE);
+    (,,, uint256 perfPending) = positionManager.pendingFees();
+    assertEq(perfPending, 0, "prior gain is not charged after raising the rate");
+  }
+
+  /// @notice A small positive basis fully absorbed by the management-fee deduction still advances
+  ///         the reference (the gain is written off the high-water mark, not carried forward).
+  function test_advance_gainBelowManagementFeeStillAdvances() public {
+    // Route to the interest-free market so the debt stays fixed and the basis stays small.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, 2000); // 2% per year mgmt so the deduction dominates the tiny gain
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 1001 / 1000); // +0.1%: basis ~5e18
+    vm.warp(block.timestamp + 30 days); // mgmt deduction ~16e18 exceeds the basis
+
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "basis is positive");
+    (,,, uint256 perfPending) = positionManager.pendingFees();
+    assertEq(perfPending, 0, "perf fee fully absorbed by the mgmt deduction");
+
+    _accrue();
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference advanced despite zero perf mint");
+  }
+
+  /// @notice The fee-cap early return (management fee capped at totalAssets) mints nothing but
+  ///         still advances the reference on a positive basis.
+  function test_advance_feeCapEarlyReturnStillAdvances() public {
+    // Route to the interest-free market so the position survives a long dormancy.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, 2000);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Large gain + very long dormancy: the mgmt fee cap binds and the no-mint guard fires.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    vm.warp(block.timestamp + 100 * 365 days);
+
+    (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
+    assertEq(mgmtPending + perfPending, 0, "cap binds: no shares pending");
+
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no shares minted when the cap binds");
+    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference NAV advanced despite zero mint");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt advanced");
   }
 
   /// @notice The management fee is time-based and independent of the performance reference: it

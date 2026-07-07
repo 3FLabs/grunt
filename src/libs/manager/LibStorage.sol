@@ -186,6 +186,15 @@ library LibStorage {
   ///      (`lastDebt == 0` sentinel), an empty vault on either side of the flow, and a carry
   ///      exceeding the post-flow debt (the reference debt floors at zero, which is the bootstrap
   ///      sentinel, so the excess is forgiven and the next accrual reseeds).
+  ///
+  ///      Bad-debt episode: while every position is excluded as bad debt on both sides of the
+  ///      flow (`prevCollat == 0 && newCollat == 0` with a live reference), there is no good-debt
+  ///      state to re-anchor on, so the reference is held unchanged, exactly like an accrual
+  ///      during the same episode; the high-water mark survives underwater flows. A flow that
+  ///      brings the pool back above water re-anchors the reference at the post-flow state (the
+  ///      pre-flow basis is not measurable against empty aggregates), so gains recovered beyond
+  ///      that point are charged; this is a documented limitation of the binary bad-debt
+  ///      exclusion in `LibView.totalAssets`.
   /// @param self The storage pointer to the PositionManagerStorageData struct.
   /// @param prevCollat The aggregate good-debt collateral before the flow (post fee accrual).
   /// @param prevDebt The aggregate good-debt debt before the flow (post fee accrual).
@@ -203,6 +212,10 @@ library LibStorage {
     uint256 newSupply
   ) internal {
     uint256 refDebt = self.lastDebt;
+    // Hold the reference across a flow executed while the good-debt universe is empty on both
+    // sides (every position underwater): rebasing against empty aggregates would collapse the
+    // high-water mark to the trough and re-charge the recovery.
+    if (refDebt > 0 && prevCollat == 0 && newCollat == 0) return;
     uint256 carry;
     if (refDebt > 0 && prevSupply > 0 && newSupply > 0) {
       uint256 refCollat = self.lastTotalAssets + refDebt;

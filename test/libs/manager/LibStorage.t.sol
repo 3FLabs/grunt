@@ -89,6 +89,15 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getLastTotalAssets(), 2_500e18, "lastTotalAssets = newCollat - newRefDebt");
   }
 
+  /// @notice A flow with an empty good-debt universe on both sides (every position underwater)
+  ///         holds the reference so the high-water mark survives the episode.
+  function test_rebaseSnapshot_underwaterFlowHoldsReference() public {
+    harness.setReference(5_000e18, 5_000e18);
+    harness.rebaseSnapshot(0, 0, 100e18, 0, 0, 100e18);
+    assertEq(harness.getLastTotalAssets(), 5_000e18, "reference NAV held");
+    assertEq(harness.getLastDebt(), 5_000e18, "reference debt held");
+  }
+
   /// @notice Carry larger than the post-flow debt floors the reference debt at the bootstrap
   ///         sentinel (excess carry is forgiven).
   function test_rebaseSnapshot_carryClampedAtNewDebt() public {
