@@ -48,9 +48,9 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
-    // Accrue fees and get current total assets.
+    // Accrue fees and get current total assets and debt.
     // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply().
-    uint256 totalAssetsBefore = _accrueFees();
+    (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
     uint256 _totalSupply = ERC20.totalSupply();
 
     // Pull collateral from caller
@@ -72,7 +72,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Settle shares based on assets delta before any external transfer to keep
     // totalAssets() and totalSupply() consistent during outbound calls.
-    shares = _settleShares(totalAssetsBefore, _totalSupply);
+    shares = _settleShares(totalAssetsBefore, debtBefore, _totalSupply);
 
     // Send borrowed debt to caller
     if (debt > 0) {
@@ -94,9 +94,9 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
-    // Accrue fees and get current total assets.
+    // Accrue fees and get current total assets and debt.
     // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply().
-    uint256 totalAssetsBefore = _accrueFees();
+    (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
     uint256 _totalSupply = ERC20.totalSupply();
 
     // Pull debt from caller for repayment
@@ -110,7 +110,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     // Settle shares based on assets delta before any external transfer to keep
     // totalAssets() and totalSupply() consistent during outbound calls.
-    shares = _settleShares(totalAssetsBefore, _totalSupply);
+    shares = _settleShares(totalAssetsBefore, debtBefore, _totalSupply);
 
     // Send collateral to caller
     if (collateral > 0) {
@@ -132,8 +132,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
 
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
-    // Accrue fees first
-    _accrueFees();
+    // Accrue fees first and capture the pre-flow state for the reference rebase.
+    (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
 
     // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply().
     uint256 _totalSupply = ERC20.totalSupply();
@@ -171,8 +171,9 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.collateralAsset.safeTransfer(msg.sender, collateral);
     }
 
-    // Update snapshot for performance fees
-    _storage.updateSnapshot();
+    // Rebase the performance reference across the flow so the exiting shares take their
+    // proportional slice of any carried pending basis with them.
+    _rebaseReference(totalAssetsBefore, debtBefore, _totalSupply);
 
     emit Burn(msg.sender, shares, collateral, debt);
   }
@@ -184,11 +185,16 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
   /// @dev Settles share changes based on total assets delta.
   ///      Mints shares if assets increased, burns shares if assets decreased.
   /// @param totalAssetsBefore The total assets before the operation
+  /// @param debtBefore The aggregate good-debt debt before the operation (post fee accrual),
+  ///        needed to rebase the performance reference across the flow
   /// @param _totalSupply The total supply before the operation
   /// @return sharesDelta Positive if shares minted, negative if shares burned
-  function _settleShares(uint256 totalAssetsBefore, uint256 _totalSupply) internal returns (int256 sharesDelta) {
+  function _settleShares(uint256 totalAssetsBefore, uint256 debtBefore, uint256 _totalSupply)
+    internal
+    returns (int256 sharesDelta)
+  {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    (uint256 totalAssetsAfter,,) = _storage.totalAssets();
+    (uint256 totalAssetsAfter, uint256 debtAfter, uint256 collatAfter) = _storage.totalAssets();
     uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
     if (totalAssetsAfter > totalAssetsBefore) {
@@ -224,7 +230,10 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     }
     // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
 
-    // Update snapshot for performance fees
-    _storage.updateSnapshot();
+    // Rebase the performance reference across the flow (preserves the pending per-share basis
+    // instead of resetting it, so accrued debt carry survives deposits and withdrawals).
+    _storage.rebaseSnapshot(
+      totalAssetsBefore + debtBefore, debtBefore, _totalSupply, collatAfter, debtAfter, ERC20.totalSupply()
+    );
   }
 }

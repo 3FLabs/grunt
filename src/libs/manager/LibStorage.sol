@@ -4,7 +4,7 @@ pragma solidity ^0.8.22;
 import {IPositionManagerAdmin, SupplyQueueEntry} from "../../interfaces/manager/base/IPositionManagerAdmin.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibChecks} from "../common/LibChecks.sol";
-import {LibView} from "./LibView.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {STORAGE_SLOT, MAX_REBALANCE_LOSS} from "./LibConstants.sol";
 import {LibManagerErrors} from "./LibManagerErrors.sol";
 
@@ -15,11 +15,13 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 ///        leveraged vault this basis is materially larger than the NAV. The resulting fee assets
 ///        are capped at `totalAssets` so the post-fee asset base remains non-negative.
 /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
-///        performance of the levered slice only — basis `LTV_prev * Δcollat - Δdebt` (equivalently
+///        performance of the levered slice only — basis `LTV_ref * Δcollat - Δdebt` (equivalently
 ///        `mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt`), where
-///        `LTV_prev = lastDebt / lastCollat` is the LTV at the previous snapshot. The basis is then
-///        reduced by the management fee assets accrued over the same period. Replaces the prior
-///        NAV-variation basis.
+///        `LTV_ref = lastDebt / lastCollat` is the LTV at the performance reference. The reference
+///        is held while the basis is non-positive (high-water mark) and advances only when a fee
+///        crystallizes, so debt interest accrued under a flat collateral quote and collateral
+///        drawdowns stay inside the basis. The basis is then reduced by the management fee assets
+///        accrued over the current accrual interval. Replaces the prior NAV-variation basis.
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -60,10 +62,16 @@ struct RebalanceConfig {
 /// @param borrowModules Set of approved borrow module addresses that can interact with positions.
 ///        Uses Solady's EnumerableSetLib for O(1) add/remove/contains operations.
 /// @param metadata Token metadata and asset addresses for the position manager.
-/// @param lastTotalAssets Cached `collateralQuoted - debt` (NAV) from the last fee accrual.
-///        Still represents `collat - debt` as before; for the performance fee, `lastCollat` is
-///        reconstructed on the fly as `lastTotalAssets + lastDebt` rather than storing it directly,
-///        which keeps the storage layout append-only and existing integrations unchanged.
+/// @param lastTotalAssets NAV component of the performance reference (`refCollat - refDebt`).
+///        Together with `lastDebt` it encodes the reference loan-to-value
+///        `LTV_ref = lastDebt / (lastTotalAssets + lastDebt)` that anchors the performance-fee
+///        basis. The reference advances to the current state only when a positive basis
+///        crystallizes (or on bootstrap); on capital flows it is rebased so the pending per-share
+///        basis is preserved (see `rebaseSnapshot`). It therefore only matches the live NAV right
+///        after a crystallizing accrual; while the reference is held it deviates from the live
+///        NAV by the carried (negative) pending basis. `lastCollat` is reconstructed on the fly
+///        as `lastTotalAssets + lastDebt` rather than stored directly, which keeps the storage
+///        layout append-only and existing integrations unchanged.
 /// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
 ///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
 /// @param virtualShareOffset Virtual shares offset for inflation attack protection, derived from debt asset decimals.
@@ -77,11 +85,14 @@ struct RebalanceConfig {
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
 ///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
 /// @param rebalanceConfig Rebalance parameters packed in a single struct (maxRebalanceLoss, cooldown, timestamp).
-/// @param lastDebt Cached aggregate debt at the last snapshot. Used together with `lastTotalAssets`
-///        to reconstruct `lastCollat = lastTotalAssets + lastDebt` for the levered-slice performance
-///        fee basis. A value of zero acts as a bootstrap sentinel: the first accrual after upgrade
-///        (or any other time `lastDebt` is zero) skips the performance fee and seeds this slot with
-///        the current debt. Subsequent accruals charge the new basis normally.
+/// @param lastDebt Debt component of the performance reference. Used together with
+///        `lastTotalAssets` to reconstruct `lastCollat = lastTotalAssets + lastDebt` for the
+///        levered-slice performance fee basis. Advanced on crystallization and rebased on flows
+///        alongside `lastTotalAssets` (see `rebaseSnapshot`), so while the reference is held it is
+///        lower than the live debt by the carried debt cost. A value of zero acts as a bootstrap
+///        sentinel: the first accrual after upgrade (or any other time `lastDebt` is zero) skips
+///        the performance fee and seeds this slot with the current debt. Subsequent accruals
+///        charge the new basis normally.
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -102,6 +113,8 @@ struct PositionManagerStorageData {
 /// @notice Library providing storage accessor for PositionManager contracts.
 /// @dev Uses a custom storage slot pattern for upgradeability.
 library LibStorage {
+  using FixedPointMathLib for uint256;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       STORAGE ACCESS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -149,16 +162,59 @@ library LibStorage {
     emit IPositionManagerAdmin.RebalanceConfigSet(maxRebalanceLoss_, rebalanceCooldown_);
   }
 
-  /// @dev Updates the `lastTotalAssets` and `lastDebt` snapshots to their current values in a
-  ///      single iteration over the borrow modules. `lastDebt` aggregates only non-bad-debt
-  ///      positions (the same set whose NAV contributes to `lastTotalAssets`), so
-  ///      `lastCollat = lastTotalAssets + lastDebt` represents the collateral of "good" positions.
-  ///      The `totalCollateral` third return from `totalAssets` is discarded — only the
-  ///      performance-fee snapshot needs to be persisted; the management fee re-reads collat live.
+  /// @dev Rebases the performance reference (`lastTotalAssets`, `lastDebt`) across a capital
+  ///      flow (deposit, withdraw, burn, rebalance, module add/remove) so the pending per-share
+  ///      performance basis is preserved instead of being reset to zero.
+  ///
+  ///      The reference encodes `LTV_ref = lastDebt / (lastTotalAssets + lastDebt)`; the pending
+  ///      basis at any state is `LTV_ref * collat - debt`. Flows change collateral, debt, and
+  ///      share supply without realising a gain, so the reference must move with them: the carry
+  ///      (the negative pending basis accumulated while the reference is held, typically accrued
+  ///      debt interest under a flat collateral quote) is scaled by the share-supply change and
+  ///      re-anchored on the post-flow state. Exits shed their proportional slice of the carry,
+  ///      deposits re-attach it to the new shares, and supply-neutral flows (rebalance, module
+  ///      changes) keep it unchanged. A holder therefore cannot shed accrued debt carry by
+  ///      exiting and re-entering, and an exit does not dump its carry slice on the stayers.
+  ///
+  ///      Called after `_accrueFees` has already crystallized any positive basis, so the pending
+  ///      basis here is non-positive; `zeroFloorSub` guards the rounding edge at exactly zero.
+  ///      Rounding matches `_pendingFees` (`mulDivUp` on the scaled reference debt), so the carry
+  ///      is the exact complement of the fee basis and each flow can only shrink it by rounding
+  ///      dust, never create a spurious positive basis.
+  ///
+  ///      Edge cases collapse to a plain snapshot of the current state (zero carry): bootstrap
+  ///      (`lastDebt == 0` sentinel), an empty vault on either side of the flow, and a carry
+  ///      exceeding the post-flow debt (the reference debt floors at zero, which is the bootstrap
+  ///      sentinel, so the excess is forgiven and the next accrual reseeds).
   /// @param self The storage pointer to the PositionManagerStorageData struct.
-  function updateSnapshot(PositionManagerStorageData storage self) internal {
-    (uint256 newTotalAssets, uint256 newDebt,) = LibView.totalAssets(self);
-    self.lastTotalAssets = newTotalAssets;
-    self.lastDebt = newDebt;
+  /// @param prevCollat The aggregate good-debt collateral before the flow (post fee accrual).
+  /// @param prevDebt The aggregate good-debt debt before the flow (post fee accrual).
+  /// @param prevSupply The share supply before the flow (including freshly minted fee shares).
+  /// @param newCollat The aggregate good-debt collateral after the flow.
+  /// @param newDebt The aggregate good-debt debt after the flow.
+  /// @param newSupply The share supply after the flow.
+  function rebaseSnapshot(
+    PositionManagerStorageData storage self,
+    uint256 prevCollat,
+    uint256 prevDebt,
+    uint256 prevSupply,
+    uint256 newCollat,
+    uint256 newDebt,
+    uint256 newSupply
+  ) internal {
+    uint256 refDebt = self.lastDebt;
+    uint256 carry;
+    if (refDebt > 0 && prevSupply > 0 && newSupply > 0) {
+      uint256 refCollat = self.lastTotalAssets + refDebt;
+      uint256 scaledRefDebt = refDebt.mulDivUp(prevCollat, refCollat);
+      uint256 prevCarry = FixedPointMathLib.zeroFloorSub(prevDebt, scaledRefDebt);
+      // Preserve the per-share carry across the supply change.
+      carry = prevCarry.mulDiv(newSupply, prevSupply);
+      if (carry > newDebt) carry = newDebt;
+    }
+    uint256 newRefDebt = newDebt - carry;
+    self.lastDebt = newRefDebt;
+    // Good-debt aggregation guarantees newCollat >= newDebt >= newRefDebt.
+    self.lastTotalAssets = newCollat - newRefDebt;
   }
 }

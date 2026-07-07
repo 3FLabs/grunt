@@ -21,9 +21,23 @@ contract LibManagerStorageHarness {
     LibStorage.positionManagerStorage().setLtv(ltv_);
   }
 
-  /// @dev Expose updateSnapshot
-  function updateSnapshot() external {
-    LibStorage.positionManagerStorage().updateSnapshot();
+  /// @dev Expose rebaseSnapshot
+  function rebaseSnapshot(
+    uint256 prevCollat,
+    uint256 prevDebt,
+    uint256 prevSupply,
+    uint256 newCollat,
+    uint256 newDebt,
+    uint256 newSupply
+  ) external {
+    LibStorage.positionManagerStorage().rebaseSnapshot(prevCollat, prevDebt, prevSupply, newCollat, newDebt, newSupply);
+  }
+
+  /// @dev Set the performance reference directly (lastTotalAssets, lastDebt)
+  function setReference(uint256 lastTotalAssets, uint256 lastDebt) external {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    ps.lastTotalAssets = lastTotalAssets;
+    ps.lastDebt = lastDebt;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

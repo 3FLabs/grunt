@@ -60,15 +60,18 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   function totalAssets() external view returns (uint256);
 
   /// @notice Returns the fee configuration and accounting state.
-  /// @dev `lastTotalAssets` is still `collat - debt` at the last accrual. To reconstruct the
-  ///      performance-fee snapshot `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()`
-  ///      alongside this value.
+  /// @dev `lastTotalAssets` is the NAV component (`refCollat - refDebt`) of the performance
+  ///      reference. To reconstruct the reference collateral
+  ///      `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()` alongside this value. The
+  ///      reference advances to the current state only when a positive basis crystallizes; while
+  ///      it is held (non-positive basis) or after flow rebases it deviates from the live NAV by
+  ///      the carried pending basis.
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days, charged on the
   ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
   /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
   ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
-  /// @return lastTotalAssets The last NAV snapshot (`collat - debt`) used for fee accounting
+  /// @return lastTotalAssets The NAV component of the performance reference used for fee accounting
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
   function feeData()
     external
@@ -81,11 +84,13 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
       uint256 lastFeeAccrualTimestamp
     );
 
-  /// @notice Returns the cached aggregate debt at the last performance-fee snapshot.
+  /// @notice Returns the debt component of the performance reference.
   /// @dev Combined with `feeData().lastTotalAssets`, callers can reconstruct
-  ///      `lastCollat = lastTotalAssets + lastDebt`. A value of zero is the bootstrap sentinel
-  ///      and means the next accrual will skip the performance fee and seed this slot.
-  /// @return The last aggregate debt snapshot
+  ///      `lastCollat = lastTotalAssets + lastDebt`. While the reference is held (non-positive
+  ///      pending basis) this is lower than the live debt by the carried debt cost. A value of
+  ///      zero is the bootstrap sentinel and means the next accrual will skip the performance fee
+  ///      and seed this slot.
+  /// @return The reference debt for the performance-fee basis
   function lastDebt() external view returns (uint256);
 
   /// @notice Returns the pending fee data needed to compute an accurate share price.

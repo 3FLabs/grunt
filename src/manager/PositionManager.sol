@@ -186,7 +186,7 @@ contract PositionManager is
     nonReadReentrant
     returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
   {
-    (totalAssets_, totalSupply_,, managementFeeShares, performanceFeeShares) = _pendingFees();
+    (totalAssets_, totalSupply_,, managementFeeShares, performanceFeeShares,) = _pendingFees();
   }
 
   /// @inheritdoc IPositionManager

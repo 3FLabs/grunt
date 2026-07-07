@@ -18,6 +18,7 @@ import {LibView} from "../../libs/manager/LibView.sol";
 import {BPS} from "../../libs/Constants.sol";
 import {LibExecutor} from "../../libs/manager/LibExecutor.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 
 /// @title PositionManagerRebalancing
 /// @author 3F Protocol
@@ -56,16 +57,19 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Enforce cooldown between consecutive rebalance calls
-    uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
-    uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
-    if (cooldown > 0 && lastRebalance > 0) {
-      // Safe: block.timestamp fits in uint40 for ~35,000 years
-      // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
-      // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
-      // to avoid uint40 overflow when cooldown is large.
-      // forge-lint: disable-next-line(unsafe-typecast)
-      if (uint40(block.timestamp) - lastRebalance < cooldown) {
-        revert LibManagerErrors.RebalanceCooldownNotElapsed();
+    // (block-scoped so the temporaries do not deepen the stack for the rest of the function)
+    {
+      uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
+      uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
+      if (cooldown > 0 && lastRebalance > 0) {
+        // Safe: block.timestamp fits in uint40 for ~35,000 years
+        // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
+        // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
+        // to avoid uint40 overflow when cooldown is large.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (uint40(block.timestamp) - lastRebalance < cooldown) {
+          revert LibManagerErrors.RebalanceCooldownNotElapsed();
+        }
       }
     }
 
@@ -75,8 +79,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
       revert CommonErrors.Paused();
     }
 
-    // Accrue fees based on pre-rebalance state and capture totalAssets before operations
-    uint256 totalAssetsBefore = _accrueFees();
+    // Accrue fees based on pre-rebalance state and capture totalAssets/debt before operations
+    (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
 
     address _collateralAsset = _storage.metadata.collateralAsset;
     address _debtAsset = _storage.metadata.debtAsset;
@@ -103,10 +107,10 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
 
     emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
 
-    // Update snapshot to post-rebalance state. Goes through updateSnapshot so lastDebt is kept
-    // in sync with lastTotalAssets in a single iteration over the borrow modules.
-    LibStorage.updateSnapshot(_storage);
-    uint256 totalAssetsAfter = _storage.lastTotalAssets;
+    // Rebase the performance reference to the post-rebalance state. A rebalance is a flow, not
+    // a gain: the share supply is unchanged, so any carried pending basis is preserved as-is and
+    // the rebalance neither crystallizes a performance fee nor writes off accrued debt carry.
+    uint256 totalAssetsAfter = _rebaseReference(totalAssetsBefore, debtBefore, ERC20.totalSupply());
 
     // Check that totalAssets didn't decrease by more than maxRebalanceLoss
     if (totalAssetsAfter < totalAssetsBefore) {
