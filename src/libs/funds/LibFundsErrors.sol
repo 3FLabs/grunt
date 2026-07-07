@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {State} from "./Order.sol";
+import {Mode, State} from "./Order.sol";
 
 /// @title LibFundsErrors
 /// @author 3F Protocol
@@ -14,6 +14,10 @@ library LibFundsErrors {
   /// @notice Thrown when the current state does not match the expected one.
   /// @param actual The actual state.
   error InvalidState(State actual);
+
+  /// @notice Thrown when the order mode does not match the expected one.
+  /// @param actual The actual mode.
+  error InvalidMode(Mode actual);
 
   /// @notice Thrown when the order Id does not match the current one.
   /// @param orderId The invalid order Id.

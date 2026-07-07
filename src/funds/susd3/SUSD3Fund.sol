@@ -25,15 +25,16 @@ import {BPS} from "../../libs/Constants.sol";
 ///        via two chained ERC-4626 conversions.
 ///      - Shares of this fund are represented by WrappedAsset tokens wrapping the sUSD3 share token.
 ///      - The order owner and receiver is always msg.sender (the depositor contract).
-///      - Deposits stake synchronously (USDC -> USD3 -> sUSD3) in commit. Delivery of the wrapped
-///        shares is immediate when sUSD3 applies no deposit lock, or deferred until the lock elapses
-///        when one is active (the fund holds the staked sUSD3 meanwhile, gated by the per-account
+///      - Deposit commits stake synchronously (USDC -> USD3 -> sUSD3). Delivery of the wrapped shares
+///        is immediate when sUSD3 applies no deposit lock, or deferred until the lock elapses when one
+///        is active (the fund holds the staked sUSD3 meanwhile, gated by the per-account
 ///        `sUSD3.lockedUntil`). Redemptions are async: commit starts the sUSD3 cooldown, and unlock
 ///        claims once the cooldown has matured (`sUSD3.maxRedeem(this) > 0`).
 ///      - Recovery is operator-driven: cancelRedeem() cancels the cooldown (PROCESSING -> RECOVERING),
-///        then recover() re-wraps the still-held sUSD3 back to the receiver. Only REDEEM orders recover;
-///        deposits are atomic and never enter RECOVERING. A DEPOSIT that yields fewer sUSD3 shares than
-///        `order.output` stays in PROCESSING until an operator lowers the threshold via resolve().
+///        then recover() re-wraps the still-held sUSD3 back to the receiver. Only REDEEM orders recover.
+///        Deposit commits are atomic, but delivery may stay in PROCESSING while a lock or output
+///        shortfall is outstanding. A DEPOSIT that yields fewer sUSD3 shares than `order.output` stays
+///        in PROCESSING until an operator lowers the threshold via resolve().
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may
 ///        differ from the state returned by the public state() function, which queries sUSD3 to detect
 ///        the PROCESSING -> UNLOCKING transition.
@@ -331,7 +332,7 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   function cancelRedeem(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     SUSD3FundStorage storage $ = _susd3FundStorage();
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
-    if (order.mode != Mode.REDEEM) revert LibFundsErrors.InvalidState($.internalState);
+    if (order.mode != Mode.REDEEM) revert LibFundsErrors.InvalidMode(order.mode);
 
     bytes32 _orderId = order.toId(address(this));
     if (_orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
@@ -354,6 +355,7 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
     SUSD3FundStorage storage $ = _susd3FundStorage();
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
     if (order.toId(address(this)) != $.currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
+    if (order.mode != Mode.DEPOSIT) revert LibFundsErrors.InvalidMode(order.mode);
 
     $.hasResolvedAmounts = true;
     $.resolvedOutput = output;
@@ -402,14 +404,16 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   /// @dev The binding USDC deposit capacity: the account's USDC balance, the USD3 supply-cap headroom
   ///      (USDC-denominated), and the sUSD3 subordination-cap headroom (USD3-denominated, converted to
-  ///      USDC). Returns 0 for accounts without DEPOSITOR_ROLE.
+  ///      USDC). Clamps values below USD3's minimum deposit to 0. Returns 0 for accounts without
+  ///      DEPOSITOR_ROLE.
   function maxDeposit(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     SUSD3FundStorage storage $ = _susd3FundStorage();
     address _usd3 = $.usd3;
     uint256 _usd3Cap = IUSD3(_usd3).maxDeposit(address(this));
     uint256 _susd3CapUsdc = IUSD3(_usd3).convertToAssets(ISUSD3($.susd3).maxDeposit(address(this)));
-    return IERC20($.asset).balanceOf(account).min(_usd3Cap).min(_susd3CapUsdc);
+    uint256 _max = IERC20($.asset).balanceOf(account).min(_usd3Cap).min(_susd3CapUsdc);
+    return _max < IUSD3(_usd3).minDeposit() ? 0 : _max;
   }
 
   /// @inheritdoc IFund
@@ -521,8 +525,10 @@ contract SUSD3Fund is ISUSD3Fund, OwnableRoles, Initializable {
         uint256 _received = $.depositReceived;
         bool _ready = _received >= _expectedOutput && block.timestamp >= ISUSD3($.susd3).lockedUntil(address(this));
         return _ready ? (State.UNLOCKING, _received) : (State.PROCESSING, 0);
+      } else {
+        // order.mode == Mode.REDEEM
+        return ISUSD3($.susd3).maxRedeem(address(this)) > 0 ? (State.UNLOCKING, 0) : (State.PROCESSING, 0);
       }
-      return ISUSD3($.susd3).maxRedeem(address(this)) > 0 ? (State.UNLOCKING, 0) : (State.PROCESSING, 0);
     }
 
     return (_internalState, 0);

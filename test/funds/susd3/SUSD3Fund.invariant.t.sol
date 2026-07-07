@@ -47,6 +47,18 @@ contract SUSD3FundInvariantTest is Test {
     vm.stopPrank();
 
     handler.initialize(fund, usdc, usd3, susd3, wrappedShare, operator);
+
+    bytes4[] memory selectors = new bytes4[](8);
+    selectors[0] = handler.act_createDeposit.selector;
+    selectors[1] = handler.act_createRedeem.selector;
+    selectors[2] = handler.act_cancel.selector;
+    selectors[3] = handler.act_commit.selector;
+    selectors[4] = handler.act_warp.selector;
+    selectors[5] = handler.act_unlock.selector;
+    selectors[6] = handler.act_cancelRedeem.selector;
+    selectors[7] = handler.act_recover.selector;
+
+    targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
   }
 

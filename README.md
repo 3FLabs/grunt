@@ -34,6 +34,9 @@ src/
 │   ├── pareto/
 │   │   ├── ParetoFund.sol           # Pareto (Idle Finance) CDO integration
 │   │   └── ParetoFundFactory.sol    # Beacon proxy factory
+│   ├── susd3/
+│   │   ├── SUSD3Fund.sol            # sUSD3 (staked USD3) integration
+│   │   └── SUSD3FundFactory.sol     # Beacon proxy factory
 │   ├── USCC/
 │   │   ├── USCCFund.sol             # Superstate USCC integration
 │   │   ├── USCCFundFactory.sol      # Beacon proxy factory
@@ -591,7 +594,7 @@ stateDiagram-v2
 - Deposits **stake synchronously** in `commit()` (measured USDC → USD3 → sUSD3). Delivery of the wrapped shares becomes available once the received sUSD3 meets the output threshold (`depositReceived >= order.output`) **and** any sUSD3 deposit lock has elapsed. Delivery is **immediate** when the deposit yields the expected shares and no lock is active; when a lock is active, the fund holds the staked sUSD3 and `unlock()` delivers once the per-account `sUSD3.lockedUntil` elapses. sUSD3's 30-day friction was historically a **deposit lock** and was only recently swapped to the withdrawal cooldown, so the fund is built to handle either configuration (gating on `lockedUntil`, not `lockDuration`, keeps an in-flight deposit robust to governance changes).
 - A DEPOSIT that yields **fewer sUSD3 shares than `order.output`** (e.g. an adverse rate move between `create` and `commit`) stays in `PROCESSING`; an `OPERATOR_ROLE`/owner call to `resolve(order, input, output)` lowers the threshold so the order can unlock (mirrors `ParetoFund`).
 - Redemptions are **cooldown-gated** — `commit()` calls `startCooldown()`, and `unlock()` becomes available once `sUSD3.maxRedeem() > 0` (after the ~30-day cooldown matures and while withdrawals aren't blocked by unrealized losses or the backing floor). `unlock()` supports **partial fills**, redeeming as much as sUSD3 currently allows and returning to PROCESSING for the remainder.
-- **Operator-abortable recovery** — an `OPERATOR_ROLE` holder calls `cancelRedeem()` to cancel the sUSD3 cooldown (PROCESSING → RECOVERING); `recover()` then re-wraps the fund's still-held sUSD3 (the tracked remainder) back to the receiver. This is the guaranteed escape for a stuck/backing-limited redeem, and clears any sub-wei floor-rounding residual. Only REDEEM orders recover — deposits are atomic.
+- **Operator-abortable recovery** — an `OPERATOR_ROLE` holder calls `cancelRedeem()` to cancel the sUSD3 cooldown (PROCESSING → RECOVERING); `recover()` then re-wraps the fund's still-held sUSD3 (the tracked remainder) back to the receiver. This is the guaranteed escape for a stuck/backing-limited redeem, and clears any sub-wei floor-rounding residual. Only REDEEM orders recover. Deposit commits are atomic, but delivery may remain in PROCESSING while a deposit lock or output shortfall is outstanding.
 - Deposits are floored at USD3's `minDeposit` (rejected in `create()` with `BelowMinDeposit()`); the fund is always a first-time USD3 depositor since it holds no USD3 between orders.
 
 **Deposit Flow (Asset → WrappedShare), synchronous stake / lock-aware delivery:**

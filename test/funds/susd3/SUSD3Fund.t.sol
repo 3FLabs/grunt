@@ -385,7 +385,7 @@ contract SUSD3FundTest is Test {
     fund.commit(o);
 
     vm.prank(operator);
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidMode.selector, Mode.DEPOSIT));
     fund.cancelRedeem(o);
   }
 
@@ -428,6 +428,19 @@ contract SUSD3FundTest is Test {
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
     fund.resolve(o, 2000e6, 1000e6);
+  }
+
+  function test_Resolve_RevertsForRedeem() public {
+    uint256 amount = 2000e6;
+    uint256 shares = _doDeposit(amount, "d1");
+    Order memory r = _redeemOrder(shares, amount, "r1");
+    wrappedShare.approve(address(fund), shares);
+    fund.create(r);
+    fund.commit(r);
+
+    vm.prank(operator);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidMode.selector, Mode.REDEEM));
+    fund.resolve(r, shares, amount);
   }
 
   function test_Resolve_OnlyOperatorOrOwner() public {
@@ -606,6 +619,21 @@ contract SUSD3FundTest is Test {
     assertEq(fund.maxDeposit(address(this)), 1000e6, "bounded by susd3 cap (usdc)");
 
     assertEq(fund.maxDeposit(outsider), 0, "non-depositor gets 0");
+  }
+
+  function test_View_MaxDeposit_ClampsBelowMinDeposit() public {
+    usdc.mint(address(this), MIN_DEPOSIT - 1);
+    assertEq(fund.maxDeposit(address(this)), 0, "balance below min");
+
+    usdc.mint(address(this), 1);
+    assertEq(fund.maxDeposit(address(this)), MIN_DEPOSIT, "exact min");
+
+    usd3.setDepositCap(MIN_DEPOSIT - 1);
+    assertEq(fund.maxDeposit(address(this)), 0, "usd3 cap below min");
+
+    usd3.setDepositCap(type(uint256).max);
+    susd3.setDepositCap(MIN_DEPOSIT - 1);
+    assertEq(fund.maxDeposit(address(this)), 0, "susd3 cap below min");
   }
 
   function test_View_MaxRedeem() public {

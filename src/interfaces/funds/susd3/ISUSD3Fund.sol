@@ -8,9 +8,10 @@ import {Order, Mode} from "../../../libs/funds/Order.sol";
 /// @author 3F Protocol
 /// @notice Interface for the SUSD3Fund contract that wraps the sUSD3 (staked USD3) strategy.
 /// @dev Extends IFund with sUSD3-specific events, initialization, administration, and view functions.
-///      Deposits (USDC -> USD3 -> sUSD3) are synchronous; redemptions (sUSD3 -> USD3 -> USDC) are gated
-///      behind the sUSD3 cooldown. A pending redeem can be aborted by an operator via `cancelRedeem`,
-///      moving it to RECOVERING so `recover()` re-wraps the held sUSD3 back to the receiver.
+///      Deposit commits stake synchronously (USDC -> USD3 -> sUSD3), while wrapped-share delivery may
+///      wait for the sUSD3 deposit lock. Redemptions (sUSD3 -> USD3 -> USDC) are gated behind the sUSD3
+///      cooldown. A pending redeem can be aborted by an operator via `cancelRedeem`, moving it to
+///      RECOVERING so `recover()` re-wraps the held sUSD3 back to the receiver.
 interface ISUSD3Fund is IFund {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -59,8 +60,8 @@ interface ISUSD3Fund is IFund {
 
   /// @notice Emitted when an operator resolves a stuck order by overriding its output threshold.
   /// @param orderId The unique identifier of the resolved order.
-  /// @param input The new input amount set by the operator.
-  /// @param output The new output amount set by the operator.
+  /// @param input The input amount emitted for off-chain tracking; not stored or used on-chain.
+  /// @param output The new output threshold set by the operator.
   /// @param caller The address that resolved the order.
   event OrderResolved(bytes32 indexed orderId, uint256 input, uint256 output, address indexed caller);
 
