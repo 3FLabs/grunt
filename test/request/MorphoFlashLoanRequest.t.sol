@@ -903,16 +903,11 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       sigs[0] = _signSetRequest(syncIntentId, proxy2, block.timestamp + 2 hours, GUARDIAN_PK);
 
       // Flash loan amount = actualDebtBorrowed (need enough debtToken to repay PM)
+      MorphoFlashLoanRequest.SetRequestParams memory setParams = MorphoFlashLoanRequest.SetRequestParams({
+        intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
+      });
       vm.prank(executor);
-      MorphoFlashLoanRequest(proxy2)
-        .execute(
-          actualDebtBorrowed,
-          MorphoFlashLoanRequest.SetRequestParams({
-          intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
-        }),
-          address(syncWithdrawal),
-          withdrawPayload
-        );
+      MorphoFlashLoanRequest(proxy2).execute(actualDebtBorrowed, setParams, address(syncWithdrawal), withdrawPayload);
     }
 
     // ── Final verification ──
