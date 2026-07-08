@@ -28,7 +28,8 @@ interface IMidasFund is IFund {
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
   /// @param amount The amount committed.
-  event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount);
+  /// @param requestId The Midas mint request id (only meaningful for DEPOSIT orders, 0 otherwise).
+  event OrderCommitted(bytes32 indexed orderId, Mode mode, uint256 amount, uint256 requestId);
 
   /// @notice Emitted when an order is recovered and funds are returned.
   /// @param orderId The unique identifier of the order.
@@ -65,7 +66,7 @@ interface IMidasFund is IFund {
   /// @param operator The address that resolved the order.
   event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
-  /// @notice Emitted when the holdback payment of the current order is confirmed.
+  /// @notice Emitted when the holdback payment of the current redeem order is confirmed.
   /// @param orderId The unique identifier of the order.
   /// @param confirmer The address that confirmed the holdback payment.
   event HoldbackConfirmed(bytes32 indexed orderId, address indexed confirmer);
@@ -145,13 +146,15 @@ interface IMidasFund is IFund {
   /// @param output The new output amount.
   function resolve(Order memory order, uint256 input, uint256 output) external;
 
-  /// @notice Confirms that the holdback payment of the current order has been received.
+  /// @notice Confirms that the holdback payment of the current redeem order has been received.
   /// @dev Can only be called by an account with the HOLDBACK_ROLE or the owner.
-  ///      Every order requires this confirmation while PROCESSING: for deposits the remaining
-  ///      mTokens airdropped by Midas once the official NAV is published, for redeems the
-  ///      holdback amount returned in the payment token. Once confirmed, state() reports
-  ///      UNLOCKING (provided the output balance threshold is met) and unlock() sweeps the
-  ///      fund's full output-token balance (instant settlement plus holdback) to the receiver.
+  ///      Every redeem order requires this confirmation while PROCESSING: Midas withholds part
+  ///      of the instant redemption and returns it off-band in the payment token. Once
+  ///      confirmed, state() reports UNLOCKING (provided the output balance threshold is met)
+  ///      and unlock() sweeps the fund's full output-token balance (instant settlement plus
+  ///      holdback) to the receiver. Deposit orders settle without a holdback (they are marked
+  ///      paid at creation), so calling this for a deposit order reverts with
+  ///      HoldbackNotPending.
   /// @param orderId The order ID that must match the current order being processed.
   ///        Required to prevent a stale pending transaction from targeting the wrong order.
   function confirmHoldback(bytes32 orderId) external;
@@ -159,7 +162,8 @@ interface IMidasFund is IFund {
   /// @notice Sets the Midas deposit vault.
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED). The new vault must manage the
-  ///      same mToken, have the payment token registered, not be paused, and (when its greenlist
+  ///      same mToken, have the payment token registered, not be paused (globally or for the
+  ///      commit-time function this fund calls), and (when its greenlist
   ///      is enabled) have both this fund and the wrapped share greenlisted.
   /// @param depositVault_ The new deposit vault address.
   function setDepositVault(address depositVault_) external;
@@ -168,7 +172,8 @@ interface IMidasFund is IFund {
   ///         vault, or between the Aave and Swapper variants).
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED). The new vault must manage the
-  ///      same mToken, have the payment token registered, not be paused, and (when its greenlist
+  ///      same mToken, have the payment token registered, not be paused (globally or for the
+  ///      commit-time function this fund calls), and (when its greenlist
   ///      is enabled) have both this fund and the wrapped share greenlisted.
   /// @param redemptionVault_ The new redemption vault address.
   function setRedemptionVault(address redemptionVault_) external;
@@ -192,9 +197,14 @@ interface IMidasFund is IFund {
   function mToken() external view returns (address);
 
   /// @notice Whether the current order is awaiting a holdback confirmation.
-  /// @dev True while the current order is PROCESSING and has not been confirmed via
-  ///      confirmHoldback() yet.
+  /// @dev True while the current redeem order is PROCESSING and has not been confirmed via
+  ///      confirmHoldback() yet. Always false for deposit orders (no holdback).
   function holdbackPending() external view returns (bool);
+
+  /// @notice The Midas mint request id of the current (or most recent) deposit order.
+  /// @dev Set when a deposit order is committed via `depositRequest`; reset to 0 when a new
+  ///      order is created. Only meaningful while the current order is a committed deposit.
+  function activeRequestId() external view returns (uint256);
 
   /// @notice The Midas referrer id forwarded on deposits.
   function referrerId() external view returns (bytes32);

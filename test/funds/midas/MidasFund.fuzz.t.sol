@@ -7,6 +7,7 @@ import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
+import {MidasRequestStatus} from "src/interfaces/integrations/midas/IMidasVault.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 
@@ -78,10 +79,10 @@ contract MidasFundFuzzTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                 FUZZ: DEPOSIT INSTANT UNLOCK               */
+  /*               FUZZ: DEPOSIT REQUEST LIFECYCLE              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_DepositInstantUnlock_Succeeds(uint96 input) public {
+  function testFuzz_DepositRequestLifecycle_Succeeds(uint96 input) public {
     uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
     // At 1:1 rates the vault mints inputAmount * 1e12 mToken (base-18) for inputAmount USDC.
     uint256 expectedMToken = inputAmount * ASSET_SCALE;
@@ -93,14 +94,20 @@ contract MidasFundFuzzTest is Test {
     usdc.approve(address(fund), inputAmount);
     fund.commit(order);
 
-    // Every order stays PROCESSING until the holdback payment is confirmed.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until confirmed");
-    assertTrue(fund.holdbackPending(), "holdback pending");
+    // Deposits settle asynchronously: PROCESSING until the Midas admin approves the request.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing while request pending");
+    uint256 requestId = fund.activeRequestId();
+    assertEq(requestId, 1, "request id recorded");
 
+    // The holdback gate does not apply to deposit orders.
+    assertFalse(fund.holdbackPending(), "no holdback gate on deposits");
     vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.HoldbackNotPending.selector);
     fund.confirmHoldback(order.toId(address(fund)));
 
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
+    // Approval mints the mToken directly to the fund.
+    depositVault.approveDepositRequest(requestId);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after approval");
 
     (State newState, uint256 amount) = fund.unlock(order);
 
@@ -110,7 +117,7 @@ contract MidasFundFuzzTest is Test {
     assertEq(uint256(newState), uint256(State.ENDED), "ended");
   }
 
-  function testFuzz_DepositHoldback_SweepsAirdrop(uint96 input, uint96 airdropSeed) public {
+  function testFuzz_DepositAirdrop_SweptAfterApproval(uint96 input, uint96 airdropSeed) public {
     uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
     uint256 airdropAmount = bound(uint256(airdropSeed), 1, type(uint96).max);
     uint256 expectedMToken = inputAmount * ASSET_SCALE;
@@ -121,16 +128,39 @@ contract MidasFundFuzzTest is Test {
     usdc.approve(address(fund), inputAmount);
     fund.commit(order);
 
-    // The off-band mToken airdrop arrives; the order remains gated until confirmed.
+    // An off-band mToken airdrop alone must not unlock the order while the request is pending,
+    // even if it covers the expected output.
     mGlobal.mint(address(fund), airdropAmount);
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated by pending request");
 
-    vm.prank(owner);
-    fund.confirmHoldback(order.toId(address(fund)));
+    depositVault.approveDepositRequest(fund.activeRequestId());
 
     (, uint256 amount) = fund.unlock(order);
-    assertEq(amount, expectedMToken + airdropAmount, "instant mint + airdrop wrapped");
+    assertEq(amount, expectedMToken + airdropAmount, "approved mint + airdrop wrapped");
     assertEq(wrappedShare.balanceOf(address(this)), expectedMToken + airdropAmount, "wrapper covers full balance");
+  }
+
+  function testFuzz_DepositRequestReject_Recovers(uint96 input) public {
+    uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
+
+    Order memory order = _depositOrder(inputAmount, inputAmount * ASSET_SCALE);
+    fund.create(order);
+    usdc.mint(address(this), inputAmount);
+    usdc.approve(address(fund), inputAmount);
+    fund.commit(order);
+
+    // Rejection alone does not refund on-chain; the order stays PROCESSING until refunded.
+    depositVault.rejectDepositRequest(fund.activeRequestId());
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before refund");
+
+    // The Midas admin returns the pulled USDC off-band.
+    depositVault.withdrawToken(address(usdc), address(fund), inputAmount);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering after refund");
+
+    (State newState, uint256 amount) = fund.recover(order);
+    assertEq(amount, inputAmount, "amount");
+    assertEq(usdc.balanceOf(address(this)), inputAmount, "usdc returned");
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -248,8 +278,7 @@ contract MidasFundFuzzTest is Test {
     usdc.mint(address(this), inputAmount);
     usdc.approve(address(fund), inputAmount);
     fund.commit(order);
-    vm.prank(owner);
-    fund.confirmHoldback(order.toId(address(fund)));
+    depositVault.approveDepositRequest(fund.activeRequestId());
     fund.unlock(order);
 
     Order memory nextOrder = _depositOrderWithSalt(nextInputAmount, nextInputAmount * ASSET_SCALE, keccak256("next"));
@@ -290,8 +319,7 @@ contract MidasFundFuzzTest is Test {
     usdc.mint(address(this), usdcAmount);
     usdc.approve(address(fund), usdcAmount);
     fund.commit(order);
-    vm.prank(owner);
-    fund.confirmHoldback(order.toId(address(fund)));
+    depositVault.approveDepositRequest(fund.activeRequestId());
     fund.unlock(order);
   }
 }
@@ -362,19 +390,21 @@ contract MidasFundInvariantTest is StdInvariant, Test {
 
     handler.initialize(fund, usdc, mGlobal, wrappedShare, depositVault, redemptionVault);
 
-    bytes4[] memory selectors = new bytes4[](12);
+    bytes4[] memory selectors = new bytes4[](14);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_cancel.selector;
     selectors[3] = handler.act_commit.selector;
-    selectors[4] = handler.act_refund.selector;
-    selectors[5] = handler.act_resolve.selector;
-    selectors[6] = handler.act_recovering.selector;
-    selectors[7] = handler.act_cancelRecovering.selector;
-    selectors[8] = handler.act_unlock.selector;
-    selectors[9] = handler.act_recover.selector;
-    selectors[10] = handler.act_payHoldback.selector;
-    selectors[11] = handler.act_confirmHoldback.selector;
+    selectors[4] = handler.act_approveRequest.selector;
+    selectors[5] = handler.act_rejectRequest.selector;
+    selectors[6] = handler.act_refund.selector;
+    selectors[7] = handler.act_resolve.selector;
+    selectors[8] = handler.act_recovering.selector;
+    selectors[9] = handler.act_cancelRecovering.selector;
+    selectors[10] = handler.act_unlock.selector;
+    selectors[11] = handler.act_recover.selector;
+    selectors[12] = handler.act_payHoldback.selector;
+    selectors[13] = handler.act_confirmHoldback.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -396,10 +426,22 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   }
 
   function invariant_HoldbackGateBlocksUnlocking() public view {
-    // An order (either mode) awaiting its holdback confirmation must never report UNLOCKING.
+    // A redeem order awaiting its holdback confirmation must never report UNLOCKING
+    // (deposits never have a pending holdback: they are marked paid at creation).
     if (!fund.holdbackPending()) return;
     Order memory order = handler.getOrder();
     assertTrue(uint256(fund.state(order)) != uint256(State.UNLOCKING), "gated order reports UNLOCKING");
+  }
+
+  function invariant_PendingDepositRequestBlocksUnlocking() public view {
+    // A committed deposit whose Midas mint request is still PENDING must never report
+    // UNLOCKING or RECOVERING, whatever the fund's token balances are.
+    if (handler.internalState() != State.PROCESSING) return;
+    Order memory order = handler.getOrder();
+    if (order.mode != Mode.DEPOSIT) return;
+    (,, MidasRequestStatus status,,,) = depositVault.mintRequests(handler.requestId());
+    if (status != MidasRequestStatus.PENDING) return;
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "pending request not PROCESSING");
   }
 
   function invariant_StateMatchesModel() public view {
@@ -420,8 +462,9 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     }
 
     if (stage == State.PROCESSING) {
-      // Dynamic checks may already report UNLOCKING (output delivered and, for redeems,
-      // holdback confirmed) or RECOVERING (off-band refund received).
+      // Dynamic checks may already report UNLOCKING (deposit: mint request approved;
+      // redeem: output delivered and holdback confirmed) or RECOVERING (rejected
+      // deposit request refunded off-band).
       assertTrue(
         uint256(actual) == uint256(State.PROCESSING) || uint256(actual) == uint256(State.UNLOCKING)
           || uint256(actual) == uint256(State.RECOVERING),

@@ -12,8 +12,10 @@ import {MockMidasRedemptionVault} from "./MockMidasRedemptionVault.sol";
 
 /// @dev Invariant handler for MidasFund. Acts as the depositor (and operator/holdback
 ///      confirmer) and mirrors the fund's internal state machine in `internalState`.
-///      Reverting actions are rolled back entirely (fail_on_revert = false), so the model
-///      only advances on success.
+///      Deposits settle asynchronously via a Midas mint request (approve/reject driven by
+///      act_approveRequest/act_rejectRequest); redeems settle instantly but stay gated on
+///      the holdback confirmation. Reverting actions are rolled back entirely
+///      (fail_on_revert = false), so the model only advances on success.
 contract MidasFundHandler is Test {
   using LibOrder for Order;
 
@@ -28,7 +30,9 @@ contract MidasFundHandler is Test {
 
   Order public order;
   State public internalState;
+  bool public rejected;
   bool public refunded;
+  uint256 public requestId;
 
   function initialize(
     MidasFund fund_,
@@ -70,7 +74,9 @@ contract MidasFundHandler is Test {
 
     fund.create(order);
     internalState = State.ACCEPTED;
+    rejected = false;
     refunded = false;
+    requestId = 0;
   }
 
   function act_createRedeem(uint96 inputSeed, bytes32 salt) external {
@@ -92,7 +98,9 @@ contract MidasFundHandler is Test {
 
     fund.create(order);
     internalState = State.ACCEPTED;
+    rejected = false;
     refunded = false;
+    requestId = 0;
   }
 
   function act_cancel() external {
@@ -110,13 +118,33 @@ contract MidasFundHandler is Test {
 
     fund.commit(order);
     internalState = State.PROCESSING;
+    // Deposits always settle via a Midas mint request; redeems settle instantly.
+    if (order.mode == Mode.DEPOSIT) requestId = fund.activeRequestId();
   }
 
-  /// @dev Simulates the off-band refund performed by the Midas admin while the operator
-  ///      has flagged the order as RECOVERING (deposit: the vault returns the pulled USDC;
+  /// @dev Simulates the Midas admin approving the pending mint request of the current
+  ///      deposit order (mints the mToken directly to the fund).
+  function act_approveRequest() external {
+    if (internalState != State.PROCESSING || order.mode != Mode.DEPOSIT || rejected) return;
+    depositVault.approveDepositRequest(requestId);
+  }
+
+  /// @dev Simulates the Midas admin rejecting the pending mint request of the current
+  ///      deposit order (the pulled USDC is NOT refunded on-chain).
+  function act_rejectRequest() external {
+    if (internalState != State.PROCESSING || order.mode != Mode.DEPOSIT || rejected) return;
+    depositVault.rejectDepositRequest(requestId);
+    rejected = true;
+  }
+
+  /// @dev Simulates the off-band refund performed by the Midas admin, either after a
+  ///      rejected deposit request (the vault returns the pulled USDC) or while the
+  ///      operator has flagged the order as RECOVERING (deposit: USDC returned;
   ///      redeem: Midas re-mints the burned mToken to the fund).
   function act_refund() external {
-    if (internalState != State.RECOVERING || refunded) return;
+    if (refunded) return;
+    bool depositRejected = order.mode == Mode.DEPOSIT && rejected && internalState == State.PROCESSING;
+    if (internalState != State.RECOVERING && !depositRejected) return;
     if (order.mode == Mode.DEPOSIT) {
       depositVault.withdrawToken(address(usdc), address(fund), order.input);
     } else {
@@ -151,16 +179,13 @@ contract MidasFundHandler is Test {
     internalState = State.ENDED;
   }
 
-  /// @dev Simulates the off-band holdback payment arriving at the fund (deposits: the
-  ///      remaining mToken airdrop; redeems: the holdback in the payment token).
+  /// @dev Simulates the off-band holdback payment arriving at the fund. Only redeem orders
+  ///      carry a holdback (the payment-token amount withheld by Midas); deposits never have
+  ///      a pending holdback, so this is a no-op for them.
   function act_payHoldback(uint96 amountSeed) external {
     if (!fund.holdbackPending()) return;
     uint256 amount = _bound(uint256(amountSeed), 1, type(uint96).max);
-    if (order.mode == Mode.DEPOSIT) {
-      mToken.mint(address(fund), amount);
-    } else {
-      usdc.mint(address(fund), amount);
-    }
+    usdc.mint(address(fund), amount);
   }
 
   function act_confirmHoldback() external {

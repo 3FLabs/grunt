@@ -80,11 +80,17 @@ library LibFundsErrors {
   ///         so any order accepted now would be guaranteed to revert at commit time.
   error MidasVaultPaused();
 
+  /// @notice Thrown when the Midas vault function targeted by the order is paused,
+  ///         so any order accepted now would be guaranteed to revert at commit time.
+  /// @param selector The paused Midas vault function selector.
+  error MidasVaultFunctionPaused(bytes4 selector);
+
   /// @notice Thrown when the payment token is not registered on the Midas vault.
   /// @param token The unsupported token address.
   error TokenNotSupported(address token);
 
-  /// @notice Thrown when confirming a holdback that has already been confirmed.
+  /// @notice Thrown when confirming a holdback that is not pending (already confirmed, or the
+  ///         order carries no holdback).
   error HoldbackNotPending();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

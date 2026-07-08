@@ -117,7 +117,7 @@ This section provides a consolidated view of all roles across contracts and how 
 | | Depositor | Facility | Create/cancel/commit/unlock orders |
 | **MidasFund** | Owner | Protocol Admin | Resolve stuck orders, confirm holdbacks, set vaults/referrer |
 | | Operator | Operations Bot | Resolve stuck orders, set referrer |
-| | Holdback | Operations EOA | Confirm holdback payments (required for every order) |
+| | Holdback | Operations EOA | Confirm holdback payments (required for every redeem order) |
 | | Vault Manager | Operations EOA | Set deposit/redemption vaults |
 | | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
