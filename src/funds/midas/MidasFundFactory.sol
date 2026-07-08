@@ -4,7 +4,6 @@ pragma solidity ^0.8.22;
 import {MidasFund} from "./MidasFund.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
-import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title MidasFundFactory
 /// @author 3F Protocol
@@ -17,10 +16,10 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 ///      - the WrappedAsset owner must grant ISSUER_ROLE to the new fund;
 ///      - Midas must greenlist the new fund (and the WrappedAsset, once) when the vault
 ///        greenlist is enabled or the mToken is permissioned (e.g. mGLOBAL);
-///      - the fund owner grants HOLDBACK_ROLE / VAULT_MANAGER_ROLE to the relevant accounts.
+///      - the fund owner grants OPERATOR_ROLE / HOLDBACK_ROLE / VAULT_MANAGER_ROLE to the
+///        relevant accounts.
 contract MidasFundFactory {
   using LibClone for address;
-  using LibChecks for address;
 
   event FactoryDeployed();
   event FundCreated(address indexed fund, address indexed depositVault, address indexed redemptionVault);

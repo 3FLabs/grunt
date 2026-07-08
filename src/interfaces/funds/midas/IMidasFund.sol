@@ -201,9 +201,10 @@ interface IMidasFund is IFund {
   ///      confirmHoldback() yet. Always false for deposit orders (no holdback).
   function holdbackPending() external view returns (bool);
 
-  /// @notice The Midas mint request id of the current (or most recent) deposit order.
-  /// @dev Set when a deposit order is committed via `depositRequest`; reset to 0 when a new
-  ///      order is created. Only meaningful while the current order is a committed deposit.
+  /// @notice The Midas mint request id of the current committed deposit order.
+  /// @dev Set when a deposit order is committed via `depositRequest`; reset to 0 on every
+  ///      create(), including redeem orders. Only meaningful while the current order is a
+  ///      committed deposit.
   function activeRequestId() external view returns (uint256);
 
   /// @notice The Midas referrer id forwarded on deposits.

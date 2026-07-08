@@ -41,7 +41,7 @@ src/
 │   ├── midas/
 │   │   ├── MidasFund.sol            # Midas mToken (mGLOBAL, etc.) integration
 │   │   └── MidasFundFactory.sol     # Beacon proxy factory
-│   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.) with virtual isAllowed hook
+│   └── WrappedAsset.sol         # Wrapper token (wUSCC, wmGLOBAL, etc.) with virtual isAllowed hook
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
 │   └── MorphoBorrowPositionFactory.sol  # Beacon proxy factory
@@ -525,8 +525,8 @@ stateDiagram-v2
 
 | Mode | Input | Output |
 |------|-------|--------|
-| DEPOSIT | Asset (e.g., USDC) | Shares (e.g., wUSCC) |
-| REDEEM | Shares (e.g., wUSCC) | Asset (e.g., USDC) |
+| DEPOSIT | Asset (e.g., USDC) | Shares (e.g., wUSCC, wmGLOBAL) |
+| REDEEM | Shares (e.g., wUSCC, wmGLOBAL) | Asset (e.g., USDC) |
 
 ### USCC Integration (Superstate)
 
@@ -589,6 +589,35 @@ stateDiagram-v2
 2. `commit()` - Burn WrappedAsset (unwrap to AA tranche), call `requestWithdraw()` on CDO
 3. *Wait for CDO epoch to end*
 4. `unlock()` - Call `claimWithdrawRequest()`, send underlying assets to receiver
+
+### Midas mToken Integration
+
+`MidasFund` wraps Midas mTokens (for example, mGLOBAL) through a WrappedAsset token such as `wmGLOBAL`. It uses Midas issuance and redemption vaults with direction-specific pricing feeds.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern**: the stored `internalState` may differ from what `state()` returns, because `state()` checks the Midas mint request status, fund token balances, and redeem holdback confirmation.
+- Deposits are **asynchronous** via `depositRequest()`: `commit()` transfers the payment token to Midas, then the order stays PROCESSING until a Midas vault admin approves the mint request and mints mToken to the fund.
+- Redeems use **instant redemption** via `redeemInstant()`, but every redeem order stays PROCESSING until the off-band holdback payment is confirmed with `confirmHoldback()`.
+- Recovery depends on an off-band Midas admin return of the committed input. Rejected deposit requests are not refunded on-chain by Midas, so `recover()` only succeeds once the returned tokens are present in the fund.
+- When the Midas vault greenlist is enabled or the mToken is permissioned, both the fund and the WrappedAsset must be greenlisted before orders can be created or committed.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order and validate output against the deposit vault's pricing feeds
+2. `commit()` - Pull assets, approve the deposit vault, call `depositRequest()`, and store the mint request id
+3. *Wait for Midas admin approval*
+4. `unlock()` - Wrap the minted mToken into WrappedAsset and send it to the receiver
+
+**Redeem Flow (WrappedShare → Asset):**
+1. `create(REDEEM)` - Initialize order and validate output against the redemption vault's pricing feeds
+2. `commit()` - Burn WrappedAsset, approve mToken to the redemption vault, and call `redeemInstant()`
+3. *Wait for the off-band holdback payment, if any*
+4. `confirmHoldback()` - Owner or holdback role confirms the holdback was received
+5. `unlock()` - Send the fund's full payment-token balance to the receiver
+
+**Recovery Flow (off-band unwind):**
+1. `recovering()` - Owner/operator marks the current processing order as recoverable
+2. *Wait for Midas to return the committed input off-band*
+3. `recover()` - Return the recovered asset or rewrapped mToken to the receiver
 
 ## Position Manager
 
@@ -1075,6 +1104,7 @@ flowchart TB
 - `USCCFundFactory` - Deploys USCC fund wrappers
 - `CentrifugeFundFactory` - Deploys Centrifuge ERC-7540 fund wrappers
 - `ParetoFundFactory` - Deploys Pareto CDO fund wrappers
+- `MidasFundFactory` - Deploys Midas mToken fund wrappers
 - `TransferGuardFactory` - Deploys transfer guards
 
 **Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.
