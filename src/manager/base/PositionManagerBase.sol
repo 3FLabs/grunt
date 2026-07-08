@@ -74,10 +74,15 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      will never recover past the old mark) the owner can force-advance the reference to the
   ///      current state via `resetPerformanceReference` in `PositionManagerAdmin`.
   ///
-  ///      The management fee assets deducted from the basis at crystallization cover only the
-  ///      current accrual interval (`lastFeeAccrualTimestamp` advances every accrual). Management
-  ///      fees charged during earlier held intervals are not re-deducted; the deduction exists to
-  ///      avoid taxing the same interval twice, not to net lifetime management fees.
+  ///      The performance fee is net of management fees over the whole period the reference
+  ///      covers: the basis is reduced by the management fees charged while the reference was
+  ///      held (`heldManagementFeeAssets`, accumulated each held accrual) plus the current
+  ///      interval's management fee. Without the accumulator, management fees minted on a
+  ///      non-positive basis would be forgotten and the next crystallization would overcharge by
+  ///      exactly those amounts. The accumulator clears whenever the reference advances (any
+  ///      excess above the basis is forgiven, not carried past the new mark) and on
+  ///      `resetPerformanceReference`; flows scale it with the share supply so the per-share
+  ///      deduction is preserved (see `LibStorage.rebaseSnapshot`).
   ///
   ///      Capital flows (deposit/withdraw/burn/rebalance/module changes) do not advance the
   ///      reference either; they rebase it so the pending per-share basis is preserved — see
@@ -110,6 +115,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   /// @return performanceFeeShares The shares that would be minted for performance fees
   /// @return advanceReference True when `_accrueFees` must advance the performance reference to
   ///         the current state (positive basis, bootstrap, or empty vault); false to hold it
+  /// @return heldManagementFees_ The value `_accrueFees` must persist as the held management fee
+  ///         accumulator: zero when the reference advances (deduction consumed or forgiven),
+  ///         otherwise the stored accumulator plus the management fee charged this interval
   function _pendingFees()
     internal
     view
@@ -119,67 +127,77 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
       uint256 currentDebt,
       uint256 managementFeeShares,
       uint256 performanceFeeShares,
-      bool advanceReference
+      bool advanceReference,
+      uint256 heldManagementFees_
     )
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     FeeData memory fd = _storage.feeData;
 
-    // Single iteration over borrow modules returns the NAV, the aggregate debt, and the
-    // aggregate quoted collateral of non-bad-debt positions in one pass.
-    uint256 currentCollat;
-    (totalAssets_, currentDebt, currentCollat) = _storage.totalAssets();
-
     // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply(),
     // since _pendingFees() is reachable from _accrueFees() during a guarded deposit/withdraw/burn.
     totalSupply_ = ERC20.totalSupply();
 
-    // Levered-slice basis against the held reference. Computed regardless of the fee
-    // configuration because it also drives the reference-advance decision (see the
-    // reference-advance rule above).
-    uint256 basis;
+    uint256 managementFeeAssets;
+    uint256 totalFeeAssets;
     {
-      uint256 _lastDebt = _storage.lastDebt;
-      if (_lastDebt == 0 || totalSupply_ == 0) {
-        // Bootstrap sentinel or empty vault: no reference to measure against (lastCollat would be
-        // zero or meaningless); skip the performance fee and (re)seed the reference.
-        advanceReference = true;
-      } else {
-        uint256 lastCollat = _storage.lastTotalAssets + _lastDebt;
-        // basis = mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt
-        //       = LTV_ref * currentCollat - currentDebt
-        // Round up on the minuend (mulDivUp) so the basis is biased larger — favors the protocol,
-        // consistent with conservative-to-protocol rounding elsewhere.
-        uint256 scaledLastDebt = _lastDebt.mulDivUp(currentCollat, lastCollat);
-        if (scaledLastDebt > currentDebt) {
-          basis = scaledLastDebt - currentDebt;
+      // Single iteration over borrow modules returns the NAV, the aggregate debt, and the
+      // aggregate quoted collateral of non-bad-debt positions in one pass.
+      uint256 currentCollat;
+      (totalAssets_, currentDebt, currentCollat) = _storage.totalAssets();
+
+      // Levered-slice basis against the held reference. Computed regardless of the fee
+      // configuration because it also drives the reference-advance decision (see the
+      // reference-advance rule above).
+      uint256 basis;
+      {
+        uint256 _lastDebt = _storage.lastDebt;
+        if (_lastDebt == 0 || totalSupply_ == 0) {
+          // Bootstrap sentinel or empty vault: no reference to measure against (lastCollat would
+          // be zero or meaningless); skip the performance fee and (re)seed the reference.
           advanceReference = true;
+        } else {
+          uint256 lastCollat = _storage.lastTotalAssets + _lastDebt;
+          // basis = mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt
+          //       = LTV_ref * currentCollat - currentDebt
+          // Round up on the minuend (mulDivUp) so the basis is biased larger — favors the
+          // protocol, consistent with conservative-to-protocol rounding elsewhere.
+          uint256 scaledLastDebt = _lastDebt.mulDivUp(currentCollat, lastCollat);
+          if (scaledLastDebt > currentDebt) {
+            basis = scaledLastDebt - currentDebt;
+            advanceReference = true;
+          }
         }
       }
+
+      if (fd.feeRecipient == address(0) || totalSupply_ == 0) {
+        // No fee is charged, so the accumulator carries over unchanged unless the reference
+        // advances (a positive basis still consumes the pending deduction, see the rule above).
+        heldManagementFees_ = advanceReference ? 0 : _storage.heldManagementFeeAssets;
+        return (totalAssets_, totalSupply_, currentDebt, 0, 0, advanceReference, heldManagementFees_);
+      }
+
+      // Management fee: charged on the aggregate good-debt collateral, time-weighted, then capped
+      // at totalAssets_ so the post-fee asset base stays non-negative for share conversion.
+      if (fd.managementFee > 0) {
+        uint256 elapsed = block.timestamp - _storage.lastFeeAccrualTimestamp;
+        managementFeeAssets = currentCollat.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
+        managementFeeAssets = managementFeeAssets.min(totalAssets_);
+      }
+
+      // Performance fee on the levered-slice basis, net of the management fees charged since the
+      // reference last advanced: the held accumulator plus the current interval's charge.
+      heldManagementFees_ = _storage.heldManagementFeeAssets;
+      totalFeeAssets = managementFeeAssets;
+      if (fd.performanceFee > 0 && basis > managementFeeAssets + heldManagementFees_) {
+        totalFeeAssets += (basis - managementFeeAssets - heldManagementFees_).mulDiv(fd.performanceFee, BPS);
+      }
+      // While the reference is held, the current interval's management fee joins the accumulator
+      // so the next crystallization deducts it; on advance the pending deduction is consumed (or,
+      // for any excess above the basis, forgiven) and the accumulator restarts.
+      heldManagementFees_ = advanceReference ? 0 : heldManagementFees_ + managementFeeAssets;
     }
 
-    if (fd.feeRecipient == address(0) || totalSupply_ == 0) {
-      return (totalAssets_, totalSupply_, currentDebt, 0, 0, advanceReference);
-    }
-
-    uint256 virtualShareOffset_ = _storage.virtualShareOffset;
-    uint256 managementFeeAssets;
-    uint256 performanceFeeAssets;
-
-    // Management fee: charged on the aggregate good-debt collateral, time-weighted, then capped
-    // at totalAssets_ so the post-fee asset base stays non-negative for share conversion.
-    if (fd.managementFee > 0) {
-      uint256 elapsed = block.timestamp - _storage.lastFeeAccrualTimestamp;
-      managementFeeAssets = currentCollat.mulDiv(fd.managementFee * elapsed, BPS * SECONDS_PER_YEAR);
-      managementFeeAssets = managementFeeAssets.min(totalAssets_);
-    }
-
-    // Performance fee on the levered-slice basis, net of the current interval's management fee.
-    if (fd.performanceFee > 0 && basis > managementFeeAssets) {
-      performanceFeeAssets = (basis - managementFeeAssets).mulDiv(fd.performanceFee, BPS);
-    }
-
-    uint256 totalFeeAssets = managementFeeAssets + performanceFeeAssets;
     // Combined no-mint guard. Folds together three cases that all imply a zero share mint:
     //   - `totalFeeAssets == 0`: nothing to mint.
     //   - `totalFeeAssets == totalAssets_`: mgmt fee cap binds exactly; `feeAdjustedAssets` would be
@@ -191,19 +209,29 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     //     and `performanceFee <= BPS`). Folding it in here makes the subsequent subtraction safe
     //     without depending on that invariant chain.
     // `_accrueFees` still refreshes `lastFeeAccrualTimestamp` (and the reference, per
-    // `advanceReference`) so normal accrual resumes next call.
+    // `advanceReference`) so normal accrual resumes next call. Nothing is minted, so this
+    // interval's management fee does not join the held accumulator either.
     if (totalFeeAssets >= totalAssets_) {
-      return (totalAssets_, totalSupply_, currentDebt, 0, 0, advanceReference);
+      return (
+        totalAssets_,
+        totalSupply_,
+        currentDebt,
+        0,
+        0,
+        advanceReference,
+        advanceReference ? 0 : _storage.heldManagementFeeAssets
+      );
     }
 
-    uint256 feeAdjustedAssets = totalAssets_ - totalFeeAssets;
-
-    // Convert the combined fee assets first so both components share the same base, then split
-    // off the management component; the remainder is the performance component.
-    performanceFeeShares = totalFeeAssets.convertToShares(totalSupply_, feeAdjustedAssets, virtualShareOffset_, false);
+    // Convert the combined fee assets first so both components share the same fee-adjusted base
+    // (`totalAssets_ - totalFeeAssets`), then split off the management component; the remainder is
+    // the performance component.
+    performanceFeeShares =
+      totalFeeAssets.convertToShares(totalSupply_, totalAssets_ - totalFeeAssets, _storage.virtualShareOffset, false);
     if (managementFeeAssets > 0) {
-      managementFeeShares =
-        managementFeeAssets.convertToShares(totalSupply_, feeAdjustedAssets, virtualShareOffset_, false);
+      managementFeeShares = managementFeeAssets.convertToShares(
+        totalSupply_, totalAssets_ - totalFeeAssets, _storage.virtualShareOffset, false
+      );
       performanceFeeShares -= managementFeeShares;
     }
   }
@@ -222,7 +250,10 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     uint256 managementFeeShares;
     uint256 performanceFeeShares;
     bool advanceReference;
-    (currentTotalAssets,, currentDebt, managementFeeShares, performanceFeeShares, advanceReference) = _pendingFees();
+    uint256 heldManagementFees_;
+    (
+      currentTotalAssets,, currentDebt, managementFeeShares, performanceFeeShares, advanceReference, heldManagementFees_
+    ) = _pendingFees();
 
     uint256 feeShares = managementFeeShares + performanceFeeShares;
 
@@ -241,6 +272,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
       _storage.lastTotalAssets = currentTotalAssets;
       _storage.lastDebt = currentDebt;
     }
+    // Persist the held management fee accumulator computed by _pendingFees: cleared on advance,
+    // grown by this interval's management fee while the reference is held.
+    _storage.heldManagementFeeAssets = heldManagementFees_;
     // The management fee is time-based and independent of the performance reference, so the
     // timestamp advances on every accrual even when the reference is held.
     // Safe: block.timestamp fits in uint40 for ~35,000 years

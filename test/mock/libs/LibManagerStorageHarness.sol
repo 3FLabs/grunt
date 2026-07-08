@@ -40,6 +40,16 @@ contract LibManagerStorageHarness {
     ps.lastDebt = lastDebt;
   }
 
+  /// @dev Set the held management fee accumulator directly
+  function setHeldManagementFeeAssets(uint256 value) external {
+    LibStorage.positionManagerStorage().heldManagementFeeAssets = value;
+  }
+
+  /// @dev Get heldManagementFeeAssets value
+  function getHeldManagementFeeAssets() external view returns (uint256) {
+    return LibStorage.positionManagerStorage().heldManagementFeeAssets;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     LibView FUNCTIONS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

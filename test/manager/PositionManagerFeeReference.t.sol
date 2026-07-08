@@ -64,6 +64,19 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     return int256(scaledRefDebt) - int256(currentDebt);
   }
 
+  /// @dev The held management fee accumulator (management fees charged since the reference last
+  ///      advanced, deducted from the next positive basis).
+  function _heldManagementFees() internal view returns (uint256) {
+    (,,,,, uint256 held) = positionManager.feeData();
+    return held;
+  }
+
+  /// @dev Expected management fee assets for one accrual interval, replicating `_pendingFees`.
+  function _expectedMgmtAssets(uint256 elapsed) internal view returns (uint256) {
+    uint256 collatQuoted = positionManager.totalAssets() + positionManager.debtAmount();
+    return collatQuoted.mulDiv(uint256(currentMgmtFee) * elapsed, 10_000 * 365 days);
+  }
+
   /// @dev Expected perf fee shares for a given basis under a perf-only config, replicating the
   ///      `_pendingFees` share conversion against the fee-adjusted base.
   function _expectedPerfShares(uint256 basis) internal view returns (uint256) {
@@ -652,6 +665,286 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              MANAGEMENT FEE NETTING (HELD)                 */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Management fees minted while the reference is held accumulate and are deducted from
+  ///         the next crystallization's basis, so the performance fee is net of the WHOLE
+  ///         period's management fees, not only the last interval's.
+  function test_managementFee_heldChargesDeductAtCrystallization() public {
+    _setFees(200, PERF_FEE); // 2% per year management fee amplifies the netting signal
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Flat stretch: each accrual mints the management fee, holds the reference, and must add the
+    // charged assets to the held accumulator.
+    uint256 expectedHeld;
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      expectedHeld += _expectedMgmtAssets(6 days);
+      _accrue();
+    }
+    assertEq(_heldManagementFees(), expectedHeld, "held accumulator equals the charged management fees");
+    assertGt(positionManager.balanceOf(feeRecipient), 0, "management fees still minted while held");
+
+    // One more interval, then the oracle steps: the crystallizing fee nets held plus current.
+    vm.warp(block.timestamp + 6 days);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 102 / 100);
+
+    uint256 mgmtAssets = _expectedMgmtAssets(6 days);
+    uint256 deduction = mgmtAssets + _heldManagementFees();
+    int256 basis = _pendingBasis();
+    assertGt(basis, int256(deduction), "gain clears the deduction");
+
+    uint256 perfAssets = (uint256(basis) - deduction).mulDiv(uint256(PERF_FEE), 10_000);
+    // The netting removes exactly perfRate x heldManagementFees relative to the single-interval
+    // deduction of the unfixed accounting.
+    uint256 perfAssetsIgnoringHeld = (uint256(basis) - mgmtAssets).mulDiv(uint256(PERF_FEE), 10_000);
+    assertApproxEqAbs(
+      perfAssetsIgnoringHeld - perfAssets,
+      _heldManagementFees().mulDiv(uint256(PERF_FEE), 10_000),
+      1,
+      "netting removes exactly the held share of the fee"
+    );
+
+    // Replicate the share conversion of `_pendingFees` (combined first, then split).
+    uint256 supply = positionManager.totalSupply();
+    uint256 offset = positionManager.virtualShareOffset();
+    uint256 feeAdjusted = positionManager.totalAssets() - mgmtAssets - perfAssets;
+    uint256 expectedMgmtShares = mgmtAssets * (supply + offset) / (feeAdjusted + 1);
+    uint256 expectedPerfShares = (mgmtAssets + perfAssets) * (supply + offset) / (feeAdjusted + 1) - expectedMgmtShares;
+    (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(mgmtShares, expectedMgmtShares, "management fee unaffected by the netting");
+    assertEq(perfShares, expectedPerfShares, "perf fee nets the whole period's management fees");
+
+    _accrue();
+    assertEq(_heldManagementFees(), 0, "crystallization clears the accumulator");
+  }
+
+  /// @notice Whatever the accrual cadence through the flat period, the crystallized performance
+  ///         fee equals perfRate x (basis - management fees charged since the last advance): a
+  ///         mid-period accrual can no longer write its management fee out of the deduction.
+  function test_managementFee_perfNetsChargedMgmtAtAnyCadence() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    uint256 start = block.timestamp;
+    uint256[3] memory cadences = [uint256(1), 5, 10];
+
+    for (uint256 c = 0; c < cadences.length; ++c) {
+      uint256 snap = vm.snapshotState();
+      uint256 accruals = cadences[c];
+
+      uint256 chargedMgmt;
+      for (uint256 i = 1; i <= accruals; ++i) {
+        vm.warp(start + i * 30 days / accruals);
+        chargedMgmt += _expectedMgmtAssets(30 days / accruals);
+        _accrue();
+      }
+      assertEq(_heldManagementFees(), chargedMgmt, "accumulator tracks the charged fees");
+
+      // Step at the period end; the crystallizing accrual is zero-elapsed, so the deduction is
+      // the accumulator alone and the perf-only share conversion applies exactly.
+      oracle.setPrice(DEFAULT_ORACLE_PRICE * 102 / 100);
+      (,,, uint256 perfShares) = positionManager.pendingFees();
+      assertEq(
+        perfShares,
+        _expectedPerfShares(uint256(_pendingBasis()) - chargedMgmt),
+        "perf fee nets exactly the charged management fees"
+      );
+      assertGt(perfShares, 0, "gain crystallizes");
+
+      vm.revertToState(snap);
+      oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    }
+  }
+
+  /// @notice A positive basis smaller than the pending management fee deduction advances the
+  ///         reference without a performance fee; the consumed deduction does not carry past the
+  ///         new mark.
+  function test_managementFee_heldDeductionAbsorbsSmallGain() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+
+    // A small step: positive basis, but below the accumulated deduction.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 1005 / 1000);
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "gain is positive");
+    assertLt(uint256(basis), held, "gain is below the pending deduction");
+
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "deduction absorbs the whole gain");
+
+    _accrue();
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference advances on the positive basis");
+    assertEq(_heldManagementFees(), 0, "consumed deduction does not carry past the new mark");
+  }
+
+  /// @notice The pending deduction scales with the share supply across a flow: an exit takes its
+  ///         slice along instead of donating it to the stayers.
+  function test_flow_scalesHeldManagementFeesWithSupply() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    vm.warp(block.timestamp + 15 days);
+    _accrue();
+    uint256 heldBefore = _heldManagementFees();
+    assertGt(heldBefore, 0, "management fees accumulated while held");
+
+    // Exit half the pool in the same block: the burn's internal accrual is zero-elapsed, so the
+    // only supply change is the burn itself and the deduction must scale with it.
+    uint256 supplyBefore = positionManager.totalSupply();
+    uint256 sharesToBurn = positionManager.balanceOf(minter) / 2;
+    _mintDebt(minter, DEBT_AMOUNT);
+    vm.prank(minter);
+    positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
+
+    uint256 supplyAfter = positionManager.totalSupply();
+    assertEq(
+      _heldManagementFees(), heldBefore.mulDiv(supplyAfter, supplyBefore), "deduction scales with the share supply"
+    );
+  }
+
+  /// @notice A rescue deposit out of a full bad-debt episode mints shares against a zero asset
+  ///         base (unmoored supply ratio); the pending deduction must stay nominal so the
+  ///         post-recovery crystallization still charges, netting only fees actually minted.
+  function test_managementFee_rescueDepositKeepsHeldDeductionNominal() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Crash below water, then rescue with a collateral deposit that lifts the pool back above.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
+    assertEq(positionManager.totalAssets(), 0, "all positions excluded as bad debt");
+    _leveredDeposit(4_000e18, 0);
+    assertGt(positionManager.totalAssets(), 0, "rescue lifts the pool above water");
+    assertEq(_heldManagementFees(), held, "deduction stays nominal across the rescue");
+
+    // Recovery from the re-anchored trough: the crystallization charges net of the nominal
+    // deduction only (an inflated deduction would swallow the whole gain).
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(
+      perfShares,
+      _expectedPerfShares(uint256(_pendingBasis()) - held),
+      "crystallization nets exactly the fees actually charged"
+    );
+    assertGt(perfShares, 0, "recovery gain above the re-anchor still charges");
+  }
+
+  /// @notice A fee holiday (no recipient) neither wipes nor grows the deduction: it survives
+  ///         held holiday accruals and still nets the crystallization once fees are re-enabled,
+  ///         while a positive-basis advance during the holiday clears it like any other advance.
+  function test_managementFee_holidayPreservesHeldDeduction() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    uint256 snap = vm.snapshotState();
+
+    // Holiday: a held accrual on the no-recipient path charges nothing and keeps the deduction.
+    vm.prank(owner);
+    positionManager.setFeeData(address(0), 200, PERF_FEE);
+    vm.warp(block.timestamp + 6 days);
+    vm.prank(owner);
+    positionManager.setFeeData(address(0), 200, PERF_FEE);
+    assertEq(_heldManagementFees(), held, "holiday accrual neither wipes nor grows the deduction");
+
+    // Re-enable fees (management rate zero isolates the pre-holiday deduction), then step: the
+    // crystallization still nets the fees charged before the holiday.
+    _setFees(0, PERF_FEE);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 102 / 100);
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(
+      perfShares, _expectedPerfShares(uint256(_pendingBasis()) - held), "crystallization nets the pre-holiday charges"
+    );
+
+    // Variant: a positive basis during the holiday advances without a mint and clears the
+    // deduction with the fee period it belonged to.
+    vm.revertToState(snap);
+    vm.prank(owner);
+    positionManager.setFeeData(address(0), 200, PERF_FEE);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
+    vm.prank(owner);
+    positionManager.setFeeData(address(0), 200, PERF_FEE);
+    assertEq(_heldManagementFees(), 0, "advance during the holiday clears the deduction");
+  }
+
+  /// @notice Accruals during a full bad-debt dip charge nothing (empty aggregates) and preserve
+  ///         the deduction, so the post-recovery crystallization still nets the pre-dip fees.
+  function test_managementFee_badDebtDipPreservesHeldDeduction() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    uint256 feeSharesBefore = positionManager.balanceOf(feeRecipient);
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Crash below water; an accrual during the dip mints nothing and keeps the deduction.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
+    vm.warp(block.timestamp + 6 days);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), feeSharesBefore, "no management fee on empty aggregates");
+    assertEq(_heldManagementFees(), held, "dip accrual preserves the deduction");
+
+    // Recovery above the mark: the crystallization nets the pre-dip charges.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(
+      perfShares, _expectedPerfShares(uint256(_pendingBasis()) - held), "crystallization nets the pre-dip charges"
+    );
+    assertGt(perfShares, 0, "gain above the pre-dip mark still charges");
+  }
+
+  /// @notice When the management fee cap binds on a held accrual (nothing is minted), the
+  ///         unminted interval fee does not join the deduction.
+  function test_managementFee_capGuardDoesNotGrowHeldDeduction() public {
+    // Route to the interest-free market so the basis stays exactly at the mark through dormancy.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // A normal held accrual seeds the accumulator.
+    vm.warp(block.timestamp + 30 days);
+    _accrue();
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Dormancy long enough for the cap to bind: the accrual mints nothing and must not grow the
+    // deduction with a fee that was never charged.
+    vm.warp(block.timestamp + 100 * 365 days);
+    (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
+    assertEq(mgmtPending + perfPending, 0, "cap binds: no shares pending");
+    _accrue();
+    assertEq(_heldManagementFees(), held, "unminted interval fee does not join the deduction");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*              OWNER RESET (ESCAPE HATCH)                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -688,6 +981,21 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     (,,, uint256 perfShares) = positionManager.pendingFees();
     assertEq(perfShares, _expectedPerfShares(uint256(basis)), "fee charged from the trough onward");
     assertGt(perfShares, 0, "fees resume without recovering past the old mark");
+  }
+
+  /// @notice The reset starts a fresh fee period: the pending management fee deduction
+  ///         (management fees charged since the reference last advanced) is forgiven with it.
+  function test_reset_clearsHeldManagementFees() public {
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    vm.warp(block.timestamp + 15 days);
+    _accrue();
+    assertGt(_heldManagementFees(), 0, "management fees accumulated while held");
+
+    vm.prank(owner);
+    positionManager.resetPerformanceReference();
+    assertEq(_heldManagementFees(), 0, "reset clears the pending management fee deduction");
   }
 
   /// @notice The reset is owner-only.

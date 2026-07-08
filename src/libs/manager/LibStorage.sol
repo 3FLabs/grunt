@@ -20,8 +20,9 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 ///        `LTV_ref = lastDebt / lastCollat` is the LTV at the performance reference. The reference
 ///        is held while the basis is non-positive (high-water mark) and advances only when a fee
 ///        crystallizes, so debt interest accrued under a flat collateral quote and collateral
-///        drawdowns stay inside the basis. The basis is then reduced by the management fee assets
-///        accrued over the current accrual interval. Replaces the prior NAV-variation basis.
+///        drawdowns stay inside the basis. The basis is then reduced by the management fees
+///        charged since the reference last advanced (`heldManagementFeeAssets` plus the current
+///        interval's charge). Replaces the prior NAV-variation basis.
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -93,6 +94,15 @@ struct RebalanceConfig {
 ///        sentinel: the first accrual after upgrade (or any other time `lastDebt` is zero) skips
 ///        the performance fee and seeds this slot with the current debt. Subsequent accruals
 ///        charge the new basis normally.
+/// @param heldManagementFeeAssets Management fee assets charged while the performance reference
+///        was held, accumulated since the reference last advanced. The performance fee must be
+///        net of management fees, so at the next crystallization this amount (plus the current
+///        interval's management fee) is deducted from the basis, and the accumulator is cleared
+///        whenever the reference advances (crystallization, bootstrap, empty vault) or the owner
+///        calls `resetPerformanceReference`. Flows scale it with the share-supply change so the
+///        per-share deduction is preserved, except a rescue flow out of a full bad-debt episode,
+///        which keeps it nominal (see `rebaseSnapshot`). Appended to the struct so the layout
+///        stays append-only; reads zero on upgrade (a clean start).
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -106,6 +116,7 @@ struct PositionManagerStorageData {
   address transferGuard;
   RebalanceConfig rebalanceConfig;
   uint256 lastDebt;
+  uint256 heldManagementFeeAssets;
 }
 
 /// @title LibStorage
@@ -182,6 +193,16 @@ library LibStorage {
   ///      is the exact complement of the fee basis and each flow can only shrink it by rounding
   ///      dust, never create a spurious positive basis.
   ///
+  ///      The held management fee accumulator (`heldManagementFeeAssets`, the management fees
+  ///      charged since the reference last advanced, deducted from the next positive basis) is
+  ///      scaled by the same supply ratio: an exit takes its slice of the pending deduction along,
+  ///      a deposit re-attaches it to the new shares. A rescue flow out of a full bad-debt
+  ///      episode (`prevCollat == 0`) keeps it nominal instead: shares mint against a zero asset
+  ///      base there, so the supply ratio is unmoored and scaling would inflate the deduction
+  ///      beyond the fees ever charged. In the fallback branches it is left in place: every such
+  ///      state (sentinel, empty vault) forces `advanceReference` on the next accrual, which
+  ///      clears the accumulator before any performance fee can consume it.
+  ///
   ///      Edge cases collapse to a plain snapshot of the current state (zero carry): bootstrap
   ///      (`lastDebt == 0` sentinel), an empty vault on either side of the flow, and a carry
   ///      exceeding the post-flow debt (the reference debt floors at zero, which is the bootstrap
@@ -224,6 +245,18 @@ library LibStorage {
       // Preserve the per-share carry across the supply change.
       carry = prevCarry.mulDiv(newSupply, prevSupply);
       if (carry > newDebt) carry = newDebt;
+      // Preserve the per-share pending management fee deduction the same way. Skipped when the
+      // pre-flow good-debt universe is empty (a rescue flow out of a full bad-debt episode):
+      // shares are then minted against a zero asset base, so the supply ratio is unmoored from
+      // any price and scaling would inflate the deduction far beyond the fees ever charged. The
+      // accumulator stays nominal instead, matching its definition (fees charged since the last
+      // advance).
+      if (newSupply != prevSupply && prevCollat > 0) {
+        uint256 heldManagementFeeAssets = self.heldManagementFeeAssets;
+        if (heldManagementFeeAssets > 0) {
+          self.heldManagementFeeAssets = heldManagementFeeAssets.mulDiv(newSupply, prevSupply);
+        }
+      }
     }
     uint256 newRefDebt = newDebt - carry;
     self.lastDebt = newRefDebt;
