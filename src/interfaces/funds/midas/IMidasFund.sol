@@ -115,14 +115,19 @@ interface IMidasFund is IFund {
 
   /// @notice Sets the fund internal state to RECOVERING (if issues arise with Midas).
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Use this when Midas returns the committed input off-band (e.g. via `withdrawToken`).
-  ///      Once set to RECOVERING, the state() function will check if recovery funds (original
-  ///      input) have been returned. If yes, it shows RECOVERING. If no, it falls back to
-  ///      PROCESSING.
-  /// @param orderId The order ID that must match the current order being processed.
-  ///        Required to prevent a stale pending transaction from targeting the wrong order if
-  ///        the current order completes and a new one enters PROCESSING before it is mined.
-  function recovering(bytes32 orderId) external;
+  ///      Only deposit orders can be recovered: use this when Midas returns the committed
+  ///      input off-band (e.g. via `withdrawToken`). Once set to RECOVERING, the state()
+  ///      function will check if recovery funds (original input) have been returned. If yes,
+  ///      it shows RECOVERING. If no, it falls back to PROCESSING.
+  ///      Reverts with RecoverNotSupported for redeem orders: a committed redeem has already
+  ///      settled irreversibly on-chain via `redeemInstant`, so the only path forward is
+  ///      confirmHoldback() followed by unlock().
+  /// @param order The order to recover (must match the current order being processed).
+  ///        The full order is required (rather than just its id) so the mode can be checked;
+  ///        matching on the derived order ID still prevents a stale pending transaction from
+  ///        targeting the wrong order if the current order completes and a new one enters
+  ///        PROCESSING before it is mined.
+  function recovering(Order calldata order) external;
 
   /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
@@ -155,6 +160,9 @@ interface IMidasFund is IFund {
   ///      holdback) to the receiver. Deposit orders settle without a holdback (they are marked
   ///      paid at creation), so calling this for a deposit order reverts with
   ///      HoldbackNotPending.
+  ///      Committed redeems cannot be recovered (the instant settlement is irreversible), so
+  ///      confirming without an actual holdback payment is the official write-off procedure:
+  ///      it deliberately completes the order with the instant settlement only.
   /// @param orderId The order ID that must match the current order being processed.
   ///        Required to prevent a stale pending transaction from targeting the wrong order.
   function confirmHoldback(bytes32 orderId) external;

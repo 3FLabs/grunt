@@ -278,7 +278,7 @@ contract MidasFundForkTest is Test {
     // Operator escape hatch (the mint request is still PENDING on the Midas side): the
     // deposit is unwound off-band by the Midas admin.
     vm.prank(owner);
-    fund.recovering(order.toId(address(fund)));
+    fund.recovering(order);
 
     // Without the refund the dynamic state falls back to PROCESSING.
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing before refund");

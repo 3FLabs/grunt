@@ -39,7 +39,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///        order remains PROCESSING until an account with the HOLDBACK_ROLE confirms via
 ///        confirmHoldback() that the holdback amount withheld by Midas was returned off-band in
 ///        the payment token. unlock() then sweeps the fund's full output-token balance (instant
-///        settlement plus holdback) to the receiver.
+///        settlement plus holdback) to the receiver. A committed redeem cannot be recovered
+///        (the instant settlement is irreversible): confirming the holdback — or deliberately
+///        waiving it if it never arrives — is the only completion path, so recovery is
+///        deposit-only.
 ///      - The Midas vault API is base-18 denominated; this contract converts the payment token
 ///        amounts from/to native decimals at the boundary.
 ///      - IMPORTANT (operations): both this fund AND the WrappedAsset must be greenlisted by Midas
@@ -349,7 +352,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No partial recoveries, always goes to ENDED. Recovery relies on the committed input
+  /// @dev No partial recoveries, always goes to ENDED. Only deposit orders can reach
+  ///      RECOVERING (a committed redeem settles irreversibly at commit and can only be
+  ///      completed via confirmHoldback() + unlock()). Recovery relies on the committed input
   ///      being returned to this contract off-band by the Midas admin (e.g. via `withdrawToken`),
   ///      which is also the refund path for a rejected deposit request.
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
@@ -362,15 +367,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_currentState);
 
-    if (order.mode == Mode.DEPOSIT) {
-      $.asset.safeTransfer(order.receiver, _amount);
-    } else {
-      // Wrap the returned mToken back and mint the WrappedAsset to the receiver
-      address _mToken = $.mToken;
-      address _wrappedShare = $.wrappedShare;
-      _mToken.safeApproveWithRetry(_wrappedShare, _amount);
-      IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
-    }
+    $.asset.safeTransfer(order.receiver, _amount);
 
     $.internalState = State.ENDED;
 
@@ -384,13 +381,19 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IMidasFund
-  function recovering(bytes32 orderId) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function recovering(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+    // A committed redeem has already settled irreversibly on-chain via `redeemInstant`
+    // (mToken burned or swapped, payment token received), so it can only be completed
+    // forward via confirmHoldback() + unlock(). Recovery is deposit-only.
+    if (order.mode == Mode.REDEEM) revert LibFundsErrors.RecoverNotSupported();
+
     MidasFundStorage storage $ = _midasFundStorage();
-    if (orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
+    bytes32 _orderId = order.toId(address(this));
+    if (_orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
     $.internalState = State.RECOVERING;
 
-    emit OrderRecovering(orderId);
+    emit OrderRecovering(_orderId);
   }
 
   /// @inheritdoc IMidasFund
@@ -577,9 +580,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///      - Redeem (instant settlement): asset balance >= effective output AND holdback
   ///        confirmed via confirmHoldback() → UNLOCKING.
   ///
-  ///      For RECOVERING state (set manually via recovering() after an off-band refund):
-  ///      - Deposit: asset balance >= effective input → RECOVERING, PROCESSING otherwise
-  ///      - Redeem: mToken balance >= effective input → RECOVERING, PROCESSING otherwise
+  ///      For RECOVERING state (set manually via recovering() after an off-band refund;
+  ///      deposit orders only, recovering() rejects redeems):
+  ///      - asset balance >= effective input → RECOVERING, PROCESSING otherwise
   ///
   ///      For all other states (EMPTY, ACCEPTED, ENDED), returns internalState directly.
   ///
@@ -619,7 +622,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
         if (_status == MidasRequestStatus.PENDING) return (State.PROCESSING, 0);
         if (_status == MidasRequestStatus.CANCELED) {
           // Rejected by Midas; the input is returned off-band by the Midas admin.
-          uint256 _recoverable = _inputBalance(order.mode, $);
+          uint256 _recoverable = IERC20($.asset).balanceOf(address(this));
           return _recoverable >= _effectiveInput ? (State.RECOVERING, _recoverable) : (State.PROCESSING, 0);
         }
         // PROCESSED falls through to the output balance check.
@@ -637,7 +640,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     }
 
     if (_internalState == State.RECOVERING) {
-      uint256 _amount = _inputBalance(order.mode, $);
+      uint256 _amount = IERC20($.asset).balanceOf(address(this));
       return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
     }
 
@@ -657,14 +660,6 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @param $ The fund storage reference.
   function _outputBalance(Mode _mode, MidasFundStorage storage $) internal view returns (uint256) {
     return IERC20(_mode == Mode.DEPOSIT ? $.mToken : $.asset).balanceOf(address(this));
-  }
-
-  /// @dev Returns this contract's balance of the order's input token
-  ///      (asset for DEPOSIT, mToken for REDEEM).
-  /// @param _mode The order mode (DEPOSIT or REDEEM).
-  /// @param $ The fund storage reference.
-  function _inputBalance(Mode _mode, MidasFundStorage storage $) internal view returns (uint256) {
-    return IERC20(_mode == Mode.DEPOSIT ? $.asset : $.mToken).balanceOf(address(this));
   }
 
   /// @dev Validates that the order output is within acceptable deviation from the feed-derived

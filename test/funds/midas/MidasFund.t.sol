@@ -1001,7 +1001,7 @@ contract MidasFundTest is Test {
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
     emit OrderRecovering(orderId);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
 
@@ -1013,50 +1013,64 @@ contract MidasFundTest is Test {
 
   function test_Recovering_FallsBackToProcessingWithoutBalance() public {
     Order memory order = _createAndCommitDeposit();
-    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     // No refund received: the dynamic state falls back to PROCESSING.
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing without balance");
   }
 
   function test_Recovering_RevertsInvalidOrder() public {
-    _createAndCommitDeposit();
+    Order memory order = _createAndCommitDeposit();
 
-    bytes32 wrongOrderId = keccak256("wrong");
+    Order memory wrongOrder = order;
+    wrongOrder.salt = keccak256("wrong");
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongOrderId));
-    fund.recovering(wrongOrderId);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongOrder.toId(address(fund))));
+    fund.recovering(wrongOrder);
   }
 
   function test_Recovering_RevertsInvalidState() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
     fund.create(order);
-    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
-    fund.recovering(orderId);
+    fund.recovering(order);
+  }
+
+  function test_Recovering_RevertsForRedeemOrder() public {
+    // A committed redeem already settled irreversibly via redeemInstant: recovery is
+    // deposit-only and the order must be completed via confirmHoldback() + unlock().
+    Order memory order = _commitRedeemOrder();
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.RecoverNotSupported.selector);
+    fund.recovering(order);
+
+    // The order remains PROCESSING and completes forward once the holdback is confirmed.
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
+    vm.prank(holdbackConfirmer);
+    fund.confirmHoldback(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
   }
 
   function test_Recovering_OnlyOwnerOrOperator() public {
     Order memory order = _createAndCommitDeposit();
-    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     // Depositor (address(this)) cannot either
     vm.expectRevert(Unauthorized.selector);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     vm.prank(owner);
     fund.grantRoles(operator, OPERATOR_ROLE);
     vm.prank(operator);
-    fund.recovering(orderId);
+    fund.recovering(order);
   }
 
   function test_CancelRecovering_Success() public {
@@ -1064,7 +1078,7 @@ contract MidasFundTest is Test {
     bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     vm.prank(owner);
     vm.expectEmit(true, true, true, true);
@@ -1079,10 +1093,9 @@ contract MidasFundTest is Test {
 
   function test_CancelRecovering_RevertsInvalidOrder() public {
     Order memory order = _createAndCommitDeposit();
-    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     bytes32 wrongOrderId = keccak256("wrong");
     vm.prank(owner);
@@ -1105,7 +1118,7 @@ contract MidasFundTest is Test {
     bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
@@ -1206,10 +1219,9 @@ contract MidasFundTest is Test {
 
   function test_Resolve_PartialRefundRecovery() public {
     Order memory order = _createAndCommitDeposit();
-    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     // Partial off-band refund: half the input
     depositVault.withdrawToken(address(usdc), address(fund), ONE_USDC / 2);
@@ -1226,10 +1238,9 @@ contract MidasFundTest is Test {
 
   function test_Resolve_AllowedInRecoveringState() public {
     Order memory order = _createAndCommitDeposit();
-    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
-    fund.recovering(orderId);
+    fund.recovering(order);
 
     vm.prank(owner);
     fund.resolve(order, ONE_USDC / 2, 0);
@@ -1304,18 +1315,6 @@ contract MidasFundTest is Test {
 
     vm.prank(holdbackConfirmer);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
-    fund.confirmHoldback(orderId);
-  }
-
-  function test_ConfirmHoldback_RevertsWhenRecovering() public {
-    Order memory order = _commitRedeemOrder();
-    bytes32 orderId = order.toId(address(fund));
-
-    vm.prank(owner);
-    fund.recovering(orderId);
-
-    vm.prank(holdbackConfirmer);
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.RECOVERING));
     fund.confirmHoldback(orderId);
   }
 
@@ -1402,24 +1401,6 @@ contract MidasFundTest is Test {
     assertEq(uint256(fund.state(nextRedeem)), uint256(State.PROCESSING), "processing until confirmed");
   }
 
-  function test_Holdback_GateSurvivesCancelRecovering() public {
-    Order memory order = _commitRedeemOrder();
-    bytes32 orderId = order.toId(address(fund));
-
-    vm.prank(owner);
-    fund.recovering(orderId);
-    vm.prank(owner);
-    fund.cancelRecovering(orderId);
-
-    // Back to PROCESSING with the gate still armed
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated");
-    assertTrue(fund.holdbackPending(), "holdback still pending");
-
-    vm.prank(holdbackConfirmer);
-    fund.confirmHoldback(orderId);
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
-  }
-
   function test_Holdback_ResolveDoesNotBypassGate() public {
     Order memory order = _commitRedeemOrder();
 
@@ -1432,24 +1413,6 @@ contract MidasFundTest is Test {
     vm.prank(holdbackConfirmer);
     fund.confirmHoldback(order.toId(address(fund)));
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
-  }
-
-  function test_Holdback_RecoveryPathUnaffected() public {
-    // The holdback only gates unlock; an off-band refund can still be recovered.
-    Order memory order = _commitRedeemOrder();
-    bytes32 orderId = order.toId(address(fund));
-
-    vm.prank(owner);
-    fund.recovering(orderId);
-
-    // Midas re-mints the redeemed mToken to the fund off-band (redemption unwound).
-    mGlobal.mint(address(fund), ONE_MTOKEN);
-    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering");
-
-    (State state, uint256 amount) = fund.recover(order);
-    assertEq(uint256(state), uint256(State.ENDED), "ended");
-    assertEq(amount, ONE_MTOKEN, "mToken recovered");
-    assertEq(wrappedShare.balanceOf(address(this)), ONE_MTOKEN, "wrapper returned");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
