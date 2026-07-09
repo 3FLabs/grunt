@@ -18,11 +18,13 @@ import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 contract SyncAllocatorDeposit {
   /// @notice Parameters forwarded to IMorphoAllocator.run, grouped into a struct to keep run() under
   ///         the ABI decoder stack limit (the project compiles without via-ir).
-  /// @dev The allocator deposits the measured unlocked amount via depositManager, so no deposit
-  ///      amount is passed here and the intent is left with no collateral dust.
+  /// @dev The allocator deposits the measured unlocked amount via depositManager, so the intent is
+  ///      left with no collateral dust. `depositAmount` is kept so existing callers do not have to
+  ///      change their encoding, but the script ignores it and does not forward it.
   /// @param deallocations Vault V2 liquidity sources to gather before allocating; see IMorphoAllocator.
   /// @param allocateAdapter Destination Morpho V1 Market adapter, or address(0) to skip allocation.
   /// @param allocateMarket Destination market, ignored when allocateAdapter is address(0).
+  /// @param depositAmount Ignored; the allocator deposits the measured unlocked amount instead.
   /// @param borrowAmount The amount to borrow via the position manager.
   /// @param useTarget Whether to use the target asset for the position manager deposit.
   /// @param minSharesUnlocked The minimum amount that must be unlocked (allocator unlock slippage guard).
@@ -30,6 +32,7 @@ contract SyncAllocatorDeposit {
     IMorphoAllocator.Deallocation[] deallocations;
     address allocateAdapter;
     MarketParams allocateMarket;
+    uint256 depositAmount;
     uint256 borrowAmount;
     bool useTarget;
     uint256 minSharesUnlocked;

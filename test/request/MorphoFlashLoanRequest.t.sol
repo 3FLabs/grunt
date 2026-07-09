@@ -670,6 +670,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       deallocations: new IMorphoAllocator.Deallocation[](0),
       allocateAdapter: address(0),
       allocateMarket: _emptyMarket(),
+      depositAmount: amount,
       borrowAmount: amount,
       useTarget: true,
       minSharesUnlocked: 0
@@ -691,6 +692,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       deallocations: new IMorphoAllocator.Deallocation[](0),
       allocateAdapter: address(0),
       allocateMarket: _emptyMarket(),
+      depositAmount: amount,
       borrowAmount: amount,
       useTarget: true, // targetPM
       minSharesUnlocked: 0
@@ -731,7 +733,8 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
 
     // The fund returns more shares than predicted (favorable NAV move between order creation and
-    // unlock). The allocator must deposit the full measured amount, not a stale prediction.
+    // unlock). The params still carry depositAmount == amount (the stale prediction); the script
+    // ignores it and the allocator deposits the full measured amount.
     uint256 unlockedAmount = amount + 50e18;
     mockFund.setUnlockAmount(unlockedAmount);
     collateralToken.setBalance(address(mockFund), unlockedAmount);
@@ -764,6 +767,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       deallocations: deallocations,
       allocateAdapter: address(0xBEEF),
       allocateMarket: _emptyMarket(),
+      depositAmount: amount,
       borrowAmount: amount,
       useTarget: true,
       minSharesUnlocked: 0
