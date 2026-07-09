@@ -24,12 +24,13 @@ interface IMorphoAllocator {
   }
 
   /// @notice Unlocks a matured fund DEPOSIT order, rebalances Morpho Vault V2 liquidity, then runs
-  ///         depositManager and borrows.
+  ///         depositManager and borrows. The measured unlocked amount is deposited in full, so the
+  ///         intent is left with no collateral dust regardless of unlock slippage or fund price
+  ///         movement.
   /// @param intentId The intent ID.
   /// @param deallocations Sources to gather liquidity from (markets and/or idle); see {Deallocation}.
   /// @param allocateAdapter Destination Morpho V1 Market adapter, or address(0) to skip allocation.
   /// @param allocateMarket Destination market, ignored when allocateAdapter is address(0).
-  /// @param depositAmount Collateral amount to deposit via depositManager (caller's fixed choice).
   /// @param borrowAmount The amount to borrow via depositManager.
   /// @param useTarget Whether to use the target asset for the position manager deposit.
   /// @param minSharesUnlocked The minimum amount that must be unlocked (slippage guard on unlock).
@@ -38,7 +39,6 @@ interface IMorphoAllocator {
     Deallocation[] calldata deallocations,
     address allocateAdapter,
     MarketParams calldata allocateMarket,
-    uint256 depositAmount,
     uint256 borrowAmount,
     bool useTarget,
     uint256 minSharesUnlocked

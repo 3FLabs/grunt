@@ -3,14 +3,18 @@ pragma solidity ^0.8.24;
 
 import {IMorphoAllocator} from "../../../src/interfaces/request/IMorphoAllocator.sol";
 import {IFacilityFunds} from "../../../src/interfaces/facility/base/IFacilityFunds.sol";
+import {IFacilityIntents} from "../../../src/interfaces/facility/base/IFacilityIntents.sol";
 import {IFacilityPositionManager} from "../../../src/interfaces/facility/base/IFacilityPositionManager.sol";
+import {IFund} from "../../../src/interfaces/funds/IFund.sol";
+import {IERC20} from "../../../src/interfaces/integrations/IERC20.sol";
 import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 
 /// @notice Test double for the externally-deployed MorphoAllocator. Implements IMorphoAllocator,
-///         enforces EXECUTOR_ROLE, and mirrors the facility side of the real `run` (unlock +
-///         depositManager). Vault V2 rebalancing is not modeled (grunt has no Vault V2 mocks); the
-///         rebalance params are recorded instead so tests can assert the script routed them through.
+///         enforces EXECUTOR_ROLE, and mirrors the facility side of the real `run` (unlock, then
+///         depositManager of the measured unlocked amount). Vault V2 rebalancing is not modeled
+///         (grunt has no Vault V2 mocks); the rebalance params are recorded instead so tests can
+///         assert the script routed them through.
 contract MockMorphoAllocator is IMorphoAllocator, OwnableRoles {
   uint256 internal constant EXECUTOR_ROLE = _ROLE_0;
 
@@ -32,21 +36,25 @@ contract MockMorphoAllocator is IMorphoAllocator, OwnableRoles {
     uint256 intentId,
     Deallocation[] calldata deallocations,
     address allocateAdapter,
-    MarketParams calldata, // allocateMarket — vault rebalancing not modeled in grunt
-    uint256 depositAmount,
+    MarketParams calldata, // allocateMarket (vault rebalancing not modeled in grunt)
     uint256 borrowAmount,
     bool useTarget,
     uint256 minSharesUnlocked
   ) external onlyRoles(EXECUTOR_ROLE) {
     lastDeallocationsLength = deallocations.length;
     lastAllocateAdapter = allocateAdapter;
-    lastDepositAmount = depositAmount;
     lastBorrowAmount = borrowAmount;
     lastUseTarget = useTarget;
     lastMinSharesUnlocked = minSharesUnlocked;
 
-    // Mirror the real allocator: unlock the matured order, then deposit + borrow via the PM.
+    // Mirror the real allocator: unlock the matured order, measure the shares credited to the
+    // facility, then deposit the full unlocked amount and borrow via the PM.
+    (, address fund,,) = IFacilityIntents(facility).getIntent(intentId);
+    address shareToken = IFund(fund).share();
+    uint256 sharesBefore = IERC20(shareToken).balanceOf(facility);
     IFacilityFunds(facility).unlock(intentId);
-    IFacilityPositionManager(facility).depositManager(intentId, depositAmount, borrowAmount, useTarget);
+    uint256 unlocked = IERC20(shareToken).balanceOf(facility) - sharesBefore;
+    lastDepositAmount = unlocked;
+    IFacilityPositionManager(facility).depositManager(intentId, unlocked, borrowAmount, useTarget);
   }
 }

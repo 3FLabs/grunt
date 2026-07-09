@@ -664,13 +664,12 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     return MarketParams(address(0), address(0), address(0), address(0), 0);
   }
 
-  /// @dev Default empty-rebalance SyncAllocatorDeposit payload (deposit == borrow == amount, targetPM).
+  /// @dev Default empty-rebalance SyncAllocatorDeposit payload (borrow == amount, targetPM).
   function _syncAllocatorDepositPayload(uint256 _intentId, uint256 amount) internal view returns (bytes memory) {
     SyncAllocatorDeposit.AllocatorParams memory allocatorParams = SyncAllocatorDeposit.AllocatorParams({
       deallocations: new IMorphoAllocator.Deallocation[](0),
       allocateAdapter: address(0),
       allocateMarket: _emptyMarket(),
-      depositAmount: amount,
       borrowAmount: amount,
       useTarget: true,
       minSharesUnlocked: 0
@@ -687,12 +686,11 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
 
     // Empty rebalance: no deallocations, allocation skipped (allocateAdapter == address(0)).
-    // pmDepositAmount = borrowAmount = amount.
+    // borrowAmount = amount; the allocator deposits the measured unlocked amount.
     SyncAllocatorDeposit.AllocatorParams memory allocatorParams = SyncAllocatorDeposit.AllocatorParams({
       deallocations: new IMorphoAllocator.Deallocation[](0),
       allocateAdapter: address(0),
       allocateMarket: _emptyMarket(),
-      depositAmount: amount,
       borrowAmount: amount,
       useTarget: true, // targetPM
       minSharesUnlocked: 0
@@ -721,12 +719,33 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     // Verify: collateral was deposited into PM (facility no longer holds it)
     assertEq(collateralToken.balanceOf(address(facility)), 0);
 
-    // Verify: the allocator received the params routed by the script
+    // Verify: the allocator deposited the measured unlocked amount and received the routed params
     assertEq(mockAllocator.lastDepositAmount(), amount);
     assertEq(mockAllocator.lastBorrowAmount(), amount);
     assertEq(mockAllocator.lastDeallocationsLength(), 0);
     assertEq(mockAllocator.lastAllocateAdapter(), address(0));
     assertTrue(mockAllocator.lastUseTarget());
+  }
+
+  function test_execute_syncAllocatorDeposit_depositsFullUnlockedAmount() public {
+    (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
+
+    // The fund returns more shares than predicted (favorable NAV move between order creation and
+    // unlock). The allocator must deposit the full measured amount, not a stale prediction.
+    uint256 unlockedAmount = amount + 50e18;
+    mockFund.setUnlockAmount(unlockedAmount);
+    collateralToken.setBalance(address(mockFund), unlockedAmount);
+
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+    bytes memory scriptPayload = _syncAllocatorDepositPayload(syncIntentId, amount);
+
+    vm.prank(executor);
+    flashLoanRequest.execute(amount, params, address(syncAllocatorDeposit), scriptPayload);
+
+    // The full unlocked amount was deposited into the PM; no collateral dust left on the facility.
+    assertEq(mockAllocator.lastDepositAmount(), unlockedAmount);
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
   }
 
   function test_execute_syncAllocatorDeposit_forwardsDeallocations() public {
@@ -745,7 +764,6 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       deallocations: deallocations,
       allocateAdapter: address(0xBEEF),
       allocateMarket: _emptyMarket(),
-      depositAmount: amount,
       borrowAmount: amount,
       useTarget: true,
       minSharesUnlocked: 0
