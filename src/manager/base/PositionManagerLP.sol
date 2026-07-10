@@ -194,7 +194,7 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     returns (int256 sharesDelta)
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    (uint256 totalAssetsAfter, uint256 debtAfter, uint256 collatAfter) = _storage.totalAssets();
+    (uint256 totalAssetsAfter, uint256 debtAfter, uint256 collatAfter,) = _storage.totalAssets();
     uint256 virtualShareOffset_ = _storage.virtualShareOffset;
 
     if (totalAssetsAfter > totalAssetsBefore) {

@@ -187,11 +187,31 @@ library LibStorage {
   ///      changes) keep it unchanged. A holder therefore cannot shed accrued debt carry by
   ///      exiting and re-entering, and an exit does not dump its carry slice on the stayers.
   ///
-  ///      Called after `_accrueFees` has already crystallized any positive basis, so the pending
-  ///      basis here is non-positive; `zeroFloorSub` guards the rounding edge at exactly zero.
-  ///      Rounding matches `_pendingFees` (`mulDivUp` on the scaled reference debt), so the carry
-  ///      is the exact complement of the fee basis and each flow can only shrink it by rounding
-  ///      dust, never create a spurious positive basis.
+  ///      Called after `_accrueFees` has already crystallized any positive basis, so outside a
+  ///      partial bad-debt episode the pending basis here is non-positive; `zeroFloorSub` guards
+  ///      the rounding edge at exactly zero. Rounding matches `_pendingFees` (`mulDivUp` on the
+  ///      scaled reference debt), so the carry is the exact complement of the fee basis and each
+  ///      flow can only shrink it by rounding dust, never create a spurious positive basis.
+  ///
+  ///      Partial bad-debt episode: while some (not all) modules are excluded as bad debt, the
+  ///      accrual freezes the reference instead of crystallizing (see `_pendingFees`), so a flow
+  ///      here can see a positive pending basis against the reduced aggregates. `zeroFloorSub`
+  ///      then clamps the carry to zero and the reference re-anchors at the post-flow visible
+  ///      state; the phantom gain itself is never preserved. The re-anchor is not
+  ///      direction-safe, because the pre-flow reduced aggregates are not comparable with the
+  ///      frozen full-universe mark: a flow that leaves the post-flow visible LTV at or below
+  ///      the frozen reference LTV under-reads the later recovery (LP-favorable; fees resume at
+  ///      a genuine new high), but a flow that raises it above the mark over-reads the recovery
+  ///      and can charge it as gain. The over-reading flows are a deposit with fresh borrowing
+  ///      during the window, a rebalance that borrows, and, most importantly, a rescue repayment
+  ///      (withdraw or rebalance) that pulls the excluded module back above water mid-flow: the
+  ///      re-anchor then adopts the re-entered module's near-100% LTV. Operational rule for the
+  ///      over-read: `resetPerformanceReference` does NOT correct it (the reset crystallizes a
+  ///      positive pending basis before moving); instead the owner should set the performance
+  ///      fee rate to zero right after such a flow, let the first accrual with a positive basis
+  ///      advance the reference mintlessly (a positive basis advances even at a zero rate), and
+  ///      then restore the rate. The under-read needs no action (fees resume at a genuine new
+  ///      high, or an owner reset re-anchors sooner).
   ///
   ///      The held management fee accumulator (`heldManagementFeeAssets`, the management fees
   ///      charged since the reference last advanced, deducted from the next positive basis) is
@@ -199,9 +219,12 @@ library LibStorage {
   ///      a deposit re-attaches it to the new shares. A rescue flow out of a full bad-debt
   ///      episode (`prevCollat == 0`) keeps it nominal instead: shares mint against a zero asset
   ///      base there, so the supply ratio is unmoored and scaling would inflate the deduction
-  ///      beyond the fees ever charged. In the fallback branches it is left in place: every such
-  ///      state (sentinel, empty vault) forces `advanceReference` on the next accrual, which
-  ///      clears the accumulator before any performance fee can consume it.
+  ///      beyond the fees ever charged. In the fallback branches it is left in place: outside a
+  ///      bad-debt window every such state (sentinel, empty vault) forces `advanceReference` on
+  ///      the next accrual, which clears the accumulator before any performance fee can consume
+  ///      it; during a window the accrual holds instead (see `_pendingFees`) and the accumulator
+  ///      keeps accruing the window's management fees for the eventual post-window netting,
+  ///      which matches its definition (fees charged since the last advance).
   ///
   ///      Edge cases collapse to a plain snapshot of the current state (zero carry): bootstrap
   ///      (`lastDebt == 0` sentinel), an empty vault on either side of the flow, and a carry

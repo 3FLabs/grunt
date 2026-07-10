@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionManagerBaseTest} from "./PositionManagerBase.t.sol";
 import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
+import {STORAGE_SLOT} from "src/libs/manager/LibConstants.sol";
 import {IPositionManagerAdmin, WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {
   RebalancingData,
@@ -322,6 +323,228 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
     _accrue();
     assertGt(positionManager.balanceOf(feeRecipient), 0, "genuine gain above the reference charges");
+  }
+
+  /// @dev Two-module fixture for the partial bad-debt window: module A holds little debt
+  ///      (10_000 collat / 1_000 debt), module B is debt-heavy (10_000 / 5_000). The aggregate
+  ///      reference is (20_000, 6_000), 30% LTV. A price drop to 0.45 excludes B
+  ///      (4_500 quoted < 5_000 debt) while A stays good, leaving visible aggregates
+  ///      (4_500, 1_000): the visible LTV (22%) sits below the reference LTV, so the naive basis
+  ///      reads +350 although NAV fell 14_000 -> 3_500.
+  function _setupDebtHeavyExclusionWindow() internal {
+    SupplyQueueEntry[] memory queue1 = new SupplyQueueEntry[](1);
+    queue1[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue1);
+    _leveredDeposit(10_000e18, 1_000e18);
+
+    SupplyQueueEntry[] memory queue2 = new SupplyQueueEntry[](1);
+    queue2[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue2);
+    _leveredDeposit(10_000e18, 5_000e18);
+
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference debt seeded on the full universe");
+    assertEq(_lastTotalAssets(), 14_000e18, "reference NAV seeded on the full universe");
+  }
+
+  /// @notice Partial bad debt, debt-heavy module excluded (PR #202 review comment): the exclusion
+  ///         deleverages the visible aggregate and the naive basis reads positive at the trough.
+  ///         The accrual must not mint and must hold the reference until the module re-enters.
+  function test_badDebt_partialExclusionOfDebtHeavyModuleMintsNoPhantomFee() public {
+    _setFees(0, PERF_FEE);
+    _setupDebtHeavyExclusionWindow();
+
+    // 55% drop: B excluded, visible NAV collapses to A's 4_500 - 1_000.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
+    assertEq(positionManager.totalAssets(), 3_500e18, "visible NAV is the healthy module only");
+
+    // The naive basis reads +350 here; nothing may be pending and nothing may mint.
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "no phantom perf fee pending at the trough");
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no phantom perf fee minted at the trough");
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference debt held through the exclusion");
+    assertEq(_lastTotalAssets(), 14_000e18, "reference NAV held through the exclusion");
+
+    // Module A recovers inside the window (B still excluded): still frozen, still no fee.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 49 / 100);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "in-window recovery is not fresh alpha");
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference debt held through the in-window recovery");
+
+    // Full recovery: B re-enters, the basis against the frozen reference is exactly zero.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "recovery to the mark is not charged");
+    assertEq(positionManager.lastDebt(), 6_000e18, "zero basis does not advance the reference");
+
+    // Only a genuine gain above the pre-dip mark crystallizes: basis = 6_000 * 21/20 - 6_000.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    (,,, perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(300e18), "only the increment above the pre-dip mark is charged");
+    assertGt(perfShares, 0, "genuine gain still crystallizes after the window");
+  }
+
+  /// @notice The management fee is unaffected by a partial bad-debt window: it accrues on the
+  ///         good-debt collateral, joins the held accumulator, and nets from the post-window
+  ///         crystallization.
+  function test_badDebt_partialExclusionManagementFeeStillAccruesAndNets() public {
+    _setFees(MGMT_FEE, PERF_FEE);
+    _setupDebtHeavyExclusionWindow();
+
+    // Trough accrual after 10 days: management fee mints on A's collateral (4_500 quoted), the
+    // reference stays frozen, and the charge joins the held accumulator.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
+    vm.warp(block.timestamp + 10 days);
+    _accrue();
+    uint256 mgmtSharesAtTrough = positionManager.balanceOf(feeRecipient);
+    assertGt(mgmtSharesAtTrough, 0, "management fee still charged during the window");
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference held despite the management fee mint");
+    uint256 expectedHeld = uint256(4_500e18).mulDiv(uint256(MGMT_FEE) * 10 days, 10_000 * 365 days);
+    assertEq(_heldManagementFees(), expectedHeld, "window management fee joins the held accumulator");
+
+    // Post-window gain: the crystallizing basis nets the held deduction, then the accumulator
+    // clears with the advance.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    int256 basis = _pendingBasis();
+    assertGt(basis, int256(expectedHeld), "gain above the mark exceeds the pending deduction");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(uint256(basis) - expectedHeld), "crystallization nets the held charge");
+    _accrue();
+    assertEq(_heldManagementFees(), 0, "accumulator clears when the reference advances");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference advanced with the crystallization");
+  }
+
+  /// @notice A flow during the window rebases against the reduced universe: the carry clamp
+  ///         re-anchors the reference at the post-flow state, which can only under-read the basis
+  ///         once the excluded module re-enters (LP-favorable), never mint the phantom gain.
+  function test_badDebt_partialExclusionFlowReanchorsLpFavorably() public {
+    _setFees(0, PERF_FEE);
+    _setupDebtHeavyExclusionWindow();
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
+
+    // Unlevered deposit routed to the healthy module: the flow's accrual must not mint, and the
+    // rebase re-anchors at the post-flow reduced universe (visible collat 4_950, debt 1_000).
+    SupplyQueueEntry[] memory queue1 = new SupplyQueueEntry[](1);
+    queue1[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue1);
+    _leveredDeposit(1_000e18, 0);
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "window flow does not crystallize the phantom");
+    assertEq(positionManager.lastDebt(), 1_000e18, "flow re-anchored on the reduced universe");
+    assertEq(_lastTotalAssets(), 3_950e18, "flow re-anchored at the post-flow visible NAV");
+
+    // B re-enters on recovery: the re-anchored reference under-reads the basis, so the recovery
+    // is not charged (under-collection until a genuine new high, corrected by an owner reset).
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    assertLt(_pendingBasis(), 0, "re-entry under-reads the basis against the re-anchored reference");
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no fee on the module re-entry");
+
+    // Fees resume once the pool clears the re-anchored reference LTV.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 150 / 100);
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "a strong enough gain clears the re-anchored reference");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "fees resume on the genuine gain");
+  }
+
+  /// @notice The bootstrap seed is also gated: a sentinel reference (`lastDebt == 0`) must not
+  ///         reseed against the reduced universe mid-window, or the mark would anchor on
+  ///         aggregates that misrepresent the pool and mis-measure the basis at re-entry.
+  function test_badDebt_partialExclusionHoldsBootstrapSeed() public {
+    _setFees(0, PERF_FEE);
+    _setupDebtHeavyExclusionWindow();
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
+
+    // Force the bootstrap sentinel (reachable via full repayment or the rebase carry clamp).
+    // `lastDebt` occupies the 13th storage slot of the ERC-7201 struct (offset 12); the assert
+    // below validates the offset.
+    vm.store(address(positionManager), bytes32(uint256(STORAGE_SLOT) + 12), bytes32(0));
+    assertEq(positionManager.lastDebt(), 0, "sentinel forced");
+
+    // A mid-window accrual must hold the sentinel instead of seeding the reduced universe.
+    _accrue();
+    assertEq(positionManager.lastDebt(), 0, "no bootstrap seed against the reduced universe");
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "sentinel accrual mints nothing");
+
+    // The first post-window accrual seeds on the full universe; fees then resume normally.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    _accrue();
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference reseeded on the full universe");
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "the reseeding accrual mints nothing");
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(300e18), "post-reseed gains charge normally");
+  }
+
+  /// @notice Pins the documented window-flow limitation and its operational remedy: a rescue
+  ///         repayment that pulls the excluded module back above water mid-flow re-anchors the
+  ///         reference at the trough (the re-entered module's high LTV over-reads the recovery),
+  ///         and the remedy is a temporary zero performance rate through the first positive
+  ///         accrual, not an owner reset (a reset would crystallize the phantom basis first).
+  function test_badDebt_partialExclusionRescueFlowNeedsFeeHoliday() public {
+    _setFees(0, PERF_FEE);
+    _setupDebtHeavyExclusionWindow();
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
+
+    // Rescue: the rebalancer repays 2_500 of B's debt, pulling B (4_500 quoted vs 2_500 debt)
+    // back above water mid-flow. The rebase compares the reduced pre-flow universe (4_500,
+    // 1_000) with the full post-flow universe (9_000, 3_500): the carry clamps to zero and the
+    // reference re-anchors at the trough with the re-entered module's LTV.
+    uint256 repay = 2_500e18;
+    RebalancingOperation[] memory ops = new RebalancingOperation[](1);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.REPAY, amount: repay
+    });
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: repay, operations: ops});
+    _mintDebt(rebalancer, repay);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), repay);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "the rescue flow itself does not crystallize");
+    assertEq(positionManager.lastDebt(), 3_500e18, "reference re-anchored at the trough (documented over-read)");
+    assertEq(_lastTotalAssets(), 5_500e18, "reference NAV re-anchored at the trough");
+
+    uint256 snap = vm.snapshotState();
+
+    // Without intervention, the recovery is charged as gain from the trough anchor.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    int256 phantomBasis = _pendingBasis();
+    assertGt(phantomBasis, 0, "the trough anchor over-reads the recovery");
+    (,,, uint256 phantomShares) = positionManager.pendingFees();
+    assertEq(
+      phantomShares,
+      _expectedPerfShares(uint256(phantomBasis)),
+      "absent intervention the recovery is charged from the trough"
+    );
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), phantomShares, "the phantom fee mints at the first accrual");
+
+    vm.revertToState(snap);
+
+    // Remedy: zero the performance rate right after the flow; the first positive accrual then
+    // advances the reference mintlessly and the rate can be restored.
+    _setFees(0, 0);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "zero-rate accrual advances without minting");
+    assertEq(_lastTotalAssets(), 16_500e18, "reference re-anchored at the recovered state");
+    _setFees(0, PERF_FEE);
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "restoring the rate does not mint");
+
+    // Fees resume only on genuine gains above the re-anchored reference.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "genuine gain above the re-anchored reference");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "post-holiday gains charge normally");
   }
 
   /// @notice Bootstrap sentinel: a full debt repayment zeroes `lastDebt`; the next accrual must

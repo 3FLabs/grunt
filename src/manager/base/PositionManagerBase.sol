@@ -108,13 +108,29 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      and gains recovered beyond that point are charged. `lastDebt == 0` still doubles as the
   ///      bootstrap sentinel (reached via full repayment or the carry clamp in `rebaseSnapshot`):
   ///      the first accrual after it skips the performance fee and reseeds the reference.
+  ///
+  ///      Partial bad-debt episode: when only some modules are underwater, the survivors' NAV
+  ///      keeps the aggregates non-zero, but the excluded modules' debt is missing from
+  ///      `currentDebt` while the reference (set on the full universe) still counts it. Whenever
+  ///      the exclusion leaves the survivors' visible LTV below the reference LTV, the visible
+  ///      aggregate looks deleveraged and the basis reads positive at the trough of a drawdown;
+  ///      charging it would mint a phantom fee and re-anchor the reference at the trough,
+  ///      re-charging the recovery. Accruals therefore never crystallize, advance, or seed the
+  ///      reference while `hasBadDebt` is set; the first accrual after the last module re-enters
+  ///      resumes against the frozen (pre-episode) reference. Flows during the window still
+  ///      rebase against the reduced universe; see `LibStorage.rebaseSnapshot` for the
+  ///      mis-anchoring a window flow can leave on the reference and the operational remedies
+  ///      (a temporary zero performance rate for an over-read, an owner reset for an
+  ///      under-read).
   /// @return totalAssets_ The current total assets across all borrow modules (`collateralQuoted - debt`)
   /// @return totalSupply_ The current total supply of shares (before fee minting)
   /// @return currentDebt The current aggregate debt across non-bad-debt positions
   /// @return managementFeeShares The shares that would be minted for management fees
   /// @return performanceFeeShares The shares that would be minted for performance fees
   /// @return advanceReference True when `_accrueFees` must advance the performance reference to
-  ///         the current state (positive basis, bootstrap, or empty vault); false to hold it
+  ///         the current state (positive basis, bootstrap, or empty vault); false to hold it.
+  ///         Always false while any module is excluded as bad debt (see the partial bad-debt
+  ///         episode rule above)
   /// @return heldManagementFees_ The value `_accrueFees` must persist as the held management fee
   ///         accumulator: zero when the reference advances (deduction consumed or forgiven),
   ///         otherwise the stored accumulator plus the management fee charged this interval
@@ -132,7 +148,6 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     )
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
-    FeeData memory fd = _storage.feeData;
 
     // Use ERC20.totalSupply() to bypass the nonReadReentrant override on the public totalSupply(),
     // since _pendingFees() is reachable from _accrueFees() during a guarded deposit/withdraw/burn.
@@ -141,22 +156,33 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     uint256 managementFeeAssets;
     uint256 totalFeeAssets;
     {
-      // Single iteration over borrow modules returns the NAV, the aggregate debt, and the
-      // aggregate quoted collateral of non-bad-debt positions in one pass.
+      // Single iteration over borrow modules returns the NAV, the aggregate debt, the aggregate
+      // quoted collateral, and the bad-debt exclusion flag of non-bad-debt positions in one pass.
       uint256 currentCollat;
-      (totalAssets_, currentDebt, currentCollat) = _storage.totalAssets();
+      bool hasBadDebt;
+      (totalAssets_, currentDebt, currentCollat, hasBadDebt) = _storage.totalAssets();
 
       // Levered-slice basis against the held reference. Computed regardless of the fee
       // configuration because it also drives the reference-advance decision (see the
       // reference-advance rule above).
+      //
+      // While any module is excluded as bad debt (`hasBadDebt`), the basis is not measurable:
+      // the excluded module's debt is missing from `currentDebt` while the reference still
+      // counts it, which deleverages the visible aggregate and can flip the basis positive in
+      // the middle of a drawdown (the healthy modules' LTV sits below the reference LTV). The
+      // reference is therefore frozen for the whole exclusion window: no crystallization, no
+      // advance, and no bootstrap seed against the reduced universe (a seed there would anchor
+      // the mark on aggregates that misrepresent the pool, mis-measuring the basis once the
+      // excluded module re-enters). The management fee is unaffected; it keeps accruing on the
+      // good-debt collateral and joins the held accumulator below.
       uint256 basis;
       {
         uint256 _lastDebt = _storage.lastDebt;
         if (_lastDebt == 0 || totalSupply_ == 0) {
           // Bootstrap sentinel or empty vault: no reference to measure against (lastCollat would
           // be zero or meaningless); skip the performance fee and (re)seed the reference.
-          advanceReference = true;
-        } else {
+          advanceReference = !hasBadDebt;
+        } else if (!hasBadDebt) {
           uint256 lastCollat = _storage.lastTotalAssets + _lastDebt;
           // basis = mulDiv(lastDebt, currentCollat, lastCollat) - currentDebt
           //       = LTV_ref * currentCollat - currentDebt
@@ -170,6 +196,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
         }
       }
 
+      // Loaded after the basis block to keep the peak stack depth flat (the block above is at
+      // the non-via-ir stack limit).
+      FeeData memory fd = _storage.feeData;
       if (fd.feeRecipient == address(0) || totalSupply_ == 0) {
         // No fee is charged, so the accumulator carries over unchanged unless the reference
         // advances (a positive basis still consumes the pending deduction, see the rule above).
@@ -296,7 +325,7 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
     uint256 debtAfter;
     uint256 collatAfter;
-    (totalAssetsAfter, debtAfter, collatAfter) = _storage.totalAssets();
+    (totalAssetsAfter, debtAfter, collatAfter,) = _storage.totalAssets();
     _storage.rebaseSnapshot(
       totalAssetsBefore + debtBefore, debtBefore, prevSupply, collatAfter, debtAfter, ERC20.totalSupply()
     );
