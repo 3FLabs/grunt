@@ -72,21 +72,6 @@ library LibBorrowErrors {
   error NotMorpho();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    UPGRADE / VERSIONING                    */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Thrown when {MorphoBorrowPosition.initializeV2} is called on a proxy that is not at
-  ///         version 1 (i.e. a fresh version-0 proxy or an already-migrated version-2 proxy).
-  /// @dev `initializeV2` is migration-only. A fresh proxy is set up through `initialize`.
-  error NotInitialized();
-
-  /// @notice Thrown when {MorphoBorrowPosition.initialize} is called on a proxy that has already
-  ///         been initialized (version != 0), e.g. a previously-initialized proxy after the beacon
-  ///         upgrade.
-  /// @dev Such proxies must use `initializeV2` instead; `initialize` is for fresh proxies only.
-  error AlreadyInitialized();
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          OFFERS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -124,16 +109,11 @@ library LibBorrowErrors {
   ///         freed/never-allocated slab slot).
   error OfferNotFound();
 
-  /// @notice Thrown when {MorphoBorrowPosition.proposeOffer} is called while the effective offer
-  ///         timelock is zero. Defense in depth for the post-upgrade, pre-`initializeV2` window
-  ///         (where `offerTimelock == 0`); in practice no proposer role exists in that window either.
-  error OfferTimelockUnset();
-
-  /// @notice Thrown when {MorphoBorrowPosition.setOfferTimelock} is given a value outside
+  /// @notice Thrown when {BorrowOffersRegistry.setOfferTimelock} is given a value outside
   ///         `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
   error OfferTimelockOutOfRange();
 
-  /// @notice Thrown when {MorphoBorrowPosition.setMinOfferBonus} is given a value above
+  /// @notice Thrown when {BorrowOffersRegistry.setMinOfferBonus} is given a value above
   ///         `MAX_MIN_OFFER_BONUS_BPS`.
   error MinOfferBonusOutOfRange();
 

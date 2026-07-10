@@ -12,7 +12,7 @@ pragma solidity ^0.8.22;
 ///      price worsens for the liquidator over time (and an offer can drift below profitability, at
 ///      which point it is simply skipped, then eventually expires). This choice gives a precise
 ///      debt-repayment quantity and a clean shares-mode Morpho settlement (no assets-mode
-///      `borrowShares` underflow). See BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md §14 (Decision B).
+///      `borrowShares` underflow).
 ///
 ///      Packing (2 storage slots):
 ///      - slot 1: `proposer` (160) + `activeAt` (40) + `expiresAt` (40)
@@ -77,28 +77,14 @@ interface IBorrowOffers {
   /// @param exhausted True if the offer was fully consumed (and removed) by this chunk.
   event OfferConsumed(uint8 indexed id, uint128 collateralFilled, uint128 debtSharesFilled, bool exhausted);
 
-  /// @notice Emitted when a new offer timelock is scheduled (it becomes effective only after the
-  ///         current timelock elapses).
-  /// @param newTimelock The scheduled timelock value.
-  /// @param effectiveAt The absolute timestamp at which `newTimelock` becomes effective.
-  event OfferTimelockScheduled(uint40 newTimelock, uint40 effectiveAt);
-
-  /// @notice Emitted when the minimum offer bonus is changed.
-  /// @param minOfferBonusBps The new minimum offer bonus, in basis points.
-  event MinOfferBonusSet(uint16 minOfferBonusBps);
-
-  /// @notice Emitted once, at initialization, when the admin role is granted.
-  /// @param admin The account granted `ROLE_ADMIN` (the PositionManager's governance owner, or the
-  ///        position owner as a fallback).
-  event RoleAdminInitialized(address indexed admin);
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      WRITE (PROPOSERS)                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Proposes a new partially-fillable pre-liquidation offer.
-  /// @dev Gated to `PROPOSER_ROLE | ROLE_ADMIN | owner`. The offer becomes consumable at
-  ///      `now + effectiveTimelock()` (fixed here) and expires at `expiresAt`.
+  /// @dev Gated by {IBorrowOffersRegistry.checkCanCreateOffer} (a proposer, or the registry
+  ///      owner). The offer becomes consumable at `now + timelock` (fixed here from the registry's
+  ///      current effective timelock for this market's collateral) and expires at `expiresAt`.
   /// @param collateral The collateral tokens offered (> 0).
   /// @param debtShares The Morpho borrow shares requested (> 0).
   /// @param expiresAt The absolute expiry timestamp (must be strictly after the computed `activeAt`
@@ -106,55 +92,15 @@ interface IBorrowOffers {
   /// @return id The slab id assigned to the new offer.
   function proposeOffer(uint128 collateral, uint128 debtShares, uint40 expiresAt) external returns (uint8 id);
 
-  /// @notice Revokes one or more offers (batch). Gated to `GUARDIAN_ROLE | ROLE_ADMIN | owner`.
+  /// @notice Revokes one or more offers (batch). Gated by
+  ///         {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or the registry owner).
   /// @dev Reverts {LibBorrowErrors.OfferNotFound} if any id is not a currently-live offer.
   /// @param ids The slab ids to revoke.
   function revokeOffers(uint8[] calldata ids) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    ADMIN (ROLE_ADMIN)                      */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Grants or revokes `PROPOSER_ROLE` for `account`. Gated to `ROLE_ADMIN | owner`.
-  function setProposer(address account, bool enabled) external;
-
-  /// @notice Grants or revokes `GUARDIAN_ROLE` for `account`. Gated to `ROLE_ADMIN | owner`.
-  function setGuardian(address account, bool enabled) external;
-
-  /// @notice Schedules a new offer timelock. Gated to `ROLE_ADMIN | owner`.
-  /// @dev The change is itself timelocked: it becomes effective only after the *current* effective
-  ///      timelock elapses. `timelock` must be within `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
-  function setOfferTimelock(uint40 timelock) external;
-
-  /// @notice Sets the minimum offer bonus, in basis points. Gated to `ROLE_ADMIN | owner`.
-  /// @dev The floor requires a fill's collateral value to exceed the debt value it repays by at
-  ///      least this fraction of that debt value. It is enforced both when an offer is proposed and
-  ///      again per fill at consume time (see {proposeOffer}), so a change takes effect on the next
-  ///      liquidation: raising it leaves live offers in the book but stops any whose current bonus
-  ///      is below the new floor from being consumable (a guardian can revoke them; lowering the
-  ///      floor again re-admits them). Effective immediately, not timelocked: the floor only ever
-  ///      makes consumption stricter (it can skip fills, never force or enlarge one), so it carries
-  ///      no direct fund exposure, and any offer proposed under a lowered floor still faces its own
-  ///      veto timelock before becoming consumable. `minOfferBonusBps` must be at most
-  ///      `MAX_MIN_OFFER_BONUS_BPS`; 0 disables the floor (leaving only the strict profitability
-  ///      check).
-  function setMinOfferBonus(uint16 minOfferBonusBps) external;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Returns the current effective offer timelock (accounting for a due, not-yet-promoted
-  ///         pending change).
-  function offerTimelock() external view returns (uint40);
-
-  /// @notice Returns the scheduled (pending) offer timelock and when it becomes effective.
-  /// @return value The pending timelock value (0 if none scheduled).
-  /// @return effectiveAt The timestamp at which it becomes effective (0 if none scheduled).
-  function pendingOfferTimelock() external view returns (uint40 value, uint40 effectiveAt);
-
-  /// @notice Returns the minimum offer bonus required to propose an offer, in basis points.
-  function minOfferBonus() external view returns (uint16);
 
   /// @notice Returns the number of currently-live offers.
   function offerCount() external view returns (uint256);
@@ -183,13 +129,4 @@ interface IBorrowOffers {
     external
     view
     returns (uint256 seized, uint256 debtShares);
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       INITIALIZATION                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Migration-only entrypoint that runs the v2 setup on an existing (version-1) proxy.
-  /// @dev Permissionless and idempotent-by-construction: it reverts on a fresh (version-0) or
-  ///      already-migrated (version-2) proxy. Fresh proxies are set up by `initialize` directly.
-  function initializeV2() external;
 }

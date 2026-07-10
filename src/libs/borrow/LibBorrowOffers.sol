@@ -24,15 +24,13 @@ import {BPS} from "../Constants.sol";
 ///      sorts them by effective price at that instant (exact, unlike the storage-order-drift of a
 ///      sorted-at-insert list), and fills cheapest-first.
 ///
-///      Core invariants (binding, re-checked per consumed chunk; see
-///      BORROW_POSITION_OFFER_LIQUIDATION_SPEC.md sections 4 / 10):
+///      Core invariants (binding, re-checked per consumed chunk):
 ///      - Profitability ({isProfitableAboveBonusFloor}): each fill seizes collateral worth
 ///        strictly more than the debt value it repays, with at least the minimum bonus on top.
 ///      - Strict de-risking ({strictlyLowersLtv}): each fill strictly lowers the position LTV,
 ///        comparing against the running debt/collateral values *before* the fill.
 ///      Conservative rounding (debt values up, collateral values down) makes both checks strict in
-///      the protocol's favour and is load-bearing for Morpho's own health check at the knife edge
-///      (see section 11.4).
+///      the protocol's favour and is load-bearing for Morpho's own health check at the knife edge.
 library LibBorrowOffers {
   using FixedPointMathLib for uint256;
   using SharesMathLib for uint256;
@@ -42,24 +40,18 @@ library LibBorrowOffers {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Offer container, stored at {BORROW_OFFERS_STORAGE_SLOT}.
-  /// @dev Layout (slot 0 packs to 168 bits; the fixed-size `slab` array starts at slot 1):
-  ///      `offerTimelock`(40) + `pendingTimelock`(40) + `pendingTimelockAt`(40) + `liveBits`(32) +
-  ///      `minOfferBonusBps`(16).
+  /// @dev Layout: slot 0 holds `liveBits` (32 bits); the fixed-size `slab` array starts at slot 1.
+  ///      The offer roles and configuration (timelock, minimum bonus) live on the shared
+  ///      {BorrowOffersRegistry}, so this namespace holds only the book itself.
   ///
   ///      `liveBits` is the single source of truth for liveness: bit `i` set <=> `slab[i]` holds a
   ///      live offer. A cleared bit's slab slot is fully zeroed (freed slots are `delete`d), and an
-  ///      all-zero namespace (the post-upgrade, pre-`initializeV2` window) structurally reads as an
-  ///      empty book. Allocation picks the lowest cleared bit, so ids stay within
-  ///      `[0, MAX_OFFERS)` and freed ids are reused.
+  ///      all-zero namespace (a fresh proxy, or an existing proxy right after the beacon upgrade)
+  ///      structurally reads as an empty book, so no per-proxy initialization or migration is
+  ///      needed. Allocation picks the lowest cleared bit, so ids stay within `[0, MAX_OFFERS)`
+  ///      and freed ids are reused.
   struct BorrowOffersStorage {
-    // --- timelock (itself timelocked; see {promoteTimelock} / {effectiveTimelock}) ---
-    uint40 offerTimelock; // current effective timelock; 0 only in the pre-initializeV2 window
-    uint40 pendingTimelock; // scheduled next value (meaningful only when pendingTimelockAt != 0)
-    uint40 pendingTimelockAt; // when pendingTimelock becomes effective; 0 == no pending change
-    // --- slab bookkeeping ---
     uint32 liveBits; // bit i set <=> slab[i] is a live offer
-    // --- proposal admission ---
-    uint16 minOfferBonusBps; // minimum offer bonus in basis points; 0 only pre-initializeV2 or if disabled
     Offer[MAX_OFFERS] slab; // ids are slab indices (uint8)
   }
 
@@ -108,44 +100,6 @@ library LibBorrowOffers {
   function borrowOffersStorage() internal pure returns (BorrowOffersStorage storage s) {
     assembly ("memory-safe") {
       s.slot := BORROW_OFFERS_STORAGE_SLOT
-    }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       INITIALIZATION                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Resets the offer-book bookkeeping for a fresh offer setup.
-  /// @dev Leaves `offerTimelock` and `minOfferBonusBps` untouched (set by the caller).
-  function initOfferBook(BorrowOffersStorage storage s) internal {
-    s.liveBits = 0;
-    s.pendingTimelock = 0;
-    s.pendingTimelockAt = 0;
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                          TIMELOCK                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Returns the effective timelock without writing (promotes a due pending value in the
-  ///         computation only).
-  function effectiveTimelock(BorrowOffersStorage storage s) internal view returns (uint40) {
-    if (s.pendingTimelockAt != 0 && block.timestamp >= s.pendingTimelockAt) return s.pendingTimelock;
-    return s.offerTimelock;
-  }
-
-  /// @notice Promotes a due pending timelock into `offerTimelock` (clearing the pending slots) and
-  ///         returns the now-effective timelock.
-  /// @dev Called by state-changing entrypoints ({proposeOffer}, {setOfferTimelock}) so a scheduled
-  ///      change lands lazily on the next write. Pure views use {effectiveTimelock} instead.
-  function promoteTimelock(BorrowOffersStorage storage s) internal returns (uint40 tl) {
-    if (s.pendingTimelockAt != 0 && block.timestamp >= s.pendingTimelockAt) {
-      tl = s.pendingTimelock;
-      s.offerTimelock = tl;
-      s.pendingTimelock = 0;
-      s.pendingTimelockAt = 0;
-    } else {
-      tl = s.offerTimelock;
     }
   }
 

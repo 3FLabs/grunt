@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -11,18 +11,8 @@ import {SharesMathLib} from "../libs/borrow/SharesMathLib.sol";
 import {MorphoBalancesLib} from "../libs/borrow/MorphoBalancesLib.sol";
 import {LibBorrowErrors} from "../libs/borrow/LibBorrowErrors.sol";
 import {LibBorrowOffers} from "../libs/borrow/LibBorrowOffers.sol";
-import {
-  ROLE_ADMIN,
-  PROPOSER_ROLE,
-  GUARDIAN_ROLE,
-  MAX_OFFERS,
-  DEFAULT_OFFER_TIMELOCK,
-  MIN_OFFER_TIMELOCK,
-  MAX_OFFER_TIMELOCK,
-  MAX_OFFER_LIFESPAN,
-  DEFAULT_MIN_OFFER_BONUS_BPS,
-  MAX_MIN_OFFER_BONUS_BPS
-} from "../libs/borrow/LibBorrowOffersConstants.sol";
+import {MAX_OFFERS, MAX_OFFER_LIFESPAN} from "../libs/borrow/LibBorrowOffersConstants.sol";
+import {IBorrowOffersRegistry} from "../interfaces/borrow/IBorrowOffersRegistry.sol";
 import {LibChecks} from "../libs/common/LibChecks.sol";
 import {LibCommonErrors} from "../libs/common/LibCommonErrors.sol";
 import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol";
@@ -45,18 +35,16 @@ import {IPositionManager} from "../interfaces/manager/IPositionManager.sol";
 ///      {Offer}s (a quantity of collateral for a quantity of debt-share repayment); liquidators
 ///      consume them through the *same* `preLiquidate` entrypoint when the LTV is in
 ///      `(safeLtv, liquidationLtv]`. The `LTV > liquidationLtv` proportional path is unchanged. All
-///      offer storage, the slab/bitmap bookkeeping, the timelock and the fill/consume math live in
-///      {LibBorrowOffers}; the base auth mixin is Solady `OwnableRoles` (storage-safe over a plain
-///      `Ownable`: `OwnableRoles is Ownable`, same `_OWNER_SLOT`, roles live in keccak-derived slots
-///      that cannot collide with the owner slot, the `Initializable` slot, the existing
-///      `"morpho.borrow.position"` namespace, or the new `"borrow.offers.main"` namespace).
-///
-///      The {MorphoBorrowPositionFactory} is unchanged: `initialize` keeps its exact signature and
-///      now also runs the offer setup, landing fresh proxies at version 2 in one call. Existing
-///      version-1 proxies are migrated by a permissionless {initializeV2} sweep after the beacon
-///      upgrade.
+///      offer storage, the slab/bitmap bookkeeping and the fill/consume math live in
+///      {LibBorrowOffers}, in its own ERC-7201 namespace (`"borrow.offers.main"`); the offer roles
+///      (proposer, guardian) and the per-collateral configuration (timelock, minimum bonus) live
+///      on the shared {BorrowOffersRegistry}, whose address is a constructor immutable and whose
+///      owner is the offer administrator. This contract therefore holds no role or configuration
+///      storage: fresh proxies and existing version-1 proxies need no offer-specific
+///      initialization or migration (an all-zero offer namespace structurally reads as an empty
+///      book), and `initialize` keeps its exact signature.
 /// @author 3F Protocol
-contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, OwnableRoles, IMorphoRepayCallback {
+contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, Ownable, IMorphoRepayCallback {
   using SharesMathLib for uint256;
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;
@@ -73,6 +61,14 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   /// @dev Set once in the constructor and shared across all beacon proxies.
   ///      Saves a warm SLOAD (2100 gas) on every external call compared to storage.
   IMorpho public immutable MORPHO;
+
+  /// @notice The shared {BorrowOffersRegistry}: the source of truth for the offer roles and the
+  ///         per-collateral offer configuration (timelock, minimum bonus).
+  /// @dev Set once in the constructor and shared across all beacon proxies (and, by passing the
+  ///      same address to future implementations, across upgrades). Because roles and
+  ///      configuration are derived from the registry rather than stored per proxy, no
+  ///      offer-specific initializer or migration exists.
+  IBorrowOffersRegistry public immutable OFFERS_REGISTRY;
 
   /// @notice Storage struct containing all persistent state for the BorrowPosition contract.
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility. All fields are grouped
@@ -103,10 +99,17 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     }
   }
 
+  /// @dev Deployment order: the registry proxy must be deployed (and initialized) before this
+  ///      implementation, since its address is baked in as an immutable. Every future beacon
+  ///      upgrade must pass the SAME registry address, otherwise offer authority silently moves
+  ///      to a different role book.
   /// @param morpho_ The Morpho Blue protocol contract address.
-  constructor(IMorpho morpho_) {
+  /// @param offersRegistry_ The shared {BorrowOffersRegistry} proxy address.
+  constructor(IMorpho morpho_, IBorrowOffersRegistry offersRegistry_) {
     address(morpho_).checkContract();
+    address(offersRegistry_).checkContract();
     MORPHO = morpho_;
+    OFFERS_REGISTRY = offersRegistry_;
     _disableInitializers();
   }
 
@@ -115,14 +118,10 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the MorphoBorrowPosition contract with all required parameters.
-  /// @dev Same signature as before (so the factory is unchanged), but now also runs the offer setup
-  ///      and lands the proxy at version 2 in one call. The `onlyUninitialized` modifier is ordered
-  ///      *before* `reinitializer(2)`: modifiers apply outside-in, so its `_getInitializedVersion()`
-  ///      check still reads the pre-bump value (0 on a fresh proxy). An already-initialized proxy
-  ///      (e.g. an existing version-1 proxy after the beacon upgrade) reverts with `AlreadyInitialized`
-  ///      and must use {initializeV2} instead.
-  ///      Validates all inputs and fetches market parameters from Morpho.
+  /// @dev Validates all inputs and fetches market parameters from Morpho.
   ///      The position manager becomes the owner and has exclusive control over the position.
+  ///      The offer feature needs no per-proxy setup: roles and configuration live on the shared
+  ///      {BorrowOffersRegistry}, and an all-zero offer namespace reads as an empty book.
   /// @param marketId_ The Morpho market ID for this borrow position. Must correspond to an existing market.
   /// @param positionManager_ The address of the position manager (owner) that will control this position.
   /// @param safeLtv_ The safe LTV threshold that must not be reached upon position mutations. Must be > 0, < liquidationLtv_.
@@ -136,8 +135,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      Reverts with {LibBorrowErrors.LiquidationLtvExceedsMarketLltv} if liquidationLtv_ exceeds the Morpho market LLTV.
   function initialize(Id marketId_, address positionManager_, uint128 safeLtv_, uint128 liquidationLtv_)
     public
-    onlyUninitialized
-    reinitializer(2)
+    initializer
   {
     if (Id.unwrap(marketId_) == bytes32(0)) revert LibBorrowErrors.InvalidMarketId(marketId_);
     if (MORPHO.market(marketId_).lastUpdate == 0) revert LibBorrowErrors.MarketNotCreated();
@@ -171,73 +169,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     _storage.safeLtv = safeLtv_;
     _storage.liquidationLtv = liquidationLtv_;
 
-    // Owner must be set before _initializeV2(), which derives the admin from the owner chain.
     _initializeOwner(positionManager_);
-    _initializeV2();
-  }
-
-  /// @inheritdoc IBorrowOffers
-  /// @dev Migration-only entrypoint for an existing version-1 proxy (after the beacon upgrade).
-  ///      `onlyVersion1` (ordered before `reinitializer(2)`) reads the pre-bump version: it reverts
-  ///      `NotInitialized` on a fresh (version-0) or already-migrated (version-2) proxy, so it can
-  ///      neither skip v1 setup on a fresh/self-deployed proxy nor double-run. Permissionless is
-  ///      safe: it ignores `msg.sender` and derives the admin from the on-chain owner chain, so a
-  ///      front-run only completes the protocol's own correct setup.
-  function initializeV2() public onlyVersion1 reinitializer(2) {
-    _initializeV2();
-  }
-
-  /// @dev Shared setup run by both {initialize} and {initializeV2}: seed the default offer timelock
-  ///      and minimum offer bonus, initialize the offer-book bookkeeping, and grant `ROLE_ADMIN` to
-  ///      the governance owner.
-  function _initializeV2() internal {
-    LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
-    o.offerTimelock = DEFAULT_OFFER_TIMELOCK;
-    o.minOfferBonusBps = DEFAULT_MIN_OFFER_BONUS_BPS;
-    LibBorrowOffers.initOfferBook(o);
-
-    // ROLE_ADMIN -> the PositionManager's governance owner(), falling back to the position owner
-    // (the PositionManager) if that lookup fails.
-    address admin = _governanceOwner();
-    _grantRoles(admin, ROLE_ADMIN);
-    emit RoleAdminInitialized(admin);
-  }
-
-  /// @dev Resolves the governance admin as `owner()`-of-`owner()`. `owner()` here is the
-  ///      PositionManager (Solady `OwnableRoles`), which always exposes `owner()`. The lookup is
-  ///      total: any anomaly (the position owner is not a contract, its `owner()` reverts, or it
-  ///      returns anything other than a single non-zero address word) falls back to the position
-  ///      owner rather than reverting and bricking initialization.
-  ///
-  ///      A low-level `staticcall` is used deliberately, not a typed call / `try-catch`: the latter
-  ///      cannot be made total here. A call to a codeless address fails the compiler's extcodesize
-  ///      check, and a successful-but-malformed return fails ABI return-decoding; neither is trapped
-  ///      by `catch`, so both bubble up and revert. The low-level call instead reports a codeless
-  ///      target or a revert as `ok == false`, and an unexpected return as a length mismatch. The
-  ///      word is decoded as `uint256` and masked to `uint160` (rather than `abi.decode(ret,
-  ///      (address))`, which itself reverts on dirty high bits) so even a malformed word falls back.
-  function _governanceOwner() internal view returns (address) {
-    address positionOwner = owner();
-    (bool ok, bytes memory ret) = positionOwner.staticcall(abi.encodeWithSignature("owner()"));
-    if (ok && ret.length == 32) {
-      address gov = address(uint160(abi.decode(ret, (uint256))));
-      if (gov != address(0)) return gov;
-    }
-    return positionOwner;
-  }
-
-  /// @dev Reverts unless the proxy is uninitialized (version 0). Ordered before `reinitializer(2)`
-  ///      so it observes the pre-bump version.
-  modifier onlyUninitialized() {
-    if (_getInitializedVersion() != 0) revert LibBorrowErrors.AlreadyInitialized();
-    _;
-  }
-
-  /// @dev Reverts unless the proxy is exactly at version 1. Ordered before `reinitializer(2)` so it
-  ///      observes the pre-bump version.
-  modifier onlyVersion1() {
-    if (_getInitializedVersion() != 1) revert LibBorrowErrors.NotInitialized();
-    _;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -392,14 +324,14 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///        with one shares-mode Morpho repay through the same `onMorphoRepay` callback.
   ///      - `LTV <= safeLtv`: healthy, revert `PositionHealthy()`.
   ///      The offer branch reads offer storage lazily (only when taken), so the proportional path
-  ///      never touches offer-initialized state and keeps working in the post-upgrade /
-  ///      pre-`initializeV2` window.
+  ///      never touches the offer namespace.
   ///
-  ///      The reentrancy analysis above also covers the new offer roles: a reentrant `proposeOffer`
-  ///      creates a timelocked (not same-block consumable) offer; a reentrant `revokeOffers` only
-  ///      removes offers while the in-flight consume has already committed its fills as effects; the
-  ///      admin setters have no fund impact. Holding offer roles is therefore not exploitable in the
-  ///      callback (the `MINTER`/`FACILITATOR` rule is the only liquidator role restriction).
+  ///      The reentrancy analysis above also covers the offer roles (held on the shared
+  ///      {BorrowOffersRegistry}): a reentrant `proposeOffer` creates a timelocked (not same-block
+  ///      consumable) offer; a reentrant `revokeOffers` only removes offers while the in-flight
+  ///      consume has already committed its fills as effects; the registry setters have no fund
+  ///      impact. Holding offer roles is therefore not exploitable in the callback (the
+  ///      `MINTER`/`FACILITATOR` rule is the only liquidator role restriction).
   /// @param borrower The address of the position owner (typically this contract's address).
   /// @param seizedAssets The amount of collateral to seize. Pass 0 to calculate based on repaidShares.
   /// @param repaidShares The amount of borrow shares to repay. Pass 0 to calculate based on seizedAssets.
@@ -523,7 +455,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
       totalBorrowShares: uint256(market.totalBorrowShares),
       positionCollateral: uint256(position.collateral),
       positionBorrowShares: uint256(position.borrowShares),
-      minOfferBonusBps: o.minOfferBonusBps
+      minOfferBonusBps: _minOfferBonusBps()
     });
     return o.consume(input);
   }
@@ -916,27 +848,22 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `PROPOSER_ROLE | ROLE_ADMIN | owner`. `activeAt` is fixed here with the timelock
-  ///      effective NOW (after promoting any due pending change), so a later {setOfferTimelock}
-  ///      cannot retroactively shorten this offer's veto window. The creation-time profitability
-  ///      and minimum-bonus checks ({_checkOfferProfitable}) are admission filters at the current
-  ///      market state; the binding checks run per fill at consume time (price and accrued interest
-  ///      drift afterwards). Offer amounts are `uint128` (matching Morpho's `uint128` collateral
-  ///      and borrow totals), so the upper bound is enforced by the parameter type and only the
-  ///      `> 0` lower bound needs an explicit check.
-  function proposeOffer(uint128 collateral, uint128 debtShares, uint40 expiresAt)
-    external
-    override
-    onlyOwnerOrRoles(PROPOSER_ROLE | ROLE_ADMIN)
-    returns (uint8 id)
-  {
+  /// @dev Gated by {IBorrowOffersRegistry.checkCanCreateOffer} (a proposer, or the registry
+  ///      owner); the position owner has no bypass. `activeAt` is fixed here with the collateral's
+  ///      registry timelock effective NOW, so a later {IBorrowOffersRegistry.setOfferTimelock}
+  ///      cannot retroactively shorten this offer's veto window; the registry floors the timelock
+  ///      to its `MIN_OFFER_TIMELOCK`, so every offer has a non-zero veto window even for a
+  ///      never-configured collateral. The creation-time profitability and minimum-bonus checks
+  ///      ({_checkOfferProfitable}) are admission filters at the current market state; the
+  ///      binding checks run per fill at consume time (price and accrued interest drift
+  ///      afterwards). Offer amounts are `uint128` (matching Morpho's `uint128` collateral and
+  ///      borrow totals), so the upper bound is enforced by the parameter type and only the `> 0`
+  ///      lower bound needs an explicit check.
+  function proposeOffer(uint128 collateral, uint128 debtShares, uint40 expiresAt) external override returns (uint8 id) {
+    OFFERS_REGISTRY.checkCanCreateOffer(msg.sender);
     if (collateral == 0 || debtShares == 0) revert LibBorrowErrors.OfferAmountZero();
 
-    LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
-
-    // Promote a due pending timelock, then fix activeAt with the timelock effective NOW.
-    uint40 timelock = o.promoteTimelock();
-    if (timelock == 0) revert LibBorrowErrors.OfferTimelockUnset();
+    (uint40 timelock, uint16 minOfferBonusBps) = _offerConfig();
     // block.timestamp + timelock fits uint40 for ~34000 years; the cast cannot truncate in practice.
     uint40 activeAt = uint40(block.timestamp + timelock);
     if (expiresAt <= activeAt) revert LibBorrowErrors.OfferExpiryTooShort();
@@ -946,9 +873,9 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     // the subtraction cannot underflow.
     if (uint256(expiresAt) - activeAt > MAX_OFFER_LIFESPAN) revert LibBorrowErrors.OfferExpiryTooLong();
 
-    _checkOfferProfitable(collateral, debtShares, o.minOfferBonusBps);
+    _checkOfferProfitable(collateral, debtShares, minOfferBonusBps);
 
-    id = o.insert(msg.sender, activeAt, expiresAt, collateral, debtShares);
+    id = LibBorrowOffers.borrowOffersStorage().insert(msg.sender, activeAt, expiresAt, collateral, debtShares);
   }
 
   /// @dev Creation-time profitability filter at the current (interest-accrued) market state.
@@ -981,11 +908,13 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   }
 
   /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `GUARDIAN_ROLE | ROLE_ADMIN | owner`. Removes each id from the offer book
-  ///      (the guardian veto inside the timelock window, and the kill switch for a bad standing
-  ///      offer at any later stage). Self-revoke by a plain proposer is deliberately not offered:
-  ///      the role table keeps revoke to guardian/admin/owner, who can already remove any offer.
-  function revokeOffers(uint8[] calldata ids) external override onlyOwnerOrRoles(GUARDIAN_ROLE | ROLE_ADMIN) {
+  /// @dev Gated by {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or the registry
+  ///      owner). Removes each id from the offer book (the guardian veto inside the timelock
+  ///      window, and the kill switch for a bad standing offer at any later stage). Self-revoke
+  ///      by a plain proposer is deliberately not offered: revoke stays with the guardians and
+  ///      the registry owner, who can already remove any offer.
+  function revokeOffers(uint8[] calldata ids) external override {
+    OFFERS_REGISTRY.checkCanRevokeOffer(msg.sender);
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     // Cache the calldata length once, and each id into a stack variable, so the loop performs a
     // single CALLDATALOAD per iteration instead of re-reading `ids.length` and `ids[i]` twice each.
@@ -998,76 +927,20 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       OFFERS (ADMIN)                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `ROLE_ADMIN | owner`. Toggles the proposer bit via Solady `_updateRoles` (which
-  ///      `_grantRoles`/`_removeRoles` themselves wrap with a boolean); the owner (PositionManager)
-  ///      also retains native `grantRoles`/`revokeRoles`.
-  function setProposer(address account, bool enabled) external override onlyOwnerOrRoles(ROLE_ADMIN) {
-    account.checkNotZero();
-    _updateRoles(account, PROPOSER_ROLE, enabled);
-  }
-
-  /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `ROLE_ADMIN | owner`. Toggles the guardian bit via Solady `_updateRoles`.
-  function setGuardian(address account, bool enabled) external override onlyOwnerOrRoles(ROLE_ADMIN) {
-    account.checkNotZero();
-    _updateRoles(account, GUARDIAN_ROLE, enabled);
-  }
-
-  /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `ROLE_ADMIN | owner`. The change is itself timelocked: it lands only after the
-  ///      *current* effective timelock elapses (re-based on each call, so a reduction can never be
-  ///      accelerated). Bounded to `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`: the floor guarantees
-  ///      a non-zero veto window; the ceiling stops an admin from freezing the band (and, because a
-  ///      change is delayed by the current timelock, from self-locking the correction). Over many
-  ///      sequential steps an admin can still ratchet the timelock down, but each step costs at
-  ///      least the current timelock and is monitorable; that is the intended trade-off.
-  function setOfferTimelock(uint40 timelock) external override onlyOwnerOrRoles(ROLE_ADMIN) {
-    if (timelock < MIN_OFFER_TIMELOCK || timelock > MAX_OFFER_TIMELOCK) {
-      revert LibBorrowErrors.OfferTimelockOutOfRange();
-    }
-    LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
-    uint40 currentTimelock = o.promoteTimelock();
-    uint40 effectiveAt = uint40(block.timestamp + currentTimelock);
-    o.pendingTimelock = timelock;
-    o.pendingTimelockAt = effectiveAt;
-    emit OfferTimelockScheduled(timelock, effectiveAt);
-  }
-
-  /// @inheritdoc IBorrowOffers
-  /// @dev Gated to `ROLE_ADMIN | owner`. Effective immediately (no timelock; see the interface
-  ///      NatSpec for the rationale) and bounded to `[0, MAX_MIN_OFFER_BONUS_BPS]`, so a fallible
-  ///      admin cannot demand a bonus floor no realistic offer could clear. Enforced at both
-  ///      proposal and consume time; live offers keep standing but a raised floor gates their
-  ///      consumption too (guardians revoke any that should not stand).
-  function setMinOfferBonus(uint16 minOfferBonusBps_) external override onlyOwnerOrRoles(ROLE_ADMIN) {
-    if (minOfferBonusBps_ > MAX_MIN_OFFER_BONUS_BPS) revert LibBorrowErrors.MinOfferBonusOutOfRange();
-    LibBorrowOffers.borrowOffersStorage().minOfferBonusBps = minOfferBonusBps_;
-    emit MinOfferBonusSet(minOfferBonusBps_);
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       OFFERS (VIEWS)                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @inheritdoc IBorrowOffers
-  function offerTimelock() external view override returns (uint40) {
-    return LibBorrowOffers.borrowOffersStorage().effectiveTimelock();
+  /// @dev Reads this market's offer configuration from the shared registry, keyed by the market's
+  ///      collateral token. The registry floors the timelock to its `MIN_OFFER_TIMELOCK`, so the
+  ///      returned timelock is never zero.
+  function _offerConfig() internal view returns (uint40 offerTimelock, uint16 minOfferBonusBps) {
+    return OFFERS_REGISTRY.offerConfig(_borrowPositionStorage().marketParams.collateralToken);
   }
 
-  /// @inheritdoc IBorrowOffers
-  function pendingOfferTimelock() external view override returns (uint40 value, uint40 effectiveAt) {
-    LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
-    if (o.pendingTimelockAt == 0) return (0, 0);
-    return (o.pendingTimelock, o.pendingTimelockAt);
-  }
-
-  /// @inheritdoc IBorrowOffers
-  function minOfferBonus() external view override returns (uint16) {
-    return LibBorrowOffers.borrowOffersStorage().minOfferBonusBps;
+  /// @dev Convenience wrapper over {_offerConfig} returning only the bonus floor (used where the
+  ///      timelock is irrelevant: the consume walk and the offer views).
+  function _minOfferBonusBps() internal view returns (uint16 minOfferBonusBps) {
+    (, minOfferBonusBps) = _offerConfig();
   }
 
   /// @inheritdoc IBorrowOffers
@@ -1107,7 +980,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
       IOracle(_storage.marketParams.oracle).price(),
       totalBorrowAssets,
       totalBorrowShares,
-      LibBorrowOffers.borrowOffersStorage().minOfferBonusBps
+      _minOfferBonusBps()
     );
   }
 
@@ -1131,7 +1004,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
       totalBorrowShares: totalBorrowShares,
       positionCollateral: uint256(position.collateral),
       positionBorrowShares: uint256(position.borrowShares),
-      minOfferBonusBps: o.minOfferBonusBps
+      minOfferBonusBps: _minOfferBonusBps()
     });
     return o.previewConsume(input);
   }
