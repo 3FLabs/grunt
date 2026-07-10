@@ -87,9 +87,9 @@ library LibBorrowOffers {
   ///      - Consume: fill `(fillCollateral, fillDebtShares)` is profitable and strictly de-risking.
   ///      - Skip: offer is unprofitable / below the bonus floor / unfillable for this target;
   ///        advance to the next offer, leave it in the book.
-  ///      - Stop: offer is over the max price, or the liquidator target is met / no capacity; the
-  ///        walk visits offers in ascending price order and not consuming freezes the LTV, so
-  ///        nothing later can qualify and the walk halts.
+  ///      - Stop: offer fails the strict de-risking check (over the max price); the walk visits
+  ///        offers in ascending price order and not consuming freezes the LTV, so nothing later
+  ///        can qualify and the walk halts.
   enum FillAction {
     Skip,
     Stop,
@@ -142,9 +142,21 @@ library LibBorrowOffers {
   }
 
   /// @dev Allocates the lowest free slab index and marks it live, or reverts
-  ///      {LibBorrowErrors.TooManyOffers} when all `MAX_OFFERS` slots are live.
+  ///      {LibBorrowErrors.TooManyOffers} when all `MAX_OFFERS` slots hold unexpired offers.
+  ///      Expired offers are pruned first (bit cleared, slot zeroed; housekeeping only, mirroring
+  ///      the pruning in {consume}), so a book full of expired offers self-heals on the next
+  ///      proposal instead of requiring a guardian to revoke the dead slots.
   function _alloc(BorrowOffersStorage storage s) private returns (uint8 id) {
     uint256 liveBits = s.liveBits;
+    uint256 scanBits = liveBits;
+    while (scanBits != 0) {
+      uint256 scanId = LibBit.ffs(scanBits);
+      scanBits &= scanBits - 1; // clear the lowest set bit
+      if (block.timestamp >= s.slab[scanId].expiresAt) {
+        liveBits &= ~(uint256(1) << scanId);
+        delete s.slab[scanId];
+      }
+    }
     uint256 freeBits = ~liveBits & ((uint256(1) << MAX_OFFERS) - 1);
     if (freeBits == 0) revert LibBorrowErrors.TooManyOffers();
     id = uint8(LibBit.ffs(freeBits));
@@ -335,7 +347,9 @@ library LibBorrowOffers {
   ///      Then `fillShares = fillCollateral.mulDivUp(remainingDebtShares, remainingCollateral)`
   ///      (rounded up, so the chunk's price rounds down: conservative for the cap, and the liquidator
   ///      cannot underpay), clamped to the remaining share target and to the position's remaining
-  ///      shares.
+  ///      shares. When the position clamp binds, the seized collateral is rescaled down to the
+  ///      offer's fixed ratio, so a nearly-repaid position can never yield the liquidator more
+  ///      collateral per share than the proposer authorized.
   ///
   ///      The binding checks (profitability, the consume-time bonus floor, strict de-risking) and
   ///      their conservative (protocol-favorable) rounding are evaluated in {_priceAction}.
@@ -367,16 +381,29 @@ library LibBorrowOffers {
         (inp.repaidSharesTarget - totalDebtShares).mulDiv(remainingCollateral, remainingDebtShares);
       fillCollateral = remainingCollateral.min(maxFillCollateral).min(remainingPositionCollateral);
     }
-    // No capacity for this target (target met, or rounds to nothing): halt the walk.
-    if (fillCollateral == 0) return (FillAction.Stop, 0, 0);
+    // Reachable only in repaidShares mode: this offer's ratio rounds the remaining share target
+    // down to zero collateral (in seizedAssets mode all three min() operands are at least 1).
+    // Later offers carry more collateral per debt share (the walk sorts by descending
+    // debt-shares-per-collateral), so one of them can still produce a non-zero fill for the same
+    // target: skip this offer, do not stop the walk.
+    if (fillCollateral == 0) return (FillAction.Skip, 0, 0);
 
     uint256 fillShares = fillCollateral.mulDivUp(remainingDebtShares, remainingCollateral);
     if (inp.repaidSharesTarget != 0) {
       uint256 shareTargetLeft = inp.repaidSharesTarget - totalDebtShares;
       if (fillShares > shareTargetLeft) fillShares = shareTargetLeft;
     }
-    // Never repay more shares than the position owes.
-    if (fillShares > remainingPositionShares) fillShares = remainingPositionShares;
+    // Never repay more shares than the position owes. Clamping the shares alone would hand the
+    // liquidator the full collateral chunk for fewer shares (a better price than the proposer
+    // authorized), so the seized collateral is rescaled to the offer's fixed ratio. Rounding down
+    // keeps every earlier cap intact (the rescaled value is strictly below the pre-clamp
+    // `fillCollateral`) and the liquidator still cannot underpay:
+    // `ceil(fillCollateral * shares / collateral) <= fillShares` after a floor rescale.
+    if (fillShares > remainingPositionShares) {
+      fillShares = remainingPositionShares;
+      fillCollateral = fillShares.mulDiv(remainingCollateral, remainingDebtShares);
+      if (fillCollateral == 0) return (FillAction.Skip, 0, 0);
+    }
     if (fillShares == 0) return (FillAction.Skip, 0, 0); // cannot charge any shares for this collateral
 
     // The profitability, bonus-floor and de-risking checks are evaluated in a separate frame
