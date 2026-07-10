@@ -15,9 +15,10 @@ import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol
 /// @notice Direct, Morpho-independent tests of the {LibBorrowOffers} data structure via
 ///         {BorrowOffersHarness}: one massive sequential lifecycle test that drives the slab +
 ///         liveness bitmap through fill / drain / revoke / lowest-id-recycle / consume / expire,
-///         plus targeted tests for the sorted-at-consume walk (ascending-price drain, Skip vs Stop)
-///         and preview/consume equivalence fuzz. Structural integrity (bitmap <=> slab agreement)
-///         is asserted after every mutation.
+///         plus targeted tests for the sorted-at-consume walk (ascending-price drain, Skip vs
+///         Stop), fill-math regressions (position-clamp rescale, zero-collateral Skip,
+///         expired-slab self-heal) and preview/consume equivalence fuzz. Structural integrity
+///         (bitmap <=> slab agreement) is asserted after every mutation.
 /// @dev The companion {LibBorrowOffersInvariantTest} runs the same structural assertions over
 ///      fuzzer-generated operation sequences; this file pins down deterministic, high-coverage
 ///      scenarios that a bounded invariant run might not reliably hit (e.g. exactly filling the
@@ -25,6 +26,8 @@ import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol
 contract LibBorrowOffersTest is Test {
   BorrowOffersHarness internal h;
 
+  /// @dev Fixed veto window applied to every inserted offer (the timelock configuration itself
+  ///      lives on the shared registry; the library only stores the book).
   uint40 internal constant TIMELOCK = 1 hours;
 
   // Fixed favorable market snapshot (see BorrowOffersHandler for the rationale): unit price, 1:1
@@ -38,7 +41,6 @@ contract LibBorrowOffersTest is Test {
 
   function setUp() public {
     h = new BorrowOffersHarness();
-    h.init(TIMELOCK);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -136,13 +138,12 @@ contract LibBorrowOffersTest is Test {
   /*                       DORMANT WINDOW                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice A never-initialized harness reproduces the post-upgrade / pre-initializeV2 dormant
-  ///         window: the offer namespace is all-zero. With the liveness bitmap this state is
-  ///         structurally an empty book (`liveBits == 0`), so every reader must degrade gracefully
-  ///         (empty / zero). Kept as a regression test even though no explicit guard exists
-  ///         anymore.
+  /// @notice A freshly-deployed harness has an all-zero offer namespace (the state of an existing
+  ///         version-1 proxy right after the beacon upgrade, before any offer is proposed). With
+  ///         the liveness bitmap this state is structurally an empty book (`liveBits == 0`), so
+  ///         every reader must degrade gracefully (empty / zero) with no initialization step.
   function test_dormantWindow_allReadersSafe() public {
-    BorrowOffersHarness fresh = new BorrowOffersHarness(); // no init(): storage entirely zero
+    BorrowOffersHarness fresh = new BorrowOffersHarness(); // storage entirely zero
     assertEq(fresh.count(), 0, "count zero");
     assertEq(fresh.liveBits(), 0, "no live bits");
 
@@ -285,6 +286,238 @@ contract LibBorrowOffersTest is Test {
     assertEq(h.slabAt(over1).remainingCollateral, 5e18, "over-price offer amounts unchanged");
     assertTrue(h.isLive(over2), "nothing after the Stop consumed");
     assertEq(h.slabAt(over2).remainingCollateral, 6e18, "later offer amounts unchanged");
+    _assertStructure();
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   FILL-MATH REGRESSIONS                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice When the position-shares clamp binds mid-walk in seizedAssets mode, the seized
+  ///         collateral is RESCALED down to the offer's fixed ratio: the liquidator does not keep
+  ///         the full collateral chunk for fewer shares. Two identical offers of (48e18 collateral,
+  ///         40e18 debt shares) against a position owing 70e18 shares: the first fills whole, the
+  ///         second is clamped to the remaining 30e18 shares and its collateral rescales to
+  ///         30e18 * 48 / 40 = 36e18, for totals (84e18, 70e18) rather than (96e18, 70e18).
+  function test_consume_positionClampRescalesCollateral_seizedAssetsMode() public {
+    LibBorrowOffers.ConsumeInput memory inp = _clampScenario();
+    inp.seizedTarget = 96e18;
+
+    (uint256 seized, uint256 repaid) = h.consume(inp);
+
+    assertEq(seized, 84e18, "collateral rescaled to the offer ratio (48e18 + 36e18)");
+    assertEq(repaid, 70e18, "whole position debt repaid");
+    _assertClampScenarioWriteBack();
+  }
+
+  /// @notice Same rescale in repaidShares mode: a share target above the position's debt (80e18 vs
+  ///         70e18) clamps to the position and the second offer's collateral rescales, for totals
+  ///         (84e18, 70e18).
+  function test_consume_positionClampRescalesCollateral_repaidSharesMode() public {
+    LibBorrowOffers.ConsumeInput memory inp = _clampScenario();
+    inp.repaidSharesTarget = 80e18;
+
+    (uint256 seized, uint256 repaid) = h.consume(inp);
+
+    assertEq(seized, 84e18, "collateral rescaled to the offer ratio (48e18 + 36e18)");
+    assertEq(repaid, 70e18, "repayment clamped to the position's shares");
+    _assertClampScenarioWriteBack();
+  }
+
+  /// @dev Books the two-offer position-clamp scenario (offers active, targets left to the caller)
+  ///      and returns the matching consume input.
+  function _clampScenario() internal returns (LibBorrowOffers.ConsumeInput memory inp) {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    h.insert(address(0xA0), active, expiry, 48e18, 40e18);
+    h.insert(address(0xA1), active, expiry, 48e18, 40e18);
+    vm.warp(active + 1);
+
+    inp = _input(0, 0); // caller sets exactly one target
+    inp.positionCollateral = 280e18; // ratio 4, above the offers' 1.2: fills are de-risking
+    inp.positionBorrowShares = 70e18;
+  }
+
+  /// @dev Asserts the write-back of the clamp scenario: first offer exhausted, second decremented
+  ///      by the rescaled fill (36e18 collateral, 30e18 shares) on BOTH sides.
+  function _assertClampScenarioWriteBack() internal view {
+    assertFalse(h.isLive(0), "first offer exhausted");
+    assertTrue(h.isLive(1), "second offer only partially filled");
+    assertEq(h.slabAt(1).remainingCollateral, 12e18, "rescaled collateral fill written back");
+    assertEq(h.slabAt(1).remainingDebtShares, 10e18, "clamped share fill written back");
+    _assertStructure();
+  }
+
+  /// @notice In repaidShares mode, an offer whose ratio floors the remaining share target to zero
+  ///         collateral is SKIPPED (not a walk-stopping condition): a later, pricier offer carries
+  ///         more collateral per debt share and can still produce a non-zero fill for the same
+  ///         target.
+  function test_consume_zeroCollateralFillSkips_laterOfferConsumed() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    // Offer A asks 9.5e14 shares per collateral wei and sorts first (cheapest); for the
+    // 9e14-share target its collateral floors to zero (9e14 * 1 / 9.5e14 = 0). Offer B asks
+    // 8.5e14 shares per collateral wei: floor(9e14 * 10 / 8.5e15) = 1 collateral wei for
+    // ceil(1 * 8.5e15 / 10) = 8.5e14 shares.
+    uint8 a = h.insert(address(0xA0), active, expiry, 1, 9.5e14);
+    uint8 b = h.insert(address(0xB0), active, expiry, 10, 8.5e15);
+    vm.warp(active + 1);
+
+    LibBorrowOffers.ConsumeInput memory inp = LibBorrowOffers.ConsumeInput({
+      seizedTarget: 0,
+      repaidSharesTarget: 9e14,
+      price: 1e9 * ORACLE_PRICE_SCALE, // 1 collateral wei is worth 1e9 loan wei
+      totalBorrowAssets: 1e12,
+      totalBorrowShares: 1e18,
+      positionCollateral: 100,
+      positionBorrowShares: 8e16,
+      minOfferBonusBps: 500
+    });
+    (uint256 seized, uint256 repaid) = h.consume(inp);
+
+    assertEq(seized, 1, "later offer filled for one collateral wei");
+    assertEq(repaid, 8.5e14, "share fill at the later offer's ratio");
+    assertTrue(h.isLive(a), "zero-fill offer left in the book");
+    assertEq(h.slabAt(a).remainingCollateral, 1, "zero-fill offer untouched");
+    assertTrue(h.isLive(b), "later offer partially filled");
+    assertEq(h.slabAt(b).remainingCollateral, 9, "later offer collateral decremented");
+    assertEq(h.slabAt(b).remainingDebtShares, 8.5e15 - 8.5e14, "later offer debt shares decremented");
+    _assertStructure();
+  }
+
+  /// @notice In seizedAssets mode, an offer whose position-shares clamp RESCALES its collateral
+  ///         down to zero is SKIPPED (not consumed, not a walk-stopping condition) and left fully
+  ///         untouched: a later, pricier offer carries more collateral per debt share and can
+  ///         still fill against the same tiny position. Offer A (1 collateral, 10 debt shares)
+  ///         sorts first (10 debt shares per collateral unit vs B's 0.8); against a position owing
+  ///         only 5 shares the clamp binds on A (10 > 5) and floor(5 * 1 / 10) = 0 collateral.
+  function test_consume_clampRescaleToZeroSkips_laterOfferConsumed() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    uint8 a = h.insert(address(0xA0), active, expiry, 1, 10);
+    uint8 b = h.insert(address(0xB0), active, expiry, 10, 8);
+    vm.warp(active + 1);
+
+    LibBorrowOffers.ConsumeInput memory inp = _input(10, 0); // seizedAssets mode, target 10 >= 1
+    inp.positionCollateral = 40; // ratio 8, above B's 1.25: B's fill is strictly de-risking
+    inp.positionBorrowShares = 5; // below A's 10 debt shares, so the clamp binds on A
+
+    (uint256 seized, uint256 repaid) = h.consume(inp);
+
+    // B's fill: fillShares = ceil(10 * 8 / 10) = 8 clamps to the position's 5 shares and the
+    // collateral rescales to floor(5 * 10 / 8) = 6 (seizedValue 6 > repaidDebtValue 5 at unit
+    // price and 1:1 totals: profitable, and fullMulDiv(6, 5, 5) = 6 < 40: strictly de-risking).
+    assertEq(seized, 6, "later offer filled at the rescaled collateral");
+    assertEq(repaid, 5, "repayment clamped to the position's shares");
+    assertTrue(h.isLive(a), "zero-rescale offer left in the book");
+    assertEq(h.slabAt(a).remainingCollateral, 1, "zero-rescale offer collateral untouched");
+    assertEq(h.slabAt(a).remainingDebtShares, 10, "zero-rescale offer debt shares untouched");
+    assertTrue(h.isLive(b), "later offer partially filled");
+    assertEq(h.slabAt(b).remainingCollateral, 4, "later offer collateral decremented");
+    assertEq(h.slabAt(b).remainingDebtShares, 3, "later offer debt shares decremented");
+    _assertStructure();
+  }
+
+  /// @notice A slab full of EXPIRED offers self-heals: the allocator prunes expired slots before
+  ///         allocating, so a new insert succeeds (recycling the lowest pruned id) instead of
+  ///         reverting {TooManyOffers}, and every pruned slot is fully zeroed with `liveBits` in
+  ///         agreement.
+  function test_insert_prunesExpiredSlab_insteadOfTooManyOffers() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    for (uint256 i; i < MAX_OFFERS; ++i) {
+      h.insert(address(uint160(0xAAAA + i)), active, expiry, uint128(1.1e18 + i * 1e16), 1e18);
+    }
+    assertEq(h.count(), MAX_OFFERS, "slab filled");
+
+    // While the book is unexpired, a full slab still rejects new offers.
+    vm.expectRevert(LibBorrowErrors.TooManyOffers.selector);
+    h.insert(address(0xBEEF), active, expiry, 2e18, 1e18);
+
+    // Past expiry the whole book is dead weight: the next insert prunes it and allocates id 0.
+    vm.warp(expiry);
+    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    uint8 id = h.insert(address(0xD00D), active2, active2 + 1 days, 2e18, 1e18);
+
+    assertEq(id, 0, "lowest pruned id recycled");
+    assertEq(h.count(), 1, "only the new offer is live");
+    assertEq(h.liveBits(), 1, "bitmap holds exactly bit 0");
+    assertEq(h.slabAt(0).proposer, address(0xD00D), "new offer stored in slot 0");
+    for (uint8 slot = 1; slot < MAX_OFFERS; ++slot) {
+      Offer memory pruned = h.slabAt(slot);
+      assertEq(pruned.proposer, address(0), "pruned slot proposer zeroed");
+      assertEq(pruned.activeAt, 0, "pruned slot activeAt zeroed");
+      assertEq(pruned.expiresAt, 0, "pruned slot expiry zeroed");
+      assertEq(pruned.remainingCollateral, 0, "pruned slot collateral zeroed");
+      assertEq(pruned.remainingDebtShares, 0, "pruned slot debt shares zeroed");
+    }
+    _assertStructure();
+  }
+
+  /// @notice A slab full of merely-ACTIVE offers (activeAt passed, expiresAt far in the future) is
+  ///         NOT pruned by the allocator: the next insert reverts {TooManyOffers} and every offer
+  ///         is left exactly as stored. The allocator's prune condition is expiry, never
+  ///         activation; a live, consumable book must not be destroyed by a new proposal.
+  function test_insert_fullActiveSlab_revertsWithoutPruning() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 expiry = active + 30 days;
+    for (uint256 i; i < MAX_OFFERS; ++i) {
+      h.insert(address(uint160(0xAAAA + i)), active, expiry, uint128(1.1e18 + i * 1e16), 1e18);
+    }
+    assertEq(h.count(), MAX_OFFERS, "slab filled");
+
+    // Past activation, well before expiry: every offer is merely active, none is prunable.
+    vm.warp(active + 1);
+    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    vm.expectRevert(LibBorrowErrors.TooManyOffers.selector);
+    h.insert(address(0xBEEF), active2, active2 + 1 days, 2e18, 1e18);
+
+    // The rejected insert pruned nothing: count, bitmap and every offer's fields are untouched.
+    assertEq(h.count(), MAX_OFFERS, "no active offer pruned");
+    assertEq(h.liveBits(), type(uint32).max, "all bits still set");
+    for (uint8 id; id < MAX_OFFERS; ++id) {
+      Offer memory offer = h.slabAt(id);
+      assertEq(offer.proposer, address(uint160(0xAAAA + id)), "active offer proposer untouched");
+      assertEq(offer.activeAt, active, "active offer activeAt untouched");
+      assertEq(offer.expiresAt, expiry, "active offer expiry untouched");
+      assertEq(offer.remainingCollateral, uint128(1.1e18 + uint256(id) * 1e16), "active offer collateral untouched");
+      assertEq(offer.remainingDebtShares, 1e18, "active offer debt shares untouched");
+    }
+    _assertStructure();
+  }
+
+  /// @notice Mixed-book recycle: with the slab full and exactly ONE offer past its expiry, the
+  ///         next insert prunes and recycles exactly that id (no {TooManyOffers}), the book is
+  ///         back at capacity, and the 31 still-live offers are untouched.
+  function test_insert_recyclesOnlyExpiredSlot_othersUntouched() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 longExpiry = active + 30 days;
+    uint40 shortExpiry = active + 1 days;
+    uint8 shortId = 7;
+    for (uint256 i; i < MAX_OFFERS; ++i) {
+      uint40 expiry = i == shortId ? shortExpiry : longExpiry;
+      h.insert(address(uint160(0xAAAA + i)), active, expiry, uint128(1.1e18 + i * 1e16), 1e18);
+    }
+    assertEq(h.count(), MAX_OFFERS, "slab filled");
+
+    // Past the short expiry only: the other offers are live (and merely active, so not prunable).
+    vm.warp(shortExpiry);
+    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    uint8 id = h.insert(address(0xD00D), active2, active2 + 1 days, 2e18, 1e18);
+
+    assertEq(id, shortId, "exactly the expired slot recycled");
+    assertEq(h.count(), MAX_OFFERS, "book back at capacity");
+    assertEq(h.liveBits(), type(uint32).max, "all bits set again");
+    assertEq(h.slabAt(shortId).proposer, address(0xD00D), "new offer stored in the recycled slot");
+    for (uint8 slot; slot < MAX_OFFERS; ++slot) {
+      if (slot == shortId) continue;
+      Offer memory offer = h.slabAt(slot);
+      assertEq(offer.proposer, address(uint160(0xAAAA + slot)), "live offer proposer untouched");
+      assertEq(offer.activeAt, active, "live offer activeAt untouched");
+      assertEq(offer.expiresAt, longExpiry, "live offer expiry untouched");
+      assertEq(offer.remainingCollateral, uint128(1.1e18 + uint256(slot) * 1e16), "live offer collateral untouched");
+      assertEq(offer.remainingDebtShares, 1e18, "live offer debt shares untouched");
+    }
     _assertStructure();
   }
 
@@ -432,6 +665,15 @@ contract LibBorrowOffersTest is Test {
       sumShares += sharesFilled;
       assertGt(collFilled, 0, "event with zero collateral fill");
       assertGt(sharesFilled, 0, "event with zero share fill");
+
+      // Per-fill price invariant: the liquidator never pays fewer debt shares per collateral unit
+      // than the offer's fixed ratio (share fills round up; the position-shares clamp rescales the
+      // collateral down, never the shares).
+      assertGe(
+        uint256(sharesFilled) * before[id].remainingCollateral,
+        uint256(collFilled) * before[id].remainingDebtShares,
+        "fill price below the offer's fixed ratio"
+      );
 
       // Ascending-price order: descending debtShares/collateral on the pre-consume amounts.
       if (prevId != type(uint256).max) {

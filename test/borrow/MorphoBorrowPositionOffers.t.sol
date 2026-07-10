@@ -5,23 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
+import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
 import {IBorrowOffers, Offer} from "src/interfaces/borrow/IBorrowOffers.sol";
 import {IPreLiquidationCallback} from "src/interfaces/borrow/IPreliquidationCallback.sol";
 import {LibBorrowErrors} from "src/libs/borrow/LibBorrowErrors.sol";
-import {
-  ROLE_ADMIN,
-  PROPOSER_ROLE,
-  GUARDIAN_ROLE,
-  MAX_OFFERS,
-  DEFAULT_OFFER_TIMELOCK,
-  MIN_OFFER_TIMELOCK,
-  MAX_OFFER_TIMELOCK,
-  MAX_OFFER_LIFESPAN,
-  DEFAULT_MIN_OFFER_BONUS_BPS,
-  MAX_MIN_OFFER_BONUS_BPS
-} from "src/libs/borrow/LibBorrowOffersConstants.sol";
+import {MAX_OFFERS, MAX_OFFER_LIFESPAN, BORROW_OFFERS_STORAGE_SLOT} from "src/libs/borrow/LibBorrowOffersConstants.sol";
 import {BPS} from "src/libs/Constants.sol";
-import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
@@ -31,8 +20,11 @@ import {SharesMathLib} from "lib/morpho-blue/src/libraries/SharesMathLib.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @title MorphoBorrowPositionOffersTest
-/// @notice v2 offer-based pre-liquidation tests for {MorphoBorrowPosition}. Uses a zero-IRM market
+/// @notice Offer-based pre-liquidation tests for {MorphoBorrowPosition}. Uses a zero-IRM market
 ///         so the position LTV is deterministic across the timelock warps (no interest accrual).
+///         Offer roles and the per-collateral configuration live on the shared
+///         {BorrowOffersRegistry}; this suite configures the test market's collateral there and
+///         tests the position-level behavior against that configuration.
 contract MorphoBorrowPositionOffersTest is Test {
   using MarketParamsLib for MarketParams;
   using SharesMathLib for uint256;
@@ -44,6 +36,7 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   MorphoBorrowPosition internal pos;
   MorphoBorrowPositionFactory internal factory;
+  BorrowOffersRegistry internal registry;
   IMorpho internal morpho;
   MockERC20 internal loanToken;
   MockERC20 internal collateralToken;
@@ -52,8 +45,9 @@ contract MorphoBorrowPositionOffersTest is Test {
   MarketParams internal marketParams;
   Id internal marketId;
 
-  address internal owner; // morpho owner
-  address internal positionManager; // position owner (and, by fallback, ROLE_ADMIN)
+  address internal owner; // morpho owner and factory beacon owner
+  address internal registryOwner; // BorrowOffersRegistry owner (the offer administrator)
+  address internal positionManager; // position owner (no offer powers: offer auth lives on the registry)
   address internal proposer;
   address internal guardian;
   address internal liquidator;
@@ -69,14 +63,13 @@ contract MorphoBorrowPositionOffersTest is Test {
   uint256 internal constant COLLATERAL = 10_000e18;
   uint256 internal constant BORROW = 6_000e18; // 0.6 LTV at price 1 (safe)
 
-  // Solady fixed storage slots (for the migration test's vm.store).
-  bytes32 internal constant INITIALIZABLE_SLOT = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffbf601132;
-  bytes32 internal constant OWNER_SLOT = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff74873927;
-  // ERC-7201 "borrow.offers.main" namespace base slot (BorrowOffersStorage slot 0).
-  bytes32 internal constant OFFERS_SLOT = 0xe6485cf370207053ea24e440730156198d1a663d29d90d2bec5f918b1f0d9100;
+  // Registry configuration for the test market's collateral (mirrors the pre-registry defaults).
+  uint40 internal constant OFFER_TIMELOCK = 1 hours;
+  uint16 internal constant MIN_OFFER_BONUS_BPS = 100;
 
   function setUp() public {
     owner = makeAddr("owner");
+    registryOwner = makeAddr("registryOwner");
     positionManager = makeAddr("positionManager");
     proposer = makeAddr("proposer");
     guardian = makeAddr("guardian");
@@ -108,7 +101,21 @@ contract MorphoBorrowPositionOffersTest is Test {
       positionManager, abi.encodeWithSignature("assets()"), abi.encode(address(collateralToken), address(loanToken))
     );
 
-    factory = new MorphoBorrowPositionFactory(owner, morpho);
+    // Shared offers registry (behind an ERC1967 proxy): roles are global, configuration is keyed
+    // by collateral token. Effective timelocks are floored to MIN_OFFER_TIMELOCK, so even the
+    // first setOfferTimelock is delayed by the floor; warp past it so the 1 hour configuration is
+    // live for the whole suite.
+    registry = BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    registry.initialize(registryOwner);
+    vm.startPrank(registryOwner);
+    registry.setProposer(proposer, true);
+    registry.setGuardian(guardian, true);
+    registry.setOfferTimelock(address(collateralToken), OFFER_TIMELOCK);
+    registry.setMinOfferBonus(address(collateralToken), MIN_OFFER_BONUS_BPS);
+    vm.stopPrank();
+    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+
+    factory = new MorphoBorrowPositionFactory(owner, morpho, registry);
     pos = MorphoBorrowPosition(factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
 
     // Position manager approvals (collateral supply path).
@@ -180,17 +187,13 @@ contract MorphoBorrowPositionOffersTest is Test {
     return uint128(collValue * SCALE / oracle.price());
   }
 
-  function _enableProposer(address who) internal {
-    vm.prank(positionManager);
-    pos.setProposer(who, true);
+  /// @dev Sets the collateral's minimum offer bonus on the registry (as the registry owner).
+  function _setMinOfferBonus(uint16 bps) internal {
+    vm.prank(registryOwner);
+    registry.setMinOfferBonus(address(collateralToken), bps);
   }
 
-  function _enableGuardian(address who) internal {
-    vm.prank(positionManager);
-    pos.setGuardian(who, true);
-  }
-
-  /// @dev Proposes an offer (as `proposer`) with the default timelock and a long lifespan.
+  /// @dev Proposes an offer (as `proposer`) with the configured timelock and a long lifespan.
   function _propose(uint128 coll, uint128 shares) internal returns (uint8 id) {
     vm.prank(proposer);
     id = pos.proposeOffer(coll, shares, uint40(block.timestamp + 30 days));
@@ -202,112 +205,68 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   function _warpActive() internal {
-    vm.warp(block.timestamp + DEFAULT_OFFER_TIMELOCK + 1);
+    vm.warp(block.timestamp + OFFER_TIMELOCK + 1);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                    INIT / UPGRADE / ROLES                  */
+  /*                    INIT / AUTHORIZATION                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_init_factoryPathLandsAtV2() public view {
-    // The factory's initialize ran v1 + v2; ROLE_ADMIN is the governance owner (fallback: PM).
-    assertEq(pos.offerTimelock(), DEFAULT_OFFER_TIMELOCK, "default timelock");
-    assertEq(pos.minOfferBonus(), DEFAULT_MIN_OFFER_BONUS_BPS, "default minimum offer bonus");
+  function test_init_wiresRegistryAndStartsEmpty() public view {
+    // The position holds no offer role or configuration storage: it points at the shared registry
+    // and starts with an empty offer book.
+    assertEq(address(pos.OFFERS_REGISTRY()), address(registry), "registry wired as immutable");
     assertEq(pos.offerCount(), 0, "no offers");
-    assertTrue(pos.hasAnyRole(positionManager, ROLE_ADMIN), "PM is admin (fallback)");
-  }
-
-  /// @notice Primary `_governanceOwner` path: when the PositionManager's `owner()` resolves to a
-  ///         real governance address, ROLE_ADMIN is granted to THAT address (owner-of-owner), not to
-  ///         the position owner.
-  function test_governanceOwner_resolvesToOwnerOfOwner() public {
-    address governance = makeAddr("governance");
-    vm.mockCall(positionManager, abi.encodeWithSignature("owner()"), abi.encode(governance));
-    MorphoBorrowPosition p =
-      MorphoBorrowPosition(factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
-    assertTrue(p.hasAnyRole(governance, ROLE_ADMIN), "governance owner is admin");
-    assertFalse(p.hasAnyRole(positionManager, ROLE_ADMIN), "PM not admin when owner-of-owner resolves");
-  }
-
-  /// @notice `_governanceOwner` is total: a PositionManager whose `owner()` returns an unexpected
-  ///         shape (here 64 bytes, not a single address word) must NOT revert initialization; it
-  ///         falls back to the position owner. The same holds for an EOA / reverting `owner()`
-  ///         (the default setUp, where `owner()` is unmocked, already exercises the empty-return
-  ///         fallback in {test_init_factoryPathLandsAtV2}).
-  function test_governanceOwner_malformedOwnerReturn_fallsBackNotRevert() public {
-    // 64-byte return: a valid address word is exactly 32 bytes, so this is "unexpected shape".
-    vm.mockCall(positionManager, abi.encodeWithSignature("owner()"), abi.encode(uint256(1), uint256(2)));
-    MorphoBorrowPosition p =
-      MorphoBorrowPosition(factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
-    assertTrue(p.hasAnyRole(positionManager, ROLE_ADMIN), "fallback to PM on malformed owner() return");
-  }
-
-  function test_roleConstants_matchSoladyOrdinals() public pure {
-    assertEq(ROLE_ADMIN, 1 << 0, "ROLE_ADMIN == _ROLE_0");
-    assertEq(PROPOSER_ROLE, 1 << 1, "PROPOSER_ROLE == _ROLE_1");
-    assertEq(GUARDIAN_ROLE, 1 << 2, "GUARDIAN_ROLE == _ROLE_2");
-  }
-
-  function test_initializeV2_revertsOnFreshProxy() public {
-    MorphoBorrowPosition fresh = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
-    vm.expectRevert(LibBorrowErrors.NotInitialized.selector);
-    fresh.initializeV2();
-  }
-
-  function test_initializeV2_revertsOnAlreadyV2() public {
-    // pos is already at version 2 (factory path).
-    vm.expectRevert(LibBorrowErrors.NotInitialized.selector);
-    pos.initializeV2();
-  }
-
-  function test_initializeV2_migratesV1Proxy() public {
-    // Model a pre-upgrade v1 proxy whose logic is ALREADY the v2 impl (the beacon upgrade swapped
-    // it) but whose Initializable slot is still at version 1 and whose owner is set. We drive those
-    // two slots directly with vm.store (Solady fixed slots), which is exactly the post-upgrade state.
-    MorphoBorrowPosition v1 = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
-    // Initializable slot: initializing=0, version=1 => stored value (1 << 1) = 2.
-    vm.store(address(v1), INITIALIZABLE_SLOT, bytes32(uint256(2)));
-    // Solady _OWNER_SLOT: set the position owner so _governanceOwner() can resolve it.
-    vm.store(address(v1), OWNER_SLOT, bytes32(uint256(uint160(positionManager))));
-    assertEq(v1.owner(), positionManager, "owner set");
-
-    // Migration runs the v2 setup and lands at version 2.
-    v1.initializeV2();
-    assertEq(v1.offerTimelock(), DEFAULT_OFFER_TIMELOCK, "timelock seeded");
-    assertEq(v1.minOfferBonus(), DEFAULT_MIN_OFFER_BONUS_BPS, "minimum offer bonus seeded");
-    assertTrue(v1.hasAnyRole(positionManager, ROLE_ADMIN), "admin granted on migration");
-
-    // Cannot migrate twice (now at version 2).
-    vm.expectRevert(LibBorrowErrors.NotInitialized.selector);
-    v1.initializeV2();
-  }
-
-  function test_setProposer_grantsAndRevokes() public {
-    _enableProposer(proposer);
-    assertTrue(pos.hasAnyRole(proposer, PROPOSER_ROLE), "granted");
-    vm.prank(positionManager);
-    pos.setProposer(proposer, false);
-    assertFalse(pos.hasAnyRole(proposer, PROPOSER_ROLE), "revoked");
-  }
-
-  function test_setGuardian_grantsAndRevokes() public {
-    _enableGuardian(guardian);
-    assertTrue(pos.hasAnyRole(guardian, GUARDIAN_ROLE), "granted");
-    vm.prank(positionManager);
-    pos.setGuardian(guardian, false);
-    assertFalse(pos.hasAnyRole(guardian, GUARDIAN_ROLE), "revoked");
-  }
-
-  function test_setProposer_revertsForNonAdmin() public {
-    vm.prank(makeAddr("rando"));
-    vm.expectRevert(Unauthorized.selector);
-    pos.setProposer(proposer, true);
+    (uint40 timelock, uint16 minBonus) = registry.offerConfig(address(collateralToken));
+    assertEq(timelock, OFFER_TIMELOCK, "collateral timelock configured");
+    assertEq(minBonus, MIN_OFFER_BONUS_BPS, "collateral minimum offer bonus configured");
   }
 
   function test_proposeOffer_revertsForNonProposer() public {
     vm.prank(makeAddr("rando"));
     vm.expectRevert(Unauthorized.selector);
     pos.proposeOffer(1e18, 1e18, uint40(block.timestamp + 1 days));
+  }
+
+  /// @notice The position owner (PositionManager) has NO bypass: offer authorization lives
+  ///         entirely on the registry, and the position owner holds no registry role.
+  function test_proposeOffer_revertsForPositionOwner() public {
+    vm.prank(positionManager);
+    vm.expectRevert(Unauthorized.selector);
+    pos.proposeOffer(1e18, 1e18, uint40(block.timestamp + 1 days));
+  }
+
+  /// @notice The registry owner is always authorized (by derivation, without holding a role).
+  function test_proposeOffer_registryOwnerAllowed() public {
+    _enterBand(0.7e18);
+    uint256 shares = _positionShares() / 4;
+    uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
+    vm.prank(registryOwner);
+    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    assertEq(pos.offer(id).proposer, registryOwner, "registry owner may propose");
+  }
+
+  /// @notice A never-configured collateral is not disabled: the registry floors the effective
+  ///         timelock to MIN_OFFER_TIMELOCK, so proposals work by default with the minimum veto
+  ///         window.
+  function test_proposeOffer_unconfiguredCollateralUsesFloorTimelock() public {
+    // A fresh registry where the proposer role is granted but the collateral is NOT configured.
+    BorrowOffersRegistry bare = BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    bare.initialize(registryOwner);
+    vm.prank(registryOwner);
+    bare.setProposer(proposer, true);
+
+    MorphoBorrowPositionFactory bareFactory = new MorphoBorrowPositionFactory(owner, morpho, bare);
+    MorphoBorrowPosition barePos =
+      MorphoBorrowPosition(bareFactory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
+
+    vm.prank(proposer);
+    uint8 id = barePos.proposeOffer(1e18, 1e17, uint40(block.timestamp + 1 days));
+    assertEq(
+      uint256(barePos.offer(id).activeAt),
+      block.timestamp + bare.MIN_OFFER_TIMELOCK(),
+      "unconfigured collateral should use the floored minimum timelock"
+    );
   }
 
   function test_revokeOffers_revertsForNonGuardian() public {
@@ -318,17 +277,104 @@ contract MorphoBorrowPositionOffersTest is Test {
     pos.revokeOffers(ids);
   }
 
+  /// @notice The position owner (PositionManager) cannot revoke either: revoke stays with the
+  ///         registry guardians and the registry owner.
+  function test_revokeOffers_revertsForPositionOwner() public {
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = 0;
+    vm.prank(positionManager);
+    vm.expectRevert(Unauthorized.selector);
+    pos.revokeOffers(ids);
+  }
+
+  function test_revokeOffers_registryOwnerAllowed() public {
+    _enterBand(0.7e18);
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = id;
+    vm.prank(registryOwner);
+    pos.revokeOffers(ids);
+    assertEq(pos.offerCount(), 0, "registry owner may revoke");
+  }
+
+  /// @notice Revoking the proposer role on the registry takes effect immediately for every
+  ///         position: a proposer that just posted an offer loses the power at once.
+  function test_proposeOffer_revertsAfterProposerRevoked() public {
+    _enterBand(0.7e18);
+    uint256 shares = _positionShares() / 4;
+    uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
+    _propose(coll, uint128(shares)); // role is live: proposing succeeds
+    assertEq(pos.offerCount(), 1, "proposed while roled");
+
+    vm.prank(registryOwner);
+    registry.setProposer(proposer, false);
+
+    vm.prank(proposer);
+    vm.expectRevert(Unauthorized.selector);
+    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+  }
+
+  /// @notice Mirror of the proposer revocation: dropping the guardian role on the registry
+  ///         immediately strips the revoke power on every position.
+  function test_revokeOffers_revertsAfterGuardianRevoked() public {
+    _enterBand(0.7e18);
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = id;
+
+    vm.prank(registryOwner);
+    registry.setGuardian(guardian, false);
+
+    vm.prank(guardian);
+    vm.expectRevert(Unauthorized.selector);
+    pos.revokeOffers(ids);
+  }
+
+  /// @notice The by-derivation owner powers follow a Solady two-step ownership handover: the old
+  ///         registry owner loses propose and revoke on every position, the new owner gains both
+  ///         (without holding a role).
+  function test_offerAuth_followsRegistryOwnershipHandover() public {
+    _enterBand(0.7e18);
+    uint256 shares = _positionShares() / 4;
+    uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
+
+    // Two-step handover: the new owner requests, the current owner completes.
+    address newOwner = makeAddr("newRegistryOwner");
+    vm.prank(newOwner);
+    registry.requestOwnershipHandover();
+    vm.prank(registryOwner);
+    registry.completeOwnershipHandover(newOwner);
+
+    // The old owner is a stranger to the registry now: no propose, no revoke.
+    vm.prank(registryOwner);
+    vm.expectRevert(Unauthorized.selector);
+    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = 0;
+    vm.prank(registryOwner);
+    vm.expectRevert(Unauthorized.selector);
+    pos.revokeOffers(ids);
+
+    // The new owner holds the full owner powers by derivation.
+    vm.prank(newOwner);
+    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    assertEq(pos.offer(id).proposer, newOwner, "new registry owner may propose");
+    ids[0] = id;
+    vm.prank(newOwner);
+    pos.revokeOffers(ids);
+    assertEq(pos.offerCount(), 0, "new registry owner may revoke");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      PROPOSE / VALIDATION                  */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_proposeOffer_storesOfferAndActiveAt() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
 
-    uint40 expectedActive = uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK);
+    uint40 expectedActive = uint40(block.timestamp + OFFER_TIMELOCK);
     uint8 id = _propose(coll, uint128(shares));
 
     Offer memory o = pos.offer(id);
@@ -340,7 +386,6 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   function test_proposeOffer_revertsZeroAmount() public {
-    _enableProposer(proposer);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferAmountZero.selector);
     pos.proposeOffer(0, 1e18, uint40(block.timestamp + 1 days));
@@ -348,7 +393,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_proposeOffer_revertsNotProfitable() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     // Price 0.9 < 1 -> not profitable at creation.
     uint128 coll = _collForPrice(shares, 0.9e18);
@@ -359,11 +403,10 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_proposeOffer_revertsExpiryTooShort() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
     // expiresAt == activeAt is not strictly after -> revert.
-    uint40 activeAt = uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK);
+    uint40 activeAt = uint40(block.timestamp + OFFER_TIMELOCK);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferExpiryTooShort.selector);
     pos.proposeOffer(coll, uint128(shares), activeAt);
@@ -371,12 +414,11 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_proposeOffer_revertsExpiryTooLong() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
     // Lifespan is measured from `activeAt` (= now + timelock), not from now. One second past the cap
     // relative to `activeAt` must revert.
-    uint40 activeAt = uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK);
+    uint40 activeAt = uint40(block.timestamp + OFFER_TIMELOCK);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferExpiryTooLong.selector);
     pos.proposeOffer(coll, uint128(shares), activeAt + MAX_OFFER_LIFESPAN + 1);
@@ -384,10 +426,9 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_proposeOffer_maxLifespanMeasuredFromActiveAt() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
-    uint40 activeAt = uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK);
+    uint40 activeAt = uint40(block.timestamp + OFFER_TIMELOCK);
     // Exactly MAX_OFFER_LIFESPAN measured from `activeAt` is the boundary and is accepted. Note this
     // expiry sits MAX_OFFER_LIFESPAN + timelock past `now`, so it would be rejected under a
     // measured-from-now rule: the live span (not the veto window) is what the cap bounds.
@@ -399,7 +440,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_proposeOffer_revertsTooManyOffers() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 1000;
     uint128 coll = _collForPrice(shares, 1.2e18);
     for (uint256 i; i < MAX_OFFERS; ++i) {
@@ -409,6 +449,27 @@ contract MorphoBorrowPositionOffersTest is Test {
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.TooManyOffers.selector);
     pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+  }
+
+  /// @notice A book full of EXPIRED offers self-heals: allocation prunes expired offers before
+  ///         reverting TooManyOffers, so a fresh proposal succeeds where it previously would not.
+  function test_proposeOffer_prunesExpiredOffersInsteadOfReverting() public {
+    _enterBand(0.7e18);
+    uint256 shares = _positionShares() / 1000;
+    uint128 coll = _collForPrice(shares, 1.2e18);
+    for (uint256 i; i < MAX_OFFERS; ++i) {
+      vm.prank(proposer);
+      pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 2 hours));
+    }
+    assertEq(pos.offerCount(), MAX_OFFERS, "slab full");
+
+    // All offers expire; the next proposal prunes them and takes a freed slot.
+    vm.warp(block.timestamp + 3 hours);
+    uint128 collLater = _collForPrice(shares, 1.2e18);
+    vm.prank(proposer);
+    uint8 id = pos.proposeOffer(collLater, uint128(shares), uint40(block.timestamp + 30 days));
+    assertEq(pos.offerCount(), 1, "expired offers pruned, fresh offer allocated");
+    assertEq(pos.offer(id).proposer, proposer, "fresh offer live");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -427,35 +488,36 @@ contract MorphoBorrowPositionOffersTest is Test {
     pos.preLiquidate(address(pos), 1e18, 0, "");
   }
 
-  /// @notice Dormant window (v1 proxy upgraded to v2 logic but initializeV2 not yet run): the offer
-  ///         namespace is all-zero, which the liveness bitmap reads structurally as an empty book
-  ///         (`liveBits == 0`). The band path must revert NoConsumableOffer (spec section 12.3).
-  ///         Kept as a regression test even though no explicit guard exists anymore.
-  function test_dispatch_dormantWindow_revertsNoConsumableNotPanic() public {
+  /// @notice Slot 0 of the "borrow.offers.main" namespace holds `liveBits` alone (the slab starts
+  ///         at slot 1 of the namespace), so zeroing that single slot structurally empties the
+  ///         book: the band path must revert NoConsumableOffer even though the slab slots still
+  ///         hold the (now dead) offer data.
+  function test_dispatch_zeroedLiveBits_readsEmptyBook() public {
     _enterBand(0.7e18);
-    // Zero the offer namespace to model an un-migrated v1 proxy (liveBits==0, timelock==0).
-    vm.store(address(pos), OFFERS_SLOT, bytes32(0));
-    assertEq(pos.offerCount(), 0, "offer storage zeroed");
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    _warpActive();
+    assertTrue(pos.isConsumable(id), "offer consumable before the wipe");
+
+    vm.store(address(pos), BORROW_OFFERS_STORAGE_SLOT, bytes32(0));
+    assertEq(pos.offerCount(), 0, "cleared liveBits reads as an empty book");
     vm.expectRevert(LibBorrowErrors.NoConsumableOffer.selector);
     pos.preLiquidate(address(pos), 1e18, 0, "");
   }
 
-  /// @notice previewConsume returns (0, 0) in the dormant window (all-zero namespace == empty book).
-  function test_previewConsume_dormantWindow_returnsZero() public {
+  /// @notice The views agree with the empty-book reading of a zeroed `liveBits` slot: no offers
+  ///         listed, nothing consumable, previewConsume returns (0, 0).
+  function test_views_zeroedLiveBits_returnEmpty() public {
     _enterBand(0.7e18);
-    vm.store(address(pos), OFFERS_SLOT, bytes32(0));
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    _warpActive();
+
+    vm.store(address(pos), BORROW_OFFERS_STORAGE_SLOT, bytes32(0));
+    Offer[] memory all = pos.offers();
+    assertEq(all.length, 0, "empty offer list");
+    assertFalse(pos.isConsumable(id), "dead slab slot not consumable");
     (uint256 s, uint256 d) = pos.previewConsume(1e18, 0);
     assertEq(s, 0, "no seize");
     assertEq(d, 0, "no shares");
-  }
-
-  /// @notice The offers() view must return an empty array in the dormant window: the all-zero
-  ///         namespace has `liveBits == 0`, so there are no set bits to walk.
-  function test_offers_dormantWindow_returnsEmptyNotPanic() public {
-    _enterBand(0.7e18);
-    vm.store(address(pos), OFFERS_SLOT, bytes32(0));
-    Offer[] memory all = pos.offers();
-    assertEq(all.length, 0, "dormant window: empty offer list");
   }
 
   function test_dispatch_aboveLiqLtv_takesProportionalPath() public {
@@ -472,7 +534,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_seizeMode_lowersLtvAndProfits() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 2;
     uint8 id = _proposeAtPrice(shares, 1.2e18);
     _warpActive();
@@ -498,7 +559,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_repaySharesMode_doesNotOvershoot() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 2;
     _proposeAtPrice(shares, 1.2e18);
     _warpActive();
@@ -513,7 +573,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_skipsUnprofitable_consumesNext() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     // Offer A at I=1.02 (barely profitable now), offer B at I=1.30 (clearly profitable). Creation
     // requires profitability, so both are valid now.
@@ -537,7 +596,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_stopsAtOverPriceOffer() public {
     _enterBand(0.7e18); // 1/L ≈ 1.4286
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     // Over-price offer (I = 1.6 > 1/L) -> should be skipped/stopped, nothing consumed.
     _proposeAtPrice(shares, 1.6e18);
@@ -548,7 +606,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_notActiveYet_revertsNoConsumable() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     _proposeAtPrice(shares, 1.2e18);
     // Do NOT warp: offer not active yet.
@@ -558,7 +615,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_expiredOffer_revertsNoConsumable() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
     vm.prank(proposer);
@@ -574,7 +630,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_expiredOffer_prunedWhenConsumeSucceeds() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
 
     // Offer A: short-lived (expires in 2h).
@@ -604,7 +659,6 @@ contract MorphoBorrowPositionOffersTest is Test {
   ///         offers, and check both the OfferConsumed event sequence and the per-offer state.
   function test_consume_ordering_drainsCheapestFirst() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 8;
     // Propose in non-sorted price order: id 0 at 1.3, id 1 at 1.1, id 2 at 1.2.
     uint8 pricey = _proposeAtPrice(shares, 1.3e18);
@@ -654,7 +708,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_consume_toZeroDebt_closesPosition() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares();
     // Offer covering the whole debt with extra collateral headroom (price < 1/L, profitable).
     _proposeAtPrice(shares, 1.2e18);
@@ -665,117 +718,158 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(pos.totalBorrowed(), 0, "no debt left");
   }
 
+  /// @notice Regression for the clamped-fill rescale: when the aggregate offer debt shares exceed
+  ///         the position's remaining borrow shares (the owner partially repaid the debt after the
+  ///         offers were posted), a seize-mode target covering the raw offer collateral must NOT be
+  ///         met in full. The last fill's shares are clamped to the position's remaining shares and
+  ///         its collateral is rescaled down to the offer's fixed ratio (floor), so the liquidator
+  ///         never receives more collateral per share than the offer authorized.
+  function test_consume_seizeMode_clampedFillRescalesCollateral() public {
+    _enterBand(0.71e18);
+    uint256 half = _positionShares() / 2;
+    uint8 a = _proposeAtPrice(half, 1.1e18);
+    uint8 b = _proposeAtPrice(half, 1.2e18);
+    _warpActive();
+
+    // The owner repays 6% of the debt: the two offers together now authorize more debt shares
+    // (100% of the original) than the position still owes (~94%), while the LTV
+    // (0.71 * 0.94 = 0.667) stays inside the band.
+    uint256 repayAmount = BORROW * 6 / 100;
+    loanToken.setBalance(positionManager, repayAmount);
+    vm.prank(positionManager);
+    pos.repay(repayAmount);
+    assertGt(_ltvWad(), SAFE_LTV, "still in band (above safe)");
+    assertLe(_ltvWad(), LIQ_LTV, "still in band (at/below liq)");
+    uint256 positionSharesLeft = _positionShares();
+    assertLt(positionSharesLeft, 2 * half, "offers now oversize the position");
+
+    Offer memory offerA = pos.offer(a);
+    Offer memory offerB = pos.offer(b);
+    uint256 rawTarget = uint256(offerA.remainingCollateral) + offerB.remainingCollateral;
+
+    // Cheapest-first walk: A (1.1) fills whole; B (1.2) is clamped to the shares the position
+    // still owes, and its collateral chunk is rescaled down to B's fixed ratio (floor), not handed
+    // out raw for fewer shares.
+    uint256 clampedShares = positionSharesLeft - offerA.remainingDebtShares;
+    uint256 rescaledFillB = clampedShares * offerB.remainingCollateral / offerB.remainingDebtShares;
+
+    vm.recordLogs();
+    (uint256 seized,) = pos.preLiquidate(address(pos), rawTarget, 0, "");
+    assertLt(seized, rawTarget, "raw target not met: the offer ratio caps the clamped fill");
+    assertEq(seized, uint256(offerA.remainingCollateral) + rescaledFillB, "collateral rescaled to B's fixed ratio");
+    assertEq(_positionShares(), 0, "position debt fully repaid");
+
+    // Every per-offer fill respects the offer's fixed ratio against its pre-walk terms:
+    // sharesFilled * preCollateral >= collateralFilled * preDebtShares, i.e. the liquidator is
+    // charged at least the offer's shares-per-collateral price on each chunk.
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    uint256 n;
+    for (uint256 i; i < logs.length; ++i) {
+      if (logs[i].emitter != address(pos) || logs[i].topics[0] != IBorrowOffers.OfferConsumed.selector) continue;
+      Offer memory pre = uint256(logs[i].topics[1]) == a ? offerA : offerB;
+      (uint128 collFilled, uint128 sharesFilled,) = abi.decode(logs[i].data, (uint128, uint128, bool));
+      assertGe(
+        uint256(sharesFilled) * pre.remainingCollateral,
+        uint256(collFilled) * pre.remainingDebtShares,
+        "fill at or above the offer's shares-per-collateral ratio"
+      );
+      ++n;
+    }
+    assertEq(n, 2, "both offers touched");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      TIMELOCK / EXPIRY                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setOfferTimelock_isItselfTimelocked() public {
-    // Schedule a reduction to the floor; it must not take effect until the current timelock elapses.
-    vm.prank(positionManager);
-    pos.setOfferTimelock(MIN_OFFER_TIMELOCK);
-
-    (uint40 pendingVal, uint40 effAt) = pos.pendingOfferTimelock();
-    assertEq(pendingVal, MIN_OFFER_TIMELOCK, "pending value");
-    assertEq(effAt, uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK), "effective after current timelock");
-    // Still effective at the OLD value before the delay elapses.
-    assertEq(pos.offerTimelock(), DEFAULT_OFFER_TIMELOCK, "old value still effective");
-
-    vm.warp(block.timestamp + DEFAULT_OFFER_TIMELOCK);
-    assertEq(pos.offerTimelock(), MIN_OFFER_TIMELOCK, "new value effective after delay");
-  }
-
-  function test_setOfferTimelock_cannotMakeFreshOfferInstantlyConsumable() public {
+  /// @notice A registry timelock reduction is itself timelocked, so it cannot make a fresh offer
+  ///         instantly consumable: while the reduction is pending, a new offer's `activeAt` still
+  ///         derives from the OLD effective timelock.
+  function test_proposeOffer_pendingTimelockReductionUsesOldValue() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
-    // Schedule reduction to MIN, but it is not yet effective; a fresh offer still uses the OLD
-    // (default) timelock for its activeAt.
-    vm.prank(positionManager);
-    pos.setOfferTimelock(MIN_OFFER_TIMELOCK);
+    // Schedule a reduction to the registry minimum; it lands only after the current (1 hour)
+    // effective timelock elapses.
+    uint40 minTimelock = registry.MIN_OFFER_TIMELOCK();
+    vm.prank(registryOwner);
+    registry.setOfferTimelock(address(collateralToken), minTimelock);
+    (uint40 effectiveTimelock,) = registry.offerConfig(address(collateralToken));
+    assertEq(effectiveTimelock, OFFER_TIMELOCK, "old value still effective");
 
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
     vm.prank(proposer);
     uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
-    assertEq(pos.offer(id).activeAt, uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK), "uses old timelock");
-  }
-
-  function test_setOfferTimelock_revertsOutOfRange() public {
-    vm.startPrank(positionManager);
-    vm.expectRevert(LibBorrowErrors.OfferTimelockOutOfRange.selector);
-    pos.setOfferTimelock(MIN_OFFER_TIMELOCK - 1);
-    vm.expectRevert(LibBorrowErrors.OfferTimelockOutOfRange.selector);
-    pos.setOfferTimelock(MAX_OFFER_TIMELOCK + 1);
-    vm.stopPrank();
-  }
-
-  function test_setOfferTimelock_reschedulingCannotAccelerate() public {
-    vm.prank(positionManager);
-    pos.setOfferTimelock(MIN_OFFER_TIMELOCK); // pending eff at now + DEFAULT
-
-    vm.warp(block.timestamp + 10 minutes);
-    vm.prank(positionManager);
-    pos.setOfferTimelock(MAX_OFFER_TIMELOCK); // re-bases on current effective (still DEFAULT)
-    (, uint40 effAt) = pos.pendingOfferTimelock();
-    assertEq(effAt, uint40(block.timestamp + DEFAULT_OFFER_TIMELOCK), "re-based on current effective");
+    assertEq(pos.offer(id).activeAt, uint40(block.timestamp + OFFER_TIMELOCK), "uses old timelock");
   }
 
   function test_activeAt_notRetimedByLaterTimelockChange() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint8 id = _proposeAtPrice(shares, 1.2e18);
     uint40 activeAt = pos.offer(id).activeAt;
 
-    // A later timelock change must not re-time the already-proposed offer.
-    vm.prank(positionManager);
-    pos.setOfferTimelock(MAX_OFFER_TIMELOCK);
+    // A later registry timelock change for this collateral must not re-time the already-proposed
+    // offer (its activeAt was fixed at proposal time).
+    uint40 maxTimelock = registry.MAX_OFFER_TIMELOCK();
+    vm.prank(registryOwner);
+    registry.setOfferTimelock(address(collateralToken), maxTimelock);
     assertEq(pos.offer(id).activeAt, activeAt, "activeAt unchanged");
+  }
+
+  /// @notice Registry configuration is keyed by collateral token: pushing collateral B's timelock
+  ///         and bonus floor to the registry maxima retunes positions on collateral B without
+  ///         touching positions on collateral A (which keep their own configuration).
+  function test_offerConfig_perCollateralIsolationAcrossPositions() public {
+    // A second market on a fresh collateral (same loan token, zero IRM, same LLTV) and a second
+    // position on it, created through the same factory, so both positions share one registry.
+    MockERC20 collateralB = new MockERC20("Coll B", "COLLB", 18);
+    OracleMock oracleB = new OracleMock();
+    oracleB.setPrice(SCALE);
+    MarketParams memory paramsB = MarketParams({
+      loanToken: address(loanToken),
+      collateralToken: address(collateralB),
+      oracle: address(oracleB),
+      irm: address(0),
+      lltv: LLTV
+    });
+    vm.prank(owner);
+    morpho.createMarket(paramsB);
+    address managerB = makeAddr("positionManagerB");
+    vm.mockCall(managerB, abi.encodeWithSignature("assets()"), abi.encode(address(collateralB), address(loanToken)));
+    MorphoBorrowPosition posB =
+      MorphoBorrowPosition(factory.createBorrowPosition(paramsB.id(), managerB, SAFE_LTV, LIQ_LTV));
+
+    // Push collateral B's configuration to the registry maxima. The timelock change is itself
+    // delayed by B's current effective timelock, and B was never configured, so the delay is the
+    // MIN_OFFER_TIMELOCK floor; warp past it so the maximum is live for B.
+    uint40 maxTimelock = registry.MAX_OFFER_TIMELOCK();
+    vm.startPrank(registryOwner);
+    registry.setOfferTimelock(address(collateralB), maxTimelock);
+    registry.setMinOfferBonus(address(collateralB), registry.MAX_MIN_OFFER_BONUS_BPS());
+    vm.stopPrank();
+    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+
+    // Position A (collateral A) still runs on its own configuration: the 1 hour timelock.
+    _enterBand(0.7e18);
+    uint8 idA = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    assertEq(pos.offer(idA).activeAt, uint40(block.timestamp + OFFER_TIMELOCK), "A keeps its own timelock");
+
+    // Position B (collateral B) picks up the maximum timelock. B's market is empty, so the offer
+    // debt is priced through Morpho's virtual shares: a token-sized collateral against a dust
+    // debt easily clears B's 10% bonus floor.
+    vm.prank(proposer);
+    uint8 idB = posB.proposeOffer(1e18, 1e17, uint40(block.timestamp + maxTimelock + 1 days));
+    assertEq(posB.offer(idB).activeAt, uint40(block.timestamp + maxTimelock), "B uses the maximum timelock");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    MINIMUM OFFER BONUS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_setMinOfferBonus_setsValueAndEmits() public {
-    vm.expectEmit(true, true, true, true, address(pos));
-    emit IBorrowOffers.MinOfferBonusSet(500);
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(500);
-    assertEq(pos.minOfferBonus(), 500, "value updated");
-  }
-
-  function test_setMinOfferBonus_revertsForNonAdmin() public {
-    _enableProposer(proposer);
-    _enableGuardian(guardian);
-    // Neither a plain proposer, a guardian, nor a random account may set it; admin/owner only.
-    vm.prank(makeAddr("rando"));
-    vm.expectRevert(Unauthorized.selector);
-    pos.setMinOfferBonus(500);
-    vm.prank(proposer);
-    vm.expectRevert(Unauthorized.selector);
-    pos.setMinOfferBonus(500);
-    vm.prank(guardian);
-    vm.expectRevert(Unauthorized.selector);
-    pos.setMinOfferBonus(500);
-  }
-
-  function test_setMinOfferBonus_boundsAndZero() public {
-    vm.startPrank(positionManager);
-    vm.expectRevert(LibBorrowErrors.MinOfferBonusOutOfRange.selector);
-    pos.setMinOfferBonus(MAX_MIN_OFFER_BONUS_BPS + 1);
-    // Both boundary values are accepted: the cap itself and 0 (floor disabled).
-    pos.setMinOfferBonus(MAX_MIN_OFFER_BONUS_BPS);
-    assertEq(pos.minOfferBonus(), MAX_MIN_OFFER_BONUS_BPS, "cap accepted");
-    pos.setMinOfferBonus(0);
-    assertEq(pos.minOfferBonus(), 0, "zero accepted");
-    vm.stopPrank();
-  }
-
   function test_proposeOffer_revertsBonusTooLow() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
-    // Price 1.005: profitable, but the 0.5% bonus is below the default 1% floor.
+    // Price 1.005: profitable, but the 0.5% bonus is below the configured 1% floor.
     uint128 coll = _collForPrice(shares, 1.005e18);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
@@ -784,14 +878,13 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_proposeOffer_minBonusExactBoundary() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     (uint256 tba, uint256 tbs) = _borrowTotals();
     uint256 debt = shares.toAssetsUp(tba, tbs);
     // Mirror the contract's floor: excess must be at least ceil(debt * bonus / BPS). `coll` is the
     // smallest collateral whose value covers debt + minExcess (ceiling division), so one unit less
     // lands strictly below the floor while still being profitable.
-    uint256 minExcess = (debt * DEFAULT_MIN_OFFER_BONUS_BPS + BPS - 1) / BPS;
+    uint256 minExcess = (debt * MIN_OFFER_BONUS_BPS + BPS - 1) / BPS;
     uint256 price = oracle.price();
     uint128 coll = uint128(((debt + minExcess) * SCALE + price - 1) / price);
 
@@ -803,13 +896,11 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(pos.offer(id).remainingCollateral, coll, "exact-floor offer accepted");
   }
 
-  function test_setMinOfferBonus_zeroDisablesFloorButKeepsProfitability() public {
+  function test_minOfferBonus_zeroDisablesFloorButKeepsProfitability() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(0);
+    _setMinOfferBonus(0);
 
-    // An epsilon-bonus offer (0.1%, below the default floor) is now proposable.
+    // An epsilon-bonus offer (0.1%, below the configured floor) is now proposable.
     uint256 shares = _positionShares() / 4;
     uint8 id = _proposeAtPrice(shares, 1.001e18);
     assertEq(pos.offerCount(), 1, "epsilon-bonus offer accepted with floor disabled");
@@ -825,19 +916,18 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   /// @notice Raising the floor above a live offer's bonus does not evict it from the book (a
-  ///         guardian must revoke it), but because the floor is enforced at consume time the live
-  ///         offer stops being consumable, and its terms can no longer be re-proposed.
-  function test_setMinOfferBonus_raiseGatesLiveOfferConsumption() public {
+  ///         guardian must revoke it), but because the floor is read from the registry at consume
+  ///         time the live offer stops being consumable, and its terms can no longer be
+  ///         re-proposed.
+  function test_minOfferBonus_raiseGatesLiveOfferConsumption() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
-    uint8 id = _proposeAtPrice(shares, 1.02e18); // 2% bonus: clears the default 1% floor
+    uint8 id = _proposeAtPrice(shares, 1.02e18); // 2% bonus: clears the configured 1% floor
     _warpActive();
-    assertTrue(pos.isConsumable(id), "consumable under the default floor");
+    assertTrue(pos.isConsumable(id), "consumable under the configured floor");
 
     // Raise the floor above the live offer's ~2% bonus.
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(MAX_MIN_OFFER_BONUS_BPS); // 10%
+    _setMinOfferBonus(registry.MAX_MIN_OFFER_BONUS_BPS()); // 10%
 
     // Not evicted from storage, but no longer consumable (consume-time floor).
     assertEq(pos.offerCount(), 1, "live offer stays in the book");
@@ -857,9 +947,8 @@ contract MorphoBorrowPositionOffersTest is Test {
   ///         as price/interest erode standing offers.
   function test_consume_belowFloorOffer_skippedAtConsumeTime() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 2;
-    // Propose at a 2% bonus (clears the default 1% floor at proposal time).
+    // Propose at a 2% bonus (clears the configured 1% floor at proposal time).
     uint8 id = _proposeAtPrice(shares, 1.02e18);
     _warpActive();
 
@@ -876,7 +965,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 offerValue = uint256(o.remainingCollateral) * oracle.price() / SCALE;
     uint256 liveBonusBps = (offerValue - offerDebt) * BPS / offerDebt;
     assertGt(offerValue, offerDebt, "still profitable");
-    assertLt(liveBonusBps, DEFAULT_MIN_OFFER_BONUS_BPS, "live bonus dropped below the floor");
+    assertLt(liveBonusBps, MIN_OFFER_BONUS_BPS, "live bonus dropped below the floor");
 
     // Consume-time floor: the below-floor offer is no longer consumable and the band has nothing to
     // fill (it is the only offer), so previewConsume returns (0, 0) and preLiquidate reverts.
@@ -896,17 +985,15 @@ contract MorphoBorrowPositionOffersTest is Test {
   ///         but for the bonus floor rather than raw profitability.
   function test_consume_skipsBelowFloorConsumesNext() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
-    // Under the default 1% floor both are admissible: A at 2% bonus, B at 30% bonus.
+    // Under the configured 1% floor both are admissible: A at 2% bonus, B at 30% bonus.
     uint8 a = _proposeAtPrice(shares, 1.02e18);
     uint8 b = _proposeAtPrice(shares, 1.3e18);
     _warpActive();
 
     // Raise the floor to 5%: A (~2%) is now below it, B (~30%) still clears. A sorts to the head
     // (lowest price), so the walk must skip A and reach B.
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(500);
+    _setMinOfferBonus(500);
     assertFalse(pos.isConsumable(a), "A below the 5% floor");
     assertTrue(pos.isConsumable(b), "B clears the 5% floor");
 
@@ -918,23 +1005,20 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(pos.offerCount(), 1, "only B removed");
   }
 
-  /// @notice The consume-time gate reads the CURRENT floor: lowering the floor re-admits a live
-  ///         offer that a prior raise had gated, without it being re-proposed.
-  function test_setMinOfferBonus_lowerReadmitsLiveOffer() public {
+  /// @notice The consume-time gate reads the CURRENT registry floor: lowering the floor re-admits
+  ///         a live offer that a prior raise had gated, without it being re-proposed.
+  function test_minOfferBonus_lowerReadmitsLiveOffer() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 2;
     uint8 id = _proposeAtPrice(shares, 1.05e18); // ~5% bonus
     _warpActive();
 
     // Raise the floor above the offer's bonus: no longer consumable.
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(800); // 8%
+    _setMinOfferBonus(800); // 8%
     assertFalse(pos.isConsumable(id), "gated at the 8% floor");
 
     // Lower the floor below the offer's bonus: consumable again, and it fills.
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(200); // 2%
+    _setMinOfferBonus(200); // 2%
     assertTrue(pos.isConsumable(id), "re-admitted at the 2% floor");
     Offer memory o = pos.offer(id);
     (uint256 seized,) = pos.preLiquidate(address(pos), o.remainingCollateral, 0, "");
@@ -943,16 +1027,14 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   /// @notice With the floor disabled (0) the consume path falls back to the strict profitability
-  ///         gate only: a tiny-bonus offer that would be rejected under the default floor still
+  ///         gate only: a tiny-bonus offer that would be rejected under the configured floor still
   ///         fills.
   function test_consume_floorZero_consumesEpsilonBonusOffer() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
-    vm.prank(positionManager);
-    pos.setMinOfferBonus(0);
+    _setMinOfferBonus(0);
 
     uint256 shares = _positionShares() / 2;
-    uint8 id = _proposeAtPrice(shares, 1.001e18); // 0.1% bonus, far below the default floor
+    uint8 id = _proposeAtPrice(shares, 1.001e18); // 0.1% bonus, far below the configured floor
     _warpActive();
 
     assertTrue(pos.isConsumable(id), "epsilon-bonus offer consumable with floor disabled");
@@ -969,8 +1051,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_revokeOffers_guardianVeto() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
-    _enableGuardian(guardian);
     uint256 shares = _positionShares() / 4;
     uint8 id = _proposeAtPrice(shares, 1.2e18);
 
@@ -983,7 +1063,6 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   function test_revokeOffers_revertsUnknownId() public {
-    _enableGuardian(guardian);
     uint8[] memory ids = new uint8[](1);
     ids[0] = 5;
     vm.prank(guardian);
@@ -993,8 +1072,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_slab_recyclesFreedSlots() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
-    _enableGuardian(guardian);
     uint256 shares = _positionShares() / 8;
     uint8 a = _proposeAtPrice(shares, 1.2e18);
     uint8[] memory ids = new uint8[](1);
@@ -1012,7 +1089,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_isConsumable_reflectsActivationAndPrice() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 4;
     uint8 id = _proposeAtPrice(shares, 1.2e18);
     assertFalse(pos.isConsumable(id), "not active yet");
@@ -1027,7 +1103,6 @@ contract MorphoBorrowPositionOffersTest is Test {
 
   function test_previewConsume_matchesActualSeize() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     uint256 shares = _positionShares() / 2;
     _proposeAtPrice(shares, 1.2e18);
     _warpActive();
@@ -1055,7 +1130,6 @@ contract MorphoBorrowPositionOffersTest is Test {
   ///         seize assertion below.
   function test_reentrancy_cannotDoubleConsume() public {
     _enterBand(0.7e18);
-    _enableProposer(proposer);
     // A small offer (an eighth of the debt) keeps the position inside the band after the outer
     // fill, so the reentrant call genuinely reaches the offer path (and not PositionHealthy).
     uint256 shares = _positionShares() / 8;
@@ -1088,7 +1162,6 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 ltv = bound(ltvPick, uint256(SAFE_LTV) + 0.01e18, uint256(LIQ_LTV) - 0.01e18);
     _enterBand(ltv);
     if (_ltvWad() <= SAFE_LTV || _ltvWad() >= LIQ_LTV) return;
-    _enableProposer(proposer);
 
     // 1/L in WAD; since L <= 0.71, invLtv >= ~1.408e18, leaving ample room above 1e18.
     uint256 invLtv = uint256(1e18) * 1e18 / _ltvWad();

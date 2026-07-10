@@ -26,13 +26,6 @@ contract BorrowOffersHarness {
   /*                        MUTATIONS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Seeds the effective timelock and resets the offer-book bookkeeping (mirrors the v2 init).
-  function init(uint40 timelock) external {
-    LibBorrowOffers.BorrowOffersStorage storage s = LibBorrowOffers.borrowOffersStorage();
-    s.offerTimelock = timelock;
-    LibBorrowOffers.initOfferBook(s);
-  }
-
   /// @notice Allocates a slab slot (lowest free id) and stores a new offer.
   function insert(address proposer, uint40 activeAt, uint40 expiresAt, uint128 collateral, uint128 debtShares)
     external
@@ -73,10 +66,6 @@ contract BorrowOffersHarness {
   /// @notice Returns whether `id` is a live offer.
   function isLive(uint8 id) external view returns (bool) {
     return LibBorrowOffers.borrowOffersStorage().isLive(id);
-  }
-
-  function offerTimelock() external view returns (uint40) {
-    return LibBorrowOffers.borrowOffersStorage().offerTimelock;
   }
 
   /// @notice Returns the raw slab slot at `i` (live or freed).

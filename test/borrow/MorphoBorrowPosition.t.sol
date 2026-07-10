@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import {Test, stdError} from "forge-std/Test.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
+import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
+import {IBorrowOffersRegistry} from "src/interfaces/borrow/IBorrowOffersRegistry.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -30,6 +32,7 @@ contract MorphoBorrowPositionTest is Test {
 
   MorphoBorrowPosition public borrowPosition;
   MorphoBorrowPositionFactory public factory;
+  BorrowOffersRegistry public offersRegistry;
   IMorpho public morpho;
   MockERC20 public loanToken;
   MockERC20 public collateralToken;
@@ -89,10 +92,6 @@ contract MorphoBorrowPositionTest is Test {
   // Solady Initializable errors
   error InvalidInitialization();
 
-  // v2 versioning errors
-  error AlreadyInitialized();
-  error NotInitialized();
-
   // Solady Ownable errors
   error Unauthorized();
 
@@ -150,8 +149,12 @@ contract MorphoBorrowPositionTest is Test {
       positionManager, abi.encodeWithSignature("assets()"), abi.encode(address(collateralToken), address(loanToken))
     );
 
+    // Deploy the shared offers registry behind an ERC1967 proxy
+    offersRegistry = BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    offersRegistry.initialize(owner);
+
     // Deploy factory and create MorphoBorrowPosition via factory (using beacon proxy)
-    factory = new MorphoBorrowPositionFactory(owner, morpho);
+    factory = new MorphoBorrowPositionFactory(owner, morpho, offersRegistry);
     address borrowPositionAddress = factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
     borrowPosition = MorphoBorrowPosition(borrowPositionAddress);
 
@@ -226,7 +229,8 @@ contract MorphoBorrowPositionTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_initialize_Success() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
@@ -240,11 +244,23 @@ contract MorphoBorrowPositionTest is Test {
 
   function test_constructor_RevertWhen_MorphoIsZero() public {
     vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0)));
-    new MorphoBorrowPosition(IMorpho(address(0)));
+    new MorphoBorrowPosition(IMorpho(address(0)), offersRegistry);
+  }
+
+  function test_constructor_RevertWhen_OffersRegistryIsZero() public {
+    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, address(0)));
+    new MorphoBorrowPosition(morpho, IBorrowOffersRegistry(address(0)));
+  }
+
+  function test_constructor_RevertWhen_OffersRegistryIsCodeless() public {
+    address codeless = makeAddr("codelessRegistry");
+    vm.expectRevert(abi.encodeWithSelector(InvalidContract.selector, codeless));
+    new MorphoBorrowPosition(morpho, IBorrowOffersRegistry(codeless));
   }
 
   function test_initialize_RevertWhen_MarketIdIsZero() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
     Id zeroMarketId = Id.wrap(bytes32(0));
 
     vm.expectRevert(abi.encodeWithSelector(InvalidMarketId.selector, zeroMarketId));
@@ -252,7 +268,8 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_MarketNotCreated() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     // Create a non-existent market ID
     Id fakeMarketId = Id.wrap(keccak256("nonexistent"));
@@ -262,17 +279,18 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_CanOnlyBeCalledOnce() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
     newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
-    // v2: initialize now lands at version 2 and the onlyUninitialized guard (ordered before
-    // reinitializer(2)) reverts AlreadyInitialized on a second call.
-    vm.expectRevert(AlreadyInitialized.selector);
+    // The Solady initializer guard reverts InvalidInitialization on a second call.
+    vm.expectRevert(InvalidInitialization.selector);
     newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
   }
 
   function test_initialize_SetsMarketParams() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
     newPosition.initialize(marketId, positionManager, SAFE_LTV, LIQUIDATION_LTV);
 
     assertEq(newPosition.borrowAsset(), marketParams.loanToken, "Loan token mismatch");
@@ -280,28 +298,32 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_LiquidationLtvIsZero() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     vm.expectRevert(InvalidLtv.selector);
     newPosition.initialize(marketId, positionManager, 0, 0);
   }
 
   function test_initialize_RevertWhen_SafeLtvIsZero() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     vm.expectRevert(InvalidLtv.selector);
     newPosition.initialize(marketId, positionManager, 0, LIQUIDATION_LTV);
   }
 
   function test_initialize_RevertWhen_LiquidationLtvExceedsWad() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     vm.expectRevert(InvalidLtv.selector);
     newPosition.initialize(marketId, positionManager, SAFE_LTV, uint128(1e18 + 1));
   }
 
   function test_initialize_RevertWhen_SafeLtvNotLessThanLiquidationLtv() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     // Safe LTV equal to liquidation LTV should revert
     vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, LIQUIDATION_LTV, LIQUIDATION_LTV));
@@ -309,7 +331,8 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_SafeLtvGreaterThanLiquidationLtv() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     // Safe LTV greater than liquidation LTV should revert
     uint128 higherSafeLtv = LIQUIDATION_LTV + 1;
@@ -319,7 +342,8 @@ contract MorphoBorrowPositionTest is Test {
 
   function test_initialize_AcceptsMarketLltv() public {
     // Liquidation LTV can be at most equal to market LLTV
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
     uint128 posLtv = uint128(DEFAULT_LLTV) - 1;
     newPosition.initialize(marketId, positionManager, posLtv, uint128(DEFAULT_LLTV));
     assertEq(newPosition.safeLtv(), posLtv, "Safe LTV should be set correctly");
@@ -327,7 +351,8 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_LiquidationLtvExceedsMarketLltv() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     // Try to set liquidation LTV higher than market LLTV
     uint128 exceedingLltv = uint128(DEFAULT_LLTV) + 1;
@@ -337,14 +362,16 @@ contract MorphoBorrowPositionTest is Test {
 
   function test_initialize_RevertWhen_LiquidationLtvIsWadButMarketLltvIsLower() public {
     // This test verifies that even WAD (100%) is rejected if market LLTV is lower
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     vm.expectRevert(abi.encodeWithSelector(LiquidationLtvExceedsMarketLltv.selector, 1e18, DEFAULT_LLTV));
     newPosition.initialize(marketId, positionManager, SAFE_LTV, uint128(1e18));
   }
 
   function test_initialize_AcceptsLtvsBelowMarketLltv() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
     uint128 lowerSafeLtv = uint128(DEFAULT_LLTV / 4);
     uint128 lowerLiquidationLtv = uint128(DEFAULT_LLTV / 2);
     newPosition.initialize(marketId, positionManager, lowerSafeLtv, lowerLiquidationLtv);
@@ -356,7 +383,8 @@ contract MorphoBorrowPositionTest is Test {
     safeLtv_ = uint128(bound(safeLtv_, 1, uint128(1e18) - 1));
     liquidationLtv_ = uint128(bound(liquidationLtv_, 1, 1e18));
 
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     if (safeLtv_ >= liquidationLtv_) {
       vm.expectRevert(abi.encodeWithSelector(SafeLtvNotLessThanLiquidationLtv.selector, safeLtv_, liquidationLtv_));
@@ -372,7 +400,8 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_CollateralAssetMismatch() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     // Mock PositionManager.assets() to return a different collateral token
     address wrongCollateral = makeAddr("wrongCollateral");
@@ -384,7 +413,8 @@ contract MorphoBorrowPositionTest is Test {
   }
 
   function test_initialize_RevertWhen_DebtAssetMismatch() public {
-    MorphoBorrowPosition newPosition = MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho)).clone());
+    MorphoBorrowPosition newPosition =
+      MorphoBorrowPosition(address(new MorphoBorrowPosition(morpho, offersRegistry)).clone());
 
     // Mock PositionManager.assets() to return a different loan token
     address wrongDebt = makeAddr("wrongDebt");

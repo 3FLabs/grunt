@@ -20,7 +20,9 @@ import {MAX_OFFERS} from "src/libs/borrow/LibBorrowOffersConstants.sol";
 ///
 ///      Consume-time ordering is intentionally NOT asserted here: the walk sorts the book by
 ///      effective price in memory at consume time (nothing about order is stored), and the
-///      ascending-price drain is covered deterministically in LibBorrowOffers.t.sol.
+///      ascending-price drain is covered deterministically in LibBorrowOffers.t.sol. The per-fill
+///      price invariant (no fill below the offer's fixed ratio) is asserted inside the handler's
+///      consume actions, where the pre-consume snapshot is available.
 ///
 ///      Runs under `FOUNDRY_PROFILE=full` (the default profile excludes `invariant_*`).
 contract LibBorrowOffersInvariantTest is StdInvariant, Test {
@@ -29,11 +31,9 @@ contract LibBorrowOffersInvariantTest is StdInvariant, Test {
 
   function setUp() public {
     harness = new BorrowOffersHarness();
-    harness.init(1 hours);
-
     handler = new BorrowOffersHandler(harness);
 
-    bytes4[] memory selectors = new bytes4[](7);
+    bytes4[] memory selectors = new bytes4[](8);
     selectors[0] = handler.act_propose.selector;
     selectors[1] = handler.act_revoke.selector;
     selectors[2] = handler.act_consumeSeized.selector;
@@ -41,6 +41,7 @@ contract LibBorrowOffersInvariantTest is StdInvariant, Test {
     selectors[4] = handler.act_warp.selector;
     selectors[5] = handler.act_consumeLowRatioPosition.selector;
     selectors[6] = handler.act_consumeLowPrice.selector;
+    selectors[7] = handler.act_consumeSmallPosition.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));

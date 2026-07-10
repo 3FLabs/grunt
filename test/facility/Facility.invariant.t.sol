@@ -15,6 +15,7 @@ import {TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 // Borrow position
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
+import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
 
 // Interfaces
 import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
@@ -186,7 +187,10 @@ contract FacilityInvariantTest is StdInvariant, Test {
     vm.label(address(positionManager), "PositionManager");
 
     // ----- 7. Deploy MorphoBorrowPositionFactory, create borrow position -----
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    BorrowOffersRegistry offersRegistry =
+      BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    offersRegistry.initialize(owner);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho, offersRegistry);
     address bp =
       borrowPositionFactory.createBorrowPosition(marketId, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
     borrowPosition = MorphoBorrowPosition(bp);
