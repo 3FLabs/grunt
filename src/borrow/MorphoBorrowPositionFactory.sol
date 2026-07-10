@@ -29,6 +29,16 @@ import {IBorrowOffersRegistry} from "../interfaces/borrow/IBorrowOffersRegistry.
 ///      1. Beacon owner deploys new MorphoBorrowPosition implementation contract
 ///      2. Beacon owner calls `upgradeTo()` on the beacon
 ///      3. All existing proxies immediately use the new implementation
+///
+///      Versioning:
+///      This factory revision (with the offers-registry constructor argument) is only needed for
+///      FRESH deployments, from the registry-aware version of MorphoBorrowPosition onward. On
+///      chains where a factory is already deployed, the existing instance stays in use across
+///      beacon upgrades: proxy creation is unchanged (`createBorrowPosition` and the 4-argument
+///      `initialize` keep their exact signatures) and only the implementation constructor gained
+///      the registry parameter, which flows through the beacon upgrade, not through the factory.
+///      The main goal is to keep a single beacon: every position of a deployment stays behind the
+///      one beacon the original factory created, instead of fragmenting across factory versions.
 /// @author 3F Protocol
 contract MorphoBorrowPositionFactory {
   using LibClone for address;
