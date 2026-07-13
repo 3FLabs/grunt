@@ -5,6 +5,7 @@ import {RetargetterBaseTest} from "./RetargetterBase.t.sol";
 import {IRetargetter} from "src/interfaces/manager/rebalancer/IRetargetter.sol";
 import {LibRetargetterErrors} from "src/libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {
   RebalancingData,
@@ -13,6 +14,7 @@ import {
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 
@@ -338,7 +340,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   }
 
   /// @dev data.debt and a REPAY leg at the sentinel both resolve to the Retargetter's full
-  ///      debt balance.
+  ///      debt balance while it stays below the module's debt.
   function test_rebalance_debtAndRepaySentinelsResolveToFullBalance() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
@@ -349,6 +351,88 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
 
     assertEq(positionManager.debtAmount(), 4_500e18, "debt shrank by the full balance");
     assertEq(debtToken.balanceOf(address(retargetter)), 0, "retargetter debt fully repaid");
+  }
+
+  /// @dev A REPAY leg at the sentinel is capped at the module's live debt: folding a balance
+  ///      larger than the debt repays the whole debt and sweeps the excess back instead of
+  ///      reverting in the venue.
+  function test_rebalance_repaySentinelCappedAtModuleDebt() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintDebt(address(retargetter), 6_000e18);
+
+    vm.prank(rebalancer);
+    retargetter.rebalance(_rebalancingData(0, MAX_SENTINEL, RebalancingOperationType.REPAY, MAX_SENTINEL));
+
+    assertEq(positionManager.debtAmount(), 0, "debt fully repaid at the cap");
+    assertEq(debtToken.balanceOf(address(retargetter)), 1_000e18, "excess beyond the module debt swept back");
+  }
+
+  /// @dev A REPAY leg at the sentinel on a debt-free module resolves to zero, which the
+  ///      borrow module rejects; the whole call reverts atomically.
+  function test_rebalance_repaySentinelOnDebtFreeModule_reverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintDebt(address(retargetter), 100e18);
+    // Seeding routes all debt to borrowPosition1 (it heads the supply queue)
+    assertEq(borrowPosition2.totalBorrowed(), 0, "borrowPosition2 starts debt-free");
+
+    RebalancingData memory data;
+    data.debt = MAX_SENTINEL;
+    data.operations = new RebalancingOperation[](1);
+    data.operations[0] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.REPAY, amount: MAX_SENTINEL
+    });
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibCommonErrors.AmountZero.selector);
+    retargetter.rebalance(data);
+  }
+
+  /// @dev Sentinel legs resolve against one pre-call snapshot and do not compose: with the
+  ///      balance sized between one module's debt and the sum of both, each REPAY sentinel
+  ///      still resolves to its own module's full debt, so the second leg overdraws the
+  ///      pulled funds and its venue transfer fails. Before the cap the first leg would
+  ///      instead panic in the venue, so the expected selector pins the new resolution.
+  function test_rebalance_repaySentinelsDoNotCompose() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _setMaxRebalanceLoss(1000);
+
+    // Owner-driven shaping (direction checks skipped): open a small second debt position on
+    // borrowPosition2 so the two REPAY sentinels target different module debts
+    RebalancingData memory shape;
+    shape.operations = new RebalancingOperation[](3);
+    shape.operations[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: 100e18
+    });
+    shape.operations[1] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: 100e18
+    });
+    shape.operations[2] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: 30e18
+    });
+    vm.prank(owner);
+    retargetter.rebalance(shape);
+
+    // Balance 5_010: above borrowPosition1's 5_000 debt, below the 5_030 the two legs
+    // resolve to together (_mintDebt sets the balance, so it also absorbs the swept 30)
+    _mintDebt(address(retargetter), 5_010e18);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(SafeTransferLib.TransferFromFailed.selector);
+    retargetter.rebalance(
+      _dataOn2(
+        0,
+        MAX_SENTINEL,
+        address(borrowPosition1),
+        RebalancingOperationType.REPAY,
+        MAX_SENTINEL,
+        address(borrowPosition2),
+        RebalancingOperationType.REPAY,
+        MAX_SENTINEL
+      )
+    );
   }
 
   /// @dev The sentinel is rejected on BORROW legs (outputs, not inputs).

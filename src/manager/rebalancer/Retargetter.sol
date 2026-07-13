@@ -424,8 +424,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      end with debt against zero collateral. LTV convention throughout: zero when debt is
   ///      zero (idle modules and an emptied position pass), the max sentinel for bad debt.
   ///      The position manager's own loss, cooldown and safe-LTV checks apply underneath.
-  ///      A sentinel resolving to a zero balance produces a zero-amount leg, which the borrow
-  ///      modules reject; the whole call reverts atomically.
+  ///      A sentinel resolving to zero (an empty balance, or a REPAY leg on a debt-free
+  ///      module) produces a zero-amount leg, which the borrow modules reject; the whole
+  ///      call reverts atomically.
   function rebalance(RebalancingData calldata data) external onlyOwnerOrRebalancer nonReentrant {
     address positionManager = LibStorage.operationStorage().checkActive();
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
@@ -433,8 +434,16 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     address debtAsset = assets_.debtAsset;
 
     // Resolve the full-balance sentinels in memory before calling the position manager.
-    // Input legs resolve to the current balance of the corresponding asset; the sentinel is
-    // rejected on output legs (BORROW, WITHDRAW).
+    // Input legs resolve to the current balance of the corresponding asset; a REPAY leg is
+    // further capped at its module's live debt, because the borrow modules forward the
+    // amount to the venue verbatim and venues reject repayments above the outstanding debt,
+    // so an uncapped balance could never be folded once it exceeds what the module owes.
+    // The module reports that debt rounded down, so a capped repayment can leave one or
+    // more wei of debt behind rather than clearing the module exactly. The sentinel is
+    // rejected on output legs (BORROW, WITHDRAW). Resolution is one snapshot taken before
+    // any leg executes: sentinels do not compose, so every leg resolves against the same
+    // pre-call balances, never the state left by earlier legs, and REPAY sentinels across
+    // several modules can together commit more than the shared balance.
     RebalancingData memory resolved = data;
     uint256 collateralBalance = collateralAsset.balanceOf(address(this));
     uint256 debtBalance = debtAsset.balanceOf(address(this));
@@ -447,7 +456,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       if (operationType == RebalancingOperationType.SUPPLY) {
         resolved.operations[i].amount = collateralBalance;
       } else if (operationType == RebalancingOperationType.REPAY) {
-        resolved.operations[i].amount = debtBalance;
+        resolved.operations[i].amount =
+          debtBalance.min(IBorrowPosition(resolved.operations[i].position).totalBorrowed());
       } else {
         revert LibRetargetterErrors.InvalidSentinel();
       }

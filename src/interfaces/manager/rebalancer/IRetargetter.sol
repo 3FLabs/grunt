@@ -240,7 +240,15 @@ interface IRetargetter {
   /// @notice Rebalances the resolved position manager under the direction guardrails.
   /// @dev Input legs (collateral, debt, SUPPLY, REPAY) support the full-balance sentinel
   ///      `type(uint256).max`, resolved to the Retargetter's current balance of the
-  ///      corresponding asset.
+  ///      corresponding asset; a REPAY leg is further capped at its module's live debt, so
+  ///      folding a balance larger than the module owes repays the whole debt instead of
+  ///      reverting in the venue. The module reports that debt rounded down, so the cap can
+  ///      sit one or more wei below the true debt and a capped repayment can leave that
+  ///      remainder on the module rather than clearing it exactly. Sentinels resolve against
+  ///      one balance snapshot taken before any leg executes and do not compose: every leg
+  ///      resolves against the same pre-call balances, never the state left by earlier legs,
+  ///      so REPAY sentinels across several modules can together commit more than the shared
+  ///      balance and revert.
   /// @param data The rebalancing data forwarded to the position manager
   function rebalance(RebalancingData calldata data) external;
 

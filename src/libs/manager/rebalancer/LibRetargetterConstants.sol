@@ -70,7 +70,8 @@ uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 
 /// @dev Sentinel amount resolved to the full balance of the corresponding asset: the
 ///      Retargetter's on rebalance input legs (collateral, debt, SUPPLY, REPAY) and the
-///      Request's on pullRequestFunds.
+///      Request's on pullRequestFunds; see IRetargetter.rebalance for the REPAY debt cap
+///      and the snapshot (non-composing) resolution semantics.
 /// @custom:value 2^256 - 1
 uint256 constant FULL_BALANCE_SENTINEL = type(uint256).max;
 
