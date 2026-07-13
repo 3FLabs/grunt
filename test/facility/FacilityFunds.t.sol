@@ -374,6 +374,45 @@ contract FacilityFundsTest is FacilityBaseTest {
     assertEq(order.input, orderAmount, "Order should still exist");
   }
 
+  function test_unlock_zeroAmountTerminalUnlockEndsOrder() public {
+    // Funds may finalize a fully swept partial-unlock order with a zero-amount terminal
+    // unlock returning (ENDED, 0) (e.g. a MidasFund redeem whose holdback was confirmed
+    // after the last sweep): no tokens move, intent accounting is untouched, and the ENDED
+    // return clears the order and fund binding.
+    uint256 intentId = _createIntentWithFundForDeposit(1000e18);
+    uint256 orderAmount = 500e18;
+
+    // minAmountOut = 0 so the mock's unlock fallback amount (order.output) is zero.
+    vm.prank(facilitator);
+    facility.create(intentId, orderAmount, 0, Mode.DEPOSIT);
+
+    mockFund.setCommitAmount(orderAmount);
+    vm.prank(facilitator);
+    facility.commit(intentId);
+
+    (address[] memory tokensBefore, uint256[] memory amountsBefore) = facility.intentBalances(intentId);
+    uint256 facilityShareBalanceBefore = collateralToken.balanceOf(address(facility));
+
+    vm.prank(facilitator);
+    facility.unlock(intentId);
+
+    // Zero tokens received and no accounting change.
+    assertEq(collateralToken.balanceOf(address(facility)), facilityShareBalanceBefore, "no tokens received");
+    (address[] memory tokensAfter, uint256[] memory amountsAfter) = facility.intentBalances(intentId);
+    assertEq(tokensAfter.length, tokensBefore.length, "no new tracked token");
+    for (uint256 i = 0; i < tokensAfter.length; i++) {
+      assertEq(tokensAfter[i], tokensBefore[i], "tracked token unchanged");
+      assertEq(amountsAfter[i], amountsBefore[i], "tracked amount unchanged");
+    }
+
+    // The ENDED return clears the stored order and the fund binding.
+    (Order memory order,) = facility.getOrder(intentId);
+    assertEq(order.owner, address(0), "order cleared");
+    assertEq(order.input, 0, "order input cleared");
+    (, address fund,,) = facility.getIntent(intentId);
+    assertEq(fund, address(0), "fund binding cleared");
+  }
+
   function test_unlock_revertWhenPaused() public {
     // Use intent with debtToken deposits for DEPOSIT mode fund operations
     uint256 intentId = _createIntentWithFundForDeposit(1000e18);

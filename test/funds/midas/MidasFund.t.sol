@@ -628,8 +628,8 @@ contract MidasFundTest is Test {
     assertEq(mGlobal.balanceOf(address(fund)), 0, "mToken redeemed");
     // Asset delivered synchronously to the fund...
     assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "fund has usdc");
-    // ...but every redeem stays PROCESSING until the holdback payment is confirmed.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+    // ...and immediately claimable, while the holdback confirmation stays pending.
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable right away");
     assertTrue(fund.holdbackPending(), "holdback pending");
   }
 
@@ -1042,18 +1042,18 @@ contract MidasFundTest is Test {
 
   function test_Recovering_RevertsForRedeemOrder() public {
     // A committed redeem already settled irreversibly via redeemInstant: recovery is
-    // deposit-only and the order must be completed via confirmHoldback() + unlock().
+    // deposit-only and the order must be completed via unlock() and confirmHoldback().
     Order memory order = _commitRedeemOrder();
 
     vm.prank(owner);
     vm.expectRevert(LibFundsErrors.RecoverNotSupported.selector);
     fund.recovering(order);
 
-    // The order remains PROCESSING and completes forward once the holdback is confirmed.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
+    // The order completes forward: the proceeds stay claimable and the holdback confirmable.
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable");
     vm.prank(holdbackConfirmer);
     fund.confirmHoldback(order.toId(address(fund)));
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "still claimable after confirmation");
   }
 
   function test_Recovering_OnlyOwnerOrOperator() public {
@@ -1250,31 +1250,49 @@ contract MidasFundTest is Test {
   /*                       HOLDBACK FLOW                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_Holdback_RedeemStaysProcessingUntilConfirmed() public {
+  function test_Holdback_PartialUnlockBeforeConfirm() public {
     Order memory order = _commitRedeemOrder();
     bytes32 orderId = order.toId(address(fund));
 
-    // The instant redemption already delivered the output...
+    // The instant redemption already delivered the output; it is claimable right away...
     assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "fund has usdc");
-    // ...but the order stays PROCESSING until the holdback payment is confirmed.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing while holdback pending");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "claimable while holdback pending");
     assertTrue(fund.holdbackPending(), "holdback pending");
 
+    // ...but the unlock is partial: the order returns to PROCESSING until the confirmation.
+    vm.expectEmit(true, true, true, true);
+    emit OrderUnlocked(orderId, order.mode, ONE_USDC, address(this));
+    (State state, uint256 amount) = fund.unlock(order);
+
+    assertEq(uint256(state), uint256(State.PROCESSING), "back to processing");
+    assertEq(amount, ONE_USDC, "instant proceeds swept");
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC, "usdc received");
+    assertTrue(fund.holdbackPending(), "holdback still pending");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "nothing left to claim");
+
+    // Nothing to sweep until more funds arrive.
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
+  }
 
-    vm.prank(holdbackConfirmer);
-    vm.expectEmit(true, true, true, true);
-    emit HoldbackConfirmed(orderId, holdbackConfirmer);
-    fund.confirmHoldback(orderId);
+  function test_Unlock_RedeemMultiplePartials() public {
+    Order memory order = _commitRedeemOrder();
 
-    assertFalse(fund.holdbackPending(), "holdback settled");
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
-
+    // First partial sweep: the instant proceeds.
     (State state, uint256 amount) = fund.unlock(order);
-    assertEq(uint256(state), uint256(State.ENDED), "ended");
-    assertEq(amount, ONE_USDC, "amount");
-    assertEq(usdc.balanceOf(address(this)), ONE_USDC, "usdc received");
+    assertEq(uint256(state), uint256(State.PROCESSING), "processing after first sweep");
+    assertEq(amount, ONE_USDC, "instant proceeds swept");
+
+    // A first holdback tranche arrives and is sweepable on its own.
+    uint256 tranche = ONE_USDC * 3 / 100;
+    usdc.mint(address(fund), tranche);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "tranche claimable");
+
+    (state, amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "processing after second sweep");
+    assertEq(amount, tranche, "tranche swept");
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC + tranche, "cumulative proceeds received");
+    assertTrue(fund.holdbackPending(), "holdback still pending");
   }
 
   function test_Holdback_UnlockSweepsHoldbackPayment() public {
@@ -1285,8 +1303,8 @@ contract MidasFundTest is Test {
     uint256 holdbackAmount = ONE_USDC * 7 / 100;
     usdc.mint(address(fund), holdbackAmount);
 
-    // Still gated: the balance alone does not release the order.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing despite full balance");
+    // The full balance (instant proceeds + holdback) is claimable even before confirmation.
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "full balance claimable");
 
     vm.prank(holdbackConfirmer);
     fund.confirmHoldback(orderId);
@@ -1295,6 +1313,90 @@ contract MidasFundTest is Test {
     assertEq(uint256(state), uint256(State.ENDED), "ended");
     assertEq(amount, ONE_USDC + holdbackAmount, "full balance swept");
     assertEq(usdc.balanceOf(address(this)), ONE_USDC + holdbackAmount, "instant proceeds + holdback received");
+  }
+
+  function test_Unlock_ZeroAmountTerminalAfterConfirm() public {
+    Order memory order = _commitRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    // Sweep everything first, then write off the holdback: confirming only flips the flag...
+    fund.unlock(order);
+
+    vm.prank(holdbackConfirmer);
+    vm.expectEmit(true, true, true, true);
+    emit HoldbackConfirmed(orderId, holdbackConfirmer);
+    fund.confirmHoldback(orderId);
+
+    assertFalse(fund.holdbackPending(), "holdback settled");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking at zero balance");
+
+    // ...and the terminal unlock finalizes with a zero amount (no transfer).
+    uint256 usdcBefore = usdc.balanceOf(address(this));
+    vm.expectEmit(true, true, true, true);
+    emit OrderUnlocked(orderId, order.mode, 0, address(this));
+    (State state, uint256 amount) = fund.unlock(order);
+
+    assertEq(uint256(state), uint256(State.ENDED), "ended by the terminal unlock");
+    assertEq(amount, 0, "zero-amount finalization");
+    assertEq(usdc.balanceOf(address(this)), usdcBefore, "no transfer");
+
+    // Re-confirming an ended order fails on the state guard.
+    vm.prank(holdbackConfirmer);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ENDED));
+    fund.confirmHoldback(orderId);
+  }
+
+  function test_Create_SucceedsAfterZeroAmountTerminalUnlock() public {
+    Order memory order = _commitRedeemOrder();
+    fund.unlock(order);
+    _confirmHoldback(order);
+    fund.unlock(order); // zero-amount terminal unlock
+
+    Order memory nextOrder = _orderWithSalt(Mode.DEPOSIT, ONE_USDC, ONE_MTOKEN, keccak256("after-terminal-unlock"));
+    fund.create(nextOrder);
+
+    // Old order was archived — state() returns ENDED
+    assertEq(uint256(fund.state(order)), uint256(State.ENDED), "old order ENDED (archived)");
+    assertEq(uint256(fund.state(nextOrder)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_ConfirmHoldback_ThenFinalUnlockSweepsRemainder() public {
+    Order memory order = _commitRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    // Partial sweep of the instant proceeds, then the holdback payment arrives.
+    fund.unlock(order);
+    uint256 holdbackAmount = ONE_USDC * 7 / 100;
+    usdc.mint(address(fund), holdbackAmount);
+
+    // A positive balance at confirmation time leaves the final sweep to unlock().
+    vm.prank(holdbackConfirmer);
+    fund.confirmHoldback(orderId);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "holdback claimable");
+
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, holdbackAmount, "holdback swept");
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC + holdbackAmount, "instant proceeds + holdback received");
+  }
+
+  function test_ConfirmHoldback_LateArrivalSweptByTerminalUnlock() public {
+    Order memory order = _commitRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    fund.unlock(order);
+    vm.prank(holdbackConfirmer);
+    fund.confirmHoldback(orderId);
+
+    // A holdback payment landing between the confirmation and the terminal unlock is
+    // automatically included in the final sweep.
+    uint256 lateAmount = ONE_USDC * 7 / 100;
+    usdc.mint(address(fund), lateAmount);
+
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, lateAmount, "late holdback swept");
+    assertEq(usdc.balanceOf(address(this)), ONE_USDC + lateAmount, "instant proceeds + late holdback received");
   }
 
   function test_ConfirmHoldback_RevertsInvalidOrder() public {
@@ -1398,21 +1500,22 @@ contract MidasFundTest is Test {
     fund.commit(nextRedeem);
 
     assertTrue(fund.holdbackPending(), "next redeem gated afresh");
-    assertEq(uint256(fund.state(nextRedeem)), uint256(State.PROCESSING), "processing until confirmed");
+    assertEq(uint256(fund.state(nextRedeem)), uint256(State.UNLOCKING), "next redeem proceeds claimable");
   }
 
-  function test_Holdback_ResolveDoesNotBypassGate() public {
+  function test_Resolve_DoesNotAffectRedeemState() public {
     Order memory order = _commitRedeemOrder();
 
-    // Even a resolved (lower) output threshold does not lift the holdback gate.
+    // Resolved amounts do not gate redeems: even an output threshold above the balance leaves
+    // it claimable, and the unlock stays partial until the holdback confirmation.
     vm.prank(owner);
-    fund.resolve(order, ONE_MTOKEN, ONE_USDC / 2);
+    fund.resolve(order, ONE_MTOKEN, ONE_USDC * 2);
 
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated after resolve");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "claimable despite resolved output");
 
-    vm.prank(holdbackConfirmer);
-    fund.confirmHoldback(order.toId(address(fund)));
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "partial until confirmed");
+    assertEq(amount, ONE_USDC, "available balance swept");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1781,10 +1884,10 @@ contract MidasFundTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "accepted");
 
     _commitRedeem(order);
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable while holdback pending");
 
     _confirmHoldback(order);
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "still claimable after confirmation");
 
     fund.unlock(order);
     assertEq(uint256(fund.state(order)), uint256(State.ENDED), "ended");
@@ -1993,8 +2096,8 @@ contract MidasFundTest is Test {
     fund.unlock(order);
   }
 
-  /// @dev Bootstraps wrapped shares and commits a REDEEM order (gated on the holdback
-  ///      confirmation, like every redeem).
+  /// @dev Bootstraps wrapped shares and commits a REDEEM order (holdback confirmation
+  ///      pending, like every redeem).
   function _commitRedeemOrder() internal returns (Order memory order) {
     _depositAndUnlock(ONE_USDC);
     order = _redeemOrder(ONE_MTOKEN, ONE_USDC);

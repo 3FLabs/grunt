@@ -178,14 +178,14 @@ contract MidasFundFuzzTest is Test {
     wrappedShare.approve(address(fund), mTokenAmount);
     fund.commit(order);
 
-    // Every redeem stays PROCESSING until the holdback payment is confirmed.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until confirmed");
+    // Proceeds are claimable right away; the holdback confirmation stays pending.
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "claimable while holdback pending");
     assertTrue(fund.holdbackPending(), "holdback pending");
 
     vm.prank(owner);
     fund.confirmHoldback(order.toId(address(fund)));
 
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "still claimable after confirmation");
 
     (State newState, uint256 amount) = fund.unlock(order);
 
@@ -193,6 +193,34 @@ contract MidasFundFuzzTest is Test {
     assertEq(usdc.balanceOf(address(this)), inputUsdc, "usdc received");
     assertEq(wrappedShare.totalSupply(), 0, "wrapper supply burned");
     assertEq(uint256(newState), uint256(State.ENDED), "ended");
+  }
+
+  function testFuzz_RedeemPartialUnlock_ZeroTerminalUnlockEnds(uint96 input) public {
+    uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
+    uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
+
+    _depositAndUnlock(inputUsdc);
+
+    Order memory order = _redeemOrder(mTokenAmount, inputUsdc);
+    fund.create(order);
+    wrappedShare.approve(address(fund), mTokenAmount);
+    fund.commit(order);
+
+    // Partial unlock of the instant proceeds while the holdback is pending.
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(amount, inputUsdc, "instant proceeds swept");
+    assertEq(uint256(newState), uint256(State.PROCESSING), "partial: back to processing");
+    assertTrue(fund.holdbackPending(), "holdback still pending");
+
+    // Confirming only flips the flag; the terminal unlock finalizes with a zero amount.
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking at zero balance");
+
+    (newState, amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended by terminal unlock");
+    assertEq(amount, 0, "zero-amount finalization");
+    assertEq(usdc.balanceOf(address(this)), inputUsdc, "usdc received");
   }
 
   function testFuzz_RedeemHoldback_SweepsPayment(uint96 input, uint96 holdbackSeed) public {
@@ -207,15 +235,22 @@ contract MidasFundFuzzTest is Test {
     wrappedShare.approve(address(fund), mTokenAmount);
     fund.commit(order);
 
-    // The off-band holdback payment arrives; the order remains gated until confirmed.
-    usdc.mint(address(fund), holdbackAmount);
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated");
+    // Partial sweep of the instant proceeds while the holdback is pending.
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.PROCESSING), "partial sweep");
+    assertEq(amount, inputUsdc, "instant proceeds swept");
 
+    // The off-band holdback payment arrives and is claimable on its own...
+    usdc.mint(address(fund), holdbackAmount);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "holdback claimable");
+
+    // ...and confirming with a positive balance leaves the final sweep to unlock().
     vm.prank(owner);
     fund.confirmHoldback(order.toId(address(fund)));
 
-    (, uint256 amount) = fund.unlock(order);
-    assertEq(amount, inputUsdc + holdbackAmount, "full balance swept");
+    (newState, amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, holdbackAmount, "holdback swept");
     assertEq(usdc.balanceOf(address(this)), inputUsdc + holdbackAmount, "proceeds + holdback received");
   }
 
@@ -425,12 +460,24 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     assertEq(fund.totalAssets(), supply / ASSET_SCALE, "totalAssets mismatch");
   }
 
-  function invariant_HoldbackGateBlocksUnlocking() public view {
-    // A redeem order awaiting its holdback confirmation must never report UNLOCKING
-    // (deposits never have a pending holdback: they are marked paid at creation).
-    if (!fund.holdbackPending()) return;
+  function invariant_RedeemStateTracksBalance() public view {
+    // A PROCESSING redeem is claimable exactly when the fund holds a positive asset balance or
+    // the holdback has been confirmed (the terminal unlock may finalize with a zero amount).
+    if (handler.internalState() != State.PROCESSING) return;
     Order memory order = handler.getOrder();
-    assertTrue(uint256(fund.state(order)) != uint256(State.UNLOCKING), "gated order reports UNLOCKING");
+    if (order.mode != Mode.REDEEM) return;
+    bool claimable = usdc.balanceOf(address(fund)) > 0 || !fund.holdbackPending();
+    State expected = claimable ? State.UNLOCKING : State.PROCESSING;
+    assertEq(uint256(fund.state(order)), uint256(expected), "redeem state does not track balance");
+  }
+
+  function invariant_EndedRedeemLeavesNoAssetBalance() public view {
+    // A redeem only ends via a terminal unlock that sweeps the full balance (possibly zero),
+    // so no asset may be stranded in the fund.
+    if (handler.internalState() != State.ENDED) return;
+    Order memory order = handler.getOrder();
+    if (order.mode != Mode.REDEEM) return;
+    assertEq(usdc.balanceOf(address(fund)), 0, "asset stranded after redeem ended");
   }
 
   function invariant_PendingDepositRequestBlocksUnlocking() public view {
@@ -463,7 +510,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
 
     if (stage == State.PROCESSING) {
       // Dynamic checks may already report UNLOCKING (deposit: mint request approved;
-      // redeem: output delivered and holdback confirmed) or RECOVERING (rejected
+      // redeem: positive asset balance, partially claimable) or RECOVERING (rejected
       // deposit request refunded off-band).
       assertTrue(
         uint256(actual) == uint256(State.PROCESSING) || uint256(actual) == uint256(State.UNLOCKING)

@@ -219,25 +219,33 @@ contract MidasFundForkTest is Test {
     wrappedShare.approve(address(fund), shares);
     fund.commit(order);
 
-    // The payout arrived, but every redeem stays PROCESSING until the holdback is confirmed.
+    // The payout arrived and is claimable right away, while the holdback stays pending.
     assertGt(IERC20(USDC).balanceOf(address(fund)), 0, "payout delivered to the fund");
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable");
     assertTrue(fund.holdbackPending(), "holdback pending");
 
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
-    fund.unlock(order);
-
-    vm.prank(owner);
-    fund.confirmHoldback(order.toId(address(fund)));
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
-
+    // Partial unlock of the instant proceeds; the order returns to PROCESSING.
     uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
     (State state, uint256 amount) = fund.unlock(order);
-    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(uint256(state), uint256(State.PROCESSING), "partial: back to processing");
     assertGe(amount, order.output, "assets >= min output");
     assertApproxEqRel(amount, expectedNet, 0.001e18, "assets match redemption feed minus fee");
     assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC received");
     assertEq(wrappedShare.balanceOf(address(this)), 0, "all shares burned");
+    assertTrue(fund.holdbackPending(), "holdback still pending");
+
+    // The off-band holdback payment arrives (_dealUSDC sets the balance, zero after the sweep).
+    uint256 holdbackAmount = 10_000 * ONE;
+    _dealUSDC(address(fund), holdbackAmount);
+
+    // Confirming with a positive balance leaves the final sweep to unlock().
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "holdback claimable");
+
+    (state, amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, holdbackAmount, "holdback swept");
   }
 
   function test_Fork_InstantRedeem_HoldbackPaymentSwept() public {
@@ -256,8 +264,8 @@ contract MidasFundForkTest is Test {
     uint256 holdbackAmount = 10_000 * ONE;
     _dealUSDC(address(fund), instantProceeds + holdbackAmount);
 
-    // Still gated: the balance alone does not release the order.
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing despite full balance");
+    // The full balance (instant proceeds + holdback) is claimable even before confirmation.
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "full balance claimable");
 
     vm.prank(owner);
     fund.confirmHoldback(order.toId(address(fund)));
@@ -310,11 +318,11 @@ contract MidasFundForkTest is Test {
 
     wrappedShare.approve(address(fund), shares);
     fund.commit(order);
-    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing until holdback confirmed");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable while holdback pending");
 
     vm.prank(owner);
     fund.confirmHoldback(order.toId(address(fund)));
-    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "unlocking after confirmation");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "still claimable after confirmation");
 
     uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
     (State state, uint256 amount) = fund.unlock(order);

@@ -117,7 +117,7 @@ This section provides a consolidated view of all roles across contracts and how 
 | | Depositor | Facility | Create/cancel/commit/unlock orders |
 | **MidasFund** | Owner | Protocol Admin | Resolve stuck orders, confirm holdbacks, set vaults/referrer |
 | | Operator | Operations Bot | Resolve stuck orders, set referrer |
-| | Holdback | Operations EOA | Confirm holdback payments (required for every redeem order) |
+| | Holdback | Operations EOA | Confirm holdback payments (required before a redeem order can end; proceeds are claimable before confirmation) |
 | | Vault Manager | Operations EOA | Set deposit/redemption vaults |
 | | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
@@ -597,7 +597,7 @@ stateDiagram-v2
 **Key Design Decisions:**
 - Uses an **internal state pattern**: the stored `internalState` may differ from what `state()` returns, because `state()` checks the Midas mint request status, fund token balances, and redeem holdback confirmation.
 - Deposits are **asynchronous** via `depositRequest()`: `commit()` transfers the payment token to Midas, then the order stays PROCESSING until a Midas vault admin approves the mint request and mints mToken to the fund.
-- Redeems use **instant redemption** via `redeemInstant()`, but every redeem order stays PROCESSING until the off-band holdback payment is confirmed with `confirmHoldback()`.
+- Redeems use **instant redemption** via `redeemInstant()` with **partial unlocks**: any positive payment-token balance is claimable via `unlock()`, which returns the order to PROCESSING while the off-band holdback payment is unconfirmed. `confirmHoldback()` only flips the holdback flag (never the lifecycle state); the next `unlock()` is terminal — it sweeps any remainder (possibly zero) and ends the order, so `unlock()` remains the only successful-completion transition to ENDED.
 - Recovery depends on an off-band Midas admin return of the committed input. Rejected deposit requests are not refunded on-chain by Midas, so `recover()` only succeeds once the returned tokens are present in the fund.
 - When the Midas vault greenlist is enabled or the mToken is permissioned, both the fund and the WrappedAsset must be greenlisted before orders can be created or committed.
 
@@ -610,9 +610,10 @@ stateDiagram-v2
 **Redeem Flow (WrappedShare → Asset):**
 1. `create(REDEEM)` - Initialize order and validate output against the redemption vault's pricing feeds
 2. `commit()` - Burn WrappedAsset, approve mToken to the redemption vault, and call `redeemInstant()`
-3. *Wait for the off-band holdback payment, if any*
-4. `confirmHoldback()` - Owner or holdback role confirms the holdback was received
-5. `unlock()` - Send the fund's full payment-token balance to the receiver
+3. `unlock()` - Sweep the available payment-token balance to the receiver (partial: the order returns to PROCESSING; repeatable as funds arrive)
+4. *Wait for the off-band holdback payment, if any*
+5. `confirmHoldback()` - Owner or holdback role confirms the holdback was received (or waives it)
+6. `unlock()` - Terminal sweep: transfers any remaining balance (possibly zero, then no transfer) and ends the order
 
 **Recovery Flow (off-band unwind):**
 1. `recovering()` - Owner/operator marks the current processing order as recoverable

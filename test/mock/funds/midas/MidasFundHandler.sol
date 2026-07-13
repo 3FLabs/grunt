@@ -13,8 +13,9 @@ import {MockMidasRedemptionVault} from "./MockMidasRedemptionVault.sol";
 /// @dev Invariant handler for MidasFund. Acts as the depositor (and operator/holdback
 ///      confirmer) and mirrors the fund's internal state machine in `internalState`.
 ///      Deposits settle asynchronously via a Midas mint request (approve/reject driven by
-///      act_approveRequest/act_rejectRequest); redeems settle instantly but stay gated on
-///      the holdback confirmation. Reverting actions are rolled back entirely
+///      act_approveRequest/act_rejectRequest); redeems settle instantly and are partially
+///      claimable; once the holdback is confirmed the next unlock is terminal (possibly with
+///      a zero amount). Reverting actions are rolled back entirely
 ///      (fail_on_revert = false), so the model only advances on success.
 contract MidasFundHandler is Test {
   using LibOrder for Order;
@@ -167,8 +168,9 @@ contract MidasFundHandler is Test {
   }
 
   function act_unlock() external {
-    fund.unlock(order);
-    internalState = State.ENDED;
+    // A redeem unlock is partial (stays PROCESSING) while the holdback is unconfirmed.
+    (State newState,) = fund.unlock(order);
+    internalState = newState;
   }
 
   function act_recover() external {

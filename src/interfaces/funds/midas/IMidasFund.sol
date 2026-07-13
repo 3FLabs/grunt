@@ -38,10 +38,14 @@ interface IMidasFund is IFund {
   /// @param receiver The address receiving the recovered funds.
   event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
-  /// @notice Emitted when an order is unlocked and completed successfully.
+  /// @notice Emitted when an order output is unlocked to the receiver.
+  /// @dev Fires once per unlock() call: a redeem order with a pending holdback can be swept
+  ///      partially several times, each sweep emitting this event with the per-call amount.
+  ///      A zero amount marks the terminal finalization call of a redeem whose balance was
+  ///      already fully swept before the holdback confirmation (no assets are transferred).
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param amount The amount unlocked.
+  /// @param amount The amount unlocked by this call.
   /// @param receiver The address receiving the unlocked funds.
   event OrderUnlocked(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
@@ -121,7 +125,7 @@ interface IMidasFund is IFund {
   ///      it shows RECOVERING. If no, it falls back to PROCESSING.
   ///      Reverts with RecoverNotSupported for redeem orders: a committed redeem has already
   ///      settled irreversibly on-chain via `redeemInstant`, so the only path forward is
-  ///      confirmHoldback() followed by unlock().
+  ///      unlock() (partial while the holdback is pending) and confirmHoldback().
   /// @param order The order to recover (must match the current order being processed).
   ///        The full order is required (rather than just its id) so the mode can be checked;
   ///        matching on the derived order ID still prevents a stale pending transaction from
@@ -139,6 +143,9 @@ interface IMidasFund is IFund {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if
   ///      received amounts differ from expected ones (e.g., a partial off-band refund).
+  ///      Resolved amounts only affect deposit orders (mint-output and refund thresholds);
+  ///      redeem orders are partial-claimable on any positive balance, so their state ignores
+  ///      the resolved amounts.
   ///
   ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id
   ///      remains valid for `state/unlock/recover`, but the fund will use the resolved
@@ -154,12 +161,14 @@ interface IMidasFund is IFund {
   /// @notice Confirms that the holdback payment of the current redeem order has been received.
   /// @dev Can only be called by an account with the HOLDBACK_ROLE or the owner.
   ///      Every redeem order requires this confirmation while PROCESSING: Midas withholds part
-  ///      of the instant redemption and returns it off-band in the payment token. Once
-  ///      confirmed, state() reports UNLOCKING (provided the output balance threshold is met)
-  ///      and unlock() sweeps the fund's full output-token balance (instant settlement plus
-  ///      holdback) to the receiver. Deposit orders settle without a holdback (they are marked
-  ///      paid at creation), so calling this for a deposit order reverts with
-  ///      HoldbackNotPending.
+  ///      of the instant redemption and returns it off-band in the payment token. Confirmation
+  ///      only flips the holdback flag — it never changes the lifecycle state and does not
+  ///      gate claiming (any positive balance is claimable via unlock() before it, partially).
+  ///      Once confirmed, state() reports UNLOCKING even at zero balance and the next unlock()
+  ///      is terminal: it sweeps whatever remains (possibly nothing) and ends the order, so
+  ///      unlock() stays the only successful-completion transition to ENDED.
+  ///      Deposit orders settle without a holdback (they are marked paid at creation), so
+  ///      calling this for a deposit order reverts with HoldbackNotPending.
   ///      Committed redeems cannot be recovered (the instant settlement is irreversible), so
   ///      confirming without an actual holdback payment is the official write-off procedure:
   ///      it deliberately completes the order with the instant settlement only.
@@ -205,8 +214,10 @@ interface IMidasFund is IFund {
   function mToken() external view returns (address);
 
   /// @notice Whether the current order is awaiting a holdback confirmation.
-  /// @dev True while the current redeem order is PROCESSING and has not been confirmed via
-  ///      confirmHoldback() yet. Always false for deposit orders (no holdback).
+  /// @dev True while the current redeem order's internal state is PROCESSING and it has not
+  ///      been confirmed via confirmHoldback() yet; stays true across partial unlocks, even
+  ///      while the public state() reports UNLOCKING (a positive claimable balance). Always
+  ///      false for deposit orders (no holdback).
   function holdbackPending() external view returns (bool);
 
   /// @notice The Midas mint request id of the current committed deposit order.

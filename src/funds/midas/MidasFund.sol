@@ -35,14 +35,17 @@ import {BPS} from "../../libs/Constants.sol";
 ///        request (which mints the full mToken amount directly to this fund) — no holdback.
 ///        A rejected request is not refunded on-chain; the Midas admin returns the payment token
 ///        off-band and the order becomes recoverable.
-///      - Redeems settle instantly: commit() settles synchronously via `redeemInstant`, then the
-///        order remains PROCESSING until an account with the HOLDBACK_ROLE confirms via
-///        confirmHoldback() that the holdback amount withheld by Midas was returned off-band in
-///        the payment token. unlock() then sweeps the fund's full output-token balance (instant
-///        settlement plus holdback) to the receiver. A committed redeem cannot be recovered
-///        (the instant settlement is irreversible): confirming the holdback — or deliberately
-///        waiving it if it never arrives — is the only completion path, so recovery is
-///        deposit-only.
+///      - Redeems settle instantly: commit() settles synchronously via `redeemInstant`, and any
+///        positive payment-token balance is immediately claimable via unlock(). While the
+///        holdback amount withheld by Midas (returned off-band in the payment token) is
+///        unconfirmed, unlock() is partial: it sweeps the available balance and the order
+///        returns to PROCESSING. An account with the HOLDBACK_ROLE confirms via
+///        confirmHoldback(), which only flips the holdback flag (never the lifecycle state);
+///        the order then reports UNLOCKING even at zero balance and the next unlock() is
+///        terminal: it sweeps any remainder (possibly zero) and ends the order. A committed
+///        redeem cannot be recovered (the instant settlement is irreversible): confirming the
+///        holdback — or deliberately waiving it if it never arrives — is the only completion
+///        path, so recovery is deposit-only.
 ///      - The Midas vault API is base-18 denominated; this contract converts the payment token
 ///        amounts from/to native decimals at the boundary.
 ///      - IMPORTANT (operations): both this fund AND the WrappedAsset must be greenlisted by Midas
@@ -100,6 +103,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param holdbackPaid Whether the holdback payment of the current order has been confirmed.
+  ///        Gates the terminal state of unlock(): ENDED when true, PROCESSING (partial) otherwise.
   ///        Only redeem orders carry a holdback; deposit orders are marked paid at creation.
   /// @param currentOrderId The order ID of the current (or most recent) order.
   /// @param referrerId The Midas referrer id forwarded on deposits.
@@ -273,8 +277,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///      - Deposit: transfers the payment token to Midas via `depositRequest` and records the
   ///        mint request id; the order stays PROCESSING until the Midas admin approves the
   ///        request (minting the mToken to this fund).
-  ///      - Redeem: settles synchronously via `redeemInstant`, but the order stays PROCESSING
-  ///        until the holdback payment is confirmed via confirmHoldback().
+  ///      - Redeem: settles synchronously via `redeemInstant`; the proceeds are immediately
+  ///        claimable via unlock() (partial until confirmHoldback() flips the holdback flag);
+  ///        the order always ends via a final unlock(), zero-amount if already fully swept.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -321,9 +326,13 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No partial unlocks, always goes to ENDED. The unlocked amount is the fund's full
-  ///      output-token balance (for deposits the mToken minted on request approval, for redeems
-  ///      the instant settlement plus the confirmed holdback payment).
+  /// @dev The unlocked amount is the fund's full output-token balance (for deposits the mToken
+  ///      minted on request approval, for redeems the payment token currently held). Deposits
+  ///      are single-shot and always go to ENDED. Redeems are partial while the holdback is
+  ///      unconfirmed: the order returns to PROCESSING and unlock() can be called again as
+  ///      funds arrive. Once confirmHoldback() has flipped the flag, unlock() is terminal and
+  ///      may be a zero-amount finalization call (no transfer, only ends the order) when
+  ///      partial unlocks already swept the full balance.
   function unlock(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -340,23 +349,28 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
       address _wrappedShare = $.wrappedShare;
       _mToken.safeApproveWithRetry(_wrappedShare, _amount);
       IWrappedAsset(_wrappedShare).mint(order.receiver, _amount);
-    } else {
+    } else if (_amount > 0) {
+      // Skipped at zero amount: the terminal unlock of a fully swept redeem only ends the order.
       $.asset.safeTransfer(order.receiver, _amount);
     }
 
-    $.internalState = State.ENDED;
+    // Redeems with a pending holdback return to PROCESSING (partial unlock) and end once the
+    // holdback is confirmed; deposits are marked paid at creation, so they are always terminal.
+    State _newState = $.holdbackPaid ? State.ENDED : State.PROCESSING;
+    $.internalState = _newState;
 
     emit OrderUnlocked(_currentOrderId, order.mode, _amount, order.receiver);
 
-    return (State.ENDED, _amount);
+    return (_newState, _amount);
   }
 
   /// @inheritdoc IFund
   /// @dev No partial recoveries, always goes to ENDED. Only deposit orders can reach
   ///      RECOVERING (a committed redeem settles irreversibly at commit and can only be
-  ///      completed via confirmHoldback() + unlock()). Recovery relies on the committed input
-  ///      being returned to this contract off-band by the Midas admin (e.g. via `withdrawToken`),
-  ///      which is also the refund path for a rejected deposit request.
+  ///      completed forward via unlock() and confirmHoldback()). Recovery relies on the
+  ///      committed input being returned to this contract off-band by the Midas admin
+  ///      (e.g. via `withdrawToken`), which is also the refund path for a rejected deposit
+  ///      request.
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -384,7 +398,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   function recovering(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     // A committed redeem has already settled irreversibly on-chain via `redeemInstant`
     // (mToken burned or swapped, payment token received), so it can only be completed
-    // forward via confirmHoldback() + unlock(). Recovery is deposit-only.
+    // forward via unlock() and confirmHoldback(). Recovery is deposit-only.
     if (order.mode == Mode.REDEEM) revert LibFundsErrors.RecoverNotSupported();
 
     MidasFundStorage storage $ = _midasFundStorage();
@@ -577,8 +591,11 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///        If the request was CANCELED (rejected by Midas), the input is refunded off-band:
   ///        asset balance >= effective input → RECOVERING, PROCESSING otherwise. Once PROCESSED,
   ///        mToken balance >= effective output → UNLOCKING.
-  ///      - Redeem (instant settlement): asset balance >= effective output AND holdback
-  ///        confirmed via confirmHoldback() → UNLOCKING.
+  ///      - Redeem (instant settlement): any positive asset balance, or a confirmed holdback,
+  ///        → UNLOCKING with the full balance (possibly zero after confirmation, allowing a
+  ///        zero-amount terminal unlock). Partial-claimable; the minimum output was already
+  ///        enforced on-chain by `redeemInstant` at commit, so resolved amounts do not affect
+  ///        redeem state. The holdback confirmation decides unlock()'s terminal state.
   ///
   ///      For RECOVERING state (set manually via recovering() after an off-band refund;
   ///      deposit orders only, recovering() rejects redeems):
@@ -625,18 +642,18 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
           uint256 _recoverable = IERC20($.asset).balanceOf(address(this));
           return _recoverable >= _effectiveInput ? (State.RECOVERING, _recoverable) : (State.PROCESSING, 0);
         }
-        // PROCESSED falls through to the output balance check.
+        // PROCESSED: the full mToken amount is minted in one shot on request approval.
+        uint256 _minted = _outputBalance(Mode.DEPOSIT, $);
+        return _minted < _effectiveOutput ? (State.PROCESSING, 0) : (State.UNLOCKING, _minted);
       }
 
-      uint256 _amount = _outputBalance(order.mode, $);
-      if (_amount < _effectiveOutput) return (State.PROCESSING, 0);
-
-      // Redeems stay PROCESSING until the off-band holdback payment (withheld by Midas in the
-      // payment token) is confirmed, so the unlock sweeps both the instant settlement and the
-      // holdback. Deposit orders are marked paid at creation, so this never gates them.
-      if (!$.holdbackPaid) return (State.PROCESSING, 0);
-
-      return (State.UNLOCKING, _amount);
+      // Redeems are partial-claimable: any positive asset balance (instant settlement, then the
+      // off-band holdback payment) can be swept via unlock(), which stays partial until the
+      // holdback confirmation. Once confirmed the order is UNLOCKING even at zero balance, so
+      // the terminal unlock can finalize without a transfer.
+      uint256 _amount = _outputBalance(Mode.REDEEM, $);
+      if (_amount > 0 || $.holdbackPaid) return (State.UNLOCKING, _amount);
+      return (State.PROCESSING, 0);
     }
 
     if (_internalState == State.RECOVERING) {
