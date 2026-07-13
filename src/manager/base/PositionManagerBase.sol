@@ -101,11 +101,13 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///
   ///      Bad-debt episode: when every borrow module is underwater (`debt > collateral`),
   ///      `LibView.totalAssets()` excludes them all and the aggregates are zero. The basis is then
-  ///      zero (not positive), so accruals hold the pre-episode reference, and flows that stay
-  ///      underwater on both sides hold it too (see `LibStorage.rebaseSnapshot`); a recovery is
-  ///      therefore measured against the pre-episode high-water mark, not forgiven. Only a flow
-  ///      that brings the pool back above water re-anchors the reference at its post-flow state,
-  ///      and gains recovered beyond that point are charged. `lastDebt == 0` still doubles as the
+  ///      zero (not positive), so accruals hold the pre-episode reference, and flows that leave
+  ///      the good-debt universe empty hold it too, including the flow that empties it, e.g.
+  ///      removing or draining the last healthy module (see `LibStorage.rebaseSnapshot`); a
+  ///      recovery is therefore measured against the pre-episode high-water mark, not forgiven.
+  ///      Only a flow that brings the pool back above water re-anchors the reference at its
+  ///      post-flow state, and gains recovered beyond that point are charged. `lastDebt == 0`
+  ///      still doubles as the
   ///      bootstrap sentinel (reached via full repayment or the carry clamp in `rebaseSnapshot`):
   ///      the first accrual after it skips the performance fee and reseeds the reference.
   ///

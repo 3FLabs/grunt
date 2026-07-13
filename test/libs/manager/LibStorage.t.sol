@@ -98,6 +98,28 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getLastDebt(), 5_000e18, "reference debt held");
   }
 
+  /// @notice A flow that empties the good-debt universe itself (the last healthy module removed
+  ///         or drained while the others stay underwater) also holds the reference: re-anchoring
+  ///         on empty aggregates would write the bootstrap sentinel and destroy the high-water
+  ///         mark, so the recovery would be re-charged from wherever the next accrual reseeds.
+  function test_rebaseSnapshot_flowEmptyingGoodDebtUniverseHoldsReference() public {
+    harness.setReference(14_000e18, 6_000e18);
+    harness.setHeldManagementFeeAssets(100e18);
+
+    // Supply-neutral removal of the last healthy module (visible pre-flow: 4_500 / 1_000).
+    harness.rebaseSnapshot(4_500e18, 1_000e18, 100e18, 0, 0, 100e18);
+    assertEq(harness.getLastTotalAssets(), 14_000e18, "reference NAV held across the removal");
+    assertEq(harness.getLastDebt(), 6_000e18, "reference debt held across the removal");
+
+    // Same transition through a supply-changing flow (a withdrawal draining the module).
+    harness.rebaseSnapshot(4_500e18, 1_000e18, 100e18, 0, 0, 40e18);
+    assertEq(harness.getLastTotalAssets(), 14_000e18, "reference NAV held across the exit");
+    assertEq(harness.getLastDebt(), 6_000e18, "reference debt held across the exit");
+
+    // The held deduction stays nominal on the hold path, like the both-sides-empty hold.
+    assertEq(harness.getHeldManagementFeeAssets(), 100e18, "hold path leaves the deduction in place");
+  }
+
   /// @notice Carry larger than the post-flow debt floors the reference debt at the bootstrap
   ///         sentinel (excess carry is forgiven).
   function test_rebaseSnapshot_carryClampedAtNewDebt() public {
@@ -164,6 +186,9 @@ contract LibManagerStorageTest is Test {
   ) public {
     vm.assume(refDebt > 0 && prevSupply > 0 && newSupply > 0);
     vm.assume(newCollat >= newDebt);
+    // A flow into an empty good-debt universe holds the reference instead of rebasing; that
+    // path is pinned by the dedicated hold tests above.
+    vm.assume(newCollat > 0);
 
     uint256 refCollat = uint256(refTotalAssets) + refDebt;
     // Build a pre-flow state whose basis is exactly -carry at reference LTV.

@@ -547,6 +547,55 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(perfShares, _expectedPerfShares(uint256(basis)), "post-holiday gains charge normally");
   }
 
+  /// @notice A flow that empties the good-debt universe (the owner removes the last healthy
+  ///         module while the other stays underwater) must hold the reference: re-anchoring on
+  ///         the empty aggregates would write the bootstrap sentinel, and the first
+  ///         post-recovery accrual would then reseed the high-water mark at the trough and
+  ///         charge the rest of the recovery as fresh gain.
+  function test_badDebt_flowEmptyingGoodDebtUniverseHoldsReference() public {
+    _setFees(0, PERF_FEE);
+    _setupDebtHeavyExclusionWindow();
+
+    // 55% drop: B (4_500 quoted vs 5_000 debt) is excluded, A stays good.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
+
+    // Post-crash cleanup: the owner removes the healthy module A mid-window (queues cleared
+    // first; removal has no underwater precondition). The post-flow good-debt universe is empty
+    // because only the underwater module B remains.
+    vm.prank(curator);
+    positionManager.setSupplyQueue(new SupplyQueueEntry[](0));
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(new address[](0));
+    vm.prank(owner);
+    positionManager.removeBorrowModule(address(borrowPosition1));
+    assertEq(positionManager.totalAssets(), 0, "good-debt universe empty after the removal");
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference debt held across the emptying flow");
+    assertEq(_lastTotalAssets(), 14_000e18, "reference NAV held across the emptying flow");
+
+    // B re-enters on recovery: measured against the held full-universe mark, B alone
+    // (10_000 / 5_000) sits below it, so the re-entry accrual neither charges nor reseeds.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "module re-entry is not charged");
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference still held after the re-entry");
+
+    // Further recovery below the held mark is not charged either (with the sentinel written the
+    // reseeded reference would have read this +500 gain as fresh alpha).
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "recovery below the held mark is not charged");
+    assertEq(positionManager.lastDebt(), 6_000e18, "reference held through the recovery");
+
+    // Fees resume only above the held mark's LTV line: basis = 6_000 * collat / 20_000 - 5_000
+    // turns positive once B's collateral clears 16_667 (price ~1.67).
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 170 / 100);
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "a genuine new high clears the held mark");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertGt(perfShares, 0, "fees resume above the held mark");
+    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "only the gain above the held mark is charged");
+  }
+
   /// @notice Bootstrap sentinel: a full debt repayment zeroes `lastDebt`; the next accrual must
   ///         skip the performance fee and reseed cleanly once leverage returns.
   function test_bootstrap_reseedsAfterFullRepayment() public {
