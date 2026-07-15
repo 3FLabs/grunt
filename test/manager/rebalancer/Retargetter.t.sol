@@ -453,6 +453,7 @@ contract RetargetterTest is RetargetterBaseTest {
       address request_,
       address fund_,
       uint40 startedAt,
+      uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
       Order memory order,
       bool orderLive
@@ -461,6 +462,7 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(request_, request, "request");
     assertEq(fund_, address(fund), "fund");
     assertEq(startedAt, 0, "loan clock not started");
+    assertEq(uint256(repaymentDeadline), startTime + 90 days, "mirrored Request deadline");
     assertEq(operationMaxYieldBps, 100, "effective yield cap");
     assertFalse(orderLive, "no stored order");
     assertEq(order.owner, address(retargetter), "rebuilt order owner");
@@ -470,13 +472,13 @@ contract RetargetterTest is RetargetterBaseTest {
     // The first consume sets the loan clock origin, not the operation start
     vm.warp(startTime + 3 days);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, startedAt,,,) = retargetter.operation();
+    (,,, startedAt,,,,) = retargetter.operation();
     assertEq(startedAt, startTime + 3 days, "startedAt is the first consume time");
 
     // Later consumes inside the consumption window leave the origin untouched
     vm.warp(startTime + 3 days + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, startedAt,,,) = retargetter.operation();
+    (,,, startedAt,,,,) = retargetter.operation();
     assertEq(startedAt, startTime + 3 days, "startedAt unchanged by later consumes");
   }
 
@@ -620,7 +622,7 @@ contract RetargetterTest is RetargetterBaseTest {
     emit IRetargetter.RetargettingStarted(address(positionManager), address(0), address(fund), 6_000e18, 100);
     retargetter.startRetargetting(address(positionManager), 6_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
-    (,,,, uint16 operationMaxYieldBps,,) = retargetter.operation();
+    (,,,,, uint16 operationMaxYieldBps,,) = retargetter.operation();
     assertEq(operationMaxYieldBps, 100, "caller cap recorded");
   }
 
@@ -637,7 +639,7 @@ contract RetargetterTest is RetargetterBaseTest {
       address(positionManager), 6_000e18, 2_000, address(fund), REQUEST_NAME, REQUEST_SYMBOL
     );
 
-    (,,,, uint16 operationMaxYieldBps,,) = retargetter.operation();
+    (,,,,, uint16 operationMaxYieldBps,,) = retargetter.operation();
     assertEq(operationMaxYieldBps, DEFAULT_MAX_YIELD_BPS, "config cap recorded");
   }
 
@@ -808,7 +810,7 @@ contract RetargetterTest is RetargetterBaseTest {
     retargetter.multicall(calls);
 
     assertEq(debtToken.balanceOf(address(fund)), 6_000e18, "commit pulled the order input");
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "order stored by the batched create");
   }
 
@@ -894,10 +896,11 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(uint16(slotA >> 200), 100, "operation max yield bits");
     assertEq(slotA >> 216, 0, "slot A upper bits clean");
 
-    // Slot B: the deployed Request
+    // Slot B: request (bits 0..159) | repaymentDeadline (160..199)
     uint256 slotB = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 1)));
     assertEq(address(uint160(slotB)), request, "request bits");
-    assertEq(slotB >> 160, 0, "slot B upper bits clean");
+    assertEq(uint40(slotB >> 160), uint40(startTime + 90 days), "repayment deadline bits");
+    assertEq(slotB >> 200, 0, "slot B upper bits clean");
 
     // Slot C: fund (bits 0..159) | orderMode (160..167) | orderLive (168..175)
     uint256 slotC = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 2)));

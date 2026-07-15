@@ -178,7 +178,7 @@ contract RetargetterHandler is Test {
       ghostStartedAt = 0;
       return;
     }
-    (,,, uint40 startedAt,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,) = retargetter.operation();
     if (ghostStartedAt == 0) {
       ghostStartedAt = startedAt;
     } else if (startedAt != ghostStartedAt) {
@@ -217,7 +217,7 @@ contract RetargetterHandler is Test {
   ///         YieldTooHigh and success paths get exercised, and a partial or full fill.
   function act_consume(uint256 amountSeed, uint256 yieldSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,, uint16 operationCap,,) = retargetter.operation();
+    (, address request,,,, uint16 operationCap,,) = retargetter.operation();
 
     uint256 offerAmount = _bound(amountSeed, 1e18, 10_000e18);
     uint256 ratioBps = _bound(yieldSeed, 0, uint256(operationCap) * 2 + 100);
@@ -254,7 +254,7 @@ contract RetargetterHandler is Test {
   ///         around both caps so every gate and the revocation path get exercised.
   function act_authorizeMinting(uint256 amountSeed, uint256 yieldSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,, uint16 operationCap,,) = retargetter.operation();
+    (, address request,,,, uint16 operationCap,,) = retargetter.operation();
     if (request == address(0)) return;
 
     uint128 ptAmount = uint128(_bound(amountSeed, 0, 10_000e18));
@@ -276,7 +276,7 @@ contract RetargetterHandler is Test {
   /// @notice The broker funds and mints whatever authorization it currently holds.
   function act_mintAuthorized() external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,) = retargetter.operation();
+    (, address request,,,,,,) = retargetter.operation();
     if (request == address(0)) return;
     (uint128 ptAuth,) = IRequest(request).mintAuthorization(brokerAddr);
     if (ptAuth == 0) return;
@@ -301,7 +301,7 @@ contract RetargetterHandler is Test {
   /// @notice Pulls consumed funds from the Request, bounded by its balance.
   function act_pull(uint256 amountSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,) = retargetter.operation();
+    (, address request,,,,,,) = retargetter.operation();
     uint256 requestBalance = debtToken.balanceOf(request);
     if (requestBalance == 0) return;
     uint256 amount = _bound(amountSeed, 1, requestBalance);
@@ -319,7 +319,7 @@ contract RetargetterHandler is Test {
   /// @notice Resolves the operation; on success records the settlement-gate ghosts.
   function act_resolve() external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,) = retargetter.operation();
+    (, address request,,,,,,) = retargetter.operation();
     vm.prank(rebalancer);
     try retargetter.resolve() {
       sawResolve = true;
@@ -348,7 +348,7 @@ contract RetargetterHandler is Test {
   ///         input token when it holds any (otherwise an arbitrary size that will fail commit).
   function act_createOrder(bool redeem, uint256 inputSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     if (orderLive) return;
     Mode mode = redeem ? Mode.REDEEM : Mode.DEPOSIT;
     uint256 available =
@@ -545,7 +545,7 @@ contract RetargetterHandler is Test {
 
   /// @dev Whether the Retargetter currently stores a live order.
   function _orderLive() internal view returns (bool orderLive) {
-    (,,,,,, orderLive) = retargetter.operation();
+    (,,,,,,, orderLive) = retargetter.operation();
   }
 
   /// @dev Current owed amount of the active operation, zero when the view reverts.

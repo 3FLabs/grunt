@@ -9,14 +9,19 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 /// @title RetargetterFactory
 /// @author 3F Protocol
 /// @notice Factory contract for deploying Retargetter instances as beacon proxies.
-/// @dev One instance per (collateralAsset, debtAsset) pair is the expected topology: a single
-///      instance serves every PositionManager on that pair. Creation is permissionless; all
-///      authority comes from the roles granted afterwards.
+/// @dev Creation is permissionless and instances are independent: a fresh instance carries
+///      no authority until roles are granted to it, so a stranger's deployment is inert.
+///      Each instance is bound to one (collateralAsset, debtAsset) pair and runs one
+///      operation at a time, so several instances deliberately serving the same pair is a
+///      supported topology: retargetting several PositionManagers on one pair concurrently
+///      takes one instance each. The factory keeps no pair registry and no duplicate check;
+///      instance discovery runs off the {RetargetterCreated} event.
 ///
 ///      Post-deployment wiring checklist:
-///      1. Each served PositionManager's owner grants the instance REBALANCER_ROLE (bit
-///         value 4) and configures `maxRebalanceLoss` of at least one basis point (Morpho
-///         rounding dust otherwise reverts valid rebalances).
+///      1. Each served PositionManager's owner grants the instance the PositionManager's
+///         REBALANCER_ROLE (Solady _ROLE_2, bit value 4; distinct from the Retargetter's
+///         own rebalancer role in step 4) and configures `maxRebalanceLoss` of at least one
+///         basis point (Morpho rounding dust otherwise reverts valid rebalances).
 ///      2. Fund owners grant the instance DEPOSITOR_ROLE on every whitelisted fund, and the
 ///         upstream venue allowlists (Superstate, Centrifuge, WrappedAsset roles) must
 ///         include the instance. Dedicated fund instances only: funds hold a single global
@@ -24,8 +29,9 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///         creates order liveness collisions.
 ///      3. Deploy the MorphoFlashLoanAdapter once per chain (its constructor takes Morpho
 ///         Blue's address).
-///      4. The instance owner grants REBALANCER and CONSUMER roles, whitelists funds and the
-///         adapter, and sets the yield estimates.
+///      4. The instance owner grants the Retargetter's own REBALANCER_ROLE (Solady _ROLE_0,
+///         bit value 1) and CONSUMER_ROLE (Solady _ROLE_1, bit value 2), whitelists funds
+///         and the adapter, and sets the yield estimates.
 contract RetargetterFactory {
   using LibClone for address;
 

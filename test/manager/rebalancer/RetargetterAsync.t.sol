@@ -199,12 +199,12 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_async_loanClock_startsAtFirstConsumeAndNeverResets() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    (,,, uint40 startedAt,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), 0, "clock unset before the first consume");
 
     vm.warp(block.timestamp + 5 days);
     _consume(request, 3_000e18, 30e18, 3_000e18);
-    (,,, startedAt,,,) = retargetter.operation();
+    (,,, startedAt,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), block.timestamp, "first consume starts the clock");
     uint256 clockOrigin = uint256(startedAt);
 
@@ -212,7 +212,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // the clock
     vm.warp(block.timestamp + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, startedAt,,,) = retargetter.operation();
+    (,,, startedAt,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), clockOrigin, "second consume keeps the origin");
 
     // Two days elapsed: paidTicks = floor((2 days + 1 day - 10 hours) / 1 day) = 2
@@ -259,7 +259,8 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   }
 
   /// @notice The window is measured from the loan clock origin, not the operation start, so a
-  ///         late first consume simply starts its window late.
+  ///         late first consume (within the deadline-buffer bound) simply starts its window
+  ///         late.
   function test_consume_windowStartsAtFirstConsumeNotOperationStart() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
@@ -276,6 +277,46 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     retargetter.consume(offer, "", 1_000e18);
   }
 
+  /// @notice The loan clock can only start while at least MIN_DEADLINE_BUFFER (80 days)
+  ///         remains before the Request's 90-day deadline: the first commitment is accepted
+  ///         up to 10 days after the operation start and rejected past that, so a late clock
+  ///         start cannot erode the settlement buffer the deadline is sized for.
+  function test_consume_clockStartAtDeadlineBufferBoundary() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    uint256 operationStart = block.timestamp;
+
+    // Exactly 80 days remain before the deadline: the clock may still start
+    vm.warp(operationStart + 10 days);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    (,,, uint40 startedAt,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), operationStart + 10 days, "clock started at the boundary");
+  }
+
+  /// @notice One second past the deadline-buffer boundary the clock can no longer start, for
+  ///         consume and nonzero mint authorization alike; the zero-amount revocation skips
+  ///         the gate as always.
+  function test_consume_clockStartPastDeadlineBufferReverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(6_000e18, 100);
+
+    // The gate fires before the Request is ever called, so the offer needs no signature
+    vm.warp(block.timestamp + 10 days + 1);
+    Offer memory offer = _createOffer(1_000e18, 10e18);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.DeadlineTooClose.selector);
+    retargetter.consume(offer, "", 1_000e18);
+
+    // A nonzero authorization starts the same clock and hits the same gate
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.DeadlineTooClose.selector);
+    retargetter.authorizeMinting(broker, 1_000e18, 10e18);
+
+    // The zero-amount revocation only shrinks exposure and stays available
+    vm.prank(consumer);
+    retargetter.authorizeMinting(broker, 0, 0);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    MINT AUTHORIZATIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -285,7 +326,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_authorizeMinting_startsClockAndCountsTowardCap() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    (,,, uint40 startedAt,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), 0, "clock unset before the authorization");
 
     vm.prank(consumer);
@@ -293,7 +334,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     emit IRetargetter.MintingAuthorized(request, broker, 2_000e18, 20e18);
     retargetter.authorizeMinting(broker, 2_000e18, 20e18);
 
-    (,,, startedAt,,,) = retargetter.operation();
+    (,,, startedAt,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), block.timestamp, "authorization starts the loan clock");
     assertEq(_outstandingAuthorizedPt(request), 2_000e18, "outstanding authorized principal");
     (uint128 ptAuth, uint128 ytAuth) = IRequest(request).mintAuthorization(broker);
@@ -471,7 +512,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // The next operation starts with the window open
     address secondRequest = _startAsync(1_000e18, 100);
     _consume(secondRequest, 100e18, 1e18, 100e18);
-    (,,, uint40 startedAt,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), block.timestamp, "fresh loan clock on the next operation");
   }
 
@@ -561,7 +602,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     retargetter.create(order);
 
-    (,,,,, Order memory stored, bool orderLive) = retargetter.operation();
+    (,,,,,, Order memory stored, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "order live");
     assertEq(uint8(stored.mode), uint8(Mode.DEPOSIT), "mode stored");
     assertEq(stored.owner, address(retargetter), "owner rebuilt");
@@ -635,12 +676,12 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     emit IRetargetter.OrderCanceled(address(fund), order);
     retargetter.cancelOrder();
 
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "order cleared");
 
     // The slot is free again for a fresh order
     retargetter.create(_order(Mode.DEPOSIT, 100e18, 100e18, bytes32(uint256(12))));
-    (,,,,,, orderLive) = retargetter.operation();
+    (,,,,,,, orderLive) = retargetter.operation();
     assertTrue(orderLive, "new order live");
     vm.stopPrank();
   }
@@ -658,13 +699,13 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     fund.setPartialUnlockBps(5000);
     vm.prank(rebalancer);
     assertEq(retargetter.unlock(), 50e18, "first partial payout");
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "order still live after a partial fill");
 
     // The second unlock pays the rest and clears the order
     vm.prank(rebalancer);
     assertEq(retargetter.unlock(), 50e18, "second payout");
-    (,,,,,, orderLive) = retargetter.operation();
+    (,,,,,,, orderLive) = retargetter.operation();
     assertFalse(orderLive, "order cleared once fully paid");
     assertEq(collateralToken.balanceOf(address(retargetter)), 100e18, "full output received");
   }
@@ -685,7 +726,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     assertEq(retargetter.recoverOrder(), 100e18, "input recovered");
     assertEq(debtToken.balanceOf(address(retargetter)), 100e18, "input back on the retargetter");
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "order cleared after recovery");
   }
 
@@ -752,7 +793,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     retargetter.resolve();
     assertFalse(retargetter.isActive(), "resolved");
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "force-ended order cleared by resolve");
   }
 
@@ -837,7 +878,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     address request = _startAsync(1_000e18, 100);
     // A one-wei-yield offer keeps the owed amount at the unpulled principal plus one wei
     _consume(request, 100e18, 1, 100e18);
-    (,,, uint40 startedAt,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,) = retargetter.operation();
     assertGt(uint256(startedAt), 0, "clock running");
     // An unminted leftover authorization dies with the repaid Request and must not survive
     // into the next operation
@@ -856,6 +897,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
       address operationRequest,
       address operationFund,
       uint40 clearedStartedAt,
+      uint40 clearedRepaymentDeadline,
       uint16 operationMaxYieldBps,
       Order memory order,
       bool orderLive
@@ -864,6 +906,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     assertEq(operationRequest, address(0), "request cleared");
     assertEq(operationFund, address(0), "fund cleared");
     assertEq(uint256(clearedStartedAt), 0, "clock cleared");
+    assertEq(uint256(clearedRepaymentDeadline), 0, "repayment deadline cleared");
     assertEq(uint256(operationMaxYieldBps), 0, "yield cap cleared");
     assertFalse(orderLive, "no order");
     assertEq(order.input, 0, "order input cleared");
@@ -1106,7 +1149,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     reused.salt = bytes32(uint256(22));
     vm.prank(rebalancer);
     retargetter.create(reused);
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "fresh-salt order created");
   }
 

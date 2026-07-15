@@ -181,9 +181,12 @@ interface IRetargetter {
   ) external returns (address request);
 
   /// @notice Consumes a signed lender offer against the operation's Request.
-  /// @dev The first consume (or nonzero mint authorization) starts the loan clock. From then
-  ///      on capital only enters while the consumption window is open (the tick threshold past
-  ///      the origin, and never once funds were pulled), for everyone including the owner:
+  /// @dev The first consume (or nonzero mint authorization) starts the loan clock, and only
+  ///      while at least the minimum deadline buffer remains before the Request's repayment
+  ///      deadline (a later start would erode the settlement room the deadline is sized
+  ///      for). From then on capital only enters while the consumption window is open (the
+  ///      tick threshold past the origin, and never once funds were pulled), for everyone
+  ///      including the owner:
   ///      repayment prices every yield token from the origin, so capital arriving later would
   ///      be overpaid for time it never covered and, on a default, would dilute the earlier
   ///      lenders' recovery.
@@ -332,6 +335,9 @@ interface IRetargetter {
   /// @return fund The operation's fund
   /// @return startedAt The loan clock origin (zero until the first consume or nonzero mint
   ///         authorization)
+  /// @return repaymentDeadline The operation Request's repayment deadline, mirrored at start
+  ///         (zero inside a SYNC window); the loan clock can only start while at least the
+  ///         minimum deadline buffer remains before it
   /// @return operationMaxYieldBps The effective per-operation yield cap
   /// @return order The stored fund order rebuilt in memory
   /// @return orderLive Whether a fund order is stored
@@ -343,6 +349,7 @@ interface IRetargetter {
       address request,
       address fund,
       uint40 startedAt,
+      uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
       Order memory order,
       bool orderLive

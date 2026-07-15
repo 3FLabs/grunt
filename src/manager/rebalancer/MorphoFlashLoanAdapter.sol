@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.24;
 
-import {IFlashLoanModule, IFlashLoanReceiver} from "../../interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanModule} from "../../interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanReceiver} from "../../interfaces/manager/rebalancer/IFlashLoanReceiver.sol";
 import {IMorphoFlashLoanCallback} from "lib/morpho-blue/src/interfaces/IMorphoCallbacks.sol";
 import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";

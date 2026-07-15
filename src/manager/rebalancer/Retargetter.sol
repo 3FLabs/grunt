@@ -3,7 +3,8 @@ pragma solidity ^0.8.24;
 
 import {IRetargetter, RetargetterConfig, YieldEstimates} from "../../interfaces/manager/rebalancer/IRetargetter.sol";
 import {IRetargetterQuoter} from "../../interfaces/manager/rebalancer/IRetargetterQuoter.sol";
-import {IFlashLoanModule, IFlashLoanReceiver} from "../../interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanModule} from "../../interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanReceiver} from "../../interfaces/manager/rebalancer/IFlashLoanReceiver.sol";
 import {IRequestFactory} from "../../interfaces/request/IRequestFactory.sol";
 import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {IRequestInteractions} from "../../interfaces/request/IRequestInteractions.sol";
@@ -92,11 +93,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*                         MODIFIERS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Passes when a flash-loan window is open (the window is what lets the flash-loan
-  ///      callback drive the steps, since `msg.sender` there is the module), when the caller
-  ///      is the owner, or when the caller holds the rebalancer role. The body lives in a
-  ///      function so the modifier costs a jump at each of its many use sites instead of an
-  ///      inlined copy (contract size).
+  /// @dev Passes when the caller is the module driving an open flash-loan window (the
+  ///      payload steps are delegatecalled from the callback, so `msg.sender` there is the
+  ///      module), when the caller is the owner, or when the caller holds the rebalancer
+  ///      role. Outside a window the slot reads the zero address, which never matches a
+  ///      caller, and a third party gaining execution control inside a window stays an
+  ///      ordinary unauthorized caller. The body lives in a function so the modifier costs
+  ///      a jump at each of its many use sites instead of an inlined copy (contract size).
   modifier onlyOwnerOrRebalancer() {
     _checkOwnerOrRebalancer();
     _;
@@ -104,7 +107,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @dev See {onlyOwnerOrRebalancer}.
   function _checkOwnerOrRebalancer() internal view {
-    if (WINDOW_TSLOT.tLoadUint() == 0 && msg.sender != owner() && !hasAnyRole(msg.sender, REBALANCER_ROLE)) {
+    if (msg.sender != WINDOW_TSLOT.tLoadAddress() && msg.sender != owner() && !hasAnyRole(msg.sender, REBALANCER_ROLE))
+    {
       revert Unauthorized();
     }
   }
@@ -185,8 +189,11 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      operation actually uses), the minimum-one-tick rule guarantees lenders a full tick
   ///      of yield, and the consumption window closes capital entry at the tick threshold or
   ///      the first pull of funds, whichever comes first. A nonzero delay would instead let a
-  ///      late authorized mint push settlement back. The Retargetter becomes the Request's
-  ///      owner, puller and consumer.
+  ///      late authorized mint push settlement back. The deadline is mirrored into the
+  ///      operation storage (the Request does not expose it) so the loan clock can only
+  ///      start while at least MIN_DEADLINE_BUFFER remains before it; see
+  ///      {LibStorage.checkConsumptionWindow}. The Retargetter becomes the Request's owner,
+  ///      puller and consumer.
   function startRetargetting(
     address positionManager,
     uint256 principal,
@@ -201,6 +208,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     uint16 configCap = LibStorage.configStorage().maxYieldBps;
     uint16 effectiveYieldCap = maxYieldBps_ < configCap ? maxYieldBps_ : configCap;
 
+    // Safe: block.timestamp + 90 days fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    uint40 repaymentDeadline = uint40(block.timestamp + REPAYMENT_DEADLINE_OFFSET);
+
     (request,,) = IRequestFactory(_REQUEST_FACTORY)
       .createRequest(
         address(this),
@@ -209,15 +220,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
         LibStorage.assetsStorage().debtAsset,
         requestName,
         requestSymbol,
-        // Safe: block.timestamp + 90 days fits in uint64 for hundreds of billions of years
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint64(block.timestamp + REPAYMENT_DEADLINE_OFFSET),
+        repaymentDeadline,
         0
       );
 
     operation_.positionManager = positionManager;
     operation_.operationMaxYieldBps = effectiveYieldCap;
     operation_.request = request;
+    operation_.repaymentDeadline = repaymentDeadline;
     operation_.fund = fund;
 
     emit RetargettingStarted(positionManager, request, fund, principal, effectiveYieldCap);
@@ -528,11 +538,12 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
 
     // Open the window: the operation storage carries the addresses the steps read (and locks
-    // out nested starts); the transient slots carry the window flag, which hands step
-    // authority to the flash-loan callback chain, and the callback authentication
+    // out nested starts); the window slot hands step authority to the module alone for the
+    // whole window, while the module slot authenticates the callback and is zeroed on its
+    // entry (single-shot), which is why the module address lives in both
     operation_.positionManager = positionManager;
     operation_.fund = fund;
-    WINDOW_TSLOT.tStoreUint(1);
+    WINDOW_TSLOT.tStoreAddress(flashLoanModule);
     MODULE_TSLOT.tStoreAddress(flashLoanModule);
     AMOUNT_TSLOT.tStoreUint(flashLoanAmount);
 
@@ -540,7 +551,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     IFlashLoanModule(flashLoanModule).flashLoan(debtAsset, flashLoanAmount, abi.encode(data));
 
     // The module has pulled its repayment; close the window and scrub any leftover approval
-    WINDOW_TSLOT.tStoreUint(0);
+    WINDOW_TSLOT.tStoreAddress(address(0));
     MODULE_TSLOT.tStoreAddress(address(0));
     AMOUNT_TSLOT.tStoreUint(0);
     debtAsset.safeApprove(flashLoanModule, 0);
@@ -559,7 +570,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      callback, including one smuggled into the payload, fails). The payload runs through
   ///      Solady's `_multicall`: each element is delegatecalled on this contract, so the
   ///      steps run their own modifiers with `msg.sender` being the module; authorization
-  ///      flows through the window flag.
+  ///      flows through the window slot holding the module address.
   /// @param amount The flash-loaned amount
   /// @param data The ABI-encoded step calls supplied to startSyncRetargetting
   function onFlashLoan(uint256 amount, bytes calldata data) external {
@@ -645,6 +656,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       address request,
       address fund,
       uint40 startedAt,
+      uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
       Order memory order,
       bool orderLive
@@ -656,6 +668,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       operation_.request,
       operation_.fund,
       operation_.startedAt,
+      operation_.repaymentDeadline,
       operation_.operationMaxYieldBps,
       operation_.order(),
       operation_.orderLive

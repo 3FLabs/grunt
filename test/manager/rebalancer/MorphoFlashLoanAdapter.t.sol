@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {MorphoFlashLoanAdapter} from "src/manager/rebalancer/MorphoFlashLoanAdapter.sol";
-import {IFlashLoanReceiver} from "src/interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanReceiver} from "src/interfaces/manager/rebalancer/IFlashLoanReceiver.sol";
 import {LibRetargetterErrors} from "src/libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";

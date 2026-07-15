@@ -5,7 +5,8 @@ import {RetargetterBaseTest} from "test/manager/rebalancer/RetargetterBase.t.sol
 import {MockRetargetterFund} from "test/mock/manager/rebalancer/MockRetargetterFund.sol";
 import {MorphoFlashLoanAdapter} from "src/manager/rebalancer/MorphoFlashLoanAdapter.sol";
 import {IRetargetter} from "src/interfaces/manager/rebalancer/IRetargetter.sol";
-import {IFlashLoanModule, IFlashLoanReceiver} from "src/interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanModule} from "src/interfaces/manager/rebalancer/IFlashLoanModule.sol";
+import {IFlashLoanReceiver} from "src/interfaces/manager/rebalancer/IFlashLoanReceiver.sol";
 import {LibRetargetterErrors} from "src/libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
@@ -44,6 +45,44 @@ contract ReplayingFlashLoanModule is IFlashLoanModule {
   function flashLoan(address, uint256 amount, bytes calldata data) external {
     IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
     IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
+  }
+}
+
+/// @dev Third party attempting a privileged Retargetter call while a flash-loan window is
+///      open. Window authority is bound to the module address, so the call must revert
+///      Unauthorized before reaching any other check.
+contract WindowThirdParty {
+  function callPrivileged(address retargetter) external {
+    IRetargetter(retargetter).cancelOrder();
+  }
+}
+
+/// @dev Flash-loan module handing execution control to a third-party contract mid-window,
+///      without moving any funds: the shape of any untrusted contract gaining control while
+///      the window is open.
+contract ThirdPartyCallerFlashLoanModule is IFlashLoanModule {
+  WindowThirdParty public immutable thirdParty = new WindowThirdParty();
+
+  function flashLoan(address, uint256, bytes calldata) external {
+    thirdParty.callPrivileged(msg.sender);
+  }
+}
+
+/// @dev Mock fund recording the Retargetter's operation shape when cancel executes inside a
+///      flash-loan window, making the intentionally transaction-scoped in-window state
+///      (active with a zero Request) observable to a test.
+contract WindowProbeFund is MockRetargetterFund {
+  bool public probed;
+  bool public sawActive;
+  address public sawRequest;
+
+  constructor(address asset_, address share_) MockRetargetterFund(asset_, share_) {}
+
+  function cancel(Order calldata order) public override returns (State) {
+    probed = true;
+    sawActive = IRetargetter(msg.sender).isActive();
+    (, sawRequest,,,,,,) = IRetargetter(msg.sender).operation();
+    return super.cancel(order);
   }
 }
 
@@ -99,6 +138,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
       address operationRequest,
       address operationFund,
       uint40 startedAt,
+      uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
       Order memory storedOrder,
       bool orderLive
@@ -107,6 +147,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     assertEq(operationRequest, address(0), "request zeroed");
     assertEq(operationFund, address(0), "fund zeroed");
     assertEq(startedAt, 0, "startedAt zeroed");
+    assertEq(repaymentDeadline, 0, "repayment deadline zeroed");
     assertEq(operationMaxYieldBps, 0, "yield cap zeroed");
     assertEq(storedOrder.input, 0, "order input zeroed");
     assertEq(storedOrder.output, 0, "order output zeroed");
@@ -411,6 +452,49 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     _assertNoTrace();
   }
 
+  /// @notice A SYNC window stores no Request, and that absence is what gates the ASYNC-only
+  ///         steps: a resolve smuggled into the payload hits checkRequest and reverts.
+  function test_startSyncRetargetting_asyncOnlyStepInsideWindowReverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+
+    bytes[] memory calls = new bytes[](1);
+    calls[0] = abi.encodeCall(retargetter.resolve, ());
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.NoActiveOperation.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(flashLoanAdapter), 1_000e18, address(fund), calls
+    );
+
+    _assertNoTrace();
+  }
+
+  /// @notice Mid-window the operation is intentionally active with a zero Request (invariant
+  ///         tests run between transactions and never observe this shape, so a fund-side
+  ///         probe pins it): the window registers in the operation storage while the missing
+  ///         Request gates the ASYNC-only steps.
+  function test_startSyncRetargetting_windowRunsActiveWithZeroRequest() public {
+    _seedPosition(10_000e18, 5_000e18);
+    WindowProbeFund probeFund = new WindowProbeFund(address(debtToken), address(collateralToken));
+    vm.prank(owner);
+    retargetter.setFund(address(probeFund), true);
+
+    uint256 amount = 1_000e18;
+    bytes[] memory calls = new bytes[](2);
+    calls[0] = abi.encodeCall(retargetter.create, (_order(Mode.DEPOSIT, amount, amount, bytes32(uint256(1)))));
+    calls[1] = abi.encodeCall(retargetter.cancelOrder, ());
+
+    vm.prank(rebalancer);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(flashLoanAdapter), amount, address(probeFund), calls
+    );
+
+    assertTrue(probeFund.probed(), "probe executed inside the window");
+    assertTrue(probeFund.sawActive(), "window runs with an active operation");
+    assertEq(probeFund.sawRequest(), address(0), "window runs with a zero Request");
+    _assertNoTrace();
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                  CALLBACK AUTHENTICATION                   */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -489,6 +573,24 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     vm.prank(address(flashLoanAdapter));
     vm.expectRevert(Ownable.Unauthorized.selector);
     retargetter.rebalance(_rebalancingData(0, 0, RebalancingOperationType.BORROW, 1));
+  }
+
+  /// @notice Window authority belongs to the module alone: a third party gaining execution
+  ///         control mid-window (here handed over by a hostile whitelisted module) stays an
+  ///         ordinary unauthorized caller for every privileged function.
+  function test_startSyncRetargetting_thirdPartyInsideWindowUnauthorized() public {
+    _seedPosition(10_000e18, 5_000e18);
+    ThirdPartyCallerFlashLoanModule hostileModule = new ThirdPartyCallerFlashLoanModule();
+    vm.prank(owner);
+    retargetter.setFlashLoanModule(address(hostileModule), true);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(hostileModule), 1_000e18, address(fund), new bytes[](0)
+    );
+
+    _assertNoTrace();
   }
 
   function test_startSyncRetargetting_directionChecksEnforcedInsideWindow() public {

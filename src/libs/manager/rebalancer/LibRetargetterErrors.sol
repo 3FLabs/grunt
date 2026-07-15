@@ -50,6 +50,11 @@ library LibRetargetterErrors {
   ///         origin, or funds were already pulled).
   error ConsumptionWindowClosed();
 
+  /// @notice Thrown when starting the loan clock (the first consume or nonzero mint
+  ///         authorization) with less than MIN_DEADLINE_BUFFER remaining before the
+  ///         Request's repayment deadline.
+  error DeadlineTooClose();
+
   /// @notice Thrown when computing a principal cap on a position with no collateral and no debt.
   error EmptyPosition();
 

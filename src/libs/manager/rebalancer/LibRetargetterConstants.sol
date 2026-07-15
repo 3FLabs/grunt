@@ -54,15 +54,26 @@ uint16 constant MAX_PRINCIPAL_BUFFER_BPS = 2000;
 uint256 constant MAX_AUTHORIZED_ACCOUNTS = 16;
 
 /// @dev Repayment deadline offset applied to every deployed Request (the maximum the
-///      Request accepts). Acknowledged limitation: past the deadline the Request auto-expires
-///      and bypasses the local repayment checks, so 90 days is sized as an effectively
-///      infinite buffer for every supported settlement flow. If an operation ever runs into
-///      it regardless, remediation is arranged offchain and delivered only through beacon
-///      upgrades governed by an extensive multisig behind its own timelock; if 90 days
-///      becomes too short for some assets, the Request and the Retargetter get upgraded
-///      with a longer duration.
+///      Request accepts). The deadline anchors at operation start while the loan clock
+///      starts at the first capital commitment; MIN_DEADLINE_BUFFER floors what must remain
+///      of this offset when the clock starts. Acknowledged limitation: past the deadline the
+///      Request auto-expires and bypasses the local repayment checks, so the guaranteed
+///      buffer is sized as effectively infinite for every supported settlement flow. If an
+///      operation ever runs into it regardless, remediation is arranged offchain and
+///      delivered only through beacon upgrades governed by an extensive multisig behind its
+///      own timelock; if the durations become too short for some assets, the Request and
+///      the Retargetter get upgraded with longer ones.
 /// @custom:value 7,776,000 (90 days)
 uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
+
+/// @dev Minimum time that must remain before the Request's repayment deadline when the loan
+///      clock starts (the first consume or nonzero mint authorization). The deadline is
+///      fixed at operation start while the clock only starts at the first capital
+///      commitment; without this floor a late first commitment (consumer-timed) could erode
+///      the settlement buffer the deadline is sized for. Capital entry after the clock
+///      start is already bounded by the tick threshold.
+/// @custom:value 6,912,000 (80 days)
+uint256 constant MIN_DEADLINE_BUFFER = 80 days;
 
 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
 /*                        REBALANCING                         */
@@ -71,7 +82,9 @@ uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 /// @dev Sentinel amount resolved to the full balance of the corresponding asset: the
 ///      Retargetter's on rebalance input legs (collateral, debt, SUPPLY, REPAY) and the
 ///      Request's on pullRequestFunds; see IRetargetter.rebalance for the REPAY debt cap
-///      and the snapshot (non-composing) resolution semantics.
+///      and the snapshot (non-composing) resolution semantics. Named because max-valued
+///      sentinels carry other meanings in the same contract (setRepaid's open upper bound,
+///      the bad-debt LTV convention); the name marks the comparisons implementing this one.
 /// @custom:value 2^256 - 1
 uint256 constant FULL_BALANCE_SENTINEL = type(uint256).max;
 
@@ -103,7 +116,11 @@ bytes32 constant OPERATION_STORAGE_SLOT = 0x79211724a6a2d25fad538c732b7f9fee62ff
 /*                     TRANSIENT STORAGE                      */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Transient slot for the flash-loan window flag (nonzero while a window is open).
+/// @dev Transient slot for the flash-loan window: holds the module driving the open window,
+///      the only address besides the owner and rebalancer role holders that passes the step
+///      authorization (zero when no window is open). Distinct from MODULE_TSLOT, which
+///      authenticates the callback and is zeroed on callback entry to make it single-shot,
+///      while this slot keeps the window's authority until the window closes.
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.window")) - 1)
 bytes32 constant WINDOW_TSLOT = 0xd6afb5b9c2dc000141f8a98b95795a2e10b482782ed7428b0e955204ff9c2c83;
 

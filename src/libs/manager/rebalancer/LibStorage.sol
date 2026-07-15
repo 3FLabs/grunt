@@ -13,7 +13,8 @@ import {
   ASSETS_STORAGE_SLOT,
   CONFIG_STORAGE_SLOT,
   WHITELISTS_STORAGE_SLOT,
-  OPERATION_STORAGE_SLOT
+  OPERATION_STORAGE_SLOT,
+  MIN_DEADLINE_BUFFER
 } from "./LibRetargetterConstants.sol";
 
 /// @notice The Retargetter's bound asset pair (namespace "retargetter.assets").
@@ -48,6 +49,9 @@ struct RetargetterWhitelists {
 /// @param consumptionClosed Whether capital entry is shut for good; set by the first pull of
 ///        funds, which also revokes every pending mint authorization
 /// @param request The Request deployed for the operation
+/// @param repaymentDeadline The Request's repayment deadline, mirrored at start because the
+///        Request does not expose it; the loan clock cannot start once less than
+///        MIN_DEADLINE_BUFFER remains before it (zero inside a SYNC window)
 /// @param fund The operation's venue, owner-whitelisted at start
 /// @param orderMode The stored order's mode
 /// @param orderLive Whether an order is stored
@@ -64,6 +68,7 @@ struct RetargetterOperation {
   uint16 operationMaxYieldBps;
   bool consumptionClosed;
   address request;
+  uint40 repaymentDeadline;
   address fund;
   Mode orderMode;
   bool orderLive;
@@ -174,16 +179,21 @@ library LibStorage {
 
   /// @dev Consumption-window gate and loan clock: reverts once the window has closed (funds
   ///      were pulled, or the tick threshold elapsed since the origin); otherwise the first
-  ///      capital commitment (consume or nonzero mint authorization) starts the clock. The
-  ///      window exists because repayment prices every yield token from the origin: capital
-  ///      arriving later would be overpaid for time it never covered and, on a default, would
-  ///      dilute the earlier lenders' recovery. It binds everyone, owner included, and a zero
-  ///      threshold collapses the window to the origin timestamp itself.
+  ///      capital commitment (consume or nonzero mint authorization) starts the clock,
+  ///      provided at least MIN_DEADLINE_BUFFER remains before the Request's repayment
+  ///      deadline (a later start would erode the settlement buffer the deadline is sized
+  ///      for). The window exists because repayment prices every yield token from the
+  ///      origin: capital arriving later would be overpaid for time it never covered and, on
+  ///      a default, would dilute the earlier lenders' recovery. It binds everyone, owner
+  ///      included, and a zero threshold collapses the window to the origin timestamp itself.
   /// @param self The storage pointer to the operation
   function checkConsumptionWindow(RetargetterOperation storage self) internal {
     if (self.consumptionClosed) revert LibRetargetterErrors.ConsumptionWindowClosed();
     uint256 startedAt = self.startedAt;
     if (startedAt == 0) {
+      if (block.timestamp + MIN_DEADLINE_BUFFER > self.repaymentDeadline) {
+        revert LibRetargetterErrors.DeadlineTooClose();
+      }
       // Safe: block.timestamp fits in uint40 for ~35,000 years
       // forge-lint: disable-next-line(unsafe-typecast)
       self.startedAt = uint40(block.timestamp);
@@ -262,6 +272,7 @@ library LibStorage {
     self.operationMaxYieldBps = 0;
     self.consumptionClosed = false;
     self.request = address(0);
+    self.repaymentDeadline = 0;
     self.fund = address(0);
     EnumerableSetLib.AddressSet storage accounts = self.authorizedAccounts;
     for (uint256 remaining = accounts.length(); remaining > 0; --remaining) {

@@ -73,12 +73,18 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   /*                         INVARIANTS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice RT-1: One operation at a time with a consistent shape. An active operation always
-  ///         carries a Request and a fund, and the fund is still whitelisted (setFund
-  ///         reverts while it is bound to the active operation).
+  /// @notice RT-1: One operation at a time with a consistent shape, for every state
+  ///         observable across transaction boundaries: an active operation is necessarily
+  ///         ASYNC and carries a Request and a whitelisted fund (setFund reverts while the
+  ///         fund is bound). SYNC windows intentionally run active with a zero Request
+  ///         inside their own transaction (that absence gates the ASYNC-only steps, see
+  ///         LibStorage), but they are transaction-scoped, cleared before
+  ///         startSyncRetargetting returns or rolled back by its revert, so this invariant,
+  ///         evaluated between handler calls, never observes one; RT-9 asserts that
+  ///         transaction scoping and a RetargetterSync unit test probes the in-window shape.
   function invariant_oneOperationAtATime() public view {
     if (!retargetter.isActive()) return;
-    (, address request, address operationFund,,,,) = retargetter.operation();
+    (, address request, address operationFund,,,,,) = retargetter.operation();
     assertTrue(request != address(0), "RT-1: active operation without a Request");
     assertTrue(operationFund != address(0), "RT-1: active operation without a fund");
     assertTrue(retargetter.isFund(operationFund), "RT-1: active operation's fund not whitelisted");
@@ -93,7 +99,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
     if (retargetter.isActive()) return;
     assertEq(collateralToken.balanceOf(address(retargetter)), 0, "RT-2: collateral at rest while inactive");
     assertEq(debtToken.balanceOf(address(retargetter)), 0, "RT-2: debt at rest while inactive");
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "RT-2: stored order survived while inactive");
   }
 
@@ -108,7 +114,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   ///         cap means a delayed repayment can never draw more than the approved yield.
   function invariant_owedNeverExceedsPtPlusYt() public view {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,) = retargetter.operation();
+    (, address request,,,,,,) = retargetter.operation();
     (uint128 ptSupply, uint128 ytSupply) = ITokenController(request).totalSupplies();
     assertLe(retargetter.owed(), uint256(ptSupply) + uint256(ytSupply), "RT-4: owed exceeds pt + yt");
   }
@@ -122,7 +128,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   /// @notice RT-6: A live stored order implies an active ASYNC operation: flash-loan windows
   ///         are transaction-scoped and never leak a live order across transactions.
   function invariant_orderLiveImpliesActive_orWindow() public view {
-    (,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,, bool orderLive) = retargetter.operation();
     if (orderLive) assertTrue(retargetter.isActive(), "RT-6: live order without an active operation");
   }
 
