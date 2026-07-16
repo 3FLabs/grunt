@@ -16,8 +16,11 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///      - the WrappedAsset owner must grant ISSUER_ROLE to the new fund;
 ///      - Midas must greenlist the new fund (and the WrappedAsset, once) when the vault
 ///        greenlist is enabled or the mToken is permissioned (e.g. mGLOBAL);
-///      - the fund owner grants OPERATOR_ROLE / HOLDBACK_ROLE / VAULT_MANAGER_ROLE to the
-///        relevant accounts.
+///      - the fund owner grants OPERATOR_ROLE / PAYMENT_ROLE / VAULT_MANAGER_ROLE to the
+///        relevant accounts;
+///      - the fund owner or vault manager sets the bond config via `setBondConfig` when Midas
+///        requires the Repay-and-Redeem bond (the bond recipient must be greenlisted for
+///        permissioned mTokens).
 contract MidasFundFactory {
   using LibClone for address;
 

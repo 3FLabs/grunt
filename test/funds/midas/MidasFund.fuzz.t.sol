@@ -7,6 +7,7 @@ import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
+import {BondConfig} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {MidasRequestStatus} from "src/interfaces/integrations/midas/IMidasVault.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
@@ -255,6 +256,49 @@ contract MidasFundFuzzTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*              FUZZ: BONDED REDEEM LIFECYCLE                 */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function testFuzz_BondedRedeemLifecycle_Succeeds(uint96 input, uint16 bondBpsSeed) public {
+    uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
+    uint256 bondBps = bound(uint256(bondBpsSeed), 1, 9_999);
+    uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
+    address bondRecipient = makeAddr("bondRecipient");
+
+    _depositAndUnlock(inputUsdc);
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: bondBps, recipient: bondRecipient}));
+
+    Order memory order = _redeemOrder(mTokenAmount, inputUsdc);
+    fund.create(order);
+    assertFalse(fund.instantRedeemUnlocked(), "bond-locked at create");
+
+    // Bond leg: only the bond fraction is burned and forwarded to the recipient.
+    uint256 bondAmount = mTokenAmount * bondBps / 10_000;
+    wrappedShare.approve(address(fund), mTokenAmount);
+    fund.commit(order);
+    assertEq(mGlobal.balanceOf(bondRecipient), bondAmount, "bond paid (floor)");
+    assertEq(fund.bondPaid(), bondAmount, "bondPaid stored");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "gated in bond phase");
+
+    // Redeem leg after the payment-role unlock: the remainder settles instantly.
+    vm.prank(owner);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+    wrappedShare.approve(address(fund), mTokenAmount);
+    fund.commit(order);
+    assertEq(wrappedShare.totalSupply(), 0, "all shares burned across both legs");
+
+    // Confirm the holdback, then the terminal unlock sweeps the proceeds (possibly zero).
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    uint256 expectedProceeds = (mTokenAmount - bondAmount) / ASSET_SCALE;
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, expectedProceeds, "proceeds on the remainder");
+    assertEq(usdc.balanceOf(address(this)), expectedProceeds, "usdc received");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                FUZZ: OUTPUT DEVIATION BOUNDS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -361,7 +405,8 @@ contract MidasFundFuzzTest is Test {
 
 contract MidasFundInvariantTest is StdInvariant, Test {
   uint256 private constant OPERATOR_ROLE = 1 << 0;
-  uint256 private constant HOLDBACK_ROLE = 1 << 2;
+  uint256 private constant PAYMENT_ROLE = 1 << 2;
+  uint256 private constant VAULT_MANAGER_ROLE = 1 << 3;
 
   uint256 private constant ISSUER_ROLE = 1 << 0;
   uint256 private constant SENDER_ROLE = 1 << 1;
@@ -421,11 +466,11 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     wrappedShare.grantRoles(address(handler), SENDER_ROLE);
 
     vm.prank(owner);
-    fund.grantRoles(address(handler), OPERATOR_ROLE | HOLDBACK_ROLE);
+    fund.grantRoles(address(handler), OPERATOR_ROLE | PAYMENT_ROLE | VAULT_MANAGER_ROLE);
 
     handler.initialize(fund, usdc, mGlobal, wrappedShare, depositVault, redemptionVault);
 
-    bytes4[] memory selectors = new bytes4[](14);
+    bytes4[] memory selectors = new bytes4[](17);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_cancel.selector;
@@ -440,6 +485,9 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     selectors[11] = handler.act_recover.selector;
     selectors[12] = handler.act_payHoldback.selector;
     selectors[13] = handler.act_confirmHoldback.selector;
+    selectors[14] = handler.act_setBondConfig.selector;
+    selectors[15] = handler.act_unlockInstantRedeem.selector;
+    selectors[16] = handler.act_removeBondConfig.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -461,14 +509,32 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   }
 
   function invariant_RedeemStateTracksBalance() public view {
-    // A PROCESSING redeem is claimable exactly when the fund holds a positive asset balance or
-    // the holdback has been confirmed (the terminal unlock may finalize with a zero amount).
+    // A PROCESSING redeem (redemption executed) is claimable exactly when the fund holds a
+    // positive asset balance or the holdback has been confirmed (the terminal unlock may
+    // finalize with a zero amount). The bond phase is covered by invariant_BondPhaseNotClaimable.
     if (handler.internalState() != State.PROCESSING) return;
     Order memory order = handler.getOrder();
     if (order.mode != Mode.REDEEM) return;
+    if (!fund.instantRedeemUnlocked()) return;
     bool claimable = usdc.balanceOf(address(fund)) > 0 || !fund.holdbackPending();
     State expected = claimable ? State.UNLOCKING : State.PROCESSING;
     assertEq(uint256(fund.state(order)), uint256(expected), "redeem state does not track balance");
+  }
+
+  function invariant_BondPhaseNotClaimable() public view {
+    // A bond-phase redeem (bond leg committed, redemption not executed) must always report
+    // PROCESSING — whatever the fund's asset balance — and carry no pending holdback.
+    if (handler.internalState() != State.PROCESSING) return;
+    Order memory order = handler.getOrder();
+    if (order.mode != Mode.REDEEM) return;
+    if (fund.instantRedeemUnlocked()) return;
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "bond phase must stay PROCESSING");
+    assertFalse(fund.holdbackPending(), "no holdback during the bond phase");
+  }
+
+  function invariant_BondRecipientBalanceMatchesGhost() public view {
+    // Every bond leg forwards its mToken bond to the recipient; nothing else pays it.
+    assertEq(mGlobal.balanceOf(handler.bondRecipient()), handler.ghostTotalBondPaid(), "bond recipient balance");
   }
 
   function invariant_EndedRedeemLeavesNoAssetBalance() public view {

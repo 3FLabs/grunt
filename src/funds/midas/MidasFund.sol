@@ -8,7 +8,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
-import {IMidasFund} from "../../interfaces/funds/midas/IMidasFund.sol";
+import {IMidasFund, BondConfig} from "../../interfaces/funds/midas/IMidasFund.sol";
 import {IMidasVault, MidasRequestStatus} from "../../interfaces/integrations/midas/IMidasVault.sol";
 import {IMidasDepositVault} from "../../interfaces/integrations/midas/IMidasDepositVault.sol";
 import {IMidasRedemptionVault} from "../../interfaces/integrations/midas/IMidasRedemptionVault.sol";
@@ -39,18 +39,36 @@ import {BPS} from "../../libs/Constants.sol";
 ///        positive payment-token balance is immediately claimable via unlock(). While the
 ///        holdback amount withheld by Midas (returned off-band in the payment token) is
 ///        unconfirmed, unlock() is partial: it sweeps the available balance and the order
-///        returns to PROCESSING. An account with the HOLDBACK_ROLE confirms via
+///        returns to PROCESSING. An account with the PAYMENT_ROLE confirms via
 ///        confirmHoldback(), which only flips the holdback flag (never the lifecycle state);
 ///        the order then reports UNLOCKING even at zero balance and the next unlock() is
 ///        terminal: it sweeps any remainder (possibly zero) and ends the order. A committed
 ///        redeem cannot be recovered (the instant settlement is irreversible): confirming the
 ///        holdback — or deliberately waiving it if it never arrives — is the only completion
 ///        path, so recovery is deposit-only.
+///      - Bonded redeems ("Repay-and-Redeem"): when `bondConfig.amount > 0` at create(), a
+///        redeem commits in two legs. The bond leg (first commit()) burns
+///        `input * amount / BPS` wrapped shares from the depositor and forwards the unwrapped
+///        mTokens to `bondConfig.recipient`; the order then waits in PROCESSING (balances and
+///        the holdback flag are ignored) until an account with the PAYMENT_ROLE confirms the
+///        bond receipt via unlockInstantRedeem() — also callable before any commit to waive
+///        the bond for a specific order — returning the order to ACCEPTED. The redeem leg
+///        (second commit()) burns the remaining `input - bondPaid` shares and settles via
+///        `redeemInstant` with the minimum output scaled proportionally; the holdback flow
+///        applies unchanged from there. Once the bond is paid the order cannot be canceled
+///        (the bond is forfeited on abandonment): the only path is forward. With a zero bond
+///        config, redeems keep the single-commit instant flow.
 ///      - The Midas vault API is base-18 denominated; this contract converts the payment token
 ///        amounts from/to native decimals at the boundary.
 ///      - IMPORTANT (operations): both this fund AND the WrappedAsset must be greenlisted by Midas
 ///        (e.g. `M_GLOBAL_GREENLISTED_ROLE`) when the vault greenlist is enabled or the mToken is
-///        permissioned, otherwise minting/wrapping transfers revert.
+///        permissioned, otherwise minting/wrapping transfers revert. The bond recipient must
+///        also be greenlisted when the mToken is permissioned (mGLOBAL gates every transfer on
+///        both parties), otherwise the bond leg reverts.
+///      - IMPORTANT (upgrades): upgrade the beacon only while every fund instance is EMPTY or
+///        ENDED — the bond fields default to zero in pre-upgrade storage, so an in-flight
+///        redeem already in PROCESSING would be misread as bond-phase and could be
+///        double-committed via unlockInstantRedeem().
 contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -62,21 +80,22 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @notice Maximum allowed deviation between order output and current rate (in basis points).
+  /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
+
   /// @notice Role for operator.
   uint256 internal constant OPERATOR_ROLE = _ROLE_0;
 
   /// @notice Role for depositor.
   uint256 internal constant DEPOSITOR_ROLE = _ROLE_1;
 
-  /// @notice Role for confirming redeem holdback payments (can be held by an EOA distinct from the operator).
-  uint256 internal constant HOLDBACK_ROLE = _ROLE_2;
+  /// @notice Role for confirming redeem payments — holdback confirmations and bond receipts
+  ///         (can be held by an EOA distinct from the operator).
+  uint256 internal constant PAYMENT_ROLE = _ROLE_2;
 
   /// @notice Role for managing the Midas vaults (can be held by an EOA distinct from the operator).
   uint256 internal constant VAULT_MANAGER_ROLE = _ROLE_3;
-
-  /// @notice Maximum allowed deviation between order output and current rate (in basis points).
-  /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
-  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
 
   /// @dev The Midas vault API and data feeds are denominated in base-18.
   uint256 internal constant _BASE18 = 1e18;
@@ -111,6 +130,12 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @param resolvedInput The resolved input amount (if hasResolvedAmounts is true).
   /// @param resolvedOutput The resolved output amount (if hasResolvedAmounts is true).
   /// @param endedOrders Tracks order IDs that have reached ENDED so historical lookups return ENDED.
+  /// @param bondConfig The Repay-and-Redeem bond configuration (amount in basis points of the
+  ///        redeem input, recipient of the mToken bond). A zero amount disables the bond flow.
+  /// @param instantRedeemUnlocked Whether the current order may execute `redeemInstant` at
+  ///        commit. Snapshot taken at create(): true for deposits and zero-bond redeems, false
+  ///        for bonded redeems until unlockInstantRedeem().
+  /// @param bondPaid The bond amount (in mTokens) paid for the current order; reset on create().
   struct MidasFundStorage {
     address depositVault;
     address redemptionVault;
@@ -127,6 +152,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     uint256 resolvedInput;
     uint256 resolvedOutput;
     mapping(bytes32 => bool) endedOrders;
+    BondConfig bondConfig;
+    bool instantRedeemUnlocked;
+    uint256 bondPaid;
   }
 
   /// @dev Storage slot for the MidasFund contract's main storage struct.
@@ -239,9 +267,17 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
     $.hasResolvedAmounts = false;
+
     // Only redeem orders carry a holdback; deposits settle in full on request approval, so the
     // holdback gate is marked satisfied upfront (confirmHoldback() reverts for deposit orders).
     $.holdbackPaid = order.mode == Mode.DEPOSIT;
+
+    // Bonded redeems must pay the bond leg before the instant redemption is unlocked; deposits
+    // and zero-bond redeems are unlocked from creation (single-commit behavior). The snapshot
+    // is stable for the order's life: setBondConfig() is gated to no-live-order.
+    $.instantRedeemUnlocked = order.mode == Mode.DEPOSIT || $.bondConfig.amount == 0;
+
+    $.bondPaid = 0;
     $.requestId = 0;
     $.resolvedInput = 0;
     $.resolvedOutput = 0;
@@ -263,6 +299,10 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     if (_internalState != State.ACCEPTED && _internalState != State.PENDING) {
       revert LibFundsErrors.InvalidState(_internalState);
     }
+    // A paid bond is forfeited on abandonment: the order can only complete forward (reachable
+    // only in the re-ACCEPTED window after unlockInstantRedeem(); the bond-phase PROCESSING
+    // state is already rejected above).
+    if ($.bondPaid > 0) revert LibFundsErrors.BondAlreadyPaid();
 
     $.currentOrderId = bytes32(0);
     $.internalState = State.EMPTY;
@@ -273,13 +313,21 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No partial commits, always goes to PROCESSING.
+  /// @dev Always goes to PROCESSING.
   ///      - Deposit: transfers the payment token to Midas via `depositRequest` and records the
   ///        mint request id; the order stays PROCESSING until the Midas admin approves the
   ///        request (minting the mToken to this fund).
-  ///      - Redeem: settles synchronously via `redeemInstant`; the proceeds are immediately
-  ///        claimable via unlock() (partial until confirmHoldback() flips the holdback flag);
-  ///        the order always ends via a final unlock(), zero-amount if already fully swept.
+  ///      - Bonded redeem (instant redemption locked): pays the Repay-and-Redeem bond — burns
+  ///        `input * bondConfig.amount / BPS` wrapped shares and forwards the unwrapped mTokens
+  ///        to the bond recipient — without touching the redemption vault; the order waits in
+  ///        PROCESSING until unlockInstantRedeem() returns it to ACCEPTED for the redeem leg.
+  ///      - Redeem (instant redemption unlocked): settles the remaining `input - bondPaid`
+  ///        synchronously via `redeemInstant`; the proceeds are immediately claimable via
+  ///        unlock() (partial until confirmHoldback() flips the holdback flag); the order
+  ///        always ends via a final unlock(), zero-amount if already fully swept.
+  ///      Both redeem legs return `order.input` as the committed amount (not the per-leg
+  ///      amount): the depositor requires the full input to be reported on every commit and
+  ///      accounts with balance deltas, so the two legs' share burns net to the order input.
   function commit(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -289,6 +337,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     if ($.internalState != State.ACCEPTED) revert LibFundsErrors.InvalidState($.internalState);
 
     uint256 _requestId;
+    uint256 _legAmount = order.input;
 
     if (order.mode == Mode.DEPOSIT) {
       address _asset = $.asset;
@@ -303,24 +352,15 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
       _requestId = IMidasDepositVault(_depositVault).depositRequest(_asset, order.input * $.assetScale, $.referrerId);
       $.requestId = _requestId;
       _asset.safeApproveWithRetry(_depositVault, 0);
+    } else if (!$.instantRedeemUnlocked) {
+      _legAmount = _commitBondLeg($, _currentOrderId, order.input);
     } else {
-      address _mToken = $.mToken;
-      address _redemptionVault = $.redemptionVault;
-      _checkVaultAccess(_redemptionVault, $.wrappedShare, _REDEEM_INSTANT_SELECTOR);
-
-      // Burn WrappedAsset from depositor (unwraps mToken to this contract), then let the
-      // vault burn/pull it (approval covers both the escrow pull and the fee transfer).
-      IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), order.input);
-      _mToken.safeApproveWithRetry(_redemptionVault, order.input);
-
-      // order.output is the minimum asset amount in native decimals; scale it to base-18.
-      IMidasRedemptionVault(_redemptionVault).redeemInstant($.asset, order.input, order.output * $.assetScale);
-      _mToken.safeApproveWithRetry(_redemptionVault, 0);
+      _legAmount = _commitRedeemLeg($, order);
     }
 
     $.internalState = State.PROCESSING;
 
-    emit OrderCommitted(_currentOrderId, order.mode, order.input, _requestId);
+    emit OrderCommitted(_currentOrderId, order.mode, _legAmount, _requestId);
 
     return (State.PROCESSING, order.input);
   }
@@ -445,14 +485,34 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function confirmHoldback(bytes32 orderId) external override onlyOwnerOrRoles(HOLDBACK_ROLE) {
+  function confirmHoldback(bytes32 orderId) external override onlyOwnerOrRoles(PAYMENT_ROLE) {
     MidasFundStorage storage $ = _midasFundStorage();
     if (orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
-    if ($.holdbackPaid) revert LibFundsErrors.HoldbackNotPending();
+    // No holdback exists before the instant redemption executed (bond phase) or after it has
+    // been confirmed (deposits are marked paid at creation).
+    if (!$.instantRedeemUnlocked || $.holdbackPaid) revert LibFundsErrors.HoldbackNotPending();
     $.holdbackPaid = true;
 
     emit HoldbackConfirmed(orderId, msg.sender);
+  }
+
+  /// @inheritdoc IMidasFund
+  function unlockInstantRedeem(bytes32 orderId) external override onlyOwnerOrRoles(PAYMENT_ROLE) {
+    MidasFundStorage storage $ = _midasFundStorage();
+    if (orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
+    // Rejects deposit orders and zero-bond redeems (unlocked at creation), double calls, and
+    // any call after the redemption executed.
+    if ($.instantRedeemUnlocked) revert LibFundsErrors.InstantRedeemAlreadyUnlocked();
+    State _internalState = $.internalState;
+    // ACCEPTED: skip-bond path (the bond is waived before any commit); PROCESSING: bond leg done.
+    if (_internalState != State.ACCEPTED && _internalState != State.PROCESSING) {
+      revert LibFundsErrors.InvalidState(_internalState);
+    }
+    $.instantRedeemUnlocked = true;
+    $.internalState = State.ACCEPTED;
+
+    emit InstantRedeemUnlocked(orderId, msg.sender);
   }
 
   /// @inheritdoc IMidasFund
@@ -488,6 +548,30 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
+  function setBondConfig(BondConfig calldata bondConfig_) external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
+    if (bondConfig_.amount == 0 || bondConfig_.amount >= BPS || bondConfig_.recipient == address(0)) {
+      revert LibFundsErrors.InvalidBondConfig();
+    }
+
+    MidasFundStorage storage $ = _midasFundStorage();
+    _checkNoLiveOrder($);
+
+    $.bondConfig = bondConfig_;
+
+    emit BondConfigUpdated(bondConfig_.amount, bondConfig_.recipient, msg.sender);
+  }
+
+  /// @inheritdoc IMidasFund
+  function removeBondConfig() external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
+    MidasFundStorage storage $ = _midasFundStorage();
+    _checkNoLiveOrder($);
+
+    delete $.bondConfig;
+
+    emit BondConfigUpdated(0, address(0), msg.sender);
+  }
+
+  /// @inheritdoc IMidasFund
   function setReferrerId(bytes32 referrerId_) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     // This is intentionally not gated by _checkNoLiveOrder(): the referrer id is metadata only,
     // and Midas reads it once when a deposit request is committed.
@@ -518,7 +602,22 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @inheritdoc IMidasFund
   function holdbackPending() external view override returns (bool) {
     MidasFundStorage storage $ = _midasFundStorage();
-    return $.internalState == State.PROCESSING && !$.holdbackPaid;
+    return $.internalState == State.PROCESSING && $.instantRedeemUnlocked && !$.holdbackPaid;
+  }
+
+  /// @inheritdoc IMidasFund
+  function bondConfig() external view override returns (BondConfig memory) {
+    return _midasFundStorage().bondConfig;
+  }
+
+  /// @inheritdoc IMidasFund
+  function bondPaid() external view override returns (uint256) {
+    return _midasFundStorage().bondPaid;
+  }
+
+  /// @inheritdoc IMidasFund
+  function instantRedeemUnlocked() external view override returns (bool) {
+    return _midasFundStorage().instantRedeemUnlocked;
   }
 
   /// @inheritdoc IMidasFund
@@ -591,7 +690,11 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///        If the request was CANCELED (rejected by Midas), the input is refunded off-band:
   ///        asset balance >= effective input → RECOVERING, PROCESSING otherwise. Once PROCESSED,
   ///        mToken balance >= effective output → UNLOCKING.
-  ///      - Redeem (instant settlement): any positive asset balance, or a confirmed holdback,
+  ///      - Redeem, bond phase (instant redemption locked): always PROCESSING with no
+  ///        claimable amount — asset balances (donations) and the holdback flag are ignored
+  ///        until the redemption executes; the order is waiting for unlockInstantRedeem().
+  ///      - Redeem, instant redemption unlocked (instant settlement): any positive asset
+  ///        balance, or a confirmed holdback,
   ///        → UNLOCKING with the full balance (possibly zero after confirmation, allowing a
   ///        zero-amount terminal unlock). Partial-claimable; the minimum output was already
   ///        enforced on-chain by `redeemInstant` at commit, so resolved amounts do not affect
@@ -647,6 +750,10 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
         return _minted < _effectiveOutput ? (State.PROCESSING, 0) : (State.UNLOCKING, _minted);
       }
 
+      // Bond phase: the redemption has not executed; ignore asset balances (donations cannot
+      // fake UNLOCKING) and the holdback flag (confirmHoldback() rejects this phase anyway).
+      if (!$.instantRedeemUnlocked) return (State.PROCESSING, 0);
+
       // Redeems are partial-claimable: any positive asset balance (instant settlement, then the
       // off-band holdback payment) can be swept via unlock(), which stays partial until the
       // holdback confirmation. Once confirmed the order is UNLOCKING even at zero balance, so
@@ -662,6 +769,54 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     }
 
     return (_internalState, 0);
+  }
+
+  /// @dev Bond leg of a bonded redeem commit: pays the Repay-and-Redeem bond in mTokens to the
+  ///      Midas-specified wallet by burning the bond fraction of the depositor's wrapped shares
+  ///      (unwrapping to this contract) and forwarding the mTokens to the bond recipient.
+  ///      The redemption vault is not touched; the order waits in PROCESSING until the bond
+  ///      receipt is confirmed via unlockInstantRedeem(). No vault access check: the mToken
+  ///      transfer itself enforces the greenlist for permissioned tokens. If the bond floors
+  ///      to zero, no tokens move but the order still waits for unlockInstantRedeem().
+  /// @param $ The fund storage reference.
+  /// @param _orderId The current order id (for the BondPaid event).
+  /// @param _input The order input amount (wrapped shares).
+  /// @return The bond amount paid.
+  function _commitBondLeg(MidasFundStorage storage $, bytes32 _orderId, uint256 _input) internal returns (uint256) {
+    uint256 _bondAmount = _input * $.bondConfig.amount / BPS;
+    if (_bondAmount > 0) {
+      address _recipient = $.bondConfig.recipient;
+      IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), _bondAmount);
+      $.mToken.safeTransfer(_recipient, _bondAmount);
+      $.bondPaid = _bondAmount;
+
+      emit BondPaid(_orderId, _bondAmount, _recipient);
+    }
+    return _bondAmount;
+  }
+
+  /// @dev Redeem leg of a redeem commit: burns the WrappedAsset from the depositor (unwraps
+  ///      mToken to this contract), then lets the vault burn/pull it (approval covers both the
+  ///      escrow pull and the fee transfer). A bonded redeem only settles the remainder: the
+  ///      bond fraction was already burned by the bond leg.
+  /// @param $ The fund storage reference.
+  /// @param order The order being committed.
+  /// @return The mToken amount redeemed (order input minus the bond paid).
+  function _commitRedeemLeg(MidasFundStorage storage $, Order calldata order) internal returns (uint256) {
+    address _mToken = $.mToken;
+    address _redemptionVault = $.redemptionVault;
+    _checkVaultAccess(_redemptionVault, $.wrappedShare, _REDEEM_INSTANT_SELECTOR);
+
+    uint256 _redeemAmount = order.input - $.bondPaid;
+    IWrappedAsset($.wrappedShare).burn(msg.sender, address(this), _redeemAmount);
+    _mToken.safeApproveWithRetry(_redemptionVault, _redeemAmount);
+
+    // order.output is the minimum asset amount in native decimals for the full input; scale it
+    // proportionally to the non-bond remainder (floor), then to base-18.
+    IMidasRedemptionVault(_redemptionVault)
+      .redeemInstant($.asset, _redeemAmount, order.output.mulDiv(_redeemAmount, order.input) * $.assetScale);
+    _mToken.safeApproveWithRetry(_redemptionVault, 0);
+    return _redeemAmount;
   }
 
   /// @dev Returns the Midas mint request status of the current deposit order.

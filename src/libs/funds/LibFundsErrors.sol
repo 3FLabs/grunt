@@ -89,9 +89,21 @@ library LibFundsErrors {
   /// @param token The unsupported token address.
   error TokenNotSupported(address token);
 
-  /// @notice Thrown when confirming a holdback that is not pending (already confirmed, or the
-  ///         order carries no holdback).
+  /// @notice Thrown when confirming a holdback that is not pending (already confirmed, the
+  ///         order carries no holdback, or the redemption has not executed yet — bond phase).
   error HoldbackNotPending();
+
+  /// @notice Thrown when setting a bond config with a zero amount, an amount of 100% or more,
+  ///         or a zero recipient (disabling the bond flow goes through removeBondConfig).
+  error InvalidBondConfig();
+
+  /// @notice Thrown when unlocking the instant redemption of an order that is not bond-locked
+  ///         (deposit order, zero-bond redeem, already unlocked, or redemption already executed).
+  error InstantRedeemAlreadyUnlocked();
+
+  /// @notice Thrown when canceling a redeem order whose bond has already been paid; the order
+  ///         can only be completed forward (unlockInstantRedeem, then commit and unlock).
+  error BondAlreadyPaid();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */

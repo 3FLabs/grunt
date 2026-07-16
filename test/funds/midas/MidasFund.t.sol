@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {Test} from "forge-std/Test.sol";
 import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
+import {BondConfig} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
@@ -33,6 +34,9 @@ contract MidasFundTest is Test {
   event OrderProcessing(bytes32 indexed orderId);
   event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
   event HoldbackConfirmed(bytes32 indexed orderId, address indexed confirmer);
+  event BondConfigUpdated(uint256 amount, address indexed recipient, address indexed operator);
+  event BondPaid(bytes32 indexed orderId, uint256 amount, address indexed recipient);
+  event InstantRedeemUnlocked(bytes32 indexed orderId, address indexed caller);
   event DepositVaultUpdated(address indexed depositVault, address indexed operator);
   event RedemptionVaultUpdated(address indexed redemptionVault, address indexed operator);
   event ReferrerIdUpdated(bytes32 referrerId, address indexed operator);
@@ -40,13 +44,15 @@ contract MidasFundTest is Test {
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_MTOKEN = 1e18;
   uint256 private constant ASSET_SCALE = 1e12; // 10 ** (18 - 6)
+  uint256 private constant BPS = 10_000;
+  uint256 private constant BOND_BPS = 200; // 2%
   bytes4 private constant SEL_DEPOSIT_REQUEST = bytes4(keccak256("depositRequest(address,uint256,bytes32)"));
   bytes4 private constant SEL_REDEEM_INSTANT = bytes4(keccak256("redeemInstant(address,uint256,uint256)"));
 
   // MidasFund roles
   uint256 private constant OPERATOR_ROLE = 1 << 0;
   uint256 private constant DEPOSITOR_ROLE = 1 << 1;
-  uint256 private constant HOLDBACK_ROLE = 1 << 2;
+  uint256 private constant PAYMENT_ROLE = 1 << 2;
   uint256 private constant VAULT_MANAGER_ROLE = 1 << 3;
 
   // WrappedAsset roles
@@ -72,15 +78,17 @@ contract MidasFundTest is Test {
 
   address public owner;
   address public operator;
-  address public holdbackConfirmer;
+  address public paymentOperator;
   address public vaultManager;
+  address public bondRecipient;
   address public outsider;
 
   function setUp() public {
     owner = makeAddr("owner");
     operator = makeAddr("operator");
-    holdbackConfirmer = makeAddr("holdbackConfirmer");
+    paymentOperator = makeAddr("paymentOperator");
     vaultManager = makeAddr("vaultManager");
+    bondRecipient = makeAddr("bondRecipient");
     outsider = makeAddr("outsider");
 
     usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -115,7 +123,7 @@ contract MidasFundTest is Test {
     wrappedShare.grantRoles(address(this), SENDER_ROLE);
 
     vm.prank(owner);
-    fund.grantRoles(holdbackConfirmer, HOLDBACK_ROLE);
+    fund.grantRoles(paymentOperator, PAYMENT_ROLE);
 
     vm.prank(owner);
     fund.grantRoles(vaultManager, VAULT_MANAGER_ROLE);
@@ -1051,7 +1059,7 @@ contract MidasFundTest is Test {
 
     // The order completes forward: the proceeds stay claimable and the holdback confirmable.
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable");
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     fund.confirmHoldback(order.toId(address(fund)));
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "still claimable after confirmation");
   }
@@ -1306,7 +1314,7 @@ contract MidasFundTest is Test {
     // The full balance (instant proceeds + holdback) is claimable even before confirmation.
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "full balance claimable");
 
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     fund.confirmHoldback(orderId);
 
     (State state, uint256 amount) = fund.unlock(order);
@@ -1322,9 +1330,9 @@ contract MidasFundTest is Test {
     // Sweep everything first, then write off the holdback: confirming only flips the flag...
     fund.unlock(order);
 
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectEmit(true, true, true, true);
-    emit HoldbackConfirmed(orderId, holdbackConfirmer);
+    emit HoldbackConfirmed(orderId, paymentOperator);
     fund.confirmHoldback(orderId);
 
     assertFalse(fund.holdbackPending(), "holdback settled");
@@ -1341,7 +1349,7 @@ contract MidasFundTest is Test {
     assertEq(usdc.balanceOf(address(this)), usdcBefore, "no transfer");
 
     // Re-confirming an ended order fails on the state guard.
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ENDED));
     fund.confirmHoldback(orderId);
   }
@@ -1370,7 +1378,7 @@ contract MidasFundTest is Test {
     usdc.mint(address(fund), holdbackAmount);
 
     // A positive balance at confirmation time leaves the final sweep to unlock().
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     fund.confirmHoldback(orderId);
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "holdback claimable");
 
@@ -1385,7 +1393,7 @@ contract MidasFundTest is Test {
     bytes32 orderId = order.toId(address(fund));
 
     fund.unlock(order);
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     fund.confirmHoldback(orderId);
 
     // A holdback payment landing between the confirmation and the terminal unlock is
@@ -1403,7 +1411,7 @@ contract MidasFundTest is Test {
     _commitRedeemOrder();
 
     bytes32 wrongOrderId = keccak256("wrong");
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, wrongOrderId));
     fund.confirmHoldback(wrongOrderId);
   }
@@ -1415,7 +1423,7 @@ contract MidasFundTest is Test {
     fund.create(order);
     bytes32 orderId = order.toId(address(fund));
 
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
     fund.confirmHoldback(orderId);
   }
@@ -1427,7 +1435,7 @@ contract MidasFundTest is Test {
 
     assertFalse(fund.holdbackPending(), "no holdback pending");
 
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectRevert(LibFundsErrors.HoldbackNotPending.selector);
     fund.confirmHoldback(orderId);
   }
@@ -1436,15 +1444,15 @@ contract MidasFundTest is Test {
     Order memory order = _commitRedeemOrder();
     bytes32 orderId = order.toId(address(fund));
 
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     fund.confirmHoldback(orderId);
 
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectRevert(LibFundsErrors.HoldbackNotPending.selector);
     fund.confirmHoldback(orderId);
   }
 
-  function test_ConfirmHoldback_OnlyOwnerOrHoldbackRole() public {
+  function test_ConfirmHoldback_OnlyOwnerOrPaymentRole() public {
     Order memory order = _commitRedeemOrder();
     bytes32 orderId = order.toId(address(fund));
 
@@ -1637,7 +1645,7 @@ contract MidasFundTest is Test {
     fund.setDepositVault(address(depositVault));
 
     // The holdback role does not either
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     vm.expectRevert(Unauthorized.selector);
     fund.setDepositVault(address(depositVault));
 
@@ -1949,6 +1957,509 @@ contract MidasFundTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        BOND CONFIG                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_SetBondConfig_Success() public {
+    vm.prank(vaultManager);
+    vm.expectEmit(true, true, true, true);
+    emit BondConfigUpdated(BOND_BPS, bondRecipient, vaultManager);
+    fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
+
+    BondConfig memory config = fund.bondConfig();
+    assertEq(config.amount, BOND_BPS, "amount");
+    assertEq(config.recipient, bondRecipient, "recipient");
+  }
+
+  function test_SetBondConfig_OwnerCanSet() public {
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
+    assertEq(fund.bondConfig().amount, BOND_BPS, "amount");
+  }
+
+  function test_SetBondConfig_OnlyOwnerOrVaultManager() public {
+    BondConfig memory config = BondConfig({amount: BOND_BPS, recipient: bondRecipient});
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.setBondConfig(config);
+
+    // Depositor (address(this)) cannot set
+    vm.expectRevert(Unauthorized.selector);
+    fund.setBondConfig(config);
+
+    // The operator role does not include bond management
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    vm.prank(operator);
+    vm.expectRevert(Unauthorized.selector);
+    fund.setBondConfig(config);
+
+    // The payment role does not either
+    vm.prank(paymentOperator);
+    vm.expectRevert(Unauthorized.selector);
+    fund.setBondConfig(config);
+  }
+
+  function test_SetBondConfig_RevertsInvalidAmount() public {
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
+    fund.setBondConfig(BondConfig({amount: BPS, recipient: bondRecipient}));
+
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
+    fund.setBondConfig(BondConfig({amount: BPS + 1, recipient: bondRecipient}));
+  }
+
+  function test_SetBondConfig_RevertsZeroRecipient() public {
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
+    fund.setBondConfig(BondConfig({amount: 1, recipient: address(0)}));
+  }
+
+  function test_SetBondConfig_RevertsZeroAmount() public {
+    // Disabling the bond flow goes through removeBondConfig, not a zero-amount set.
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
+    fund.setBondConfig(BondConfig({amount: 0, recipient: bondRecipient}));
+
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
+    fund.setBondConfig(BondConfig({amount: 0, recipient: address(0)}));
+  }
+
+  function test_RemoveBondConfig_Success() public {
+    _setBondConfig(BOND_BPS);
+
+    vm.prank(vaultManager);
+    vm.expectEmit(true, true, true, true);
+    emit BondConfigUpdated(0, address(0), vaultManager);
+    fund.removeBondConfig();
+
+    BondConfig memory config = fund.bondConfig();
+    assertEq(config.amount, 0, "amount cleared");
+    assertEq(config.recipient, address(0), "recipient cleared");
+
+    // Subsequent redeems commit in a single leg again.
+    _depositAndUnlock(ONE_USDC);
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    assertTrue(fund.instantRedeemUnlocked(), "redeem unlocked after removal");
+  }
+
+  function test_RemoveBondConfig_Idempotent() public {
+    // Removing an already-zero config succeeds.
+    vm.prank(vaultManager);
+    fund.removeBondConfig();
+    assertEq(fund.bondConfig().amount, 0, "still disabled");
+  }
+
+  function test_RemoveBondConfig_OnlyOwnerOrVaultManager() public {
+    _setBondConfig(BOND_BPS);
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.removeBondConfig();
+
+    // Depositor (address(this)) cannot remove
+    vm.expectRevert(Unauthorized.selector);
+    fund.removeBondConfig();
+
+    // The operator role does not include bond management
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    vm.prank(operator);
+    vm.expectRevert(Unauthorized.selector);
+    fund.removeBondConfig();
+
+    // The payment role does not either
+    vm.prank(paymentOperator);
+    vm.expectRevert(Unauthorized.selector);
+    fund.removeBondConfig();
+
+    // The owner can always remove
+    vm.prank(owner);
+    fund.removeBondConfig();
+    assertEq(fund.bondConfig().amount, 0, "removed by owner");
+  }
+
+  function test_RemoveBondConfig_RevertsWhenOrderLive() public {
+    _setBondConfig(BOND_BPS);
+    Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
+    fund.create(order);
+
+    vm.prank(vaultManager);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
+    fund.removeBondConfig();
+
+    _commitDeposit(order);
+    vm.prank(vaultManager);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.removeBondConfig();
+  }
+
+  function test_SetBondConfig_RevertsWhenOrderLive() public {
+    Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
+    fund.create(order);
+
+    vm.prank(vaultManager);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
+    fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
+
+    _commitDeposit(order);
+    vm.prank(vaultManager);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
+  }
+
+  function test_SetBondConfig_AllowedAfterEnded() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
+    assertEq(fund.bondConfig().amount, BOND_BPS, "set after ended");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         BOND FLOW                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_Create_BondedRedeem_LocksInstantRedeem() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
+
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    assertFalse(fund.instantRedeemUnlocked(), "bonded redeem locked at create");
+    assertEq(fund.bondPaid(), 0, "no bond paid yet");
+  }
+
+  function test_Create_BondedDeposit_StaysUnlocked() public {
+    _setBondConfig(BOND_BPS);
+    Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
+    fund.create(order);
+    assertTrue(fund.instantRedeemUnlocked(), "deposits never bond-locked");
+  }
+
+  function test_Create_ZeroBondConfig_UnlockedAtCreate() public {
+    _depositAndUnlock(ONE_USDC);
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    assertTrue(fund.instantRedeemUnlocked(), "zero-bond redeem unlocked at create");
+  }
+
+  function test_Commit_BondLeg_Success() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    bytes32 orderId = order.toId(address(fund));
+    uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
+    uint256 sharesBefore = wrappedShare.balanceOf(address(this));
+
+    wrappedShare.approve(address(fund), order.input);
+    vm.expectEmit(true, true, true, true);
+    emit BondPaid(orderId, bondAmount, bondRecipient);
+    vm.expectEmit(true, true, true, true);
+    emit OrderCommitted(orderId, Mode.REDEEM, bondAmount, 0);
+    (State state, uint256 committed) = fund.commit(order);
+
+    assertEq(uint256(state), uint256(State.PROCESSING), "processing");
+    assertEq(committed, order.input, "full input reported (depositor-compatible)");
+    assertEq(mGlobal.balanceOf(bondRecipient), bondAmount, "bond paid in mTokens");
+    assertEq(sharesBefore - wrappedShare.balanceOf(address(this)), bondAmount, "only the bond shares burned");
+    assertEq(mGlobal.balanceOf(address(fund)), 0, "no mTokens retained");
+    assertEq(usdc.balanceOf(address(fund)), 0, "redemption vault not touched");
+    assertEq(fund.bondPaid(), bondAmount, "bondPaid stored");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "state processing");
+  }
+
+  function test_Commit_BondLeg_ZeroRoundingSkipsTransfers() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(1); // 1 bps
+
+    // 9_999 wei of mToken: the bond floors to zero (9_999 * 1 / 10_000).
+    Order memory order = _redeemOrder(9_999, 0);
+    fund.create(order);
+    assertFalse(fund.instantRedeemUnlocked(), "still bond-locked");
+
+    _commitRedeem(order);
+    assertEq(fund.bondPaid(), 0, "no bond paid");
+    assertEq(mGlobal.balanceOf(bondRecipient), 0, "no transfer");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still gated");
+
+    // The flow still completes through unlockInstantRedeem.
+    _unlockInstantRedeem(order);
+    _commitRedeem(order);
+    _confirmHoldback(order);
+    (State state,) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+  }
+
+  function test_UnlockInstantRedeem_FromProcessing() public {
+    Order memory order = _commitBondedRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    vm.expectEmit(true, true, true, true);
+    emit InstantRedeemUnlocked(orderId, paymentOperator);
+    vm.prank(paymentOperator);
+    fund.unlockInstantRedeem(orderId);
+
+    assertTrue(fund.instantRedeemUnlocked(), "unlocked");
+    assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "back to accepted");
+  }
+
+  function test_UnlockInstantRedeem_FromAccepted_WaivesBond() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+
+    _unlockInstantRedeem(order);
+    assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "still accepted");
+
+    // The single commit burns the full input; no bond is paid.
+    _commitRedeem(order);
+    assertEq(fund.bondPaid(), 0, "bond waived");
+    assertEq(mGlobal.balanceOf(bondRecipient), 0, "no bond transfer");
+    assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "full proceeds received");
+  }
+
+  function test_UnlockInstantRedeem_OnlyOwnerOrPaymentRole() public {
+    Order memory order = _commitBondedRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.unlockInstantRedeem(orderId);
+
+    // Depositor (address(this)) cannot unlock
+    vm.expectRevert(Unauthorized.selector);
+    fund.unlockInstantRedeem(orderId);
+
+    // The operator role does not include payment management
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    vm.prank(operator);
+    vm.expectRevert(Unauthorized.selector);
+    fund.unlockInstantRedeem(orderId);
+
+    // The vault manager role does not either
+    vm.prank(vaultManager);
+    vm.expectRevert(Unauthorized.selector);
+    fund.unlockInstantRedeem(orderId);
+
+    // The owner can always unlock
+    vm.prank(owner);
+    fund.unlockInstantRedeem(orderId);
+    assertTrue(fund.instantRedeemUnlocked(), "owner can unlock");
+  }
+
+  function test_UnlockInstantRedeem_RevertsInvalidOrder() public {
+    _commitBondedRedeemOrder();
+
+    vm.prank(paymentOperator);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOrder.selector, bytes32("wrong")));
+    fund.unlockInstantRedeem(bytes32("wrong"));
+  }
+
+  function test_UnlockInstantRedeem_RevertsForDeposit() public {
+    _setBondConfig(BOND_BPS);
+    Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
+    fund.create(order);
+
+    vm.prank(paymentOperator);
+    vm.expectRevert(LibFundsErrors.InstantRedeemAlreadyUnlocked.selector);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+  }
+
+  function test_UnlockInstantRedeem_RevertsForZeroBondRedeem() public {
+    Order memory order = _commitRedeemOrder();
+
+    vm.prank(paymentOperator);
+    vm.expectRevert(LibFundsErrors.InstantRedeemAlreadyUnlocked.selector);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+  }
+
+  function test_UnlockInstantRedeem_RevertsWhenAlreadyUnlocked() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+
+    vm.prank(paymentOperator);
+    vm.expectRevert(LibFundsErrors.InstantRedeemAlreadyUnlocked.selector);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+  }
+
+  function test_UnlockInstantRedeem_RevertsAfterRedeemExecuted() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    _commitRedeem(order); // redeem leg executed → PROCESSING with the flag set
+
+    vm.prank(paymentOperator);
+    vm.expectRevert(LibFundsErrors.InstantRedeemAlreadyUnlocked.selector);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+  }
+
+  function test_Commit_RedeemLeg_BurnsRemainderAndScalesMinOut() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    bytes32 orderId = order.toId(address(fund));
+    uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
+    uint256 remainder = ONE_MTOKEN - bondAmount;
+
+    wrappedShare.approve(address(fund), order.input);
+    vm.expectEmit(true, true, true, true);
+    emit OrderCommitted(orderId, Mode.REDEEM, remainder, 0);
+    (State state, uint256 committed) = fund.commit(order);
+
+    assertEq(uint256(state), uint256(State.PROCESSING), "processing");
+    assertEq(committed, order.input, "full input reported (depositor-compatible)");
+    assertEq(wrappedShare.totalSupply(), 0, "all shares burned across both legs");
+    assertEq(usdc.balanceOf(address(fund)), remainder / ASSET_SCALE, "proceeds on the remainder");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "claimable");
+    assertTrue(fund.holdbackPending(), "holdback pending after redemption");
+  }
+
+  function test_Commit_RedeemLeg_MinOutEnforced() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+
+    // Rate drop after create: the proportionally scaled min-out is forwarded and enforced.
+    redemptionMTokenFeed.setRate(0.9e18);
+    wrappedShare.approve(address(fund), order.input);
+    vm.expectRevert("MockRedemptionVault: slippage");
+    fund.commit(order);
+  }
+
+  function test_BondFlow_FullLifecycle() public {
+    Order memory order = _commitBondedRedeemOrder(); // bond leg
+    uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
+    uint256 expectedProceeds = (ONE_MTOKEN - bondAmount) / ASSET_SCALE;
+
+    _unlockInstantRedeem(order);
+    _commitRedeem(order); // redeem leg
+
+    // Partial unlock sweeps the instant proceeds; the holdback keeps the order alive.
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "partial unlock");
+    assertEq(amount, expectedProceeds, "instant proceeds swept");
+
+    // Off-band holdback payment arrives and is confirmed.
+    usdc.mint(address(fund), ONE_USDC / 100);
+    _confirmHoldback(order);
+    (state, amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "terminal unlock");
+    assertEq(amount, ONE_USDC / 100, "holdback swept");
+
+    assertEq(usdc.balanceOf(address(this)), expectedProceeds + ONE_USDC / 100, "total proceeds");
+    assertEq(mGlobal.balanceOf(bondRecipient), bondAmount, "bond kept by the recipient");
+    assertEq(wrappedShare.totalSupply(), 0, "all shares burned");
+
+    // A new order can be created after the bonded lifecycle.
+    Order memory next = _orderWithSalt(Mode.DEPOSIT, ONE_USDC, ONE_MTOKEN, keccak256("post-bond"));
+    fund.create(next);
+    assertEq(uint256(fund.state(next)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_Cancel_RevertsAfterBondPaid() public {
+    Order memory order = _commitBondedRedeemOrder();
+
+    // Bond-phase PROCESSING is rejected by the state check.
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.cancel(order);
+
+    // Re-ACCEPTED window after unlockInstantRedeem: the paid bond blocks cancellation.
+    _unlockInstantRedeem(order);
+    vm.expectRevert(LibFundsErrors.BondAlreadyPaid.selector);
+    fund.cancel(order);
+  }
+
+  function test_Cancel_AllowedBeforeBondPaid() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
+
+    // No commit yet: cancel is free.
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    fund.cancel(order);
+
+    // Waive path: unlockInstantRedeem before any commit leaves bondPaid at zero.
+    Order memory waived = _orderWithSalt(Mode.REDEEM, ONE_MTOKEN, ONE_USDC, keccak256("waived"));
+    fund.create(waived);
+    _unlockInstantRedeem(waived);
+    fund.cancel(waived);
+    assertEq(uint256(fund.state(waived)), uint256(State.EMPTY), "canceled");
+  }
+
+  function test_ConfirmHoldback_RevertsDuringBondPhase() public {
+    Order memory order = _commitBondedRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    assertFalse(fund.holdbackPending(), "no holdback before the redemption executes");
+
+    vm.prank(paymentOperator);
+    vm.expectRevert(LibFundsErrors.HoldbackNotPending.selector);
+    fund.confirmHoldback(orderId);
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.HoldbackNotPending.selector);
+    fund.confirmHoldback(orderId);
+  }
+
+  function test_State_BondPhase_DonationStaysProcessing() public {
+    Order memory order = _commitBondedRedeemOrder();
+
+    usdc.mint(address(fund), ONE_USDC);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "donation ignored in bond phase");
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(order);
+
+    // The donation becomes claimable together with the proceeds once the redemption executes.
+    _unlockInstantRedeem(order);
+    _commitRedeem(order);
+    (, uint256 amount) = fund.unlock(order);
+    uint256 remainder = ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS;
+    assertEq(amount, ONE_USDC + remainder / ASSET_SCALE, "donation swept with the proceeds");
+  }
+
+  function test_Resolve_DuringBondPhase_NoEffect() public {
+    Order memory order = _commitBondedRedeemOrder();
+
+    // Callable (state gate is PROCESSING), but redeem state ignores resolved amounts.
+    vm.prank(owner);
+    fund.resolve(order, ONE_MTOKEN, 1);
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
+  }
+
+  function test_Recovering_RevertsForBondedRedeem() public {
+    Order memory order = _commitBondedRedeemOrder();
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.RecoverNotSupported.selector);
+    fund.recovering(order);
+  }
+
+  function test_BondFields_ResetOnNextOrder() public {
+    // Complete a bonded redeem lifecycle.
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    _commitRedeem(order);
+    _confirmHoldback(order);
+    fund.unlock(order);
+
+    // The next deposit is unlocked and carries no bond.
+    Order memory nextDeposit = _orderWithSalt(Mode.DEPOSIT, ONE_USDC, ONE_MTOKEN, keccak256("reset-deposit"));
+    fund.create(nextDeposit);
+    assertTrue(fund.instantRedeemUnlocked(), "deposit unlocked");
+    assertEq(fund.bondPaid(), 0, "bond reset");
+    fund.cancel(nextDeposit);
+
+    // The next redeem is bond-locked afresh (config still set).
+    Order memory nextRedeem = _orderWithSalt(Mode.REDEEM, ONE_MTOKEN, ONE_USDC, keccak256("reset-redeem"));
+    fund.create(nextRedeem);
+    assertFalse(fund.instantRedeemUnlocked(), "redeem locked afresh");
+    assertEq(fund.bondPaid(), 0, "bond reset (redeem)");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ROLES                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -1958,8 +2469,8 @@ contract MidasFundTest is Test {
     assertEq(fund.rolesOf(operator), OPERATOR_ROLE, "operator role");
   }
 
-  function test_Roles_HoldbackAndVaultManagerGranted() public view {
-    assertEq(fund.rolesOf(holdbackConfirmer), HOLDBACK_ROLE, "holdback role");
+  function test_Roles_PaymentAndVaultManagerGranted() public view {
+    assertEq(fund.rolesOf(paymentOperator), PAYMENT_ROLE, "payment role");
     assertEq(fund.rolesOf(vaultManager), VAULT_MANAGER_ROLE, "vault manager role");
   }
 
@@ -2070,7 +2581,7 @@ contract MidasFundTest is Test {
 
   /// @dev Confirms the holdback of the given committed REDEEM order.
   function _confirmHoldback(Order memory order) internal {
-    vm.prank(holdbackConfirmer);
+    vm.prank(paymentOperator);
     fund.confirmHoldback(order.toId(address(fund)));
   }
 
@@ -2100,6 +2611,28 @@ contract MidasFundTest is Test {
   ///      pending, like every redeem).
   function _commitRedeemOrder() internal returns (Order memory order) {
     _depositAndUnlock(ONE_USDC);
+    order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    _commitRedeem(order);
+  }
+
+  /// @dev Sets the bond config as the vault manager (bondRecipient as recipient).
+  function _setBondConfig(uint256 amountBps) internal {
+    vm.prank(vaultManager);
+    fund.setBondConfig(BondConfig({amount: amountBps, recipient: bondRecipient}));
+  }
+
+  /// @dev Unlocks the instant redemption of the given order as the payment operator.
+  function _unlockInstantRedeem(Order memory order) internal {
+    vm.prank(paymentOperator);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+  }
+
+  /// @dev Bootstraps wrapped shares, sets a 2% bond config, creates a REDEEM order and commits
+  ///      the bond leg (order PROCESSING, awaiting unlockInstantRedeem()).
+  function _commitBondedRedeemOrder() internal returns (Order memory order) {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
     order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
     fund.create(order);
     _commitRedeem(order);

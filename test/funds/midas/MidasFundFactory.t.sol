@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {Test} from "forge-std/Test.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
 import {MidasFund} from "src/funds/midas/MidasFund.sol";
+import {BondConfig} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibCommonErrors as CommonErrors} from "src/libs/common/LibCommonErrors.sol";
@@ -85,6 +86,12 @@ contract MidasFundFactoryTest is Test {
     assertEq(fund.redemptionVault(), address(redemptionVault), "redemption vault");
     assertEq(fund.owner(), owner, "owner");
     assertFalse(fund.holdbackPending(), "no holdback pending");
+
+    // Fresh funds default to the zero (disabled) bond config.
+    BondConfig memory bondConfig = fund.bondConfig();
+    assertEq(bondConfig.amount, 0, "bond amount");
+    assertEq(bondConfig.recipient, address(0), "bond recipient");
+    assertEq(fund.bondPaid(), 0, "no bond paid");
   }
 
   function test_Factory_ConfiguresRoles() public {

@@ -6,6 +6,7 @@ import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {Order, Mode, State, LibOrder} from "src/libs/funds/Order.sol";
+import {BondConfig} from "src/interfaces/funds/midas/IMidasFund.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {IERC20} from "src/interfaces/integrations/IERC20.sol";
@@ -274,6 +275,87 @@ contract MidasFundForkTest is Test {
     (, uint256 amount) = fund.unlock(order);
     assertEq(amount, instantProceeds + holdbackAmount, "instant proceeds + holdback swept");
     assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC received");
+  }
+
+  function test_Fork_BondedInstantRedeem_Lifecycle() public {
+    uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
+
+    // The bond recipient must be greenlisted (mGLOBAL gates every transfer on both parties).
+    address bondRecipient = makeAddr("bondRecipient");
+    vm.prank(MIDAS_DEFAULT_ADMIN);
+    IMidasAccessControlFork(MIDAS_ACCESS_CONTROL).grantRole(GREENLISTED_ROLE, bondRecipient);
+
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: 200, recipient: bondRecipient}));
+
+    uint256 expectedNet = _expectedRedeemAssets(shares * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
+    Order memory order = _redeemOrder(shares, _haircut(expectedNet));
+    fund.create(order);
+    bytes32 orderId = order.toId(address(fund));
+
+    // Bond leg: 2% of the shares go to the recipient in mGLOBAL; no USDC is sourced.
+    uint256 bondAmount = shares * 200 / BPS;
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+    assertEq(IERC20(MGLOBAL).balanceOf(bondRecipient), bondAmount, "bond paid in mGLOBAL");
+    assertEq(IERC20(USDC).balanceOf(address(fund)), 0, "redemption vault not touched");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "gated in bond phase");
+    assertFalse(fund.holdbackPending(), "no holdback during the bond phase");
+
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.HoldbackNotPending.selector);
+    fund.confirmHoldback(orderId);
+
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(order);
+
+    // The payment-role unlock re-arms the order for the redeem leg.
+    vm.prank(owner);
+    fund.unlockInstantRedeem(orderId);
+    assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "back to accepted");
+
+    // Redeem leg: the remainder settles instantly against the real Aave redemption vault.
+    uint256 expectedRemainderNet =
+      _expectedRedeemAssets((shares - bondAmount) * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+    assertEq(wrappedShare.balanceOf(address(this)), 0, "all shares burned");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable");
+    assertTrue(fund.holdbackPending(), "holdback pending after the redemption");
+
+    // Partial unlock, then the off-band holdback payment completes the order.
+    uint256 usdcBefore = IERC20(USDC).balanceOf(address(this));
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "partial: back to processing");
+    assertGe(amount, order.output * (shares - bondAmount) / shares, "assets >= scaled min output");
+    assertApproxEqRel(amount, expectedRemainderNet, 0.001e18, "proceeds on the remainder");
+    assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC received");
+
+    uint256 holdbackAmount = 10_000 * ONE;
+    _dealUSDC(address(fund), holdbackAmount);
+    vm.prank(owner);
+    fund.confirmHoldback(orderId);
+    (state, amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, holdbackAmount, "holdback swept");
+  }
+
+  function test_Fork_BondLeg_RevertsWhenRecipientNotGreenlisted() public {
+    uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
+
+    // Recipient deliberately NOT greenlisted: the bond transfer must revert inside mGLOBAL.
+    address bondRecipient = makeAddr("bondRecipient");
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: 200, recipient: bondRecipient}));
+
+    Order memory order = _redeemOrder(
+      shares, _haircut(_expectedRedeemAssets(shares * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE))
+    );
+    fund.create(order);
+
+    wrappedShare.approve(address(fund), shares);
+    vm.expectRevert();
+    fund.commit(order);
   }
 
   function test_Fork_Recovering_OffBandRefund() public {
