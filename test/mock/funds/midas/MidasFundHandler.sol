@@ -150,8 +150,8 @@ contract MidasFundHandler is Test {
 
   /// @dev Simulates the off-band USDC refund performed by the Midas admin, either after a
   ///      rejected deposit request (the vault returns the pulled USDC) or while the
-  ///      operator has flagged the deposit order as RECOVERING. Only deposit orders can be
-  ///      refunded: recovering() rejects redeems, so a redeem never reaches RECOVERING.
+  ///      operator has flagged the order as RECOVERING (for an aborted bonded redeem the
+  ///      refund is swept by recover(), which is also fine with a zero balance).
   function act_refund() external {
     if (refunded) return;
     bool depositRejected = order.mode == Mode.DEPOSIT && rejected && internalState == State.PROCESSING;
@@ -167,7 +167,9 @@ contract MidasFundHandler is Test {
   }
 
   function act_recovering() external {
-    // Reverts for redeem orders (RecoverNotSupported): the model only advances on success.
+    // Succeeds for PROCESSING deposits and unsettled bonded redeems (bond phase, or
+    // re-ACCEPTED with the bond paid); reverts otherwise (RecoverNotSupported /
+    // InvalidState) and the model only advances on success.
     fund.recovering(order);
     internalState = State.RECOVERING;
   }

@@ -1048,9 +1048,9 @@ contract MidasFundTest is Test {
     fund.recovering(order);
   }
 
-  function test_Recovering_RevertsForRedeemOrder() public {
-    // A committed redeem already settled irreversibly via redeemInstant: recovery is
-    // deposit-only and the order must be completed via unlock() and confirmHoldback().
+  function test_Recovering_RevertsForSettledRedeem() public {
+    // A committed zero-bond redeem already settled irreversibly via redeemInstant: it must
+    // be completed via unlock() and confirmHoldback().
     Order memory order = _commitRedeemOrder();
 
     vm.prank(owner);
@@ -2429,12 +2429,161 @@ contract MidasFundTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "still processing");
   }
 
-  function test_Recovering_RevertsForBondedRedeem() public {
+  function test_Recovering_BondPhaseRedeem_Succeeds() public {
     Order memory order = _commitBondedRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit OrderRecovering(orderId);
+    fund.recovering(order);
+
+    // Nothing is owed back: recoverable even at zero balance.
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recoverable at zero balance");
+
+    // Zero-amount terminal recover: no transfer, only ends the order.
+    vm.expectEmit(true, true, true, true);
+    emit OrderRecovered(orderId, Mode.REDEEM, 0, address(this));
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, 0, "zero-amount finalization");
+    assertEq(usdc.balanceOf(address(this)), 0, "no transfer");
+
+    // The bond stays forfeited; the remainder shares never left the depositor.
+    uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
+    assertEq(mGlobal.balanceOf(bondRecipient), bondAmount, "bond kept by the recipient");
+    assertEq(wrappedShare.balanceOf(address(this)), ONE_MTOKEN - bondAmount, "remainder shares intact");
+
+    // The instance is freed.
+    Order memory next = _orderWithSalt(Mode.DEPOSIT, ONE_USDC, ONE_MTOKEN, keccak256("post-abort"));
+    fund.create(next);
+    assertEq(uint256(fund.state(next)), uint256(State.ACCEPTED), "next order accepted");
+  }
+
+  function test_Recovering_ReAcceptedBondedRedeem_Succeeds() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order); // ACCEPTED with the bond paid, redeem leg not committed
+
+    vm.prank(owner);
+    fund.recovering(order);
+
+    // The instant redemption is re-locked so cancelRecovering() lands in the bond phase.
+    assertFalse(fund.instantRedeemUnlocked(), "re-locked");
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recoverable");
+
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, 0, "zero-amount finalization");
+  }
+
+  function test_Recovering_RevertsForSettledBondedRedeem() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    _commitRedeem(order); // redeem leg executed: the payout must complete forward
 
     vm.prank(owner);
     vm.expectRevert(LibFundsErrors.RecoverNotSupported.selector);
     fund.recovering(order);
+  }
+
+  function test_Recovering_RevertsForAcceptedRedeemWithoutBond() public {
+    _depositAndUnlock(ONE_USDC);
+    _setBondConfig(BOND_BPS);
+
+    // Bonded redeem created but not committed: cancel() is the tool, not recovery.
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.RecoverNotSupported.selector);
+    fund.recovering(order);
+    fund.cancel(order);
+
+    // Same for the waive path with no bond paid (bondPaid == 0).
+    Order memory waived = _orderWithSalt(Mode.REDEEM, ONE_MTOKEN, ONE_USDC, keccak256("waived-no-bond"));
+    fund.create(waived);
+    _unlockInstantRedeem(waived);
+    vm.prank(owner);
+    vm.expectRevert(LibFundsErrors.RecoverNotSupported.selector);
+    fund.recovering(waived);
+  }
+
+  function test_Recover_RedeemSweepsOffBandRefund() public {
+    Order memory order = _commitBondedRedeemOrder();
+
+    vm.prank(owner);
+    fund.recovering(order);
+
+    // An off-band refund (e.g. Midas returning the bond value in USDC) is swept by recover().
+    uint256 refund = ONE_USDC / 50;
+    usdc.mint(address(fund), refund);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recoverable with refund");
+
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, refund, "refund swept");
+    assertEq(usdc.balanceOf(address(this)), refund, "refund received");
+  }
+
+  function test_CancelRecovering_BondedRedeem_LandsInBondPhase() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    bytes32 orderId = order.toId(address(fund));
+
+    // Flag from the re-ACCEPTED state, then cancel the recovery.
+    vm.prank(owner);
+    fund.recovering(order);
+    vm.prank(owner);
+    fund.cancelRecovering(orderId);
+
+    // The order lands in the bond phase (PROCESSING, instant redemption locked)...
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "bond phase");
+    assertFalse(fund.instantRedeemUnlocked(), "locked again");
+    assertFalse(fund.holdbackPending(), "no holdback in bond phase");
+
+    // ...and the full completion path still works: unlock the redeem, settle, holdback, end.
+    _unlockInstantRedeem(order);
+    _commitRedeem(order);
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "partial unlock");
+    assertEq(amount, (ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS) / ASSET_SCALE, "proceeds on the remainder");
+    _confirmHoldback(order);
+    (state,) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+  }
+
+  function test_Resolve_DoesNotAffectRecoveringRedeem() public {
+    Order memory order = _commitBondedRedeemOrder();
+    vm.prank(owner);
+    fund.recovering(order);
+
+    // Redeem recovery ignores resolved amounts: recoverable even with a huge input threshold.
+    vm.prank(owner);
+    fund.resolve(order, type(uint128).max, 0);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "still recoverable");
+  }
+
+  function test_BondAbort_ThenReissueRedeem() public {
+    // Abort a stuck bonded redeem...
+    Order memory order = _commitBondedRedeemOrder();
+    vm.prank(owner);
+    fund.recovering(order);
+    fund.recover(order);
+
+    // ...then reissue the remaining shares as a plain redeem through the existing gates.
+    vm.prank(vaultManager);
+    fund.removeBondConfig();
+
+    uint256 remainder = ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS;
+    Order memory reissued = _orderWithSalt(Mode.REDEEM, remainder, remainder / ASSET_SCALE, keccak256("reissue"));
+    fund.create(reissued);
+    assertTrue(fund.instantRedeemUnlocked(), "unbonded: single-commit");
+    wrappedShare.approve(address(fund), remainder);
+    fund.commit(reissued);
+    _confirmHoldback(reissued);
+    (State state, uint256 amount) = fund.unlock(reissued);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, remainder / ASSET_SCALE, "remainder redeemed");
+    assertEq(wrappedShare.totalSupply(), 0, "all shares settled");
   }
 
   function test_BondFields_ResetOnNextOrder() public {

@@ -340,6 +340,62 @@ contract MidasFundForkTest is Test {
     assertEq(amount, holdbackAmount, "holdback swept");
   }
 
+  function test_Fork_BondedRedeem_AbortAndReissue() public {
+    uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
+
+    address bondRecipient = makeAddr("bondRecipient");
+    vm.prank(MIDAS_DEFAULT_ADMIN);
+    IMidasAccessControlFork(MIDAS_ACCESS_CONTROL).grantRole(GREENLISTED_ROLE, bondRecipient);
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: 200, recipient: bondRecipient}));
+
+    // Bond leg, then the redeem leg is (hypothetically) permanently stuck: abort.
+    uint256 expectedNet = _expectedRedeemAssets(shares * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
+    Order memory order = _redeemOrder(shares, _haircut(expectedNet));
+    fund.create(order);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+
+    vm.prank(owner);
+    fund.recovering(order);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recoverable at zero balance");
+
+    // Zero-amount terminal recover ends the order and frees the instance.
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, 0, "zero-amount finalization");
+    uint256 bondAmount = shares * 200 / BPS;
+    assertEq(IERC20(MGLOBAL).balanceOf(bondRecipient), bondAmount, "bond stays forfeited");
+
+    // Reissue the remaining shares as a plain redeem through the existing gates.
+    vm.prank(owner);
+    fund.removeBondConfig();
+
+    uint256 remainder = shares - bondAmount;
+    uint256 expectedRemainderNet =
+      _expectedRedeemAssets(remainder * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
+    Order memory reissued = Order({
+      mode: Mode.REDEEM,
+      owner: address(this),
+      receiver: address(this),
+      input: remainder,
+      output: _haircut(expectedRemainderNet),
+      salt: keccak256("fork-reissue")
+    });
+    fund.create(reissued);
+    wrappedShare.approve(address(fund), remainder);
+    fund.commit(reissued);
+    assertEq(uint256(fund.state(reissued)), uint256(State.UNLOCKING), "proceeds claimable");
+
+    vm.prank(owner);
+    fund.confirmHoldback(reissued.toId(address(fund)));
+    (state, amount) = fund.unlock(reissued);
+    assertEq(uint256(state), uint256(State.ENDED), "reissued redeem ended");
+    assertGe(amount, reissued.output, "assets >= min output");
+    assertApproxEqRel(amount, expectedRemainderNet, 0.001e18, "proceeds on the remainder");
+    assertEq(wrappedShare.balanceOf(address(this)), 0, "all shares settled");
+  }
+
   function test_Fork_BondLeg_RevertsWhenRecipientNotGreenlisted() public {
     uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
 

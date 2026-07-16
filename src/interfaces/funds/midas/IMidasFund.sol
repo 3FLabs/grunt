@@ -149,15 +149,20 @@ interface IMidasFund is IFund {
 
   /// @notice Sets the fund internal state to RECOVERING (if issues arise with Midas).
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Only deposit orders can be recovered: use this when Midas returns the committed
-  ///      input off-band (e.g. via `withdrawToken`). Once set to RECOVERING, the state()
-  ///      function will check if recovery funds (original input) have been returned. If yes,
-  ///      it shows RECOVERING. If no, it falls back to PROCESSING.
-  ///      Reverts with RecoverNotSupported for redeem orders, including during the bond phase
-  ///      of a bonded redeem: a committed redeem either settled irreversibly on-chain via
-  ///      `redeemInstant` or forfeited its bond, so the only path forward is
-  ///      unlockInstantRedeem() (if bond-locked), unlock() (partial while the holdback is
-  ///      pending) and confirmHoldback().
+  ///      - Deposit orders (must be PROCESSING): use this when Midas returns the committed
+  ///        input off-band (e.g. via `withdrawToken`). Once set to RECOVERING, the state()
+  ///        function will check if recovery funds (original input) have been returned. If
+  ///        yes, it shows RECOVERING. If no, it falls back to PROCESSING.
+  ///      - Redeem orders: only an UNSETTLED bonded redeem can be flagged — in the bond
+  ///        phase (bond leg committed, instant redemption locked), or re-ACCEPTED after
+  ///        unlockInstantRedeem() with the bond already paid. This is the abort path for a
+  ///        permanently stuck bonded redeem: the bond stays forfeited, the remainder shares
+  ///        never left the depositor, and recover() ends the order sweeping any off-band
+  ///        refund (possibly zero). Flagging re-locks the instant redemption so that
+  ///        cancelRecovering() always lands back in the bond phase.
+  ///        Reverts with RecoverNotSupported for a settled redeem (`redeemInstant` executed
+  ///        — the payout must complete forward via unlock() and confirmHoldback()) and for
+  ///        an uncommitted redeem with no bond paid (cancel() is the tool there).
   /// @param order The order to recover (must match the current order being processed).
   ///        The full order is required (rather than just its id) so the mode can be checked;
   ///        matching on the derived order ID still prevents a stale pending transaction from
@@ -168,6 +173,9 @@ interface IMidasFund is IFund {
   /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   ///      Use this if recovering() was called by mistake and Midas delivered the output tokens.
+  ///      For a bonded redeem the order lands back in the bond phase (recovering() re-locked
+  ///      the instant redemption), so unlockInstantRedeem() must be called again before the
+  ///      redeem leg can be committed.
   /// @param orderId The order ID that must match the current order in RECOVERING state.
   function cancelRecovering(bytes32 orderId) external;
 
@@ -219,8 +227,9 @@ interface IMidasFund is IFund {
   ///      (skip-bond path: unlocking before any commit waives the bond for this order) or
   ///      PROCESSING (normal path: after the bond leg of commit()). Sets the internal state
   ///      back to ACCEPTED so the depositor can commit the redeem leg.
-  ///      Once the bond has been paid the order can only complete forward: cancel() reverts
-  ///      with BondAlreadyPaid, so an abandoned redemption forfeits the bond.
+  ///      Once the bond has been paid, cancel() reverts with BondAlreadyPaid: the order
+  ///      either completes forward, or — while the redemption has not executed — is aborted
+  ///      via recovering() + recover() (the bond stays forfeited).
   /// @param orderId The order ID that must match the current order.
   ///        Required to prevent a stale pending transaction from targeting the wrong order.
   function unlockInstantRedeem(bytes32 orderId) external;

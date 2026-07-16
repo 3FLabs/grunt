@@ -102,7 +102,8 @@ library LibFundsErrors {
   error InstantRedeemAlreadyUnlocked();
 
   /// @notice Thrown when canceling a redeem order whose bond has already been paid; the order
-  ///         can only be completed forward (unlockInstantRedeem, then commit and unlock).
+  ///         can only be completed forward (unlockInstantRedeem, then commit and unlock) or
+  ///         aborted via recovering() and recover() (the bond stays forfeited).
   error BondAlreadyPaid();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

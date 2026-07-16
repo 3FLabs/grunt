@@ -298,6 +298,39 @@ contract MidasFundFuzzTest is Test {
     assertEq(usdc.balanceOf(address(this)), expectedProceeds, "usdc received");
   }
 
+  function testFuzz_BondedRedeemAbort_RecoverEnds(uint96 input, uint16 bondBpsSeed, uint96 refundSeed) public {
+    uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
+    uint256 bondBps = bound(uint256(bondBpsSeed), 1, 9_999);
+    uint256 refund = bound(uint256(refundSeed), 0, type(uint96).max);
+    uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
+    address bondRecipient = makeAddr("bondRecipient");
+
+    _depositAndUnlock(inputUsdc);
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: bondBps, recipient: bondRecipient}));
+
+    // Bond leg, then abort: the order is recoverable regardless of the fund's balance.
+    Order memory order = _redeemOrder(mTokenAmount, inputUsdc);
+    fund.create(order);
+    wrappedShare.approve(address(fund), mTokenAmount);
+    fund.commit(order);
+    vm.prank(owner);
+    fund.recovering(order);
+    if (refund > 0) usdc.mint(address(fund), refund);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "always recoverable");
+
+    // recover() sweeps exactly the balance (possibly zero) and ends the order.
+    (State newState, uint256 amount) = fund.recover(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, refund, "balance swept");
+    assertEq(usdc.balanceOf(address(this)), refund, "refund received");
+
+    // The bond stays forfeited; the remainder shares never left the depositor.
+    uint256 bondAmount = mTokenAmount * bondBps / 10_000;
+    assertEq(mGlobal.balanceOf(bondRecipient), bondAmount, "bond kept");
+    assertEq(wrappedShare.balanceOf(address(this)), mTokenAmount - bondAmount, "remainder shares intact");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                FUZZ: OUTPUT DEVIATION BOUNDS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -535,6 +568,15 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   function invariant_BondRecipientBalanceMatchesGhost() public view {
     // Every bond leg forwards its mToken bond to the recipient; nothing else pays it.
     assertEq(mGlobal.balanceOf(handler.bondRecipient()), handler.ghostTotalBondPaid(), "bond recipient balance");
+  }
+
+  function invariant_RecoveringRedeemAlwaysRecoverable() public view {
+    // An aborted redeem owes nothing back, so RECOVERING never falls back to PROCESSING
+    // (recover() may finalize with a zero amount at any time).
+    if (handler.internalState() != State.RECOVERING) return;
+    Order memory order = handler.getOrder();
+    if (order.mode != Mode.REDEEM) return;
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recovering redeem not recoverable");
   }
 
   function invariant_EndedRedeemLeavesNoAssetBalance() public view {

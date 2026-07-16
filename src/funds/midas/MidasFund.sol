@@ -42,10 +42,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///        returns to PROCESSING. An account with the PAYMENT_ROLE confirms via
 ///        confirmHoldback(), which only flips the holdback flag (never the lifecycle state);
 ///        the order then reports UNLOCKING even at zero balance and the next unlock() is
-///        terminal: it sweeps any remainder (possibly zero) and ends the order. A committed
+///        terminal: it sweeps any remainder (possibly zero) and ends the order. A settled
 ///        redeem cannot be recovered (the instant settlement is irreversible): confirming the
 ///        holdback — or deliberately waiving it if it never arrives — is the only completion
-///        path, so recovery is deposit-only.
+///        path. Recovery covers deposits and unsettled bonded redeems only.
 ///      - Bonded redeems ("Repay-and-Redeem"): when `bondConfig.amount > 0` at create(), a
 ///        redeem commits in two legs. The bond leg (first commit()) burns
 ///        `input * amount / BPS` wrapped shares from the depositor and forwards the unwrapped
@@ -56,8 +56,11 @@ import {BPS} from "../../libs/Constants.sol";
 ///        (second commit()) burns the remaining `input - bondPaid` shares and settles via
 ///        `redeemInstant` with the minimum output scaled proportionally; the holdback flow
 ///        applies unchanged from there. Once the bond is paid the order cannot be canceled
-///        (the bond is forfeited on abandonment): the only path is forward. With a zero bond
-///        config, redeems keep the single-commit instant flow.
+///        (the bond is forfeited on abandonment): it either completes forward, or — while the
+///        redemption has not executed — is aborted via recovering() + recover(), which ends
+///        the order (the remainder shares never left the depositor; any off-band refund is
+///        swept, possibly zero). With a zero bond config, redeems keep the single-commit
+///        instant flow.
 ///      - The Midas vault API is base-18 denominated; this contract converts the payment token
 ///        amounts from/to native decimals at the boundary.
 ///      - IMPORTANT (operations): both this fund AND the WrappedAsset must be greenlisted by Midas
@@ -299,9 +302,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     if (_internalState != State.ACCEPTED && _internalState != State.PENDING) {
       revert LibFundsErrors.InvalidState(_internalState);
     }
-    // A paid bond is forfeited on abandonment: the order can only complete forward (reachable
-    // only in the re-ACCEPTED window after unlockInstantRedeem(); the bond-phase PROCESSING
-    // state is already rejected above).
+    // A paid bond is forfeited on abandonment: the order completes forward or is aborted via
+    // recovering() + recover() (reachable only in the re-ACCEPTED window after
+    // unlockInstantRedeem(); the bond-phase PROCESSING state is already rejected above).
     if ($.bondPaid > 0) revert LibFundsErrors.BondAlreadyPaid();
 
     $.currentOrderId = bytes32(0);
@@ -405,12 +408,16 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No partial recoveries, always goes to ENDED. Only deposit orders can reach
-  ///      RECOVERING (a committed redeem settles irreversibly at commit and can only be
-  ///      completed forward via unlock() and confirmHoldback()). Recovery relies on the
-  ///      committed input being returned to this contract off-band by the Midas admin
-  ///      (e.g. via `withdrawToken`), which is also the refund path for a rejected deposit
-  ///      request.
+  /// @dev No partial recoveries, always goes to ENDED.
+  ///      - Deposit: recovery relies on the committed input being returned to this contract
+  ///        off-band by the Midas admin (e.g. via `withdrawToken`), which is also the refund
+  ///        path for a rejected deposit request.
+  ///      - Redeem: only an aborted UNSETTLED bonded redeem reaches RECOVERING (a settled
+  ///        redeem completes forward via unlock() and confirmHoldback()). Nothing is owed
+  ///        back — the remainder shares never left the depositor and the bond is forfeited —
+  ///        so this sweeps the asset balance (any off-band refund) and may be a zero-amount
+  ///        finalization call (no transfer, only ends the order; OrderRecovered fires with
+  ///        amount 0).
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
 
@@ -421,7 +428,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     (State _currentState, uint256 _amount) = _state(order);
     if (_currentState != State.RECOVERING) revert LibFundsErrors.InvalidState(_currentState);
 
-    $.asset.safeTransfer(order.receiver, _amount);
+    // Skipped at zero amount: the terminal recover of an aborted bonded redeem with no
+    // off-band refund only ends the order.
+    if (_amount > 0) $.asset.safeTransfer(order.receiver, _amount);
 
     $.internalState = State.ENDED;
 
@@ -436,15 +445,31 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IMidasFund
   function recovering(Order calldata order) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
-    // A committed redeem has already settled irreversibly on-chain via `redeemInstant`
-    // (mToken burned or swapped, payment token received), so it can only be completed
-    // forward via unlock() and confirmHoldback(). Recovery is deposit-only.
-    if (order.mode == Mode.REDEEM) revert LibFundsErrors.RecoverNotSupported();
-
     MidasFundStorage storage $ = _midasFundStorage();
     bytes32 _orderId = order.toId(address(this));
     if (_orderId != $.currentOrderId) revert LibFundsErrors.InvalidOrder(_orderId);
-    if ($.internalState != State.PROCESSING) revert LibFundsErrors.InvalidState($.internalState);
+
+    State _internalState = $.internalState;
+    if (order.mode == Mode.REDEEM) {
+      // A settled redeem (redeemInstant executed ⟺ PROCESSING with the instant redemption
+      // unlocked) has irreversibly received its payout and can only complete forward via
+      // unlock() and confirmHoldback(). An UNSETTLED bonded redeem can be aborted: in the
+      // bond phase, or re-ACCEPTED after unlockInstantRedeem() with the bond already paid.
+      // The bond is forfeited and the remainder shares never left the depositor, so the
+      // recovery only has to end the order (sweeping any off-band refund, possibly zero).
+      // An uncommitted redeem (no bond paid) is rejected: cancel() is the tool there.
+      if (
+        (_internalState != State.PROCESSING || $.instantRedeemUnlocked)
+          && (_internalState != State.ACCEPTED || $.bondPaid == 0)
+      ) {
+        revert LibFundsErrors.RecoverNotSupported();
+      }
+      // Re-lock the instant redemption so cancelRecovering() (which restores PROCESSING)
+      // always lands in the consistent bond phase, never in a fake "settled" state.
+      $.instantRedeemUnlocked = false;
+    } else if (_internalState != State.PROCESSING) {
+      revert LibFundsErrors.InvalidState(_internalState);
+    }
     $.internalState = State.RECOVERING;
 
     emit OrderRecovering(_orderId);
@@ -700,9 +725,13 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///        enforced on-chain by `redeemInstant` at commit, so resolved amounts do not affect
   ///        redeem state. The holdback confirmation decides unlock()'s terminal state.
   ///
-  ///      For RECOVERING state (set manually via recovering() after an off-band refund;
-  ///      deposit orders only, recovering() rejects redeems):
-  ///      - asset balance >= effective input → RECOVERING, PROCESSING otherwise
+  ///      For RECOVERING state (set manually via recovering()):
+  ///      - Deposit (off-band refund expected): asset balance >= effective input → RECOVERING,
+  ///        PROCESSING otherwise.
+  ///      - Redeem (aborted unsettled bonded redeem): always RECOVERING with the full asset
+  ///        balance — nothing is owed back (the remainder shares never left the depositor and
+  ///        the bond is forfeited), so recover() may finalize with a zero amount and any
+  ///        off-band refund is swept.
   ///
   ///      For all other states (EMPTY, ACCEPTED, ENDED), returns internalState directly.
   ///
@@ -765,6 +794,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
 
     if (_internalState == State.RECOVERING) {
       uint256 _amount = IERC20($.asset).balanceOf(address(this));
+      // An aborted redeem owes nothing back (the remainder shares never left the depositor;
+      // the bond is forfeited): always recoverable, sweeping any off-band refund (maybe zero).
+      if (order.mode == Mode.REDEEM) return (State.RECOVERING, _amount);
       return _amount >= _effectiveInput ? (State.RECOVERING, _amount) : (State.PROCESSING, 0);
     }
 
