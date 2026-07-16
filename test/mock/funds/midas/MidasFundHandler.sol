@@ -30,6 +30,7 @@ contract MidasFundHandler is Test {
   WrappedAsset public wrappedShare;
   MockMidasDepositVault public depositVault;
   MockMidasRedemptionVault public redemptionVault;
+  MockMidasRedemptionVault public redemptionVault2;
 
   bool public initialized;
 
@@ -48,7 +49,8 @@ contract MidasFundHandler is Test {
     MockERC20 mToken_,
     WrappedAsset wrappedShare_,
     MockMidasDepositVault depositVault_,
-    MockMidasRedemptionVault redemptionVault_
+    MockMidasRedemptionVault redemptionVault_,
+    MockMidasRedemptionVault redemptionVault2_
   ) external {
     require(!initialized, "initialized");
     initialized = true;
@@ -59,6 +61,7 @@ contract MidasFundHandler is Test {
     wrappedShare = wrappedShare_;
     depositVault = depositVault_;
     redemptionVault = redemptionVault_;
+    redemptionVault2 = redemptionVault2_;
     internalState = State.EMPTY;
   }
 
@@ -220,5 +223,12 @@ contract MidasFundHandler is Test {
   function act_unlockInstantRedeem() external {
     fund.unlockInstantRedeem(order.toId(address(fund)));
     internalState = State.ACCEPTED;
+  }
+
+  /// @dev Swaps the redemption vault between the two mock instances. Never gated on the order
+  ///      state (the redemption vault carries no per-order state): a live redeem settles
+  ///      through whichever vault is configured when its redeem leg commits.
+  function act_swapRedemptionVault(bool useSecondary) external {
+    fund.setRedemptionVault(address(useSecondary ? redemptionVault2 : redemptionVault));
   }
 }

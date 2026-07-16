@@ -245,8 +245,13 @@ interface IMidasFund is IFund {
 
   /// @notice Sets the Midas redemption vault (e.g. to switch to a dedicated instant-redemption
   ///         vault, or between the Aave and Swapper variants).
-  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
-  ///      while no order is live (internal state EMPTY or ENDED). The new vault must manage the
+  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner. Callable at
+  ///      any time, including while an order is live: the redemption vault carries no per-order
+  ///      state (unlike the deposit vault, which tracks the pending mint request), and a live
+  ///      redeem settles through the vault configured when its redeem leg commits, with the
+  ///      order's minimum output still enforced on-chain. In particular this is how the
+  ///      dedicated Repay-and-Redeem vault — deployed by Midas only once the bond is received —
+  ///      is configured while the bonded redeem is live. The new vault must manage the
   ///      same mToken, have the payment token registered, not be paused (globally or for the
   ///      commit-time function this fund calls), and (when its greenlist
   ///      is enabled) have both this fund and the wrapped share greenlisted.

@@ -55,7 +55,11 @@ import {BPS} from "../../libs/Constants.sol";
 ///        the bond for a specific order — returning the order to ACCEPTED. The redeem leg
 ///        (second commit()) burns the remaining `input - bondPaid` shares and settles via
 ///        `redeemInstant` with the minimum output scaled proportionally; the holdback flow
-///        applies unchanged from there. Once the bond is paid the order cannot be canceled
+///        applies unchanged from there. Midas deploys the dedicated Repay-and-Redeem
+///        redemption vault only once the bond is received: setRedemptionVault() is therefore
+///        not gated on a live order (the redemption vault carries no per-order state) and the
+///        redeem leg settles through whichever vault is configured when it commits. Once the
+///        bond is paid the order cannot be canceled
 ///        (the bond is forfeited on abandonment): it either completes forward, or — while the
 ///        redemption has not executed — is aborted via recovering() + recover(), which ends
 ///        the order (the remainder shares never left the depositor; any off-band refund is
@@ -561,7 +565,6 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     redemptionVault_.checkContract();
 
     MidasFundStorage storage $ = _midasFundStorage();
-    _checkNoLiveOrder($);
 
     if (IMidasRedemptionVault(redemptionVault_).mToken() != $.mToken) revert LibFundsErrors.InvalidUnderlyingAsset();
     _checkPaymentToken(redemptionVault_, $.asset);

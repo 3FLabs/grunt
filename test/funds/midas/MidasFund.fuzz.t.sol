@@ -25,6 +25,7 @@ contract MidasFundFuzzTest is Test {
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_MTOKEN = 1e18;
   uint256 private constant ASSET_SCALE = 1e12;
+  bytes4 private constant SEL_REDEEM_INSTANT = bytes4(keccak256("redeemInstant(address,uint256,uint256)"));
 
   // WrappedAsset roles
   uint256 private constant ISSUER_ROLE = 1 << 0;
@@ -331,6 +332,50 @@ contract MidasFundFuzzTest is Test {
     assertEq(wrappedShare.balanceOf(address(this)), mTokenAmount - bondAmount, "remainder shares intact");
   }
 
+  function testFuzz_BondedRedeem_VaultSwapMidOrder(uint96 input, uint16 bondBpsSeed) public {
+    uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
+    uint256 bondBps = bound(uint256(bondBpsSeed), 1, 9_999);
+    uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
+    address bondRecipient = makeAddr("bondRecipient");
+
+    _depositAndUnlock(inputUsdc);
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: bondBps, recipient: bondRecipient}));
+
+    Order memory order = _redeemOrder(mTokenAmount, inputUsdc);
+    fund.create(order);
+    wrappedShare.approve(address(fund), mTokenAmount);
+    fund.commit(order);
+
+    // The Repay-and-Redeem operational flow: Midas deploys the dedicated redemption vault
+    // only once the bond is received, so the swap lands during the bond phase.
+    MockMidasRedemptionVault newVault =
+      new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
+    newVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
+    vm.prank(owner);
+    fund.setRedemptionVault(address(newVault));
+
+    // The redeem leg settles through the new vault; the lifecycle accounting is identical to
+    // the unswapped bonded lifecycle.
+    vm.prank(owner);
+    fund.unlockInstantRedeem(order.toId(address(fund)));
+    wrappedShare.approve(address(fund), mTokenAmount);
+    uint256 bondAmount = mTokenAmount * bondBps / 10_000;
+    vm.expectCall(
+      address(newVault), abi.encodeWithSelector(SEL_REDEEM_INSTANT, address(usdc), mTokenAmount - bondAmount)
+    );
+    fund.commit(order);
+    assertEq(wrappedShare.totalSupply(), 0, "all shares burned across both legs");
+
+    vm.prank(owner);
+    fund.confirmHoldback(order.toId(address(fund)));
+    uint256 expectedProceeds = (mTokenAmount - bondAmount) / ASSET_SCALE;
+    (State newState, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(newState), uint256(State.ENDED), "ended");
+    assertEq(amount, expectedProceeds, "proceeds on the remainder");
+    assertEq(usdc.balanceOf(address(this)), expectedProceeds, "usdc received from the new vault");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                FUZZ: OUTPUT DEVIATION BOUNDS               */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -458,6 +503,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   MockMidasDataFeed public redemptionAssetFeed;
   MockMidasDepositVault public depositVault;
   MockMidasRedemptionVault public redemptionVault;
+  MockMidasRedemptionVault public redemptionVault2;
 
   MidasFundHandler public handler;
 
@@ -476,8 +522,10 @@ contract MidasFundInvariantTest is StdInvariant, Test {
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
     redemptionVault = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
+    redemptionVault2 = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
     depositVault.setTokenConfig(address(usdc), address(depositAssetFeed), 0, type(uint256).max, true);
     redemptionVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
+    redemptionVault2.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
 
     WrappedAsset implementation = new WrappedAsset();
     address proxy = LibClone.deployERC1967(address(implementation));
@@ -501,9 +549,9 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     vm.prank(owner);
     fund.grantRoles(address(handler), OPERATOR_ROLE | PAYMENT_ROLE | VAULT_MANAGER_ROLE);
 
-    handler.initialize(fund, usdc, mGlobal, wrappedShare, depositVault, redemptionVault);
+    handler.initialize(fund, usdc, mGlobal, wrappedShare, depositVault, redemptionVault, redemptionVault2);
 
-    bytes4[] memory selectors = new bytes4[](17);
+    bytes4[] memory selectors = new bytes4[](18);
     selectors[0] = handler.act_createDeposit.selector;
     selectors[1] = handler.act_createRedeem.selector;
     selectors[2] = handler.act_cancel.selector;
@@ -521,6 +569,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     selectors[14] = handler.act_setBondConfig.selector;
     selectors[15] = handler.act_unlockInstantRedeem.selector;
     selectors[16] = handler.act_removeBondConfig.selector;
+    selectors[17] = handler.act_swapRedemptionVault.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));

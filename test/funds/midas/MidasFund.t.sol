@@ -1734,17 +1734,120 @@ contract MidasFundTest is Test {
     fund.setRedemptionVault(address(bareVault));
   }
 
-  function test_SetRedemptionVault_RevertsWhenOrderLive() public {
-    MockMidasRedemptionVault newVault =
-      new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
-    newVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
+  function test_SetRedemptionVault_SucceedsWithLiveDeposit() public {
+    // Deposits never touch the redemption vault: the swap is allowed at any point of their
+    // lifecycle and the pending mint request settles unaffected.
+    MockMidasRedemptionVault newVault = _newRedemptionVault();
 
     Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
     fund.create(order);
 
     vm.prank(vaultManager);
-    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
     fund.setRedemptionVault(address(newVault));
+    assertEq(fund.redemptionVault(), address(newVault), "swapped while ACCEPTED");
+
+    _commitDeposit(order);
+    vm.prank(vaultManager);
+    fund.setRedemptionVault(address(redemptionVault));
+    assertEq(fund.redemptionVault(), address(redemptionVault), "swapped while PROCESSING");
+
+    _approveDepositRequest();
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "deposit lifecycle unaffected");
+    assertEq(amount, ONE_MTOKEN, "full mint unlocked");
+  }
+
+  function test_SetRedemptionVault_AcceptedRedeem_Succeeds() public {
+    // A zero-bond redeem created against the old vault settles through the vault configured
+    // at commit time; its min-out is carried by the order and enforced by the new vault.
+    _depositAndUnlock(ONE_USDC);
+    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
+    fund.create(order);
+
+    MockMidasRedemptionVault newVault = _newRedemptionVault();
+    vm.prank(vaultManager);
+    fund.setRedemptionVault(address(newVault));
+
+    vm.expectCall(
+      address(newVault), abi.encodeWithSelector(SEL_REDEEM_INSTANT, address(usdc), ONE_MTOKEN, ONE_USDC * ASSET_SCALE)
+    );
+    _commitRedeem(order);
+    assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "settled through the new vault");
+  }
+
+  function test_SetRedemptionVault_BondPhaseRedeem_Succeeds() public {
+    // The Repay-and-Redeem flow: Midas deploys the dedicated redemption vault only once the
+    // bond is received, so the swap lands between the two legs.
+    Order memory order = _commitBondedRedeemOrder();
+    uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
+    uint256 redeemAmount = ONE_MTOKEN - bondAmount;
+
+    MockMidasRedemptionVault newVault = _newRedemptionVault();
+    vm.prank(vaultManager);
+    fund.setRedemptionVault(address(newVault));
+    assertEq(fund.redemptionVault(), address(newVault), "swapped during the bond phase");
+
+    _unlockInstantRedeem(order);
+    vm.expectCall(
+      address(newVault),
+      abi.encodeWithSelector(SEL_REDEEM_INSTANT, address(usdc), redeemAmount, redeemAmount / ASSET_SCALE * ASSET_SCALE)
+    );
+    _commitRedeem(order);
+
+    // The full holdback lifecycle completes through the new vault's proceeds.
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.PROCESSING), "partial unlock");
+    assertEq(amount, redeemAmount / ASSET_SCALE, "remainder proceeds");
+    _confirmHoldback(order);
+    (state,) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+  }
+
+  function test_SetRedemptionVault_ReAcceptedBondedRedeem_Succeeds() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+
+    MockMidasRedemptionVault newVault = _newRedemptionVault();
+    vm.prank(vaultManager);
+    fund.setRedemptionVault(address(newVault));
+
+    uint256 redeemAmount = ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS;
+    vm.expectCall(address(newVault), abi.encodeWithSelector(SEL_REDEEM_INSTANT), 1);
+    _commitRedeem(order);
+    assertEq(usdc.balanceOf(address(fund)), redeemAmount / ASSET_SCALE, "settled through the new vault");
+  }
+
+  function test_SetRedemptionVault_SettledRedeem_Succeeds() public {
+    // After redeemInstant executed the vault is never read again for this order: the swap is
+    // harmless and the holdback flow completes unchanged.
+    Order memory order = _commitRedeemOrder();
+
+    MockMidasRedemptionVault newVault = _newRedemptionVault();
+    vm.prank(vaultManager);
+    fund.setRedemptionVault(address(newVault));
+
+    fund.unlock(order);
+    _confirmHoldback(order);
+    (State state,) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "holdback flow unaffected");
+  }
+
+  function test_SetRedemptionVault_MidOrderStillValidates() public {
+    // The vault-validity checks are not relaxed by the live order.
+    _commitBondedRedeemOrder();
+
+    MockMidasRedemptionVault pausedVault = _newRedemptionVault();
+    pausedVault.setPaused(true);
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.MidasVaultPaused.selector);
+    fund.setRedemptionVault(address(pausedVault));
+
+    MockERC20 otherToken = new MockERC20("Other", "OTH", 18);
+    MockMidasRedemptionVault badVault =
+      new MockMidasRedemptionVault(address(otherToken), address(redemptionMTokenFeed), address(midasAcl));
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
+    fund.setRedemptionVault(address(badVault));
   }
 
   function test_SetRedemptionVault_RevertsNonContract() public {
@@ -2763,6 +2866,13 @@ contract MidasFundTest is Test {
     order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
     fund.create(order);
     _commitRedeem(order);
+  }
+
+  /// @dev Deploys a fresh mock redemption vault sharing the mToken, feeds and ACL of the
+  ///      default one (the mock mints the payout, so no funding is needed).
+  function _newRedemptionVault() internal returns (MockMidasRedemptionVault newVault) {
+    newVault = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
+    newVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
   }
 
   /// @dev Sets the bond config as the vault manager (bondRecipient as recipient).
