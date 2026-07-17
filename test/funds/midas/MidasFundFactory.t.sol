@@ -14,6 +14,7 @@ import {MockERC20} from "../../mock/MockERC20.sol";
 import {MockMidasDataFeed} from "../../mock/funds/midas/MockMidasDataFeed.sol";
 import {MockMidasAccessControl} from "../../mock/funds/midas/MockMidasAccessControl.sol";
 import {MockMidasDepositVault} from "../../mock/funds/midas/MockMidasDepositVault.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
 
 contract MidasFundFactoryTest is Test {
   event FactoryDeployed();
@@ -29,6 +30,7 @@ contract MidasFundFactoryTest is Test {
   MockMidasDataFeed public depositMTokenFeed;
   MockMidasDataFeed public depositAssetFeed;
   MockMidasDepositVault public depositVault;
+  MockChainlinkOracle public oracle;
 
   address public owner;
   address public depositor;
@@ -42,6 +44,7 @@ contract MidasFundFactoryTest is Test {
     midasAcl = new MockMidasAccessControl();
     depositMTokenFeed = new MockMidasDataFeed();
     depositAssetFeed = new MockMidasDataFeed();
+    oracle = new MockChainlinkOracle(8);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
     depositVault.setTokenConfig(address(usdc), address(depositAssetFeed), 0, type(uint256).max, true);
@@ -101,22 +104,35 @@ contract MidasFundFactoryTest is Test {
 
   function test_Factory_RevertsInvalidDepositor() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, address(1), address(depositVault), address(wrappedShare), address(usdc));
+    factory.createFund(owner, address(1), address(depositVault), address(wrappedShare), address(usdc), address(oracle));
   }
 
   function test_Factory_RevertsInvalidDepositVault() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, address(1), address(wrappedShare), address(usdc));
+    factory.createFund(owner, depositor, address(1), address(wrappedShare), address(usdc), address(oracle));
   }
 
   function test_Factory_RevertsInvalidWrappedShare() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, address(depositVault), address(1), address(usdc));
+    factory.createFund(owner, depositor, address(depositVault), address(1), address(usdc), address(oracle));
   }
 
   function test_Factory_RevertsInvalidAsset() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(1));
+    factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(1), address(oracle));
+  }
+
+  function test_Factory_RevertsInvalidOracle() public {
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
+    factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(usdc), address(1));
+  }
+
+  function test_Factory_RevertsInvalidOracleDecimals() public {
+    MockChainlinkOracle invalidOracle = new MockChainlinkOracle(18);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOracle.selector, address(invalidOracle)));
+    factory.createFund(
+      owner, depositor, address(depositVault), address(wrappedShare), address(usdc), address(invalidOracle)
+    );
   }
 
   function test_Factory_RevertsWrappedShareMismatch() public {
@@ -126,10 +142,13 @@ contract MidasFundFactoryTest is Test {
     otherWrappedShare.initialize(owner, owner, address(otherToken), "wOther", "wOTH");
 
     vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
-    factory.createFund(owner, depositor, address(depositVault), address(otherWrappedShare), address(usdc));
+    factory.createFund(
+      owner, depositor, address(depositVault), address(otherWrappedShare), address(usdc), address(oracle)
+    );
   }
 
   function _createFund() internal returns (address) {
-    return factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(usdc));
+    return
+      factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(usdc), address(oracle));
   }
 }

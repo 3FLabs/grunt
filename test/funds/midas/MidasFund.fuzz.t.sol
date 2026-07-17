@@ -18,6 +18,7 @@ import {MockMidasAccessControl} from "../../mock/funds/midas/MockMidasAccessCont
 import {MockMidasDepositVault} from "../../mock/funds/midas/MockMidasDepositVault.sol";
 import {MockMidasRedemptionVault} from "../../mock/funds/midas/MockMidasRedemptionVault.sol";
 import {MidasFundHandler} from "test/mock/funds/midas/MidasFundHandler.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
 
 contract MidasFundFuzzTest is Test {
   using LibOrder for Order;
@@ -43,6 +44,7 @@ contract MidasFundFuzzTest is Test {
   MockMidasDataFeed public redemptionAssetFeed;
   MockMidasDepositVault public depositVault;
   MockMidasRedemptionVault public redemptionVault;
+  MockChainlinkOracle public oracle;
 
   address public owner;
 
@@ -56,6 +58,9 @@ contract MidasFundFuzzTest is Test {
     depositAssetFeed = new MockMidasDataFeed();
     redemptionMTokenFeed = new MockMidasDataFeed();
     redemptionAssetFeed = new MockMidasDataFeed();
+    oracle = new MockChainlinkOracle(8);
+    oracle.setRoundData(1, int256(1e8), block.timestamp, 1);
+    oracle.setLatestRound(1);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
     redemptionVault = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
@@ -69,8 +74,9 @@ contract MidasFundFuzzTest is Test {
     wrappedShare.initialize(owner, owner, address(mGlobal), "wmGLOBAL", "Wrapped mGLOBAL");
 
     factory = new MidasFundFactory(owner);
-    address fundAddr =
-      factory.createFund(owner, address(this), address(depositVault), address(wrappedShare), address(usdc));
+    address fundAddr = factory.createFund(
+      owner, address(this), address(depositVault), address(wrappedShare), address(usdc), address(oracle)
+    );
     fund = MidasFund(fundAddr);
 
     vm.prank(owner);
@@ -369,7 +375,7 @@ contract MidasFundFuzzTest is Test {
 
   function testFuzz_Create_AcceptsOutputWithinMaxDeviation(uint96 input, uint16 deviationBps) public {
     uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
-    uint256 bps = bound(uint256(deviationBps), 0, 500);
+    uint256 bps = bound(uint256(deviationBps), 0, 1000);
     // expectedOutput = inputAmount * 1e12 is always divisible by 10_000, so the
     // deviation math below is exact.
     uint256 expectedOutput = inputAmount * ASSET_SCALE;
@@ -382,7 +388,7 @@ contract MidasFundFuzzTest is Test {
 
   function testFuzz_Create_RejectsOutputBeyondMaxDeviation(uint96 input, uint16 deviationBps) public {
     uint256 inputAmount = bound(uint256(input), 1, type(uint96).max);
-    uint256 bps = bound(uint256(deviationBps), 501, 10_000);
+    uint256 bps = bound(uint256(deviationBps), 1001, 10_000);
     uint256 expectedOutput = inputAmount * ASSET_SCALE;
     uint256 output = expectedOutput * (10_000 - bps) / 10_000;
 
@@ -395,15 +401,16 @@ contract MidasFundFuzzTest is Test {
   /*                FUZZ: TOTAL ASSETS VARYING RATE             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function testFuzz_TotalAssets_VaryingMTokenRate(uint64 rawRate) public {
-    uint256 rate = bound(uint256(rawRate), 0.5e18, 2e18);
+  function testFuzz_TotalAssets_VaryingOraclePrice(uint64 rawPrice) public {
+    uint256 price = bound(uint256(rawPrice), 0.5e8, 2e8);
 
     _depositAndUnlock(ONE_USDC);
     uint256 supply = wrappedShare.totalSupply();
     assertEq(supply, ONE_MTOKEN, "supply");
 
-    depositMTokenFeed.setRate(rate);
-    uint256 expected = supply * rate / 1e18 / ASSET_SCALE;
+    oracle.setRoundData(2, int256(price), block.timestamp, 2);
+    oracle.setLatestRound(2);
+    uint256 expected = supply * price / 1e8 / ASSET_SCALE;
     assertEq(fund.totalAssets(), expected, "totalAssets");
   }
 
@@ -491,6 +498,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   MockMidasDepositVault public depositVault;
   MockMidasRedemptionVault public redemptionVault;
   MockMidasRedemptionVault public redemptionVault2;
+  MockChainlinkOracle public oracle;
 
   MidasFundHandler public handler;
 
@@ -506,6 +514,9 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     depositAssetFeed = new MockMidasDataFeed();
     redemptionMTokenFeed = new MockMidasDataFeed();
     redemptionAssetFeed = new MockMidasDataFeed();
+    oracle = new MockChainlinkOracle(8);
+    oracle.setRoundData(1, int256(1e8), block.timestamp, 1);
+    oracle.setLatestRound(1);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
     redemptionVault = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
@@ -523,8 +534,9 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     handler = new MidasFundHandler();
 
     factory = new MidasFundFactory(owner);
-    address fundAddr =
-      factory.createFund(owner, address(handler), address(depositVault), address(wrappedShare), address(usdc));
+    address fundAddr = factory.createFund(
+      owner, address(handler), address(depositVault), address(wrappedShare), address(usdc), address(oracle)
+    );
     fund = MidasFund(fundAddr);
 
     vm.prank(owner);
@@ -569,7 +581,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
 
   function invariant_TotalAssetsConsistent() public view {
     // Rates are fixed at 1e18 and the asset is stable, so:
-    // totalAssets = supply * 1e18 / 1e18 / 1e12
+    // totalAssets = supply * 1e8 / 1e8 / 1e12
     uint256 supply = wrappedShare.totalSupply();
     assertEq(fund.totalAssets(), supply / ASSET_SCALE, "totalAssets mismatch");
   }

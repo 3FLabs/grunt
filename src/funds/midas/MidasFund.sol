@@ -5,6 +5,7 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 import {IERC20} from "../../interfaces/integrations/IERC20.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
@@ -12,8 +13,8 @@ import {IMidasFund, BondConfig} from "../../interfaces/funds/midas/IMidasFund.so
 import {IMidasVault, MidasRequestStatus} from "../../interfaces/integrations/midas/IMidasVault.sol";
 import {IMidasDepositVault} from "../../interfaces/integrations/midas/IMidasDepositVault.sol";
 import {IMidasRedemptionVault} from "../../interfaces/integrations/midas/IMidasRedemptionVault.sol";
-import {IMidasDataFeed} from "../../interfaces/integrations/midas/IMidasDataFeed.sol";
 import {IMidasAccessControl} from "../../interfaces/integrations/midas/IMidasAccessControl.sol";
+import {AggregatorV3Interface} from "../../interfaces/integrations/AggregatorV3Interface.sol";
 import {IWrappedAsset} from "../../interfaces/funds/IWrappedAsset.sol";
 import {Order, State, Mode, LibOrder} from "../../libs/funds/Order.sol";
 import {LibFundsErrors} from "../../libs/funds/LibFundsErrors.sol";
@@ -51,9 +52,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///        the bond is received: create() resets the stored redemption vault to address(0), and
 ///        setRedemptionVault() — not gated on a live order (the redemption vault carries no
 ///        per-order state) — must point the fund at the fresh vault before the redeem leg
-///        commits. Consequently redeem orders are not feed-validated at create (their minimum
-///        output is enforced on-chain by `redeemInstant` at commit) and totalAssets() uses
-///        the deposit vault's data feeds, the only ones always available.
+///        commits. Consequently redeem orders are not oracle-validated at create (their minimum
+///        output is enforced on-chain by `redeemInstant` at commit). Deposit validation and
+///        totalAssets() use the configurable external mToken/USD AggregatorV3 oracle and
+///        assume the payment asset is worth exactly 1 USD.
 ///      - Once the bond is paid the order cannot be canceled (the bond is forfeited on
 ///        abandonment): it either completes forward, or — while the redemption has not
 ///        executed — is aborted via recovering() + recover(), which ends the order (the
@@ -69,6 +71,7 @@ import {BPS} from "../../libs/Constants.sol";
 contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
+  using SafeCastLib for int256;
   using LibChecks for address;
   using LibChecks for uint256;
   using LibOrder for Order;
@@ -77,10 +80,10 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Maximum allowed deviation between a deposit order output and the current rate
-  ///         (in basis points). Redeem outputs are not feed-validated (see _validateOutput).
-  /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
-  uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
+  /// @notice Maximum allowed deviation between a deposit order output and the oracle-derived
+  ///         rate (in basis points). Redeem outputs are not oracle-validated (see _validateOutput).
+  /// @dev 10_000 = 100%. E.g., 1000 = 10% max deviation below the oracle-derived output.
+  uint256 public constant MAX_OUTPUT_DEVIATION = 1000; // 10%
 
   /// @notice Maximum bond fraction of a redeem order input (in basis points).
   uint256 public constant MAX_BOND_AMOUNT = 500; // 5%
@@ -98,11 +101,14 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @notice Role for managing the Midas vaults (can be held by an EOA distinct from the operator).
   uint256 internal constant VAULT_MANAGER_ROLE = _ROLE_3;
 
-  /// @dev The Midas vault API and data feeds are denominated in base-18.
-  uint256 internal constant _BASE18 = 1e18;
-
   /// @dev mTokens are always 18 decimals.
   uint256 internal constant _MTOKEN_DECIMALS = 18;
+
+  /// @dev The mToken/USD oracle is denominated with 8 decimals.
+  uint256 internal constant _ORACLE_DECIMALS = 8;
+
+  /// @dev Scaled unit for the 8-decimal mToken/USD oracle.
+  uint256 internal constant _ORACLE_SCALED_UNIT = 10 ** _ORACLE_DECIMALS;
 
   /// @dev Midas function selectors this fund calls at commit time.
   bytes4 internal constant _DEPOSIT_REQUEST_SELECTOR = bytes4(keccak256("depositRequest(address,uint256,bytes32)"));
@@ -137,6 +143,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///        commit. Snapshot taken at create(): true for deposits, false for redeems until
   ///        unlockInstantRedeem().
   /// @param bondPaid The bond amount (in mTokens) paid for the current order; reset on create().
+  /// @param oracle The AggregatorV3-compatible mToken/USD oracle.
   struct MidasFundStorage {
     address depositVault;
     address redemptionVault;
@@ -155,6 +162,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     BondConfig bondConfig;
     bool instantRedeemUnlocked;
     uint256 bondPaid;
+    address oracle;
   }
 
   /// @dev Storage slot for the MidasFund contract's main storage struct.
@@ -184,11 +192,14 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IMidasFund
-  function initialize(address owner_, address depositor_, address depositVault_, address wrappedShare_, address asset_)
-    external
-    override
-    initializer
-  {
+  function initialize(
+    address owner_,
+    address depositor_,
+    address depositVault_,
+    address wrappedShare_,
+    address asset_,
+    address oracle_
+  ) external override initializer {
     owner_.checkNotZero();
     depositor_.checkContract();
     depositVault_.checkContract();
@@ -222,6 +233,8 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     $.asset = asset_;
     $.wrappedShare = wrappedShare_;
     $.assetScale = 10 ** (_MTOKEN_DECIMALS - _assetDecimals);
+
+    _setOracle(oracle_);
 
     _initializeOwner(owner_);
     _setRoles(depositor_, DEPOSITOR_ROLE);
@@ -587,6 +600,11 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     emit ReferrerIdUpdated(referrerId_, msg.sender);
   }
 
+  /// @inheritdoc IMidasFund
+  function setOracle(address oracle_) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
+    _setOracle(oracle_);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -642,10 +660,8 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev Converts total wrapped share supply to assets using the deposit vault's data feeds:
-  ///      the redemption vault is transient (reset to address(0) on every create and only set
-  ///      while a redemption is settling), so the issuance-side feeds are the only ones always
-  ///      available.
+  /// @dev Converts total wrapped share supply to assets using the configured mToken/USD oracle
+  ///      and assuming the payment asset is worth exactly 1 USD.
   ///      The returned value is derived from `$.wrappedShare.totalSupply()`, so when a single
   ///      `WrappedAsset` deployment backs multiple `MidasFund` instances, every instance
   ///      reports the same wrapper-wide aggregate AUM rather than AUM scoped to this fund.
@@ -654,12 +670,8 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     uint256 _supply = IERC20($.wrappedShare).totalSupply();
     if (_supply == 0) return 0;
 
-    address _depositVault = $.depositVault;
-    uint256 _mTokenRate = _getMTokenRate(_depositVault);
-    uint256 _assetRate = _getPaymentTokenRate(_depositVault, $.asset);
-
-    // shares (base-18) -> USD (base-18) -> asset (base-18) -> asset (native decimals)
-    return _supply.mulDiv(_mTokenRate, _assetRate) / $.assetScale;
+    // shares (base-18) -> USD (base-18) -> asset (native decimals), assuming 1 asset = 1 USD.
+    return _supply.mulDiv(_getOraclePrice(), _ORACLE_SCALED_UNIT) / $.assetScale;
   }
 
   /// @inheritdoc IFund
@@ -866,23 +878,19 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @dev Validates that a deposit order's output is within acceptable deviation from the
-  ///      feed-derived expected output (asset native → mToken base-18, priced by the deposit
-  ///      vault's feeds). Reverts if the output deviates negatively by more than
+  ///      oracle-derived expected output (asset native → mToken base-18), assuming the payment
+  ///      asset is worth exactly 1 USD. Reverts if the output deviates negatively by more than
   ///      MAX_OUTPUT_DEVIATION basis points. This is a create-time sanity bound only: the
   ///      actual mint amount is set by the NAV rate at which the Midas admin approves the
-  ///      request. Redeem orders are not feed-validated: their dedicated vault (and its
-  ///      redemption-side pricing, which may deviate from the issuance-side feeds by more
-  ///      than the allowed bound) does not exist at create time — the order output is the
+  ///      request. Redeem orders are not oracle-validated because their dedicated vault's
+  ///      settlement pricing may differ from the external oracle — the order output is the
   ///      minimum payout enforced on-chain by `redeemInstant` when the redeem leg commits.
   /// @param order The order to validate.
   function _validateOutput(Order calldata order) internal view {
     if (order.mode != Mode.DEPOSIT) return;
 
     MidasFundStorage storage $ = _midasFundStorage();
-    address _depositVault = $.depositVault;
-    uint256 _mTokenRate = _getMTokenRate(_depositVault);
-    uint256 _assetRate = _getPaymentTokenRate(_depositVault, $.asset);
-    uint256 _expectedOutput = (order.input * $.assetScale).mulDiv(_assetRate, _mTokenRate);
+    uint256 _expectedOutput = order.input.mulDiv($.assetScale * _ORACLE_SCALED_UNIT, _getOraclePrice());
 
     if (order.output < _expectedOutput) {
       if (_expectedOutput - order.output > _expectedOutput * MAX_OUTPUT_DEVIATION / BPS) {
@@ -891,21 +899,27 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     }
   }
 
-  /// @dev Returns the base-18 mToken/USD rate from the given vault's data feed.
-  /// @param _vault The Midas vault address.
-  function _getMTokenRate(address _vault) internal view returns (uint256) {
-    return IMidasDataFeed(IMidasVault(_vault).mTokenDataFeed()).getDataInBase18();
+  /// @dev Returns the validated 8-decimal mToken/USD oracle price.
+  function _getOraclePrice() internal view returns (uint256) {
+    AggregatorV3Interface _oracle = AggregatorV3Interface(_midasFundStorage().oracle);
+    (uint80 _roundId, int256 _answer,, uint256 _updatedAt, uint80 _answeredInRound) = _oracle.latestRoundData();
+
+    if (_answer <= 0) revert LibFundsErrors.ChainlinkInvalidAnswer();
+    if (_updatedAt == 0) revert LibFundsErrors.ChainlinkIncompleteRound();
+    if (_answeredInRound < _roundId) revert LibFundsErrors.ChainlinkStaleRound();
+
+    return _answer.toUint256();
   }
 
-  /// @dev Returns the base-18 payment-token/USD rate from the given vault's token config.
-  ///      Mirrors the Midas vault pricing: tokens flagged as stable are priced at a constant 1 USD.
-  /// @param _vault The Midas vault address.
-  /// @param _token The payment token address.
-  function _getPaymentTokenRate(address _vault, address _token) internal view returns (uint256) {
-    (address _dataFeed,,, bool _stable) = IMidasVault(_vault).tokensConfig(_token);
-    if (_dataFeed == address(0)) revert LibFundsErrors.TokenNotSupported(_token);
-    if (_stable) return _BASE18;
-    return IMidasDataFeed(_dataFeed).getDataInBase18();
+  /// @dev Validates and stores an 8-decimal AggregatorV3-compatible oracle.
+  function _setOracle(address oracle_) private {
+    oracle_.checkContract();
+    if (AggregatorV3Interface(oracle_).decimals() != _ORACLE_DECIMALS) {
+      revert LibFundsErrors.InvalidOracle(oracle_);
+    }
+
+    _midasFundStorage().oracle = oracle_;
+    emit OracleUpdated(oracle_, msg.sender);
   }
 
   /// @dev Reverts if the vault would reject operations from this fund:

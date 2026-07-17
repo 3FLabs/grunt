@@ -18,6 +18,7 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///        greenlist is enabled or the mToken is permissioned (e.g. mGLOBAL);
 ///      - the fund owner grants OPERATOR_ROLE / PAYMENT_ROLE / VAULT_MANAGER_ROLE to the
 ///        relevant accounts;
+///      - the fund owner or operator can rotate the mToken/USD oracle via `setOracle`;
 ///      - the fund owner or vault manager sets the bond config via `setBondConfig` when Midas
 ///        requires the Repay-and-Redeem bond (the bond recipient must be greenlisted for
 ///        permissioned mTokens).
@@ -42,13 +43,18 @@ contract MidasFundFactory {
   /// @param depositVault The Midas DepositVault (issuance vault) proxy address.
   /// @param wrappedShare The WrappedAsset contract wrapping the mToken.
   /// @param asset The payment token used for deposits and redemptions (e.g. USDC).
+  /// @param oracle The 8-decimal AggregatorV3-compatible mToken/USD oracle.
   /// @return fund The address of the newly deployed fund.
-  function createFund(address owner, address depositor, address depositVault, address wrappedShare, address asset)
-    external
-    returns (address fund)
-  {
+  function createFund(
+    address owner,
+    address depositor,
+    address depositVault,
+    address wrappedShare,
+    address asset,
+    address oracle
+  ) external returns (address fund) {
     fund = MIDAS_FUND_BEACON.deployERC1967BeaconProxy();
-    MidasFund(fund).initialize(owner, depositor, depositVault, wrappedShare, asset);
+    MidasFund(fund).initialize(owner, depositor, depositVault, wrappedShare, asset, oracle);
     emit FundCreated(fund, depositVault);
   }
 }

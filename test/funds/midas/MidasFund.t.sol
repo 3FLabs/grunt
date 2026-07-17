@@ -16,6 +16,7 @@ import {MockMidasDataFeed} from "../../mock/funds/midas/MockMidasDataFeed.sol";
 import {MockMidasAccessControl} from "../../mock/funds/midas/MockMidasAccessControl.sol";
 import {MockMidasDepositVault} from "../../mock/funds/midas/MockMidasDepositVault.sol";
 import {MockMidasRedemptionVault} from "../../mock/funds/midas/MockMidasRedemptionVault.sol";
+import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
 
 contract MidasFundTest is Test {
   using LibOrder for Order;
@@ -39,6 +40,7 @@ contract MidasFundTest is Test {
   event DepositVaultUpdated(address indexed depositVault, address indexed operator);
   event RedemptionVaultUpdated(address indexed redemptionVault, address indexed operator);
   event ReferrerIdUpdated(bytes32 referrerId, address indexed operator);
+  event OracleUpdated(address indexed newOracle, address indexed operator);
 
   uint256 private constant ONE_USDC = 1e6;
   uint256 private constant ONE_MTOKEN = 1e18;
@@ -74,6 +76,7 @@ contract MidasFundTest is Test {
   MockMidasDataFeed public redemptionAssetFeed;
   MockMidasDepositVault public depositVault;
   MockMidasRedemptionVault public redemptionVault;
+  MockChainlinkOracle public oracle;
 
   address public owner;
   address public operator;
@@ -97,6 +100,9 @@ contract MidasFundTest is Test {
     depositAssetFeed = new MockMidasDataFeed();
     redemptionMTokenFeed = new MockMidasDataFeed();
     redemptionAssetFeed = new MockMidasDataFeed();
+    oracle = new MockChainlinkOracle(8);
+    oracle.setRoundData(1, int256(1e8), block.timestamp, 1);
+    oracle.setLatestRound(1);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
     redemptionVault = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
@@ -110,8 +116,9 @@ contract MidasFundTest is Test {
     wrappedShare.initialize(owner, owner, address(mGlobal), "wmGLOBAL", "Wrapped mGLOBAL");
 
     factory = new MidasFundFactory(owner);
-    address fundAddress =
-      factory.createFund(owner, address(this), address(depositVault), address(wrappedShare), address(usdc));
+    address fundAddress = factory.createFund(
+      owner, address(this), address(depositVault), address(wrappedShare), address(usdc), address(oracle)
+    );
     fund = MidasFund(fundAddress);
 
     vm.prank(owner);
@@ -149,31 +156,54 @@ contract MidasFundTest is Test {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(CommonErrors.AddressZero.selector);
     MidasFund(fundProxy)
-      .initialize(address(0), address(this), address(depositVault), address(wrappedShare), address(usdc));
+      .initialize(
+        address(0), address(this), address(depositVault), address(wrappedShare), address(usdc), address(oracle)
+      );
   }
 
   function test_Initialize_RevertsInvalidDepositor() public {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
-    MidasFund(fundProxy).initialize(owner, address(0xBEEF), address(depositVault), address(wrappedShare), address(usdc));
+    MidasFund(fundProxy)
+      .initialize(owner, address(0xBEEF), address(depositVault), address(wrappedShare), address(usdc), address(oracle));
   }
 
   function test_Initialize_RevertsInvalidDepositVault() public {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
-    MidasFund(fundProxy).initialize(owner, address(this), address(0xBEEF), address(wrappedShare), address(usdc));
+    MidasFund(fundProxy)
+      .initialize(owner, address(this), address(0xBEEF), address(wrappedShare), address(usdc), address(oracle));
   }
 
   function test_Initialize_RevertsInvalidWrappedShare() public {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
-    MidasFund(fundProxy).initialize(owner, address(this), address(depositVault), address(0xBEEF), address(usdc));
+    MidasFund(fundProxy)
+      .initialize(owner, address(this), address(depositVault), address(0xBEEF), address(usdc), address(oracle));
   }
 
   function test_Initialize_RevertsInvalidAsset() public {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
-    MidasFund(fundProxy).initialize(owner, address(this), address(depositVault), address(wrappedShare), address(0xBEEF));
+    MidasFund(fundProxy)
+      .initialize(owner, address(this), address(depositVault), address(wrappedShare), address(0xBEEF), address(oracle));
+  }
+
+  function test_Initialize_RevertsInvalidOracleContract() public {
+    address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
+    MidasFund(fundProxy)
+      .initialize(owner, address(this), address(depositVault), address(wrappedShare), address(usdc), address(0xBEEF));
+  }
+
+  function test_Initialize_RevertsInvalidOracleDecimals() public {
+    MockChainlinkOracle invalidOracle = new MockChainlinkOracle(18);
+    address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOracle.selector, address(invalidOracle)));
+    MidasFund(fundProxy)
+      .initialize(
+        owner, address(this), address(depositVault), address(wrappedShare), address(usdc), address(invalidOracle)
+      );
   }
 
   function test_Initialize_RevertsWrappedShareMismatch() public {
@@ -185,7 +215,7 @@ contract MidasFundTest is Test {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
     MidasFund(fundProxy)
-      .initialize(owner, address(this), address(depositVault), address(badWrappedShare), address(usdc));
+      .initialize(owner, address(this), address(depositVault), address(badWrappedShare), address(usdc), address(oracle));
   }
 
   function test_Initialize_RevertsMTokenDecimalsMismatch() public {
@@ -198,7 +228,8 @@ contract MidasFundTest is Test {
 
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.DecimalsMismatch.selector, 8, 18));
-    MidasFund(fundProxy).initialize(owner, address(this), address(depositVault8), address(wrappedShare8), address(usdc));
+    MidasFund(fundProxy)
+      .initialize(owner, address(this), address(depositVault8), address(wrappedShare8), address(usdc), address(oracle));
   }
 
   function test_Initialize_RevertsAssetDecimalsTooHigh() public {
@@ -207,7 +238,7 @@ contract MidasFundTest is Test {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.DecimalsMismatch.selector, 20, 18));
     MidasFund(fundProxy)
-      .initialize(owner, address(this), address(depositVault), address(wrappedShare), address(asset20));
+      .initialize(owner, address(this), address(depositVault), address(wrappedShare), address(asset20), address(oracle));
   }
 
   function test_Initialize_RevertsTokenNotSupportedOnDepositVault() public {
@@ -217,12 +248,14 @@ contract MidasFundTest is Test {
     address fundProxy = LibClone.deployERC1967BeaconProxy(factory.MIDAS_FUND_BEACON());
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.TokenNotSupported.selector, address(usdc)));
     MidasFund(fundProxy)
-      .initialize(owner, address(this), address(bareDepositVault), address(wrappedShare), address(usdc));
+      .initialize(
+        owner, address(this), address(bareDepositVault), address(wrappedShare), address(usdc), address(oracle)
+      );
   }
 
   function test_Initialize_OnlyOnce() public {
     vm.expectRevert(InvalidInitialization.selector);
-    fund.initialize(owner, address(this), address(depositVault), address(wrappedShare), address(usdc));
+    fund.initialize(owner, address(this), address(depositVault), address(wrappedShare), address(usdc), address(oracle));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -413,14 +446,14 @@ contract MidasFundTest is Test {
 
   function test_Create_RevertsInvalidOutput_Deposit() public {
     // At 1:1 rates, depositing ONE_USDC should yield ONE_MTOKEN.
-    // Setting output to ONE_MTOKEN / 2 is a 50% deviation — well beyond the 5% max.
+    // Setting output to ONE_MTOKEN / 2 is a 50% deviation — well beyond the 10% max.
     Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN / 2);
     vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
     fund.create(order);
   }
 
   function test_Create_Redeem_OutputNotFeedValidated() public {
-    // Redeem outputs are not feed-validated at create: the per-redemption vault (and its
+    // Redeem outputs are not oracle-validated at create: the per-redemption vault (and its
     // redemption-side pricing) does not exist yet. The output is the minimum payout enforced
     // on-chain by redeemInstant when the redeem leg commits.
     Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC / 2);
@@ -429,8 +462,8 @@ contract MidasFundTest is Test {
   }
 
   function test_Create_AcceptsOutputWithinDeviation() public {
-    // 96% of ONE_MTOKEN is within the 5% max deviation.
-    Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN * 96 / 100);
+    // 90% of ONE_MTOKEN is within the 10% max deviation.
+    Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN * 90 / 100);
     State state = fund.create(order);
     assertEq(uint256(state), uint256(State.ACCEPTED), "accepted within deviation");
   }
@@ -442,17 +475,19 @@ contract MidasFundTest is Test {
     assertEq(uint256(state), uint256(State.ACCEPTED), "accepted above rate");
   }
 
-  function test_Create_Deposit_UsesDepositVaultFeeds() public {
-    // Absurd redemption-side rate must not affect DEPOSIT validation.
+  function test_Create_Deposit_UsesOracleAndIgnoresVaultFeeds() public {
+    // Vault-side mToken rates do not affect the fund's create-time sanity check.
+    depositMTokenFeed.setRate(100e18);
     redemptionMTokenFeed.setRate(100e18);
-    // Deposit mToken rate 2e18: expected output = 1e18 * 1e18 / 2e18 = 0.5e18 per USDC.
-    depositMTokenFeed.setRate(2e18);
+    // Oracle price 2 USD: expected output = 0.5e18 mToken per USDC.
+    oracle.setRoundData(2, int256(2e8), block.timestamp, 2);
+    oracle.setLatestRound(2);
 
     Order memory tooLow = _depositOrder(ONE_USDC, 0.4e18);
     vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
     fund.create(tooLow);
 
-    Order memory withinDeviation = _depositOrder(ONE_USDC, 0.475e18); // 95% of 0.5e18
+    Order memory withinDeviation = _depositOrder(ONE_USDC, 0.45e18); // 90% of 0.5e18
     State state = fund.create(withinDeviation);
     assertEq(uint256(state), uint256(State.ACCEPTED), "accepted");
   }
@@ -468,18 +503,45 @@ contract MidasFundTest is Test {
     assertEq(uint256(state), uint256(State.ACCEPTED), "accepted regardless of feeds");
   }
 
-  function test_Create_NonStableAssetUsesAssetFeed() public {
-    // Flag the asset as non-stable, worth 2 USD: expected output = 2e18 per USDC.
+  function test_Create_AssumesPaymentAssetIsOneUsd() public {
+    // Vault payment-token pricing is ignored even when the token is flagged as non-stable.
     depositVault.setTokenConfig(address(usdc), address(depositAssetFeed), 0, type(uint256).max, false);
     depositAssetFeed.setRate(2e18);
 
-    Order memory tooLow = _depositOrder(ONE_USDC, ONE_MTOKEN);
+    Order memory tooLow = _depositOrder(ONE_USDC, ONE_MTOKEN * 89 / 100);
     vm.expectRevert(LibFundsErrors.InvalidOutput.selector);
     fund.create(tooLow);
 
-    Order memory matching = _depositOrder(ONE_USDC, 2e18);
+    Order memory matching = _depositOrder(ONE_USDC, ONE_MTOKEN);
     State state = fund.create(matching);
     assertEq(uint256(state), uint256(State.ACCEPTED), "accepted");
+  }
+
+  function test_Create_RevertsChainlinkInvalidAnswer() public {
+    oracle.setRoundData(2, 0, block.timestamp, 2);
+    oracle.setLatestRound(2);
+    vm.expectRevert(LibFundsErrors.ChainlinkInvalidAnswer.selector);
+    fund.create(_depositOrder(ONE_USDC, ONE_MTOKEN));
+  }
+
+  function test_Create_RevertsChainlinkIncompleteRound() public {
+    oracle.setRoundData(2, int256(1e8), 0, 2);
+    oracle.setLatestRound(2);
+    vm.expectRevert(LibFundsErrors.ChainlinkIncompleteRound.selector);
+    fund.create(_depositOrder(ONE_USDC, ONE_MTOKEN));
+  }
+
+  function test_Create_RevertsChainlinkStaleRound() public {
+    oracle.setRoundData(2, int256(1e8), block.timestamp, 1);
+    oracle.setLatestRound(2);
+    vm.expectRevert(LibFundsErrors.ChainlinkStaleRound.selector);
+    fund.create(_depositOrder(ONE_USDC, ONE_MTOKEN));
+  }
+
+  function test_Create_AcceptsOldCompletedOracleRound() public {
+    oracle.setRoundData(2, int256(1e8), 1, 2);
+    oracle.setLatestRound(2);
+    assertEq(uint256(fund.create(_depositOrder(ONE_USDC, ONE_MTOKEN))), uint256(State.ACCEPTED), "accepted");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1719,6 +1781,49 @@ contract MidasFundTest is Test {
     fund.setReferrerId(bytes32(0));
   }
 
+  function test_SetOracle_OwnerSuccess() public {
+    MockChainlinkOracle newOracle = new MockChainlinkOracle(8);
+    newOracle.setRoundData(1, int256(2e8), block.timestamp, 1);
+    newOracle.setLatestRound(1);
+
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit OracleUpdated(address(newOracle), owner);
+    fund.setOracle(address(newOracle));
+
+    // The new 2 USD price is used immediately.
+    fund.create(_depositOrder(ONE_USDC, 0.5e18));
+  }
+
+  function test_SetOracle_OperatorSuccessDuringLiveOrder() public {
+    fund.create(_redeemOrder(ONE_MTOKEN, ONE_USDC));
+    MockChainlinkOracle newOracle = new MockChainlinkOracle(8);
+
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    vm.prank(operator);
+    fund.setOracle(address(newOracle));
+  }
+
+  function test_SetOracle_RevertsInvalidContract() public {
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0xBEEF)));
+    fund.setOracle(address(0xBEEF));
+  }
+
+  function test_SetOracle_RevertsInvalidDecimals() public {
+    MockChainlinkOracle invalidOracle = new MockChainlinkOracle(18);
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidOracle.selector, address(invalidOracle)));
+    fund.setOracle(address(invalidOracle));
+  }
+
+  function test_SetOracle_OnlyOwnerOrOperator() public {
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.setOracle(address(oracle));
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -1738,24 +1843,34 @@ contract MidasFundTest is Test {
     assertEq(fund.totalAssets(), 0, "zero supply");
   }
 
-  function test_TotalAssets_UsesDepositFeeds() public {
+  function test_TotalAssets_UsesOracleAndIgnoresVaultFeeds() public {
     _depositAndUnlock(ONE_USDC);
 
-    // supply (1e18) * mTokenRate (1e18) / assetRate (1e18, stable) / 1e12 = 1e6
+    // supply (1e18) * oracle price (1e8) / 1e8 / 1e12 = 1e6
     assertEq(fund.totalAssets(), ONE_USDC, "totalAssets at 1:1");
 
-    // The deposit-side mToken rate drives the valuation (the redemption vault is transient).
-    depositMTokenFeed.setRate(1.5e18);
+    oracle.setRoundData(2, int256(1.5e8), block.timestamp, 2);
+    oracle.setLatestRound(2);
     assertEq(fund.totalAssets(), ONE_USDC * 15 / 10, "totalAssets at 1.5x");
 
-    // Redemption-side rates are ignored
+    // Both vault mToken feeds are ignored.
+    depositMTokenFeed.setRate(4e18);
     redemptionMTokenFeed.setRate(3e18);
-    assertEq(fund.totalAssets(), ONE_USDC * 15 / 10, "redemption feed ignored");
+    assertEq(fund.totalAssets(), ONE_USDC * 15 / 10, "mToken vault feeds ignored");
 
-    // Non-stable asset: the deposit-side asset feed is used
+    // The payment asset is assumed to be worth 1 USD, regardless of its vault configuration.
     depositVault.setTokenConfig(address(usdc), address(depositAssetFeed), 0, type(uint256).max, false);
     depositAssetFeed.setRate(2e18);
-    assertEq(fund.totalAssets(), ONE_USDC * 15 / 20, "totalAssets with asset at 2 USD");
+    assertEq(fund.totalAssets(), ONE_USDC * 15 / 10, "payment-token feed ignored");
+  }
+
+  function test_TotalAssets_RevertsInvalidOracleRound() public {
+    _depositAndUnlock(ONE_USDC);
+    oracle.setRoundData(2, -1, block.timestamp, 2);
+    oracle.setLatestRound(2);
+
+    vm.expectRevert(LibFundsErrors.ChainlinkInvalidAnswer.selector);
+    fund.totalAssets();
   }
 
   function test_MaxDeposit_ReturnsDepositorBalance() public {
@@ -2636,8 +2751,11 @@ contract MidasFundTest is Test {
     depositVault.setTokenConfig(address(dai), address(daiDepositFeed), 0, type(uint256).max, true);
     redemptionVault.setTokenConfig(address(dai), address(daiRedemptionFeed), 0, type(uint256).max, true);
 
-    MidasFund daiFund =
-      MidasFund(factory.createFund(owner, address(this), address(depositVault), address(wrappedShare), address(dai)));
+    MidasFund daiFund = MidasFund(
+      factory.createFund(
+        owner, address(this), address(depositVault), address(wrappedShare), address(dai), address(oracle)
+      )
+    );
     vm.prank(owner);
     wrappedShare.grantRoles(address(daiFund), ISSUER_ROLE);
 

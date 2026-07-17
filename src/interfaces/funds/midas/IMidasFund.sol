@@ -120,6 +120,11 @@ interface IMidasFund is IFund {
   /// @param operator The address that updated the referrer id.
   event ReferrerIdUpdated(bytes32 referrerId, address indexed operator);
 
+  /// @notice Emitted when the mToken/USD oracle is updated.
+  /// @param newOracle The new AggregatorV3-compatible oracle.
+  /// @param operator The account that updated the oracle.
+  event OracleUpdated(address indexed newOracle, address indexed operator);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -134,8 +139,15 @@ interface IMidasFund is IFund {
   /// @param depositVault_ The Midas DepositVault (issuance vault) proxy address.
   /// @param wrappedShare_ The WrappedAsset contract wrapping the mToken.
   /// @param asset_ The payment token used for deposits and redemptions (e.g. USDC).
-  function initialize(address owner_, address depositor_, address depositVault_, address wrappedShare_, address asset_)
-    external;
+  /// @param oracle_ The 8-decimal AggregatorV3-compatible mToken/USD oracle.
+  function initialize(
+    address owner_,
+    address depositor_,
+    address depositVault_,
+    address wrappedShare_,
+    address asset_,
+    address oracle_
+  ) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       ADMINISTRATION                       */
@@ -262,6 +274,12 @@ interface IMidasFund is IFund {
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
   /// @param referrerId_ The new referrer id.
   function setReferrerId(bytes32 referrerId_) external;
+
+  /// @notice Sets the mToken/USD oracle.
+  /// @dev Can be called by the owner or an account with OPERATOR_ROLE, including while an order
+  ///      is live. The oracle must be a contract exposing 8-decimal AggregatorV3 data.
+  /// @param oracle_ The new oracle address.
+  function setOracle(address oracle_) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */

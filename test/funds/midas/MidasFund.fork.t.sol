@@ -13,6 +13,7 @@ import {IERC20} from "src/interfaces/integrations/IERC20.sol";
 import {IMidasVault, MidasRequestStatus} from "src/interfaces/integrations/midas/IMidasVault.sol";
 import {IMidasDepositVault} from "src/interfaces/integrations/midas/IMidasDepositVault.sol";
 import {IMidasDataFeed} from "src/interfaces/integrations/midas/IMidasDataFeed.sol";
+import {AggregatorV3Interface} from "src/interfaces/integrations/AggregatorV3Interface.sol";
 
 /// @dev Admin surface of the Midas vaults used in fork tests (not part of the src interfaces).
 interface IMidasVaultAdminFork {
@@ -55,6 +56,7 @@ contract MidasFundForkTest is Test {
   address constant REDEMPTION_VAULT_AAVE = 0xA0Fc8BDFb1E6a705C1375810989B1d70a982b01B;
   address constant REDEMPTION_VAULT_SWAPPER = 0x1e0fd66753198c7b8bA64edEe8d41D8628Bf20D7;
   address constant MIDAS_ACCESS_CONTROL = 0x0312A9D1Ff2372DDEdCBB21e4B6389aFc919aC4B;
+  address constant MGLOBAL_ORACLE = 0x66Aa9fcD63DF74e1f67A9452E6E59Fbc67f75E38;
   address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
   /// @dev EOA holding DEFAULT_ADMIN_ROLE on the MidasAccessControl at the pinned block.
@@ -107,7 +109,8 @@ contract MidasFundForkTest is Test {
 
     // Deploy fund via factory (no redemption vault: one is set per redemption)
     factory = new MidasFundFactory(owner);
-    address fundAddress = factory.createFund(owner, address(this), DEPOSIT_VAULT, address(wrappedShare), USDC);
+    address fundAddress =
+      factory.createFund(owner, address(this), DEPOSIT_VAULT, address(wrappedShare), USDC, MGLOBAL_ORACLE);
     fund = MidasFund(fundAddress);
 
     // Grant roles on wrappedShare
@@ -160,9 +163,12 @@ contract MidasFundForkTest is Test {
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
 
-    // Approve at the snapshotted rate → mints mGLOBAL directly to the fund
+    assertGt(tokenOutRate, _oracleRateBase18(), "vault snapshot differs from external oracle");
+
+    // The Midas admin approves at the external oracle rate used by the fund.
+    uint256 oracleRate = _oracleRateBase18();
     vm.prank(midasAdmin);
-    IMidasVaultAdminFork(DEPOSIT_VAULT).approveRequest(requestId, tokenOutRate);
+    IMidasVaultAdminFork(DEPOSIT_VAULT).approveRequest(requestId, oracleRate);
 
     (,, status,,,) = IMidasDepositVault(DEPOSIT_VAULT).mintRequests(requestId);
     assertEq(uint256(status), uint256(MidasRequestStatus.PROCESSED), "request processed");
@@ -535,7 +541,8 @@ contract MidasFundForkTest is Test {
     WrappedAsset wrappedShare2 = WrappedAsset(LibClone.deployERC1967(address(implementation)));
     wrappedShare2.initialize(owner, owner, MGLOBAL, "wmGLOBAL2", "Wrapped mGLOBAL 2");
 
-    MidasFund fund2 = MidasFund(factory.createFund(owner, address(this), DEPOSIT_VAULT, address(wrappedShare2), USDC));
+    MidasFund fund2 =
+      MidasFund(factory.createFund(owner, address(this), DEPOSIT_VAULT, address(wrappedShare2), USDC, MGLOBAL_ORACLE));
 
     Order memory order = _depositOrder(DEPOSIT_AMOUNT, _haircut(_expectedDepositShares(DEPOSIT_AMOUNT)));
 
@@ -556,15 +563,14 @@ contract MidasFundForkTest is Test {
 
     _doFullDeposit(DEPOSIT_AMOUNT);
 
-    // totalAssets values the wrapper supply at the deposit-side feed (the redemption vault is
-    // transient: unset except while a redemption is settling).
+    // totalAssets values the wrapper supply through the external mGLOBAL/USD oracle.
     uint256 supply = wrappedShare.totalSupply();
-    uint256 depositRate = IMidasDataFeed(IMidasVault(DEPOSIT_VAULT).mTokenDataFeed()).getDataInBase18();
-    uint256 expectedTotalAssets = (supply * depositRate / 1e18) / SCALE;
+    uint256 oraclePrice = _oraclePrice();
+    uint256 expectedTotalAssets = (supply * oraclePrice / 1e8) / SCALE;
 
     assertGt(fund.totalAssets(), 0, "totalAssets non-zero");
-    assertEq(fund.totalAssets(), expectedTotalAssets, "totalAssets matches supply * deposit rate");
-    // The shares were minted at the same deposit-side rate → valuation ≈ deposited amount.
+    assertEq(fund.totalAssets(), expectedTotalAssets, "totalAssets matches supply * oracle price");
+    // The shares were minted at the same external oracle rate → valuation ≈ deposited amount.
     assertApproxEqRel(fund.totalAssets(), DEPOSIT_AMOUNT, 0.001e18, "valuation matches deposited amount");
   }
 
@@ -586,12 +592,19 @@ contract MidasFundForkTest is Test {
     }
   }
 
-  /// @dev Expected base-18 mGLOBAL amount minted for a native-decimals USDC deposit,
-  ///      priced with the deposit vault's own (higher) mToken feed. USDC is flagged
-  ///      stable on the vault, so its rate is a constant 1e18.
+  /// @dev Expected base-18 mGLOBAL amount for a native-decimals USDC deposit, priced with
+  ///      the external 8-decimal mGLOBAL/USD oracle and assuming 1 USDC = 1 USD.
   function _expectedDepositShares(uint256 usdcAmount) internal view returns (uint256) {
-    uint256 mTokenRate = IMidasDataFeed(IMidasVault(DEPOSIT_VAULT).mTokenDataFeed()).getDataInBase18();
-    return (usdcAmount * SCALE) * 1e18 / mTokenRate;
+    return (usdcAmount * SCALE) * 1e8 / _oraclePrice();
+  }
+
+  function _oraclePrice() internal view returns (uint256) {
+    (, int256 answer,,,) = AggregatorV3Interface(MGLOBAL_ORACLE).latestRoundData();
+    return uint256(answer);
+  }
+
+  function _oracleRateBase18() internal view returns (uint256) {
+    return _oraclePrice() * 1e10;
   }
 
   /// @dev Expected native-decimals USDC amount for a base-18 mGLOBAL redemption,
@@ -602,7 +615,7 @@ contract MidasFundForkTest is Test {
   }
 
   /// @dev 0.1% haircut applied to feed-derived outputs so orders clear both the fund's
-  ///      5% deviation guard and the Midas minReceiveAmount check despite rounding.
+  ///      10% deviation guard and the Midas minReceiveAmount check despite rounding.
   function _haircut(uint256 amount) internal pure returns (uint256) {
     return amount * 9990 / BPS;
   }
@@ -616,9 +629,9 @@ contract MidasFundForkTest is Test {
     fund.commit(order);
 
     uint256 requestId = fund.activeRequestId();
-    (,,,,, uint256 tokenOutRate) = IMidasDepositVault(DEPOSIT_VAULT).mintRequests(requestId);
+    uint256 oracleRate = _oracleRateBase18();
     vm.prank(midasAdmin);
-    IMidasVaultAdminFork(DEPOSIT_VAULT).approveRequest(requestId, tokenOutRate);
+    IMidasVaultAdminFork(DEPOSIT_VAULT).approveRequest(requestId, oracleRate);
 
     (, shares) = fund.unlock(order);
   }
