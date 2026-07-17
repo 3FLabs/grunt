@@ -183,9 +183,10 @@ contract MidasFundHandler is Test {
   }
 
   function act_recovering() external {
-    // Succeeds for PROCESSING deposits and unsettled bonded redeems (bond phase, or
-    // re-ACCEPTED with the bond paid); reverts otherwise (RecoverNotSupported /
-    // InvalidState) and the model only advances on success.
+    // Succeeds for PROCESSING deposits that are not yet claimable (an approved mint request
+    // makes recovering() revert) and unsettled bonded redeems (bond phase, or re-ACCEPTED
+    // with the bond paid); reverts otherwise (RecoverNotSupported / InvalidState) and the
+    // model only advances on success.
     fund.recovering(order);
     internalState = State.RECOVERING;
   }

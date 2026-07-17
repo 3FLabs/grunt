@@ -159,6 +159,10 @@ interface IMidasFund is IFund {
   ///        input off-band (e.g. via `withdrawToken`). Once set to RECOVERING, the state()
   ///        function will check if recovery funds (original input) have been returned. If
   ///        yes, it shows RECOVERING. If no, it falls back to PROCESSING.
+  ///        Reverts with InvalidState(UNLOCKING) for a settled deposit (mint request
+  ///        approved, mTokens claimable): the payout completes forward via unlock(). If the
+  ///        approval lands only after flagging, the order reports PROCESSING until
+  ///        cancelRecovering() restores the claimable state.
   ///      - Redeem orders: only an UNSETTLED bonded redeem can be flagged — in the bond
   ///        phase (bond leg committed, instant redemption locked), or re-ACCEPTED after
   ///        unlockInstantRedeem() with the bond already paid. This is the abort path for a

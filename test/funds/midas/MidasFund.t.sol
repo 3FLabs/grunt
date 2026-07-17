@@ -1183,6 +1183,43 @@ contract MidasFundTest is Test {
     fund.recovering(order);
   }
 
+  function test_Recovering_RevertsForSettledDeposit() public {
+    // A settled deposit (mint request approved, mTokens claimable) completes forward via
+    // unlock(): flagging it would only park the payout.
+    Order memory order = _createAndCommitDeposit();
+    _approveDepositRequest();
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "claimable");
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.UNLOCKING));
+    fund.recovering(order);
+
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, ONE_MTOKEN, "payout claimed");
+  }
+
+  function test_Recovering_ApprovedWhileRecovering_CancelRestoresUnlock() public {
+    // The guard cannot see an approval that lands after flagging: the order then reports
+    // PROCESSING (asset balance short of the input) and parks until cancelRecovering().
+    Order memory order = _createAndCommitDeposit();
+    vm.prank(owner);
+    fund.recovering(order);
+    _approveDepositRequest();
+
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "parked");
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
+    fund.unlock(order);
+
+    // cancelRecovering() restores the stored PROCESSING state and the claimable payout.
+    vm.prank(owner);
+    fund.cancelRecovering(order.toId(address(fund)));
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "claimable again");
+    (State state, uint256 amount) = fund.unlock(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, ONE_MTOKEN, "payout claimed");
+  }
+
   function test_Recovering_RevertsForSettledRedeem() public {
     // A settled redeem already received its payout irreversibly via redeemInstant: it must
     // be completed via the terminal unlock().

@@ -476,8 +476,14 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
       // Re-lock the instant redemption so cancelRecovering() (which restores PROCESSING)
       // always lands in the consistent bond phase, never in a fake "settled" state.
       $.instantRedeemUnlocked = false;
-    } else if (_internalState != State.PROCESSING) {
-      revert LibFundsErrors.InvalidState(_internalState);
+    } else {
+      if (_internalState != State.PROCESSING) revert LibFundsErrors.InvalidState(_internalState);
+      // A settled deposit (mint request approved, mTokens claimable) completes forward via
+      // unlock(): flagging it would park the payout behind cancelRecovering() and let a
+      // stray asset balance wrongly finalize the order via recover(). If the approval lands
+      // only after flagging, cancelRecovering() restores the claimable state.
+      (State _dynamicState,) = _state(order);
+      if (_dynamicState == State.UNLOCKING) revert LibFundsErrors.InvalidState(_dynamicState);
     }
     $.internalState = State.RECOVERING;
 
