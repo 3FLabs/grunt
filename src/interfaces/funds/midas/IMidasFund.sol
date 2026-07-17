@@ -49,7 +49,9 @@ interface IMidasFund is IFund {
   /// @notice Emitted when an order is recovered and funds are returned.
   /// @param orderId The unique identifier of the order.
   /// @param mode The mode of the order (DEPOSIT or REDEEM).
-  /// @param amount The amount recovered.
+  /// @param amount The amount recovered: payment tokens for a DEPOSIT, mTokens re-wrapped
+  ///        1:1 into shares for a REDEEM (0 marks the terminal finalization of an aborted
+  ///        bonded redeem whose bond stayed forfeited).
   /// @param receiver The address receiving the recovered funds.
   event OrderRecovered(bytes32 indexed orderId, Mode mode, uint256 amount, address indexed receiver);
 
@@ -148,10 +150,11 @@ interface IMidasFund is IFund {
   ///      - Redeem orders: only an UNSETTLED bonded redeem can be flagged — in the bond
   ///        phase (bond leg committed, instant redemption locked), or re-ACCEPTED after
   ///        unlockInstantRedeem() with the bond already paid. This is the abort path for a
-  ///        permanently stuck bonded redeem: the bond stays forfeited, the remainder shares
-  ///        never left the depositor, and recover() ends the order sweeping any off-band
-  ///        refund (possibly zero). Flagging re-locks the instant redemption so that
-  ///        cancelRecovering() always lands back in the bond phase.
+  ///        permanently stuck bonded redeem: the remainder shares never left the depositor,
+  ///        and recover() ends the order re-wrapping any bond returned off-band in mTokens
+  ///        into shares minted to the receiver (possibly zero — the bond may stay
+  ///        forfeited). Flagging re-locks the instant redemption so that cancelRecovering()
+  ///        always lands back in the bond phase.
   ///        Reverts with RecoverNotSupported for a settled redeem (`redeemInstant` executed
   ///        — the payout must complete forward via the terminal unlock()) and for an
   ///        uncommitted redeem with no bond paid (cancel() is the tool there).
@@ -167,7 +170,10 @@ interface IMidasFund is IFund {
   ///      Use this if recovering() was called by mistake and Midas delivered the output tokens.
   ///      For a bonded redeem the order lands back in the bond phase (recovering() re-locked
   ///      the instant redemption), so unlockInstantRedeem() must be called again before the
-  ///      redeem leg can be committed.
+  ///      redeem leg can be committed. Only cancel a redeem recovery while no bond has been
+  ///      returned: mTokens already received are not swept by the resumed order's completion
+  ///      (they surface as a later deposit's balance sweep) — once the refund is in,
+  ///      finalize via recover() instead.
   /// @param orderId The order ID that must match the current order in RECOVERING state.
   function cancelRecovering(bytes32 orderId) external;
 

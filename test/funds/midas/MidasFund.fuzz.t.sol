@@ -303,19 +303,23 @@ contract MidasFundFuzzTest is Test {
     fund.commit(order);
     vm.prank(owner);
     fund.recovering(order);
-    if (refund > 0) usdc.mint(address(fund), refund);
+    // The returned bond arrives off-band in mTokens (possibly never).
+    if (refund > 0) mGlobal.mint(address(fund), refund);
     assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "always recoverable");
 
-    // recover() sweeps exactly the balance (possibly zero) and ends the order.
+    // recover() re-wraps exactly the mToken balance (possibly zero) into shares and ends
+    // the order.
     (State newState, uint256 amount) = fund.recover(order);
     assertEq(uint256(newState), uint256(State.ENDED), "ended");
-    assertEq(amount, refund, "balance swept");
-    assertEq(usdc.balanceOf(address(this)), refund, "refund received");
+    assertEq(amount, refund, "balance re-wrapped");
+    assertEq(usdc.balanceOf(address(this)), 0, "payment token not involved");
+    assertEq(mGlobal.balanceOf(address(fund)), 0, "no mTokens left in the fund");
 
-    // The bond stays forfeited; the remainder shares never left the depositor.
+    // The bond went to the recipient; the receiver holds the untouched remainder shares
+    // plus the re-wrapped refund.
     uint256 bondAmount = mTokenAmount * bondBps / 10_000;
     assertEq(mGlobal.balanceOf(bondRecipient), bondAmount, "bond kept");
-    assertEq(wrappedShare.balanceOf(address(this)), mTokenAmount - bondAmount, "remainder shares intact");
+    assertEq(wrappedShare.balanceOf(address(this)), mTokenAmount - bondAmount + refund, "remainder plus refund");
   }
 
   function testFuzz_BondedRedeem_FreshVaultMidOrder(uint96 input, uint16 bondBpsSeed) public {
@@ -597,7 +601,8 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   }
 
   function invariant_RecoveringRedeemAlwaysRecoverable() public view {
-    // An aborted redeem owes nothing back, so RECOVERING never falls back to PROCESSING
+    // An aborted redeem is always recoverable — the only amount possibly owed back is the
+    // bond, returned off-band in mTokens — so RECOVERING never falls back to PROCESSING
     // (recover() may finalize with a zero amount at any time).
     if (handler.internalState() != State.RECOVERING) return;
     Order memory order = handler.getOrder();
@@ -606,12 +611,15 @@ contract MidasFundInvariantTest is StdInvariant, Test {
   }
 
   function invariant_EndedRedeemLeavesNoAssetBalance() public view {
-    // A redeem only ends via a terminal unlock that sweeps the full balance (possibly zero),
-    // so no asset may be stranded in the fund.
+    // A redeem only ends via a terminal unlock that sweeps the full asset balance or a
+    // recover that re-wraps the full mToken balance (each possibly zero), so nothing may be
+    // stranded in the fund — except a refund abandoned by cancelRecovering + forward
+    // completion, which stays until the next deposit's unlock sweeps it (ghost-tracked).
     if (handler.internalState() != State.ENDED) return;
     Order memory order = handler.getOrder();
     if (order.mode != Mode.REDEEM) return;
     assertEq(usdc.balanceOf(address(fund)), 0, "asset stranded after redeem ended");
+    assertEq(mGlobal.balanceOf(address(fund)), handler.ghostOutstandingMTokenRefund(), "mToken refund unaccounted");
   }
 
   function invariant_PendingDepositRequestBlocksUnlocking() public view {

@@ -44,6 +44,10 @@ contract MidasFundHandler is Test {
 
   address public bondRecipient = address(0xB07D);
   uint256 public ghostTotalBondPaid;
+  // mTokens refunded to the fund (returned bond) and not yet swept: zeroed by a redeem
+  // recover() (re-wraps the whole balance) or a deposit unlock() (wraps the whole balance,
+  // catching a refund stranded by cancelRecovering + forward completion).
+  uint256 public ghostOutstandingMTokenRefund;
 
   function initialize(
     MidasFund fund_,
@@ -153,15 +157,22 @@ contract MidasFundHandler is Test {
     rejected = true;
   }
 
-  /// @dev Simulates the off-band USDC refund performed by the Midas admin, either after a
-  ///      rejected deposit request (the vault returns the pulled USDC) or while the
-  ///      operator has flagged the order as RECOVERING (for an aborted bonded redeem the
-  ///      refund is swept by recover(), which is also fine with a zero balance).
+  /// @dev Simulates the off-band refund performed by the Midas admin: USDC after a rejected
+  ///      deposit request (the vault returns the pulled input) or while a deposit is flagged
+  ///      RECOVERING; the returned bond in mTokens for an aborted bonded redeem (recover()
+  ///      re-wraps it into shares, and is also fine with a zero balance).
   function act_refund() external {
     if (refunded) return;
     bool depositRejected = order.mode == Mode.DEPOSIT && rejected && internalState == State.PROCESSING;
     if (internalState != State.RECOVERING && !depositRejected) return;
-    depositVault.withdrawToken(address(usdc), address(fund), order.input);
+    if (order.mode == Mode.REDEEM) {
+      uint256 amount = fund.bondPaid();
+      if (amount == 0) return;
+      mToken.mint(address(fund), amount);
+      ghostOutstandingMTokenRefund += amount;
+    } else {
+      depositVault.withdrawToken(address(usdc), address(fund), order.input);
+    }
     refunded = true;
   }
 
@@ -188,11 +199,15 @@ contract MidasFundHandler is Test {
     // Single-shot for both modes: unlock() always ends the order.
     (State newState,) = fund.unlock(order);
     internalState = newState;
+    // A deposit unlock wraps the fund's whole mToken balance, sweeping any stranded refund.
+    if (order.mode == Mode.DEPOSIT) ghostOutstandingMTokenRefund = 0;
   }
 
   function act_recover() external {
     fund.recover(order);
     internalState = State.ENDED;
+    // A redeem recover re-wraps the fund's whole mToken balance (the returned bond).
+    if (order.mode == Mode.REDEEM) ghostOutstandingMTokenRefund = 0;
   }
 
   /// @dev Sets the bond config (reverts while an order is live).

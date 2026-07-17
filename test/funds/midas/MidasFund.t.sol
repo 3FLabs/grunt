@@ -2413,21 +2413,70 @@ contract MidasFundTest is Test {
     fund.recovering(waived);
   }
 
-  function test_Recover_RedeemSweepsOffBandRefund() public {
+  function test_Recover_RedeemRewrapsReturnedBond() public {
     Order memory order = _commitBondedRedeemOrder();
+    bytes32 orderId = order.toId(address(fund));
 
     vm.prank(owner);
     fund.recovering(order);
 
-    // An off-band refund (e.g. Midas returning the bond value in USDC) is swept by recover().
-    uint256 refund = ONE_USDC / 50;
-    usdc.mint(address(fund), refund);
+    // Midas returns the bond off-band in mTokens: recover() re-wraps it 1:1 into shares.
+    uint256 refund = ONE_MTOKEN * BOND_BPS / BPS;
+    mGlobal.mint(address(fund), refund);
     assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recoverable with refund");
 
+    uint256 sharesBefore = wrappedShare.balanceOf(address(this));
+    vm.expectEmit(true, true, true, true);
+    emit OrderRecovered(orderId, Mode.REDEEM, refund, address(this));
     (State state, uint256 amount) = fund.recover(order);
     assertEq(uint256(state), uint256(State.ENDED), "ended");
-    assertEq(amount, refund, "refund swept");
-    assertEq(usdc.balanceOf(address(this)), refund, "refund received");
+    assertEq(amount, refund, "refund re-wrapped");
+    assertEq(wrappedShare.balanceOf(address(this)) - sharesBefore, refund, "shares minted to the receiver");
+    assertEq(mGlobal.balanceOf(address(fund)), 0, "no mTokens left in the fund");
+    assertEq(mGlobal.balanceOf(address(wrappedShare)), wrappedShare.totalSupply(), "wrapper fully backed");
+    assertEq(usdc.balanceOf(address(this)), 0, "payment token not involved");
+  }
+
+  function test_Recover_RedeemIgnoresAssetBalance() public {
+    Order memory order = _commitBondedRedeemOrder();
+    vm.prank(owner);
+    fund.recovering(order);
+
+    // A payment-token balance (donation or mistaken USDC refund) is not part of a redeem
+    // recovery: only the mToken balance is reported and swept.
+    usdc.mint(address(fund), ONE_USDC);
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, 0, "usdc ignored");
+    assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "usdc stays in the fund");
+    assertEq(usdc.balanceOf(address(this)), 0, "nothing transferred");
+  }
+
+  function test_CancelRecovering_AfterBondReturn_StrandsRefundUntilNextDepositUnlock() public {
+    Order memory order = _commitBondedRedeemOrder();
+    vm.prank(owner);
+    fund.recovering(order);
+
+    // The bond comes back while RECOVERING, but the recovery is (mistakenly) canceled and the
+    // order completes forward: the resumed completion never sweeps the mTokens.
+    uint256 refund = ONE_MTOKEN * BOND_BPS / BPS;
+    mGlobal.mint(address(fund), refund);
+    vm.prank(owner);
+    fund.cancelRecovering(order.toId(address(fund)));
+    _unlockInstantRedeem(order);
+    _setRedemptionVault();
+    _commitRedeem(order);
+    fund.unlock(order);
+    assertEq(mGlobal.balanceOf(address(fund)), refund, "refund stranded after the redeem ends");
+
+    // The stranded mTokens surface as the next deposit's balance sweep (wrapped with its output).
+    Order memory next = _orderWithSalt(Mode.DEPOSIT, ONE_USDC, ONE_MTOKEN, keccak256("post-strand"));
+    fund.create(next);
+    _commitDeposit(next);
+    _approveDepositRequest();
+    (, uint256 unlocked) = fund.unlock(next);
+    assertEq(unlocked, ONE_MTOKEN + refund, "refund swept with the deposit output");
+    assertEq(mGlobal.balanceOf(address(fund)), 0, "fund drained");
   }
 
   function test_CancelRecovering_BondedRedeem_LandsInBondPhase() public {

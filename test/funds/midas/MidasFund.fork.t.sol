@@ -377,6 +377,40 @@ contract MidasFundForkTest is Test {
     assertEq(wrappedShare.balanceOf(address(this)), 0, "all shares settled");
   }
 
+  function test_Fork_BondedRedeem_AbortWithBondReturn() public {
+    uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
+
+    address bondRecipient = makeAddr("bondRecipient");
+    vm.prank(MIDAS_DEFAULT_ADMIN);
+    IMidasAccessControlFork(MIDAS_ACCESS_CONTROL).grantRole(GREENLISTED_ROLE, bondRecipient);
+    vm.prank(owner);
+    fund.setBondConfig(BondConfig({amount: 200, recipient: bondRecipient}));
+
+    // Bond leg, then abort. Midas returns the bond off-band in real mGLOBAL: both parties
+    // are greenlisted, so the permissioned transfer passes.
+    uint256 expectedNet = _expectedRedeemAssets(shares * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
+    Order memory order = _redeemOrder(shares, _haircut(expectedNet));
+    fund.create(order);
+    wrappedShare.approve(address(fund), shares);
+    fund.commit(order);
+    vm.prank(owner);
+    fund.recovering(order);
+
+    uint256 bondAmount = shares * 200 / BPS;
+    vm.prank(bondRecipient);
+    IERC20(MGLOBAL).transfer(address(fund), bondAmount);
+    assertEq(uint256(fund.state(order)), uint256(State.RECOVERING), "recoverable with the bond back");
+
+    // recover() re-wraps the returned bond 1:1 into shares minted to the receiver.
+    (State state, uint256 amount) = fund.recover(order);
+    assertEq(uint256(state), uint256(State.ENDED), "ended");
+    assertEq(amount, bondAmount, "bond re-wrapped");
+    assertEq(IERC20(MGLOBAL).balanceOf(address(fund)), 0, "no mGLOBAL left in the fund");
+    assertEq(IERC20(MGLOBAL).balanceOf(bondRecipient), 0, "bond fully returned");
+    // The receiver holds the untouched remainder shares plus the re-wrapped bond.
+    assertEq(wrappedShare.balanceOf(address(this)), shares, "remainder plus returned bond");
+  }
+
   function test_Fork_BondedRedeem_FreshVaultAfterBond() public {
     uint256 shares = _doFullDeposit(DEPOSIT_AMOUNT);
 
