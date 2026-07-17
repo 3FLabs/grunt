@@ -15,12 +15,14 @@ import {MockMidasRedemptionVault} from "./MockMidasRedemptionVault.sol";
 ///      operator/vault manager) and mirrors the fund's internal state machine in
 ///      `internalState`.
 ///      Deposits settle asynchronously via a Midas mint request (approve/reject driven by
-///      act_approveRequest/act_rejectRequest); redeems settle instantly and are partially
-///      claimable; once the holdback is confirmed the next unlock is terminal (possibly with
-///      a zero amount). When a bond config is set, redeems commit in two legs: the bond leg
-///      pays the bond to `bondRecipient` (tracked in `ghostTotalBondPaid`), then
-///      act_unlockInstantRedeem re-arms the order for the redeem leg. Reverting actions are
-///      rolled back entirely (fail_on_revert = false), so the model only advances on success.
+///      act_approveRequest/act_rejectRequest). Redeems always commit in two legs: the bond
+///      leg pays the bond to `bondRecipient` (tracked in `ghostTotalBondPaid`, nothing when
+///      the config is empty), then act_unlockInstantRedeem re-arms the order for the redeem
+///      leg — also callable before any commit to skip the bond leg — which settles instantly
+///      through whichever redemption vault act_swapRedemptionVault configured (create()
+///      resets it, so the redeem leg reverts until a vault is set); the single terminal
+///      unlock then ends the order. Reverting actions are rolled back entirely
+///      (fail_on_revert = false), so the model only advances on success.
 contract MidasFundHandler is Test {
   using LibOrder for Order;
 
@@ -183,7 +185,7 @@ contract MidasFundHandler is Test {
   }
 
   function act_unlock() external {
-    // A redeem unlock is partial (stays PROCESSING) while the holdback is unconfirmed.
+    // Single-shot for both modes: unlock() always ends the order.
     (State newState,) = fund.unlock(order);
     internalState = newState;
   }
@@ -191,19 +193,6 @@ contract MidasFundHandler is Test {
   function act_recover() external {
     fund.recover(order);
     internalState = State.ENDED;
-  }
-
-  /// @dev Simulates the off-band holdback payment arriving at the fund. Only redeem orders
-  ///      carry a holdback (the payment-token amount withheld by Midas); deposits never have
-  ///      a pending holdback, so this is a no-op for them.
-  function act_payHoldback(uint96 amountSeed) external {
-    if (!fund.holdbackPending()) return;
-    uint256 amount = _bound(uint256(amountSeed), 1, type(uint96).max);
-    usdc.mint(address(fund), amount);
-  }
-
-  function act_confirmHoldback() external {
-    fund.confirmHoldback(order.toId(address(fund)));
   }
 
   /// @dev Sets the bond config (reverts while an order is live).

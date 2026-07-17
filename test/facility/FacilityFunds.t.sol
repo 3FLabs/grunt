@@ -375,10 +375,9 @@ contract FacilityFundsTest is FacilityBaseTest {
   }
 
   function test_unlock_zeroAmountTerminalUnlockEndsOrder() public {
-    // Funds may finalize a fully swept partial-unlock order with a zero-amount terminal
-    // unlock returning (ENDED, 0) (e.g. a MidasFund redeem whose holdback was confirmed
-    // after the last sweep): no tokens move, intent accounting is untouched, and the ENDED
-    // return clears the order and fund binding.
+    // Funds may finalize an order with a zero-amount terminal unlock returning (ENDED, 0)
+    // (e.g. a MidasFund redeem whose settlement proceeds floored to zero): no tokens move,
+    // intent accounting is untouched, and the ENDED return clears the order and fund binding.
     uint256 intentId = _createIntentWithFundForDeposit(1000e18);
     uint256 orderAmount = 500e18;
 

@@ -14,11 +14,10 @@ import {MockERC20} from "../../mock/MockERC20.sol";
 import {MockMidasDataFeed} from "../../mock/funds/midas/MockMidasDataFeed.sol";
 import {MockMidasAccessControl} from "../../mock/funds/midas/MockMidasAccessControl.sol";
 import {MockMidasDepositVault} from "../../mock/funds/midas/MockMidasDepositVault.sol";
-import {MockMidasRedemptionVault} from "../../mock/funds/midas/MockMidasRedemptionVault.sol";
 
 contract MidasFundFactoryTest is Test {
   event FactoryDeployed();
-  event FundCreated(address indexed fund, address indexed depositVault, address indexed redemptionVault);
+  event FundCreated(address indexed fund, address indexed depositVault);
 
   uint256 private constant DEPOSITOR_ROLE = 1 << 1;
 
@@ -29,10 +28,7 @@ contract MidasFundFactoryTest is Test {
   MockMidasAccessControl public midasAcl;
   MockMidasDataFeed public depositMTokenFeed;
   MockMidasDataFeed public depositAssetFeed;
-  MockMidasDataFeed public redemptionMTokenFeed;
-  MockMidasDataFeed public redemptionAssetFeed;
   MockMidasDepositVault public depositVault;
-  MockMidasRedemptionVault public redemptionVault;
 
   address public owner;
   address public depositor;
@@ -46,13 +42,9 @@ contract MidasFundFactoryTest is Test {
     midasAcl = new MockMidasAccessControl();
     depositMTokenFeed = new MockMidasDataFeed();
     depositAssetFeed = new MockMidasDataFeed();
-    redemptionMTokenFeed = new MockMidasDataFeed();
-    redemptionAssetFeed = new MockMidasDataFeed();
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
-    redemptionVault = new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
     depositVault.setTokenConfig(address(usdc), address(depositAssetFeed), 0, type(uint256).max, true);
-    redemptionVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
 
     WrappedAsset implementation = new WrappedAsset();
     address proxy = LibClone.deployERC1967(address(implementation));
@@ -74,7 +66,7 @@ contract MidasFundFactoryTest is Test {
     uint64 nonce = vm.getNonce(address(factory));
     address expectedFundAddress = vm.computeCreateAddress(address(factory), uint256(nonce));
     vm.expectEmit(true, true, true, false, address(factory));
-    emit FundCreated(expectedFundAddress, address(depositVault), address(redemptionVault));
+    emit FundCreated(expectedFundAddress, address(depositVault));
 
     address fundAddress = _createFund();
     assertEq(fundAddress, expectedFundAddress, "fund");
@@ -83,11 +75,11 @@ contract MidasFundFactoryTest is Test {
     assertEq(fund.share(), address(wrappedShare), "share");
     assertEq(fund.mToken(), address(mGlobal), "mToken");
     assertEq(fund.depositVault(), address(depositVault), "deposit vault");
-    assertEq(fund.redemptionVault(), address(redemptionVault), "redemption vault");
+    // No redemption vault at creation: one is set per redemption via setRedemptionVault().
+    assertEq(fund.redemptionVault(), address(0), "no redemption vault");
     assertEq(fund.owner(), owner, "owner");
-    assertFalse(fund.holdbackPending(), "no holdback pending");
 
-    // Fresh funds default to the zero (disabled) bond config.
+    // Fresh funds default to the zero (no payment) bond config.
     BondConfig memory bondConfig = fund.bondConfig();
     assertEq(bondConfig.amount, 0, "bond amount");
     assertEq(bondConfig.recipient, address(0), "bond recipient");
@@ -109,31 +101,22 @@ contract MidasFundFactoryTest is Test {
 
   function test_Factory_RevertsInvalidDepositor() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, address(1), address(depositVault), address(redemptionVault), address(wrappedShare), address(usdc)
-    );
+    factory.createFund(owner, address(1), address(depositVault), address(wrappedShare), address(usdc));
   }
 
   function test_Factory_RevertsInvalidDepositVault() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, address(1), address(redemptionVault), address(wrappedShare), address(usdc));
-  }
-
-  function test_Factory_RevertsInvalidRedemptionVault() public {
-    vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, address(depositVault), address(1), address(wrappedShare), address(usdc));
+    factory.createFund(owner, depositor, address(1), address(wrappedShare), address(usdc));
   }
 
   function test_Factory_RevertsInvalidWrappedShare() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(owner, depositor, address(depositVault), address(redemptionVault), address(1), address(usdc));
+    factory.createFund(owner, depositor, address(depositVault), address(1), address(usdc));
   }
 
   function test_Factory_RevertsInvalidAsset() public {
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(1)));
-    factory.createFund(
-      owner, depositor, address(depositVault), address(redemptionVault), address(wrappedShare), address(1)
-    );
+    factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(1));
   }
 
   function test_Factory_RevertsWrappedShareMismatch() public {
@@ -143,25 +126,10 @@ contract MidasFundFactoryTest is Test {
     otherWrappedShare.initialize(owner, owner, address(otherToken), "wOther", "wOTH");
 
     vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
-    factory.createFund(
-      owner, depositor, address(depositVault), address(redemptionVault), address(otherWrappedShare), address(usdc)
-    );
-  }
-
-  function test_Factory_RevertsRedemptionVaultMTokenMismatch() public {
-    MockERC20 otherToken = new MockERC20("Other", "OTH", 18);
-    MockMidasRedemptionVault otherRedemptionVault =
-      new MockMidasRedemptionVault(address(otherToken), address(redemptionMTokenFeed), address(midasAcl));
-
-    vm.expectRevert(LibFundsErrors.InvalidUnderlyingAsset.selector);
-    factory.createFund(
-      owner, depositor, address(depositVault), address(otherRedemptionVault), address(wrappedShare), address(usdc)
-    );
+    factory.createFund(owner, depositor, address(depositVault), address(otherWrappedShare), address(usdc));
   }
 
   function _createFund() internal returns (address) {
-    return factory.createFund(
-      owner, depositor, address(depositVault), address(redemptionVault), address(wrappedShare), address(usdc)
-    );
+    return factory.createFund(owner, depositor, address(depositVault), address(wrappedShare), address(usdc));
   }
 }

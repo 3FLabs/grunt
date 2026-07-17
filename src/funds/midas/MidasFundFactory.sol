@@ -25,7 +25,7 @@ contract MidasFundFactory {
   using LibClone for address;
 
   event FactoryDeployed();
-  event FundCreated(address indexed fund, address indexed depositVault, address indexed redemptionVault);
+  event FundCreated(address indexed fund, address indexed depositVault);
 
   address public immutable MIDAS_FUND_BEACON;
 
@@ -35,23 +35,20 @@ contract MidasFundFactory {
   }
 
   /// @notice Deploys a new MidasFund beacon proxy and initializes it.
+  /// @dev No redemption vault is configured at creation: Midas deploys a dedicated one per
+  ///      redemption, set via `setRedemptionVault` while the redeem is live.
   /// @param owner The owner of the new fund.
   /// @param depositor The depositor contract address (granted DEPOSITOR_ROLE).
   /// @param depositVault The Midas DepositVault (issuance vault) proxy address.
-  /// @param redemptionVault The Midas RedemptionVault proxy address.
   /// @param wrappedShare The WrappedAsset contract wrapping the mToken.
   /// @param asset The payment token used for deposits and redemptions (e.g. USDC).
   /// @return fund The address of the newly deployed fund.
-  function createFund(
-    address owner,
-    address depositor,
-    address depositVault,
-    address redemptionVault,
-    address wrappedShare,
-    address asset
-  ) external returns (address fund) {
+  function createFund(address owner, address depositor, address depositVault, address wrappedShare, address asset)
+    external
+    returns (address fund)
+  {
     fund = MIDAS_FUND_BEACON.deployERC1967BeaconProxy();
-    MidasFund(fund).initialize(owner, depositor, depositVault, redemptionVault, wrappedShare, asset);
-    emit FundCreated(fund, depositVault, redemptionVault);
+    MidasFund(fund).initialize(owner, depositor, depositVault, wrappedShare, asset);
+    emit FundCreated(fund, depositVault);
   }
 }
