@@ -102,6 +102,13 @@ library LibFundsErrors {
   ///         aborted via recovering() and recover() (the bond stays forfeited).
   error BondAlreadyPaid();
 
+  /// @notice Thrown when a redemption pays out less than the order's minimum output: the
+  ///         redemption vault is not blindly trusted to enforce the min-out it was passed,
+  ///         so the received payment-token balance delta is verified fund-side.
+  /// @param received The payment token amount actually received.
+  /// @param minimum The minimum payment token amount expected.
+  error InsufficientRedeemOutput(uint256 received, uint256 minimum);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

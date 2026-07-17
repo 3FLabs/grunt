@@ -808,12 +808,16 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///      escrow pull and the fee transfer). Only settles the remainder: the bond fraction (if
   ///      any) was already burned by the bond leg. The redemption vault is reset on create()
   ///      and set per-redemption, so it must have been configured via setRedemptionVault()
-  ///      before this leg commits (reverts with InvalidContract otherwise).
+  ///      before this leg commits (reverts with InvalidContract otherwise). The per-redemption
+  ///      vault is not blindly trusted to enforce the min-out it is passed: the payment-token
+  ///      balance delta is verified against the order's scaled minimum (reverts with
+  ///      InsufficientRedeemOutput otherwise).
   /// @param $ The fund storage reference.
   /// @param order The order being committed.
   /// @return The mToken amount redeemed (order input minus the bond paid).
   function _commitRedeemLeg(MidasFundStorage storage $, Order calldata order) internal returns (uint256) {
     address _mToken = $.mToken;
+    address _asset = $.asset;
     address _redemptionVault = $.redemptionVault;
     _redemptionVault.checkContract();
     _checkVaultAccess(_redemptionVault, $.wrappedShare, _REDEEM_INSTANT_SELECTOR);
@@ -823,10 +827,14 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     _mToken.safeApproveWithRetry(_redemptionVault, _redeemAmount);
 
     // order.output is the minimum asset amount in native decimals for the full input; scale it
-    // proportionally to the non-bond remainder (floor), then to base-18.
-    IMidasRedemptionVault(_redemptionVault)
-      .redeemInstant($.asset, _redeemAmount, order.output.mulDiv(_redeemAmount, order.input) * $.assetScale);
+    // proportionally to the non-bond remainder (floor), then to base-18 for the vault call.
+    uint256 _minOutput = order.output.mulDiv(_redeemAmount, order.input);
+    uint256 _balanceBefore = IERC20(_asset).balanceOf(address(this));
+    IMidasRedemptionVault(_redemptionVault).redeemInstant(_asset, _redeemAmount, _minOutput * $.assetScale);
     _mToken.safeApproveWithRetry(_redemptionVault, 0);
+
+    uint256 _received = IERC20(_asset).balanceOf(address(this)) - _balanceBefore;
+    if (_received < _minOutput) revert LibFundsErrors.InsufficientRedeemOutput(_received, _minOutput);
     return _redeemAmount;
   }
 

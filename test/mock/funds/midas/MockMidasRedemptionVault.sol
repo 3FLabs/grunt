@@ -37,6 +37,9 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
   uint256 internal _minAmount;
   uint256 internal _instantFee;
   uint256 internal _instantDailyLimit = type(uint256).max;
+  uint256 internal _payoutOverride = _NO_OVERRIDE;
+
+  uint256 internal constant _NO_OVERRIDE = type(uint256).max;
 
   mapping(bytes4 => bool) internal _fnPaused;
   mapping(address => TokenConfig) internal _tokensConfig;
@@ -161,6 +164,13 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
     _instantDailyLimit = limit;
   }
 
+  /// @dev Makes redeemInstant pay out exactly `amountNative` (in tokenOut native decimals),
+  ///      bypassing the rate computation AND the vault-side `minReceiveAmount` check —
+  ///      simulates a misbehaving vault to exercise the fund-side received-balance check.
+  function setPayoutOverride(uint256 amountNative) external {
+    _payoutOverride = amountNative;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -171,6 +181,11 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
     require(!_paused, "MockRedemptionVault: paused");
     _mToken.safeTransferFrom(msg.sender, address(this), amountMTokenIn);
     MockERC20(_mToken).burn(address(this), amountMTokenIn);
+
+    if (_payoutOverride != _NO_OVERRIDE) {
+      MockERC20(tokenOut).mint(recipient, _payoutOverride);
+      return;
+    }
 
     uint256 amountOutBase18 = amountMTokenIn * _mTokenRate() / _tokenOutRate(tokenOut);
     if (_instantFee > 0) {

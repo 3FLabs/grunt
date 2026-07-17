@@ -610,6 +610,35 @@ contract MidasFundTest is Test {
     assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "settled once the vault is set");
   }
 
+  function test_Commit_RedeemLeg_RevertsWhenVaultUnderpays() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    _setRedemptionVault();
+
+    // The vault claims success but pays less than the order's minimum scaled to the non-bond
+    // remainder: the fund's own received-balance check catches it.
+    uint256 redeemAmount = ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS;
+    uint256 minOutput = ONE_USDC * redeemAmount / ONE_MTOKEN;
+    redemptionVault.setPayoutOverride(minOutput - 1);
+    wrappedShare.approve(address(fund), order.input);
+    vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InsufficientRedeemOutput.selector, minOutput - 1, minOutput));
+    fund.commit(order);
+  }
+
+  function test_Commit_RedeemLeg_AcceptsExactMinimumPayout() public {
+    Order memory order = _commitBondedRedeemOrder();
+    _unlockInstantRedeem(order);
+    _setRedemptionVault();
+
+    // Exactly the scaled minimum passes the fund-side check.
+    uint256 redeemAmount = ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS;
+    uint256 minOutput = ONE_USDC * redeemAmount / ONE_MTOKEN;
+    redemptionVault.setPayoutOverride(minOutput);
+    _commitRedeem(order);
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "settled at the exact minimum");
+    assertEq(usdc.balanceOf(address(fund)), minOutput, "minimum payout held");
+  }
+
   function test_Commit_RevertsInvalidOrder() public {
     Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
     fund.create(order);
