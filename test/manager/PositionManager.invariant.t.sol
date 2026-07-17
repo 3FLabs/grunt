@@ -313,7 +313,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   ///      MAX_PERFORMANCE_FEE (5000 bps = 50%) during setFeeData(). This invariant
   ///      re-checks the stored values to ensure no path can bypass the validation.
   function invariant_feeBounds() public view {
-    (address feeRecipient, uint24 managementFee, uint24 performanceFee,,) = positionManager.feeData();
+    (address feeRecipient, uint24 managementFee, uint24 performanceFee,,,) = positionManager.feeData();
     assertTrue(managementFee <= MAX_MANAGEMENT_FEE, "PM-4: managementFee exceeds MAX_MANAGEMENT_FEE");
     assertTrue(performanceFee <= MAX_PERFORMANCE_FEE, "PM-4: performanceFee exceeds MAX_PERFORMANCE_FEE");
 

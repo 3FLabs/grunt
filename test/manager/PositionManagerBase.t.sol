@@ -263,12 +263,12 @@ contract PositionManagerBaseTest is Test {
   }
 
   function _lastTotalAssets() internal view returns (uint256) {
-    (,,, uint256 lastTotalAssets_,) = positionManager.feeData();
+    (,,, uint256 lastTotalAssets_,,) = positionManager.feeData();
     return lastTotalAssets_;
   }
 
   function _lastFeeAccrualTimestamp() internal view returns (uint256) {
-    (,,,, uint256 lastFeeAccrualTimestamp_) = positionManager.feeData();
+    (,,,, uint256 lastFeeAccrualTimestamp_,) = positionManager.feeData();
     return lastFeeAccrualTimestamp_;
   }
 

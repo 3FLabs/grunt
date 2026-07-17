@@ -143,7 +143,7 @@ contract PositionManager is
 
   /// @inheritdoc IPositionManager
   function totalAssets() public view nonReadReentrant returns (uint256 amount) {
-    (amount,,) = LibStorage.positionManagerStorage().totalAssets();
+    (amount,,,) = LibStorage.positionManagerStorage().totalAssets();
   }
 
   /// @inheritdoc ERC20
@@ -162,7 +162,8 @@ contract PositionManager is
       uint24 managementFee,
       uint24 performanceFee,
       uint256 lastTotalAssets,
-      uint256 lastFeeAccrualTimestamp
+      uint256 lastFeeAccrualTimestamp,
+      uint256 heldManagementFees
     )
   {
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
@@ -172,6 +173,7 @@ contract PositionManager is
     performanceFee = fd.performanceFee;
     lastTotalAssets = _storage.lastTotalAssets;
     lastFeeAccrualTimestamp = _storage.lastFeeAccrualTimestamp;
+    heldManagementFees = _storage.heldManagementFeeAssets;
   }
 
   /// @inheritdoc IPositionManager
@@ -186,7 +188,7 @@ contract PositionManager is
     nonReadReentrant
     returns (uint256 totalAssets_, uint256 totalSupply_, uint256 managementFeeShares, uint256 performanceFeeShares)
   {
-    (totalAssets_, totalSupply_,, managementFeeShares, performanceFeeShares) = _pendingFees();
+    (totalAssets_, totalSupply_,, managementFeeShares, performanceFeeShares,,) = _pendingFees();
   }
 
   /// @inheritdoc IPositionManager

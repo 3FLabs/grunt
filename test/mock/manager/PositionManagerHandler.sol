@@ -346,7 +346,7 @@ contract PositionManagerHandler is Test {
     mgmt = _bound(mgmt, 0, 200);
     perf = _bound(perf, 0, 5000);
 
-    (address currentRecipient,,,,) = positionManager.feeData();
+    (address currentRecipient,,,,,) = positionManager.feeData();
     address recipient = currentRecipient;
     if (recipient == address(0)) {
       recipient = address(0xFEE);
