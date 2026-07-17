@@ -208,7 +208,7 @@ contract MidasFundHandler is Test {
 
   /// @dev Sets the bond config (reverts while an order is live).
   function act_setBondConfig(uint16 bpsSeed) external {
-    uint256 bps = _bound(uint256(bpsSeed), 1, 9_999);
+    uint256 bps = _bound(uint256(bpsSeed), 1, fund.MAX_BOND_AMOUNT());
     fund.setBondConfig(BondConfig({amount: bps, recipient: bondRecipient}));
   }
 

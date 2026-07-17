@@ -91,6 +91,9 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @dev 10_000 = 100%. E.g., 500 = 5% max deviation below current rate.
   uint256 public constant MAX_OUTPUT_DEVIATION = 500; // 5%
 
+  /// @notice Maximum bond fraction of a redeem order input (in basis points).
+  uint256 public constant MAX_BOND_AMOUNT = 500; // 5%
+
   /// @notice Role for operator.
   uint256 internal constant OPERATOR_ROLE = _ROLE_0;
 
@@ -577,7 +580,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
 
   /// @inheritdoc IMidasFund
   function setBondConfig(BondConfig calldata bondConfig_) external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
-    if (bondConfig_.amount == 0 || bondConfig_.amount >= BPS || bondConfig_.recipient == address(0)) {
+    if (bondConfig_.amount == 0 || bondConfig_.amount > MAX_BOND_AMOUNT || bondConfig_.recipient == address(0)) {
       revert LibFundsErrors.InvalidBondConfig();
     }
 

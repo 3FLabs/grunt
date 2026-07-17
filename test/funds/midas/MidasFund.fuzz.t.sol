@@ -262,7 +262,7 @@ contract MidasFundFuzzTest is Test {
 
   function testFuzz_BondedRedeemLifecycle_Succeeds(uint96 input, uint16 bondBpsSeed) public {
     uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
-    uint256 bondBps = bound(uint256(bondBpsSeed), 1, 9_999);
+    uint256 bondBps = bound(uint256(bondBpsSeed), 1, fund.MAX_BOND_AMOUNT());
     uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
     address bondRecipient = makeAddr("bondRecipient");
 
@@ -301,7 +301,7 @@ contract MidasFundFuzzTest is Test {
 
   function testFuzz_BondedRedeemAbort_RecoverEnds(uint96 input, uint16 bondBpsSeed, uint96 refundSeed) public {
     uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
-    uint256 bondBps = bound(uint256(bondBpsSeed), 1, 9_999);
+    uint256 bondBps = bound(uint256(bondBpsSeed), 1, fund.MAX_BOND_AMOUNT());
     uint256 refund = bound(uint256(refundSeed), 0, type(uint96).max);
     uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
     address bondRecipient = makeAddr("bondRecipient");
@@ -334,7 +334,7 @@ contract MidasFundFuzzTest is Test {
 
   function testFuzz_BondedRedeem_VaultSwapMidOrder(uint96 input, uint16 bondBpsSeed) public {
     uint256 inputUsdc = bound(uint256(input), 1, type(uint96).max);
-    uint256 bondBps = bound(uint256(bondBpsSeed), 1, 9_999);
+    uint256 bondBps = bound(uint256(bondBpsSeed), 1, fund.MAX_BOND_AMOUNT());
     uint256 mTokenAmount = inputUsdc * ASSET_SCALE;
     address bondRecipient = makeAddr("bondRecipient");
 

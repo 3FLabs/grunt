@@ -6,7 +6,8 @@ import {Order, Mode} from "../../../libs/funds/Order.sol";
 
 /// @notice Bond configuration for the Midas "Repay-and-Redeem" flow.
 /// @param amount Bond size as a fraction of the redeem order input, in basis points (must be
-///        less than BPS). Zero disables the bond flow: redeems commit in a single leg.
+///        at most MAX_BOND_AMOUNT, 500 bps = 5%). Zero disables the bond flow: redeems commit
+///        in a single leg.
 /// @param recipient The Midas-specified wallet receiving the bond in mTokens. Must be non-zero
 ///        when amount is positive, and must be greenlisted by Midas when the mToken is
 ///        permissioned (e.g. mGLOBAL gates every transfer on both parties).
@@ -262,8 +263,9 @@ interface IMidasFund is IFund {
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED), so the bond lock snapshot
   ///      taken at create() is stable for the order's life.
-  ///      Reverts with InvalidBondConfig if the amount is zero or BPS (100%) or more, or if
-  ///      the recipient is the zero address. Use removeBondConfig() to disable the bond flow.
+  ///      Reverts with InvalidBondConfig if the amount is zero or greater than MAX_BOND_AMOUNT
+  ///      (5%), or if the recipient is the zero address. Use removeBondConfig() to disable the
+  ///      bond flow.
   ///      OPERATIONS: the recipient must be greenlisted by Midas when the mToken is
   ///      permissioned (e.g. mGLOBAL gates every transfer), otherwise the bond leg reverts.
   /// @param bondConfig_ The new bond configuration (amount in basis points, recipient).

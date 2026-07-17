@@ -2105,13 +2105,23 @@ contract MidasFundTest is Test {
   }
 
   function test_SetBondConfig_RevertsInvalidAmount() public {
-    vm.prank(vaultManager);
-    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
-    fund.setBondConfig(BondConfig({amount: BPS, recipient: bondRecipient}));
+    uint256 overCap = fund.MAX_BOND_AMOUNT() + 1;
 
     vm.prank(vaultManager);
     vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
-    fund.setBondConfig(BondConfig({amount: BPS + 1, recipient: bondRecipient}));
+    fund.setBondConfig(BondConfig({amount: overCap, recipient: bondRecipient}));
+
+    vm.prank(vaultManager);
+    vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
+    fund.setBondConfig(BondConfig({amount: BPS, recipient: bondRecipient}));
+  }
+
+  function test_SetBondConfig_MaxAmountSucceeds() public {
+    uint256 maxBond = fund.MAX_BOND_AMOUNT();
+
+    vm.prank(vaultManager);
+    fund.setBondConfig(BondConfig({amount: maxBond, recipient: bondRecipient}));
+    assertEq(fund.bondConfig().amount, maxBond, "amount");
   }
 
   function test_SetBondConfig_RevertsZeroRecipient() public {
