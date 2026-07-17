@@ -147,7 +147,8 @@ contract MockMidasDepositVault is IMidasDepositVault {
   }
 
   function depositRequest(address tokenIn, uint256 amountToken, bytes32 referrerId)
-    external
+    public
+    virtual
     override
     returns (uint256 requestId)
   {

@@ -347,6 +347,8 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     if (order.toId(address(this)) != _currentOrderId) revert LibFundsErrors.InvalidOrder(order.toId(address(this)));
     if ($.internalState != State.ACCEPTED) revert LibFundsErrors.InvalidState($.internalState);
 
+    $.internalState = State.PROCESSING;
+
     uint256 _requestId;
     uint256 _legAmount = order.input;
 
@@ -368,8 +370,6 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     } else {
       _legAmount = _commitRedeemLeg($, order);
     }
-
-    $.internalState = State.PROCESSING;
 
     emit OrderCommitted(_currentOrderId, order.mode, _legAmount, _requestId);
 

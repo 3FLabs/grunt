@@ -112,7 +112,7 @@ contract MockMidasRedemptionVault is IMidasRedemptionVault {
   /*              IMidasRedemptionVault OPERATIONS              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function redeemInstant(address tokenOut, uint256 amountMTokenIn, uint256 minReceiveAmount) external override {
+  function redeemInstant(address tokenOut, uint256 amountMTokenIn, uint256 minReceiveAmount) public virtual override {
     _redeemInstant(tokenOut, amountMTokenIn, minReceiveAmount, msg.sender);
   }
 

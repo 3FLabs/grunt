@@ -16,6 +16,10 @@ import {MockMidasDataFeed} from "../../mock/funds/midas/MockMidasDataFeed.sol";
 import {MockMidasAccessControl} from "../../mock/funds/midas/MockMidasAccessControl.sol";
 import {MockMidasDepositVault} from "../../mock/funds/midas/MockMidasDepositVault.sol";
 import {MockMidasRedemptionVault} from "../../mock/funds/midas/MockMidasRedemptionVault.sol";
+import {
+  ReentrantMidasDepositVault,
+  ReentrantMidasRedemptionVault
+} from "../../mock/funds/midas/ReentrantMidasVaults.sol";
 import {MockChainlinkOracle} from "../../mock/funds/MockChainlinkOracle.sol";
 
 contract MidasFundTest is Test {
@@ -626,6 +630,42 @@ contract MidasFundTest is Test {
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing while request pending");
   }
 
+  function test_Commit_DepositBlocksReentrantCommit() public {
+    ReentrantMidasDepositVault reentrantVault =
+      new ReentrantMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
+    reentrantVault.setTokenConfig(address(usdc), address(depositAssetFeed), 0, type(uint256).max, true);
+
+    vm.prank(vaultManager);
+    fund.setDepositVault(address(reentrantVault));
+    vm.prank(owner);
+    fund.grantRoles(address(reentrantVault), DEPOSITOR_ROLE);
+
+    Order memory order = Order({
+      mode: Mode.DEPOSIT,
+      owner: address(reentrantVault),
+      receiver: address(reentrantVault),
+      input: ONE_USDC,
+      output: ONE_MTOKEN,
+      salt: keccak256("reentrant-deposit")
+    });
+
+    vm.prank(address(reentrantVault));
+    fund.create(order);
+
+    usdc.mint(address(reentrantVault), order.input * 2);
+    vm.prank(address(reentrantVault));
+    usdc.approve(address(fund), type(uint256).max);
+    reentrantVault.setReentrantCommit(fund, order);
+
+    vm.prank(address(reentrantVault));
+    fund.commit(order);
+
+    assertFalse(reentrantVault.reenterSucceeded(), "reentrant commit blocked");
+    assertEq(reentrantVault.reenterRevertSelector(), LibFundsErrors.InvalidState.selector, "blocked by state");
+    assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "outer commit processing");
+    assertEq(fund.activeRequestId(), 1, "single request stored");
+  }
+
   function test_Commit_RedeemInstantSuccess() public {
     _depositAndUnlock(ONE_USDC);
 
@@ -652,6 +692,44 @@ contract MidasFundTest is Test {
     assertEq(usdc.balanceOf(address(fund)), ONE_USDC, "fund has usdc");
     // ...and immediately claimable in full.
     assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "proceeds claimable right away");
+  }
+
+  function test_Commit_RedeemBlocksReentrantCommit() public {
+    _depositAndUnlock(ONE_USDC);
+
+    ReentrantMidasRedemptionVault reentrantVault =
+      new ReentrantMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
+    reentrantVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
+
+    vm.prank(owner);
+    fund.grantRoles(address(reentrantVault), DEPOSITOR_ROLE);
+    wrappedShare.transfer(address(reentrantVault), ONE_MTOKEN);
+
+    Order memory order = Order({
+      mode: Mode.REDEEM,
+      owner: address(reentrantVault),
+      receiver: address(reentrantVault),
+      input: ONE_MTOKEN,
+      output: ONE_USDC,
+      salt: keccak256("reentrant-redeem")
+    });
+
+    vm.prank(address(reentrantVault));
+    fund.create(order);
+    _unlockInstantRedeem(order);
+    vm.prank(vaultManager);
+    fund.setRedemptionVault(address(reentrantVault));
+
+    vm.prank(address(reentrantVault));
+    wrappedShare.approve(address(fund), type(uint256).max);
+    reentrantVault.setReentrantCommit(fund, order);
+
+    vm.prank(address(reentrantVault));
+    fund.commit(order);
+
+    assertFalse(reentrantVault.reenterSucceeded(), "reentrant commit blocked");
+    assertEq(reentrantVault.reenterRevertSelector(), LibFundsErrors.InvalidState.selector, "blocked by state");
+    assertEq(uint256(fund.state(order)), uint256(State.UNLOCKING), "outer commit settled");
   }
 
   function test_Commit_RedeemLeg_RevertsWhenVaultNotSet() public {
