@@ -98,7 +98,15 @@ interface IBorrowPosition {
 
   /// @notice Returns the safe LTV threshold for this borrow position.
   /// @dev The safe LTV is the maximum LTV that must not be reached upon position mutations
-  ///      (borrow, withdrawCollateral). It is immutable after initialization.
+  ///      (borrow, withdrawCollateral). It is immutable after initialization. In v2 it is also the
+  ///      earliest LTV at which standing offers can be consumed (the floor of the offer band).
   /// @return The safe LTV in WAD format (1e18 = 100%).
   function safeLtv() external view returns (uint128);
+
+  /// @notice Returns the liquidation LTV threshold for this borrow position.
+  /// @dev The liquidation LTV is where the (unchanged) proportional pre-liquidation path triggers
+  ///      and, in v2, the upper bound of the offer band. Immutable after initialization and
+  ///      constrained at init to `<= market LLTV`.
+  /// @return The liquidation LTV in WAD format (1e18 = 100%).
+  function liquidationLtv() external view returns (uint128);
 }

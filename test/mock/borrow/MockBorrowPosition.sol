@@ -19,6 +19,7 @@ contract MockBorrowPosition is IBorrowPosition {
   uint256 public override totalBorrowed;
   uint256 public override availableLiquidity;
   uint128 public override safeLtv;
+  uint128 public override liquidationLtv;
 
   bool public healthy = true;
 

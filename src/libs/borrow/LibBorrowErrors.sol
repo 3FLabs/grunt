@@ -70,4 +70,56 @@ library LibBorrowErrors {
 
   /// @notice Thrown when the callback is called by an address other than Morpho.
   error NotMorpho();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          OFFERS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when an offer is proposed with zero collateral or zero debt shares.
+  /// @dev Offer amounts are typed `uint128` (matching Morpho's `uint128` collateral and borrow
+  ///      totals), so the upper bound is enforced by the parameter type itself; only the
+  ///      lower-bound (> 0) needs an explicit check.
+  error OfferAmountZero();
+
+  /// @notice Thrown at proposal time when the offer is not profitable at the current price
+  ///         (`collateral value <= debt value`). This is a sanity filter only; the binding
+  ///         profitability/de-risking checks are re-evaluated per fill at consume time.
+  error OfferNotProfitable();
+
+  /// @notice Thrown at proposal time when the offer is profitable but its bonus (the excess of the
+  ///         collateral value over the debt value, as a fraction of the debt value) is below the
+  ///         admin-set minimum. Anti-griefing floor: keeps barely-profitable offers out of the
+  ///         book, where they would sort to the head and make band liquidations unattractive. The
+  ///         same floor is re-checked at consume time, where a below-floor fill is skipped (not
+  ///         reverted with this error).
+  error OfferBonusTooLow();
+
+  /// @notice Thrown when an offer's `expiresAt` is not strictly after its computed `activeAt`,
+  ///         i.e. the offer would have no consumable window.
+  error OfferExpiryTooShort();
+
+  /// @notice Thrown when an offer's lifespan (`expiresAt - activeAt`, i.e. measured from when it
+  ///         becomes consumable) exceeds `MAX_OFFER_LIFESPAN`.
+  error OfferExpiryTooLong();
+
+  /// @notice Thrown when the offer slab is full (`MAX_OFFERS` live offers).
+  error TooManyOffers();
+
+  /// @notice Thrown when an offer id does not correspond to a currently-live offer (bad id or a
+  ///         freed/never-allocated slab slot).
+  error OfferNotFound();
+
+  /// @notice Thrown when {BorrowOffersRegistry.setOfferTimelock} is given a value outside
+  ///         `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
+  error OfferTimelockOutOfRange();
+
+  /// @notice Thrown when {BorrowOffersRegistry.setMinOfferBonus} is given a value above
+  ///         `MAX_MIN_OFFER_BONUS_BPS`.
+  error MinOfferBonusOutOfRange();
+
+  /// @notice Thrown when the offer (band) liquidation path is entered but nothing is fillable
+  ///         (empty / all-inactive / all-over-price / only-unprofitable list). A dedicated error
+  ///         so liquidators get a clear signal instead of Morpho's `INCONSISTENT_INPUT` from a
+  ///         zero-amount repay.
+  error NoConsumableOffer();
 }

@@ -68,6 +68,10 @@ contract MaliciousBorrowModule is IBorrowPosition {
     return uint128(1e18);
   }
 
+  function liquidationLtv() external pure override returns (uint128) {
+    return uint128(1e18);
+  }
+
   function totalBorrowed() external pure override returns (uint256) {
     return 0;
   }
