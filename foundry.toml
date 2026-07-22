@@ -34,6 +34,10 @@ fail_on_revert = false
 [rpc_endpoints]
 mainnet = "${ETH_RPC_URL}"
 
+[doc]
+# Keep generated API docs out of docs/, which holds the hand-written wiki
+out = "generated-docs"
+
 [fmt]
 tab_width = 2
 
