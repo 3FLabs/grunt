@@ -77,8 +77,7 @@ library LibFacilityErrors {
   error AssetNotPositionManager(address asset);
 
   /// @notice Thrown when a position manager reports invalid asset configuration.
-  /// @dev Reverts if collateralAsset == debtAsset, collateralAsset == positionManager,
-  ///      or debtAsset == positionManager, preventing snapshot double-counting attacks.
+  /// @dev The position manager, collateral, and debt addresses must be pairwise distinct.
   error InvalidPositionManagerAssets();
 
   /// @notice Thrown when an amount differs from the expected value.
@@ -200,7 +199,6 @@ library LibFacilityErrors {
   error TransferBlocked(address guard, address from, address to, uint256 amount);
 
   /// @notice Thrown when attempting to transfer tokens to address(0).
-  /// @dev ERC6909 credits balances to address(0) on transfer, which would break totalSupply tracking.
-  ///      Use burn() instead to properly remove tokens from circulation.
+  /// @dev Shares leave circulation through withdraw/claim; see the transfer overrides in {Facility}.
   error TransferToZeroAddress();
 }

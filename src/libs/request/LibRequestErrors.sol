@@ -9,7 +9,7 @@ library LibRequestErrors {
   /*                       REPAYMENT                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid(uint256)`, `pullFunds()`, and `repay()`.
+  /// @notice Thrown when the request has already been repaid, preventing further calls to `setRepaid()`, `pullFunds()`, and `repay()`.
   error AlreadyRepaid();
 
   /// @notice Thrown when `setRepaid` is called but the contract balance is below the caller-specified minimum.
@@ -61,10 +61,8 @@ library LibRequestErrors {
   /// @notice Thrown when the spender has insufficient allowance for a transferFrom operation.
   error InsufficientAllowance();
 
-  /// @notice Thrown when an approve amount falls in `[type(uint128).max, type(uint256).max - 1]`,
-  ///         which cannot be represented exactly in the uint128-packed allowance storage. Only
-  ///         values strictly below `type(uint128).max` (stored as-is) and `type(uint256).max`
-  ///         (stored as the infinite-allowance sentinel) are accepted.
+  /// @notice Thrown when an approve amount in `[type(uint128).max, type(uint256).max - 1]` cannot be
+  ///         represented exactly in the uint128-packed allowance storage; see ITokenController.allowance.
   error AllowanceTooLarge();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -81,8 +79,8 @@ library LibRequestErrors {
   /*                    TIMELOCK OPERATIONS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when setRepaid(uint256) is called before the mint-to-repaid delay has elapsed since the last mint/consume.
-  /// @param availableAt Earliest timestamp when setRepaid(uint256) is allowed.
+  /// @notice Thrown when setRepaid() is called before the mint-to-repaid delay has elapsed since the last mint/consume.
+  /// @param availableAt Earliest timestamp when setRepaid() is allowed.
   error MintToRepaidDelayNotElapsed(uint40 availableAt);
 
   /// @notice Thrown when the repayment deadline is not within the valid range during initialization.

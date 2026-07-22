@@ -49,25 +49,14 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///         Requests (bridge loans), funds (subscription/redemption) and PositionManager
 ///         rebalancing. Bound to one (collateralAsset, debtAsset) pair at initialization and
 ///         runs one operation at a time against any PositionManager on that pair.
-/// @dev Two entry points:
-///      - ASYNC (`startRetargetting`): deploys a fresh Request through the audited
-///        RequestFactory; the operation spans the fund's settlement window and ends with a
-///        trustless, tick-priced repayment at `resolve`.
-///      - SYNC (`startSyncRetargetting`): the whole operation runs atomically inside a flash
-///        loan taken through an owner-whitelisted {IFlashLoanModule}; the steps are supplied
-///        as a multicall payload executed inside the callback and nothing persists past the
-///        transaction.
-///
-///      Trust model: fully trusted owner, semi-trusted rebalancer boxed in by the guardrails
-///      (direction checks, principal and yield caps, whitelists, residual settlement gates),
-///      untrusted everyone else. The Retargetter holds no value at rest: `resolve` and the end
-///      of the flash-loan window both require its balances of the two bound assets to stay
-///      within the configured residual tolerance (exact zero by default).
-///
-///      Derive, do not store: everything readable from the composed contracts (direction,
-///      consumed principal, order liveness progress, repaid status) is recomputed fresh at
-///      every use; only the operation addresses, the loan clock origin, the per-operation
-///      yield cap and the non-derivable order fields persist (see {LibStorage}).
+/// @dev Two entry points: ASYNC (`startRetargetting`, a fresh Request bridging the fund's
+///      settlement window) and SYNC (`startSyncRetargetting`, the whole operation atomic
+///      inside a flash loan); see docs/retargetter.md#operation-lifecycle. Trust model:
+///      fully trusted owner, semi-trusted rebalancer boxed in by the guardrails, untrusted
+///      everyone else. The Retargetter holds no value at rest: settlement requires its
+///      balances of both bound assets within the configured residual tolerance (exact zero
+///      by default). Everything derivable from the composed contracts is recomputed fresh at
+///      every use; only the non-derivable operation fields persist (see {LibStorage}).
 contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initializable, Multicallable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -80,26 +69,20 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*                         IMMUTABLES                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev The stateless quoter holding the sizing and repayment math; private because the
-  ///      {quoter} interface view already exposes it (a public immutable would duplicate the
-  ///      getter).
+  /// @dev The stateless quoter holding the sizing and repayment math; exposed via {quoter}.
   address private immutable _QUOTER;
 
-  /// @dev The factory deploying the operation Requests; private because the {requestFactory}
-  ///      interface view already exposes it.
+  /// @dev The factory deploying the operation Requests; exposed via {requestFactory}.
   address private immutable _REQUEST_FACTORY;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         MODIFIERS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Passes when the caller is the module driving an open flash-loan window (the
-  ///      payload steps are delegatecalled from the callback, so `msg.sender` there is the
-  ///      module), when the caller is the owner, or when the caller holds the rebalancer
-  ///      role. Outside a window the slot reads the zero address, which never matches a
-  ///      caller, and a third party gaining execution control inside a window stays an
-  ///      ordinary unauthorized caller. The body lives in a function so the modifier costs
-  ///      a jump at each of its many use sites instead of an inlined copy (contract size).
+  /// @dev Passes for the module driving an open flash-loan window (the payload steps are
+  ///      delegatecalled from the callback, so `msg.sender` there is the module), the owner,
+  ///      or a rebalancer role holder. Outside a window the slot reads the zero address,
+  ///      which never matches a caller. The body lives in a function for contract size.
   modifier onlyOwnerOrRebalancer() {
     _checkOwnerOrRebalancer();
     _;
@@ -113,10 +96,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
   }
 
-  /// @dev Transient reentrancy guard, with the body behind function calls: the guard sits on
-  ///      nearly every entry point, and inlining it at each one costs contract size. The
-  ///      error signature matches Solady's ReentrancyGuardTransient, keeping the selector
-  ///      tooling knows.
+  /// @dev Transient reentrancy guard, with the body behind function calls for contract size.
   modifier nonReentrant() {
     _nonReentrantBefore();
     _;
@@ -181,17 +161,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @inheritdoc IRetargetter
   /// @dev The deployed Request gets the maximum 90-day repayment deadline (treated as
-  ///      effectively infinite; see REPAYMENT_DEADLINE_OFFSET for the acknowledgment) and a
-  ///      zero mint-to-repaid delay. That delay exists to keep a Request consumer from minting
-  ///      disproportionate yield tokens right before repayment; here the minting paths are
-  ///      boxed in instead: the yield gates cap yield proportional to principal, the principal
-  ///      gates cap principal at the live quoter cap (so every pulled asset is capital the
-  ///      operation actually uses), the minimum-one-tick rule guarantees lenders a full tick
-  ///      of yield, and the consumption window closes capital entry at the tick threshold or
-  ///      the first pull of funds, whichever comes first. A nonzero delay would instead let a
-  ///      late authorized mint push settlement back. The deadline is mirrored into the
-  ///      operation storage (the Request does not expose it) so the loan clock can only
-  ///      start while at least MIN_DEADLINE_BUFFER remains before it; see
+  ///      effectively infinite; see docs/known-issues.md#retargetter) and a zero
+  ///      mint-to-repaid delay (the funding gates box the minting paths in instead; see
+  ///      docs/retargetter.md#operation-lifecycle). The deadline is mirrored into the
+  ///      operation storage because the Request does not expose it; see
   ///      {LibStorage.checkConsumptionWindow}. The Retargetter becomes the Request's owner,
   ///      puller and consumer.
   function startRetargetting(
@@ -234,11 +207,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev The yield gate compares the offer's ratio (partial fills keep it), division-free:
-  ///      `expectedReturn * BPS <= amount * operationMaxYieldBps`. The gate is flat because
-  ///      repayment itself is duration-prorated by the tick formula. The principal gate is
-  ///      cumulative through the Request's PT supply plus the outstanding mint authorizations,
-  ///      which together are the complete capital accounting for the Request.
+  /// @dev Capital gates documented at {LibStorage.checkOffer}.
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)
@@ -255,12 +224,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev Shares consume's gates: the flat yield-ratio gate on the authorized amounts and the
-  ///      principal gate counting the PT supply plus every outstanding authorization (the
-  ///      account's current one is replaced, not added to). A nonzero authorization starts the
-  ///      loan clock, must land inside the consumption window and is capped in count by
-  ///      MAX_AUTHORIZED_ACCOUNTS; the zero-amount revocation skips every gate because it
-  ///      only shrinks exposure and must stay available after the window closes.
+  /// @dev Shares consume's gates ({LibStorage.checkOffer}); the account's current
+  ///      authorization is replaced, not added to, and a zero-amount revocation skips every
+  ///      gate.
   function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)
@@ -296,16 +262,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev With no consume the owed amount is zero and this simply marks the Request repaid,
-  ///      which is how an untouched operation gets abandoned. Transfers only the shortfall
-  ///      between the owed amount and the Request's balance, never more, so position-derived
-  ///      funds cannot overpay YT holders. The open upper bound at setRepaid keeps third-party
-  ///      donations to the Request from blocking repayment. Once the Request passes its
-  ///      90-day deadline it auto-expires and this function reverts AlreadyRepaid; proceeds
-  ///      settling after that point cannot be delivered to lenders locally. The expiry
-  ///      bypassing the local repayment flow is an acknowledged limitation and, like the
-  ///      expiry itself, delivery of late proceeds runs through the governed upgrade path;
-  ///      see REPAYMENT_DEADLINE_OFFSET for the remediation posture.
+  /// @dev Transfers only the shortfall between the owed amount and the Request's balance,
+  ///      never more, so position-derived funds cannot overpay YT holders; the open upper
+  ///      bound at setRepaid keeps third-party donations to the Request from blocking
+  ///      repayment. With no consume the owed amount is zero and this simply marks the
+  ///      Request repaid, which is how an untouched operation gets abandoned. Past its
+  ///      90-day deadline the Request auto-expires and this function reverts AlreadyRepaid;
+  ///      see docs/known-issues.md#retargetter.
   function repay() external onlyOwnerOrRebalancer nonReentrant returns (uint256 owedAmount) {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
@@ -336,11 +299,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /// @dev Three settlement gates, never bypassed by anyone: Request repaid (through the
   ///      state-mutating sync so a past-deadline Request resolves instead of wedging), no
   ///      pending order (an ENDED or force-ended order is cleared here), and residual within
-  ///      the configured tolerance on both bound assets (dust donations below the tolerance
-  ///      cannot grief settlement; anything above is folded into the position with a
-  ///      full-balance rebalance leg, except a debt-asset donation beyond the outstanding
-  ///      module debt, which the owner instead tolerates by raising the asset's residual
-  ///      exponent so it folds into the next operation).
+  ///      the configured tolerance on both bound assets. Donation handling: see
+  ///      docs/known-issues.md#retargetter.
   function resolve() external onlyOwnerOrRebalancer nonReentrant {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
@@ -357,15 +317,11 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRetargetter
-  /// @dev Operates against the operation's fund (ASYNC operations and SYNC windows both
-  ///      record it in the operation storage). Only the non-derivable order fields are
+  /// @dev Operates against the operation's fund. Only the non-derivable order fields are
   ///      stored; identical re-submissions need a fresh salt because funds archive ended
   ///      order ids. An order created inside a flash-loan window must reach ENDED or be
-  ///      canceled before the window closes. Operator note: size order.output at or below
-  ///      the venue-simulated output; on venues whose deviation check is one-sided (Pareto
-  ///      rejects only outputs below the rate), an overstated output commits into an order
-  ///      that never becomes unlockable and stays pending until the fund operator resolves
-  ///      it fund-side.
+  ///      canceled before the window closes. Sizing order.output is venue-sensitive; see
+  ///      docs/known-issues.md#retargetter.
   function create(Order calldata order_) external onlyOwnerOrRebalancer nonReentrant {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     operation_.checkActive();
@@ -427,33 +383,21 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRetargetter
-  /// @dev Snapshots the target and the aggregate and per-module LTVs before the call, so no
-  ///      mid-call state change can move the goalposts. After the call (skipped for direct
-  ///      owner calls, always applied inside a window): the aggregate and every module may
-  ///      end above target only while strictly improving on their snapshot, and no module may
-  ///      end with debt against zero collateral. LTV convention throughout: zero when debt is
-  ///      zero (idle modules and an emptied position pass), the max sentinel for bad debt.
-  ///      The position manager's own loss, cooldown and safe-LTV checks apply underneath.
-  ///      A sentinel resolving to zero (an empty balance, or a REPAY leg on a debt-free
-  ///      module) produces a zero-amount leg, which the borrow modules reject; the whole
-  ///      call reverts atomically.
+  /// @dev Snapshots the target and the aggregate and per-module LTVs before the call; after
+  ///      it (skipped for direct owner calls, always applied inside a window) each may end
+  ///      above target only while strictly improving on its snapshot, and no module may end
+  ///      in bad debt. LTV convention in {_ltv}; the position manager's own loss, cooldown
+  ///      and safe-LTV checks apply underneath. A sentinel resolving to zero produces a
+  ///      zero-amount leg, which the borrow modules reject.
   function rebalance(RebalancingData calldata data) external onlyOwnerOrRebalancer nonReentrant {
     address positionManager = LibStorage.operationStorage().checkActive();
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     address collateralAsset = assets_.collateralAsset;
     address debtAsset = assets_.debtAsset;
 
-    // Resolve the full-balance sentinels in memory before calling the position manager.
-    // Input legs resolve to the current balance of the corresponding asset; a REPAY leg is
-    // further capped at its module's live debt, because the borrow modules forward the
-    // amount to the venue verbatim and venues reject repayments above the outstanding debt,
-    // so an uncapped balance could never be folded once it exceeds what the module owes.
-    // The module reports that debt rounded down, so a capped repayment can leave one or
-    // more wei of debt behind rather than clearing the module exactly. The sentinel is
-    // rejected on output legs (BORROW, WITHDRAW). Resolution is one snapshot taken before
-    // any leg executes: sentinels do not compose, so every leg resolves against the same
-    // pre-call balances, never the state left by earlier legs, and REPAY sentinels across
-    // several modules can together commit more than the shared balance.
+    // Resolve the full-balance sentinels in memory before calling the position manager:
+    // one pre-call snapshot, REPAY capped at the module's live debt, rejected on output
+    // legs (BORROW, WITHDRAW); full semantics at {IRetargetter.rebalance}
     RebalancingData memory resolved = data;
     uint256 collateralBalance = collateralAsset.balanceOf(address(this));
     uint256 debtBalance = debtAsset.balanceOf(address(this));
@@ -518,12 +462,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /// @dev Deliberately not nonReentrant: the payload steps executed inside the callback are
   ///      themselves guarded and the guard lives in transient storage shared across the
   ///      delegatecalls, so a held outer guard would revert every inner step. Reentry
-  ///      protection comes from the operation storage doubling as the entry lock. The window
-  ///      populates the same operation storage the steps read during an ASYNC operation
-  ///      (minus the Request, whose absence gates the ASYNC-only steps) and zeroes it at
-  ///      window close, so nothing persists past the transaction. Atomicity is the
-  ///      settlement invariant: either the whole retarget lands (loan repaid, no stored
-  ///      order, residual within the configured tolerance) or the transaction reverts.
+  ///      protection comes from the operation storage doubling as the entry lock; the window
+  ///      populates it (minus the Request, whose absence gates the ASYNC-only steps) and
+  ///      zeroes it at window close, so nothing persists past the transaction.
   function startSyncRetargetting(
     address positionManager,
     address flashLoanModule,
@@ -537,10 +478,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       revert LibRetargetterErrors.ModuleNotWhitelisted();
     }
 
-    // Open the window: the operation storage carries the addresses the steps read (and locks
-    // out nested starts); the window slot hands step authority to the module alone for the
-    // whole window, while the module slot authenticates the callback and is zeroed on its
-    // entry (single-shot), which is why the module address lives in both
+    // Open the window: the operation storage carries the addresses the steps read, and the
+    // module address goes into both transient slots (distinct roles; see WINDOW_TSLOT)
     operation_.positionManager = positionManager;
     operation_.fund = fund;
     WINDOW_TSLOT.tStoreAddress(flashLoanModule);
@@ -566,11 +505,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @notice Provider-agnostic flash-loan callback executing the operation payload.
   /// @dev Only callable by the transient module with the exact transient amount; the module
-  ///      slot is zeroed on entry so the callback is single-shot (a nested or replayed
-  ///      callback, including one smuggled into the payload, fails). The payload runs through
+  ///      slot is zeroed on entry, making the callback single-shot. The payload runs through
   ///      Solady's `_multicall`: each element is delegatecalled on this contract, so the
-  ///      steps run their own modifiers with `msg.sender` being the module; authorization
-  ///      flows through the window slot holding the module address.
+  ///      steps run their own modifiers with `msg.sender` being the module.
   /// @param amount The flash-loaned amount
   /// @param data The ABI-encoded step calls supplied to startSyncRetargetting
   function onFlashLoan(uint256 amount, bytes calldata data) external {
@@ -694,8 +631,6 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
     (uint256 target,) = IPositionManager(positionManager).config();
     RetargetterConfig storage config_ = LibStorage.configStorage();
-    // The estimates pack into a single slot, so one copy into memory beats a storage
-    // pointer re-reading the slot for every field passed to the quoter
     YieldEstimates memory estimates = config_.estimates;
     uint256 principal = IRetargetterQuoter(_QUOTER)
       .retargetPrincipal(
@@ -785,9 +720,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @dev Shared start gate of both entry points. One operation at a time: the position
   ///      manager doubles as the active flag, and a SYNC window keeps it populated, so this
-  ///      also locks out starts smuggled into a window payload. No leftover order, matching
-  ///      asset pair, whitelisted fund, and the requested amount within the live principal
-  ///      cap (fail-fast for ASYNC, where the binding check re-runs at every consume).
+  ///      also locks out starts smuggled into a window payload.
   function _checkStart(RetargetterOperation storage operation_, address positionManager, address fund, uint256 amount)
     internal
     view
@@ -844,14 +777,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @dev Settlement gate: the balance of each bound asset must stay strictly below two to
-  ///      the power of its configured residual exponent, checked with a single shift. The
-  ///      zero default keeps the gate exact; a small tolerance (for example 2^20 on a
-  ///      6-decimal asset, about one token) stops dust donations from griefing settlement.
-  ///      Everything above must have returned to the position manager or the Request, or be
-  ///      folded into the position through the full-balance rebalance legs; a debt-asset
-  ///      donation beyond what those legs can repay is tolerated by the owner raising the
-  ///      asset's residual exponent instead. Tolerated dust stays here and folds into the
-  ///      next operation through the full-balance sentinels.
+  ///      the power of its configured residual exponent, checked with a single shift; the
+  ///      zero default keeps the gate exact. Donation handling and remediation: see
+  ///      docs/known-issues.md#retargetter.
   function _checkResidual() internal view {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     RetargetterConfig storage config_ = LibStorage.configStorage();

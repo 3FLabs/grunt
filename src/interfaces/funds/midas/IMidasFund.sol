@@ -5,13 +5,10 @@ import {IFund} from "../IFund.sol";
 import {Order, Mode} from "../../../libs/funds/Order.sol";
 
 /// @notice Bond configuration for the Midas "Repay-and-Redeem" flow.
-/// @param amount Bond size as a fraction of the redeem order input, in basis points (must be
-///        at most MAX_BOND_AMOUNT, 500 bps = 5%). Zero (the default, or after
-///        removeBondConfig()) means no bond payment is required: the bond leg moves nothing,
-///        but redeems still wait for the unlockInstantRedeem() confirmation.
-/// @param recipient The Midas-specified wallet receiving the bond in mTokens. Must be non-zero
-///        when amount is positive, and must be greenlisted by Midas when the mToken is
-///        permissioned (e.g. mGLOBAL gates every transfer on both parties).
+/// @param amount Bond size as a fraction of the redeem order input, in basis points (at most
+///        MAX_BOND_AMOUNT, 500 bps = 5%); zero means no bond payment is required.
+/// @param recipient The Midas-specified wallet receiving the bond in mTokens; must be
+///        greenlisted by Midas when the mToken is permissioned.
 struct BondConfig {
   uint256 amount;
   address recipient;
@@ -130,10 +127,8 @@ interface IMidasFund is IFund {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the MidasFund contract with all required parameters.
-  /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
-  ///      The mToken is derived from the deposit vault; the wrapped share must reference the
-  ///      same mToken. No redemption vault is configured at initialization: Midas deploys a
-  ///      dedicated one per redemption, set via setRedemptionVault() while the redeem is live.
+  /// @dev Callable once. The mToken is derived from the deposit vault; the wrapped share must
+  ///      wrap the same mToken. No redemption vault is configured at initialization.
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
   /// @param depositVault_ The Midas DepositVault (issuance vault) proxy address.
@@ -155,58 +150,34 @@ interface IMidasFund is IFund {
 
   /// @notice Sets the fund internal state to RECOVERING (if issues arise with Midas).
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      - Deposit orders (must be PROCESSING): use this when Midas returns the committed
-  ///        input off-band (e.g. via `withdrawToken`). Once set to RECOVERING, the state()
-  ///        function will check if recovery funds (original input) have been returned. If
-  ///        yes, it shows RECOVERING. If no, it falls back to PROCESSING.
-  ///        Reverts with InvalidState(UNLOCKING) for a settled deposit (mint request
-  ///        approved, mTokens claimable): the payout completes forward via unlock(). If the
-  ///        approval lands only after flagging, the order reports PROCESSING until
-  ///        cancelRecovering() restores the claimable state.
-  ///      - Redeem orders: only an UNSETTLED bonded redeem can be flagged — in the bond
-  ///        phase (bond leg committed, instant redemption locked), or re-ACCEPTED after
-  ///        unlockInstantRedeem() with the bond already paid. This is the abort path for a
-  ///        permanently stuck bonded redeem: the remainder shares never left the depositor,
-  ///        and recover() ends the order re-wrapping any bond returned off-band in mTokens
-  ///        into shares minted to the receiver (possibly zero — the bond may stay
-  ///        forfeited). Flagging re-locks the instant redemption so that cancelRecovering()
-  ///        always lands back in the bond phase.
-  ///        Reverts with RecoverNotSupported for a settled redeem (`redeemInstant` executed
-  ///        — the payout must complete forward via the terminal unlock()) and for an
-  ///        uncommitted redeem with no bond paid (cancel() is the tool there).
-  /// @param order The order to recover (must match the current order being processed).
-  ///        The full order is required (rather than just its id) so the mode can be checked;
-  ///        matching on the derived order ID still prevents a stale pending transaction from
-  ///        targeting the wrong order if the current order completes and a new one enters
-  ///        PROCESSING before it is mined.
+  ///      Deposits (must be PROCESSING): flag when Midas is expected to return the committed
+  ///      input off-band (e.g. via `withdrawToken`); a settled deposit (mTokens claimable) is
+  ///      rejected and completes forward via unlock(). Redeems: only an unsettled bonded
+  ///      redeem can be flagged (in the bond phase, or re-ACCEPTED with the bond already
+  ///      paid); flagging re-locks the instant redemption so cancelRecovering() lands back in
+  ///      the bond phase. Recovery procedure: see docs/funds.md#midas-mtoken.
+  /// @param order The order to recover (must match the current order). The full order is
+  ///        required so the mode can be checked; id matching still prevents a stale pending
+  ///        transaction from targeting a later order.
   function recovering(Order calldata order) external;
 
   /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
   /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Use this if recovering() was called by mistake and Midas delivered the output tokens.
-  ///      For a bonded redeem the order lands back in the bond phase (recovering() re-locked
-  ///      the instant redemption), so unlockInstantRedeem() must be called again before the
-  ///      redeem leg can be committed. Only cancel a redeem recovery while no bond has been
-  ///      returned: mTokens already received are not swept by the resumed order's completion
-  ///      (they surface as a later deposit's balance sweep) — once the refund is in,
-  ///      finalize via recover() instead.
+  ///      A bonded redeem lands back in the bond phase, so unlockInstantRedeem() must be
+  ///      called again. Only cancel a redeem recovery while no bond has been returned:
+  ///      mTokens already received are not swept by the resumed order's completion (they
+  ///      surface as a later deposit's balance sweep); once the refund is in, finalize via
+  ///      recover() instead.
   /// @param orderId The order ID that must match the current order in RECOVERING state.
   function cancelRecovering(bytes32 orderId) external;
 
   /// @notice Resolves the current order by setting its input and output amounts.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if
-  ///      received amounts differ from expected ones (e.g., a partial off-band refund).
-  ///      Resolved amounts only affect deposit orders (mint-output and refund thresholds);
-  ///      redeem orders settle synchronously with the minimum output enforced on-chain, so
-  ///      their state ignores the resolved amounts.
-  ///
-  ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id
-  ///      remains valid for `state/unlock/recover`, but the fund will use the resolved
-  ///      `input/output` amounts as the effective thresholds for PROCESSING/RECOVERING balance
-  ///      comparisons. It's possible to resolve multiple times if needed, always overriding the
-  ///      previous resolution.
-  ///
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, on a
+  ///      PROCESSING or RECOVERING order whose received amounts differ from the expected ones
+  ///      (e.g. a partial off-band refund). Does not change the order identity: the original
+  ///      order id stays valid and the resolved amounts become the effective thresholds for
+  ///      deposit balance comparisons (redeems enforce their minimum output on-chain and
+  ///      ignore them). Re-resolvable; the last resolution wins.
   /// @param order The order to resolve (must match current order ID before resolution).
   /// @param input The new input amount.
   /// @param output The new output amount.
@@ -214,64 +185,47 @@ interface IMidasFund is IFund {
 
   /// @notice Confirms receipt of the bond (or skips the bond leg) and unlocks the instant
   ///         redemption of the current redeem order.
-  /// @dev Can only be called by an account with the PAYMENT_ROLE or the owner.
-  ///      Every redeem order requires this confirmation before its redeem leg can commit.
-  ///      Requires the current order to be bond-locked — reverts with
-  ///      InstantRedeemAlreadyUnlocked for deposit orders, double calls, or once the
-  ///      redemption has executed — and its internal state to be either ACCEPTED (skip path:
-  ///      unlocking before any commit skips the bond leg when nothing is required for this
-  ///      redemption) or PROCESSING (normal path: after the bond leg of commit()). Sets the
+  /// @dev Can only be called by an account with the PAYMENT_ROLE or the owner. Every redeem
+  ///      order requires this confirmation before its redeem leg can commit. The current
+  ///      order must be bond-locked, in internal state ACCEPTED (skip path: waives the bond
+  ///      leg before any commit) or PROCESSING (normal path: after the bond leg). Sets the
   ///      internal state back to ACCEPTED so the depositor can commit the redeem leg.
-  ///      Once the bond has been paid, cancel() reverts with BondAlreadyPaid: the order
-  ///      either completes forward, or — while the redemption has not executed — is aborted
-  ///      via recovering() + recover() (the bond stays forfeited).
   /// @param orderId The order ID that must match the current order.
   ///        Required to prevent a stale pending transaction from targeting the wrong order.
   function unlockInstantRedeem(bytes32 orderId) external;
 
   /// @notice Sets the Midas deposit vault.
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
-  ///      while no order is live (internal state EMPTY or ENDED). The new vault must manage the
-  ///      same mToken, have the payment token registered, not be paused (globally or for the
-  ///      commit-time function this fund calls), and (when its greenlist
-  ///      is enabled) have both this fund and the wrapped share greenlisted.
+  ///      while no order is live (internal state EMPTY or ENDED). The new vault must manage
+  ///      the same mToken, have the payment token registered, not be paused (globally or for
+  ///      the commit-time function this fund calls), and (when its greenlist is enabled) have
+  ///      both this fund and the wrapped share greenlisted.
   /// @param depositVault_ The new deposit vault address.
   function setDepositVault(address depositVault_) external;
 
   /// @notice Sets the Midas redemption vault for the current redemption.
-  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner. Callable at
-  ///      any time, including while an order is live: the redemption vault carries no per-order
+  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, at any
+  ///      time including while an order is live: the redemption vault carries no per-order
   ///      state (unlike the deposit vault, which tracks the pending mint request), and a live
-  ///      redeem settles through the vault configured when its redeem leg commits, with the
-  ///      order's minimum output still enforced on-chain. Each redemption settles through a
-  ///      dedicated vault deployed by Midas once the bond is received: create() resets the
-  ///      stored vault to address(0), so this must be called for every redemption before its
-  ///      redeem leg commits. The new vault must manage the
-  ///      same mToken, have the payment token registered, not be paused (globally or for the
-  ///      commit-time function this fund calls), and (when its greenlist
-  ///      is enabled) have both this fund and the wrapped share greenlisted.
+  ///      redeem still enforces its minimum output on-chain. create() resets the stored vault
+  ///      to address(0), so this must be called for every redemption before its redeem leg
+  ///      commits. Same vault requirements as setDepositVault().
   /// @param redemptionVault_ The new redemption vault address.
   function setRedemptionVault(address redemptionVault_) external;
 
   /// @notice Sets the bond configuration for the Repay-and-Redeem flow.
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
-  ///      while no order is live (internal state EMPTY or ENDED), so the bond terms are stable
-  ///      for an order's life.
-  ///      Reverts with InvalidBondConfig if the amount is zero or greater than MAX_BOND_AMOUNT
-  ///      (5%), or if the recipient is the zero address. Use removeBondConfig() to disable the
-  ///      bond flow.
-  ///      OPERATIONS: the recipient must be greenlisted by Midas when the mToken is
-  ///      permissioned (e.g. mGLOBAL gates every transfer), otherwise the bond leg reverts.
+  ///      while no order is live (the bond terms are stable for an order's life). Reverts with
+  ///      InvalidBondConfig if the amount is zero or greater than MAX_BOND_AMOUNT (5%), or if
+  ///      the recipient is the zero address; use removeBondConfig() to disable the bond payment.
   /// @param bondConfig_ The new bond configuration (amount in basis points, recipient).
   function setBondConfig(BondConfig calldata bondConfig_) external;
 
   /// @notice Removes the bond configuration (no bond payment required).
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
-  ///      while no order is live (internal state EMPTY or ENDED). Subsequent redeem orders
-  ///      still follow the two-leg bond flow, but their bond leg moves nothing; the
-  ///      unlockInstantRedeem() confirmation is required regardless.
-  ///      Idempotent: removing an already-zero config succeeds. Emits BondConfigUpdated with
-  ///      a zero amount and recipient.
+  ///      while no order is live. Subsequent redeem orders still follow the two-leg bond flow,
+  ///      but their bond leg moves nothing; the unlockInstantRedeem() confirmation is required
+  ///      regardless.
   function removeBondConfig() external;
 
   /// @notice Sets the Midas referrer id forwarded on deposits.

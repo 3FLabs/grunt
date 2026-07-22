@@ -4,8 +4,8 @@ pragma solidity ^0.8.22;
 /// @title IRetargetterQuoter
 /// @author 3F Protocol
 /// @notice Stateless pure math for sizing retargetting operations and pricing their repayment.
-/// @dev Behavioral contract only: the formulas and their step-by-step derivations live in the
-///      RetargetterQuoter contract header.
+/// @dev Behavioral contract only: the formulas and their step-by-step derivations live in
+///      docs/retargetter.md#model-and-notation.
 ///
 ///      Units and conventions:
 ///      - `collateralQuoted` and `debt` are in debt-asset units (PositionManager

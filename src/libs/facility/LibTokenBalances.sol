@@ -12,24 +12,16 @@ import {LibCommonErrors as CommonErrors} from "../common/LibCommonErrors.sol";
 library LibTokenBalances {
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
 
-  /// @notice Adds an amount to a token's balance in the map.
-  /// @dev If the token doesn't exist in the map, it will be added with the given amount.
-  ///      If it exists, the amount is added to the current balance.
-  ///      Uses direct mapping access instead of tryGet to avoid an unnecessary contains() check.
-  /// @param _balances The storage reference to the balance map.
-  /// @param token The token address to add balance for.
-  /// @param amount The amount to add to the balance.
+  /// @notice Adds an amount to a token's balance in the map, inserting the key if missing.
+  /// @dev Reads `_values` directly instead of tryGet to avoid an unnecessary contains() check.
   function add(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
     _balances.set(token, _balances._values[token] + amount);
   }
 
   /// @notice Subtracts an amount from a token's balance in the map.
   /// @dev Reverts with InsufficientBalance if the current balance is less than the amount.
-  ///      Automatically removes the token entry from the map if the resulting balance is zero.
-  ///      Uses direct mapping access instead of tryGet to avoid an unnecessary contains() check.
-  /// @param _balances The storage reference to the balance map.
-  /// @param token The token address to subtract balance from.
-  /// @param amount The amount to subtract from the balance.
+  ///      Removes the token entry from the map when the resulting balance is zero (callers
+  ///      reading `_values` directly rely on a removed key returning 0).
   function sub(EnumerableMapLib.AddressToUint256Map storage _balances, address token, uint256 amount) internal {
     unchecked {
       uint256 currentAmount = _balances._values[token];

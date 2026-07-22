@@ -16,26 +16,19 @@ library LibExecutor {
   /*                       MODIFIERS                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Internal helper to safely approve a position contract for a token transfer before an operation.
-  /// @dev This function is defined to reduce contract code size by centralizing approval logic, as SafeTransferLib.safeApproveWithRetry can be verbose if inlined multiple times.
-  /// @param position The address of the contract that will be approved to spend the token.
-  /// @param token The address of the ERC20 token to be approved.
-  /// @param amount The amount of tokens to approve.
+  /// @dev Approval leg of the {approves} modifier; kept as a helper to reduce contract code size
+  ///      (SafeTransferLib calls are verbose if inlined multiple times).
   function _approvesBefore(address position, address token, uint256 amount) private {
     token.safeApproveWithRetry(position, amount);
   }
 
-  /// @notice Internal helper to reset approval to zero for a position contract after an operation.
-  /// @dev This function is defined to reduce contract code size by centralizing de-approval logic, as SafeTransferLib.safeApprove can be verbose if inlined multiple times.
-  /// @param position The address of the contract whose approval is being reset.
-  /// @param token The address of the ERC20 token whose approval is to be reset.
+  /// @dev Reset leg of the {approves} modifier.
   function _approvesAfter(address position, address token) private {
     token.safeApprove(position, 0);
   }
 
-  /// @notice Modifier that safely approves a position contract to transfer a specific amount of a token, and resets approval to zero afterward.
-  /// @dev This modifier ensures that the `token` is approved for `amount` for the given `position` only during the execution of the function.
-  ///      After the function executes, approval is reset to zero to minimize risk of unintended token transfers.
+  /// @dev Approves `position` for `amount` of `token` during the wrapped call, then resets the
+  ///      approval to zero.
   /// @param position The address of the IBorrowPosition contract to approve
   /// @param token The ERC20 token address to approve
   /// @param amount The amount of tokens to approve for transfer

@@ -77,22 +77,17 @@ interface ICentrifugeFund is IFund {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Transitions to RECOVERING and submits a cancel request to the Centrifuge vault.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Must be in PROCESSING state. Reverts with `PendingClaimableAssets` if the vault has
-  ///      claimable partial-fill assets (maxMint for deposits, maxWithdraw for redeems) that must
-  ///      be drained via `unlock()` first. Sets internal state to RECOVERING, then calls
-  ///      cancelDepositRequest or cancelRedeemRequest on the vault depending on the order mode.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, on an order in
+  ///      PROCESSING state. Reverts with `PendingClaimableAssets` if the vault has claimable
+  ///      partial fills that must be drained via `unlock()` first.
   /// @param order The order to cancel.
   function cancelRequest(Order calldata order) external;
 
   /// @notice Force-ends a stuck order that cannot transition to ENDED naturally.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      Intended for orders stuck in PROCESSING due to griefing (e.g., an attacker
-  ///      inflating the vault's pendingDepositRequest via direct requestDeposit calls).
-  ///      Must be in PROCESSING or RECOVERING state. Reverts with `PendingClaimableAssets`
-  ///      if the vault has claimable fills (maxMint/maxWithdraw) or recoverable cancel assets
-  ///      (claimableCancelDepositRequest/claimableCancelRedeemRequest) that must be drained
-  ///      via `unlock()` or `recover()` first.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, on an order in
+  ///      PROCESSING or RECOVERING state; intended for orders stuck in PROCESSING by griefing of
+  ///      the vault's pending-request accounting (see docs/known-issues.md#funds). Reverts with
+  ///      `PendingClaimableAssets` while claimable fills or recoverable cancel assets remain undrained.
   /// @param order The order to force-end.
   function forceEnd(Order calldata order) external;
 

@@ -12,17 +12,9 @@ import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 
 /// @title MorphoRebalancer
 /// @notice A rebalancer contract that uses Morpho flash loans to rebalance PositionManager positions.
-/// @dev This contract is designed to be granted the REBALANCER role on PositionManagers.
-///      It enables atomic rebalancing operations by flash loaning debt tokens from Morpho,
-///      executing the rebalance, and repaying the flash loan in a single transaction.
-///      Can be reused across multiple PositionManagers by passing the target as a parameter.
-///
-///      Flow:
-///      1. Owner calls `rebalance()` with the PositionManager and rebalancing data
-///      2. Contract initiates flash loan from Morpho using data.debt as the amount
-///      3. In the callback, contract calls `rebalance()` on PositionManager
-///      4. Contract approves Morpho to pull back the flash loaned amount
-///
+/// @dev Designed to be granted the REBALANCER role on PositionManagers and reusable across
+///      several of them by passing the target as a parameter; the rebalance runs inside a
+///      Morpho flash-loan callback and the loan is repaid in the same transaction.
 /// @author 3F Protocol
 contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardTransient {
   using SafeTransferLib for address;
@@ -78,16 +70,12 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
     // Collateral cannot be provided through this rebalancer
     if (data.collateral != 0) revert LibManagerErrors.CollateralNotAllowed();
 
-    // Get assets from position manager
     (address collateralAsset, address debtAsset) = positionManager.assets();
 
-    // Encode position manager, rebalancing data, and receiver for the callback
     bytes memory callbackData = abi.encode(positionManager, data, receiver);
 
-    // Initiate flash loan using data.debt as the amount - Morpho will call onMorphoFlashLoan
     MORPHO.flashLoan(debtAsset, data.debt, callbackData);
 
-    // Transfer any excess tokens to receiver (after flash loan repayment)
     uint256 collateralExcess = collateralAsset.safeTransferAll(receiver);
     uint256 debtExcess = debtAsset.safeTransferAll(receiver);
 
@@ -108,24 +96,18 @@ contract MorphoRebalancer is IMorphoFlashLoanCallback, Ownable, ReentrancyGuardT
   function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
     if (msg.sender != address(MORPHO)) revert LibManagerErrors.UnauthorizedCaller();
 
-    // Decode the position manager, rebalancing data, and receiver
     (IPositionManager positionManager, RebalancingData memory rebalancingData,) =
       abi.decode(data, (IPositionManager, RebalancingData, address));
 
-    // Get debt asset from position manager
     (, address debtAsset) = positionManager.assets();
 
-    // Approve PositionManager to pull debt tokens for rebalancing
     debtAsset.safeApproveWithRetry(address(positionManager), rebalancingData.debt);
 
-    // Execute rebalance on PositionManager
-    // Excess tokens must come back here (address(this)) to repay flash loan
+    // Excess tokens must come back here (address(this)) to repay the flash loan
     positionManager.rebalance(rebalancingData, address(this));
 
-    // Clear any remaining approval to PositionManager
     debtAsset.safeApprove(address(positionManager), 0);
 
-    // Approve Morpho to pull back the flash loaned amount
     debtAsset.safeApproveWithRetry(address(MORPHO), assets);
   }
 

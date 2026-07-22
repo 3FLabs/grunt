@@ -28,17 +28,6 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 ///      any pre-existing dust) is stored in transient storage as the raw debt. The actual
 ///      outstanding debt is computed as rawDebt - assetBalance. The asset balance must never
 ///      exceed the raw debt.
-///
-///      Flow:
-///      1. Owner calls execute() with flash loan amount, setRequest params, script, and payload
-///      2. Contract initiates a flash loan from Morpho
-///      3. In callback: sets raw debt, sets itself as the request on the facility
-///      4. Pulls the flash loan amount from this request into the facility
-///      5. Delegatecalls the whitelisted script (which can chain facility operations)
-///      6. Repays the flash loan amount from the facility back to this request
-///      7. Removes itself as the request on the facility
-///      8. Approves Morpho to pull back the flash loaned amount
-///
 /// @author 3F Protocol
 contract MorphoFlashLoanRequest is
   IRequest,
@@ -228,7 +217,7 @@ contract MorphoFlashLoanRequest is
 
     MorphoFlashLoanRequestStorage storage $ = _storage();
 
-    // Set raw debt to full balance (flash loan + any pre-existing dust) — actual debt is rawDebt - assetBalance
+    // Set raw debt to full balance (flash loan + any pre-existing dust); actual debt is rawDebt - assetBalance
     _setRawDebt(IERC20($.asset).balanceOf(address(this)));
 
     (SetRequestParams memory params, address script, bytes memory scriptPayload) =
@@ -308,7 +297,7 @@ contract MorphoFlashLoanRequest is
   }
 
   /// @inheritdoc IRequest
-  /// @dev Equivalent to isRepaid() for this implementation — flash loans are atomic,
+  /// @dev Equivalent to isRepaid() for this implementation; flash loans are atomic,
   ///      so there is no async repayment to sync.
   function syncRepaidStatus() external view returns (bool) {
     return _debt() == 0;

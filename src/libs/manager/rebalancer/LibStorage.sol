@@ -50,8 +50,7 @@ struct RetargetterWhitelists {
 ///        funds, which also revokes every pending mint authorization
 /// @param request The Request deployed for the operation
 /// @param repaymentDeadline The Request's repayment deadline, mirrored at start because the
-///        Request does not expose it; the loan clock cannot start once less than
-///        MIN_DEADLINE_BUFFER remains before it (zero inside a SYNC window)
+///        Request does not expose it (zero inside a SYNC window)
 /// @param fund The operation's venue, owner-whitelisted at start
 /// @param orderMode The stored order's mode
 /// @param orderLive Whether an order is stored
@@ -59,9 +58,8 @@ struct RetargetterWhitelists {
 /// @param orderOutput The stored order's output amount
 /// @param orderSalt The stored order's salt
 /// @param authorizedAccounts The accounts holding a registered mint authorization; the live
-///        amounts are re-read from the Request per account, revocation removes its account
-///        eagerly, a completed mint is pruned lazily by the next write-path computation, and
-///        resolve empties the set
+///        amounts are re-read from the Request per account (lifecycle documented at
+///        IRetargetter.authorizedAccounts)
 struct RetargetterOperation {
   address positionManager;
   uint40 startedAt;
@@ -181,11 +179,9 @@ library LibStorage {
   ///      were pulled, or the tick threshold elapsed since the origin); otherwise the first
   ///      capital commitment (consume or nonzero mint authorization) starts the clock,
   ///      provided at least MIN_DEADLINE_BUFFER remains before the Request's repayment
-  ///      deadline (a later start would erode the settlement buffer the deadline is sized
-  ///      for). The window exists because repayment prices every yield token from the
-  ///      origin: capital arriving later would be overpaid for time it never covered and, on
-  ///      a default, would dilute the earlier lenders' recovery. It binds everyone, owner
-  ///      included, and a zero threshold collapses the window to the origin timestamp itself.
+  ///      deadline. The gate binds everyone, owner included, and a zero threshold collapses
+  ///      the window to the origin timestamp itself; rationale in
+  ///      docs/retargetter.md#operation-lifecycle.
   /// @param self The storage pointer to the operation
   function checkConsumptionWindow(RetargetterOperation storage self) internal {
     if (self.consumptionClosed) revert LibRetargetterErrors.ConsumptionWindowClosed();
@@ -204,8 +200,7 @@ library LibStorage {
 
   /// @dev Ends the funding round: consume and new authorizations reject from here on, and
   ///      every pending mint authorization is revoked on the Request while the set empties
-  ///      (back to front, each removal a plain pop). Runs on every pull of funds and is
-  ///      idempotent; once capital is being deployed it can no longer be diluted.
+  ///      (back to front, each removal a plain pop). Runs on every pull of funds; idempotent.
   /// @param self The storage pointer to the operation
   /// @param request The operation's Request
   function closeConsumption(RetargetterOperation storage self, address request) internal {

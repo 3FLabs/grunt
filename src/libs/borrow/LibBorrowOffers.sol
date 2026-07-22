@@ -16,13 +16,7 @@ import {BPS} from "../Constants.sol";
 ///         pre-liquidation feature of {MorphoBorrowPosition}.
 /// @dev All functions are `internal`, so they are inlined into {MorphoBorrowPosition}: `msg.sender`,
 ///      `block.timestamp` and emitted events are exactly as if the code lived in the contract. The
-///      library owns its own ERC-7201 namespace (`"borrow.offers.main"`), kept separate from the
-///      existing market/LTV storage so the upgrade is storage-safe.
-///
-///      Offers are held in a fixed slab with a one-bit-per-slot liveness bitmap (`liveBits`); no
-///      order is maintained in storage. The consume walk loads the consumable offers into memory,
-///      sorts them by effective price at that instant (exact, unlike the storage-order-drift of a
-///      sorted-at-insert list), and fills cheapest-first.
+///      library owns its own ERC-7201 namespace (`"borrow.offers.main"`).
 ///
 ///      Core invariants (binding, re-checked per consumed chunk):
 ///      - Profitability ({isProfitableAboveBonusFloor}): each fill seizes collateral worth
@@ -41,15 +35,12 @@ library LibBorrowOffers {
 
   /// @notice Offer container, stored at {BORROW_OFFERS_STORAGE_SLOT}.
   /// @dev Layout: slot 0 holds `liveBits` (32 bits); the fixed-size `slab` array starts at slot 1.
-  ///      The offer roles and configuration (timelock, minimum bonus) live on the shared
-  ///      {BorrowOffersRegistry}, so this namespace holds only the book itself.
-  ///
   ///      `liveBits` is the single source of truth for liveness: bit `i` set <=> `slab[i]` holds a
-  ///      live offer. A cleared bit's slab slot is fully zeroed (freed slots are `delete`d), and an
-  ///      all-zero namespace (a fresh proxy, or an existing proxy right after the beacon upgrade)
-  ///      structurally reads as an empty book, so no per-proxy initialization or migration is
-  ///      needed. Allocation picks the lowest cleared bit, so ids stay within `[0, MAX_OFFERS)`
-  ///      and freed ids are reused.
+  ///      live offer, and a freed slot is fully zeroed (`delete`d), so an all-zero namespace
+  ///      structurally reads as an empty book and no per-proxy initialization or migration is
+  ///      needed. A live offer always has a non-zero proposer and both remaining amounts > 0.
+  ///      Allocation picks the lowest cleared bit, so ids stay within `[0, MAX_OFFERS)` and freed
+  ///      ids are reused.
   struct BorrowOffersStorage {
     uint32 liveBits; // bit i set <=> slab[i] is a live offer
     Offer[MAX_OFFERS] slab; // ids are slab indices (uint8)
@@ -171,12 +162,9 @@ library LibBorrowOffers {
   ///         strictly-de-risking chunks until the liquidator target is met or a stop condition
   ///         fires, then writes all effects back to storage.
   /// @dev Same load + walk as {previewConsume}; only the write-back differs, so preview and
-  ///      consume cannot disagree against the same state.
-  ///
-  ///      Every expired offer in the book is pruned, even ones past the walk's halt point (the
-  ///      sorted-at-insert predecessor only pruned expired offers its cursor reached). Expired
-  ///      offers are never consumable, so this widens housekeeping only, and it still rolls back
-  ///      with the transaction when the caller reverts on a fruitless walk (`NoConsumableOffer`).
+  ///      consume cannot disagree against the same state. Every expired offer in the book is
+  ///      pruned, even ones past the walk's halt point (expired offers are never consumable, so
+  ///      this is housekeeping only).
   ///
   ///      Effects-before-interaction: all offer mutations (decrements, deletions, expiry prunes)
   ///      are persisted here, before the caller performs the single Morpho `repay`. A reentrant
@@ -289,14 +277,11 @@ library LibBorrowOffers {
       uint256(a.remainingDebtShares) * b.remainingCollateral > uint256(b.remainingDebtShares) * a.remainingCollateral;
   }
 
-  /// @dev The shared consume/preview walk over the sorted consumable offers: fills cheapest-first
-  ///      until the liquidator target is met, the position is exhausted, or an over-price offer
-  ///      stops the walk (offers are visited in ascending price order and not consuming freezes the
-  ///      LTV, so nothing later can qualify). Pure over memory: fills are recorded by mutating the
-  ///      {WalkOffer}s in place (memory structs are references), which {consume} then persists.
-  ///
-  ///      Stop conditions (any one halts the walk): liquidator target met; position collateral
-  ///      exhausted; position debt exhausted; all offers visited; offer over the max price.
+  /// @dev The shared consume/preview walk over the sorted consumable offers: fills cheapest-first.
+  ///      Pure over memory: fills are recorded by mutating the {WalkOffer}s in place (memory
+  ///      structs are references), which {consume} then persists.
+  ///      Stop conditions (any one halts the walk): liquidator target met; position collateral or
+  ///      debt exhausted; all offers visited; offer over the max price (see {FillAction.Stop}).
   /// @return totalSeized Total collateral to seize (offer-native units).
   /// @return totalDebtShares Total borrow shares to repay (offer-native units).
   function _walk(ConsumeInput memory inp, WalkOffer[] memory offers, uint256 walkLength)
@@ -336,28 +321,16 @@ library LibBorrowOffers {
     }
   }
 
-  /// @dev Computes the fill for a single offer and the per-fill decision (pure).
+  /// @dev Computes the fill for a single offer and the per-fill decision (pure). Fills are
+  ///      collateral-driven for uniform rounding: `fillShares` rounds up, so the chunk's price
+  ///      rounds in the protocol's favour and the liquidator cannot underpay; in repaidShares
+  ///      mode the candidate collateral rounds down so the implied shares never overshoot the
+  ///      target. The binding checks (profitability, bonus floor, strict de-risking) are
+  ///      evaluated in {_priceAction}.
   ///
-  ///      Fills are *collateral-driven* for uniform rounding:
-  ///      - seizedAssets mode: `fillCollateral = min(offer.remainingCollateral, seizeTargetLeft,
-  ///        positionLeft)`.
-  ///      - repaidShares mode: `maxFillCollateral = shareTargetLeft * remainingCollateral /
-  ///        remainingDebtShares` (rounded down so debt shares cannot overshoot the target);
-  ///        `fillCollateral = min(offer.remainingCollateral, maxFillCollateral, positionLeft)`.
-  ///      Then `fillShares = fillCollateral.mulDivUp(remainingDebtShares, remainingCollateral)`
-  ///      (rounded up, so the chunk's price rounds down: conservative for the cap, and the liquidator
-  ///      cannot underpay), clamped to the remaining share target and to the position's remaining
-  ///      shares. When the position clamp binds, the seized collateral is rescaled down to the
-  ///      offer's fixed ratio, so a nearly-repaid position can never yield the liquidator more
-  ///      collateral per share than the proposer authorized.
-  ///
-  ///      The binding checks (profitability, the consume-time bonus floor, strict de-risking) and
-  ///      their conservative (protocol-favorable) rounding are evaluated in {_priceAction}.
-  ///
-  ///      The position's remaining collateral/shares before this fill (`remainingPositionCollateral`
-  ///      / `remainingPositionShares`) are derived from `inp` and the running totals here rather than
-  ///      threaded in, to keep the stack shallow (this codebase compiles without the via-IR
-  ///      pipeline). Unnamed returns are used for the same reason.
+  ///      The position's remaining collateral/shares are derived from `inp` and the running
+  ///      totals rather than threaded in, and returns are unnamed, to keep the stack within the
+  ///      limits of the non-via-IR pipeline this codebase compiles with.
   function _computeFill(
     ConsumeInput memory inp,
     uint256 remainingCollateral,
@@ -381,11 +354,9 @@ library LibBorrowOffers {
         (inp.repaidSharesTarget - totalDebtShares).mulDiv(remainingCollateral, remainingDebtShares);
       fillCollateral = remainingCollateral.min(maxFillCollateral).min(remainingPositionCollateral);
     }
-    // Reachable only in repaidShares mode: this offer's ratio rounds the remaining share target
-    // down to zero collateral (in seizedAssets mode all three min() operands are at least 1).
-    // Later offers carry more collateral per debt share (the walk sorts by descending
-    // debt-shares-per-collateral), so one of them can still produce a non-zero fill for the same
-    // target: skip this offer, do not stop the walk.
+    // Reachable only in repaidShares mode (in seizedAssets mode all three min() operands are at
+    // least 1). Later offers carry more collateral per debt share and can still produce a
+    // non-zero fill for the same target: skip this offer, do not stop the walk.
     if (fillCollateral == 0) return (FillAction.Skip, 0, 0);
 
     uint256 fillShares = fillCollateral.mulDivUp(remainingDebtShares, remainingCollateral);
@@ -395,10 +366,8 @@ library LibBorrowOffers {
     }
     // Never repay more shares than the position owes. Clamping the shares alone would hand the
     // liquidator the full collateral chunk for fewer shares (a better price than the proposer
-    // authorized), so the seized collateral is rescaled to the offer's fixed ratio. Rounding down
-    // keeps every earlier cap intact (the rescaled value is strictly below the pre-clamp
-    // `fillCollateral`) and the liquidator still cannot underpay:
-    // `ceil(fillCollateral * shares / collateral) <= fillShares` after a floor rescale.
+    // authorized), so the seized collateral is rescaled down to the offer's fixed ratio; the
+    // floor rescale stays below every earlier cap and the liquidator still cannot underpay.
     if (fillShares > remainingPositionShares) {
       fillShares = remainingPositionShares;
       fillCollateral = fillShares.mulDiv(remainingCollateral, remainingDebtShares);
@@ -406,26 +375,18 @@ library LibBorrowOffers {
     }
     if (fillShares == 0) return (FillAction.Skip, 0, 0); // cannot charge any shares for this collateral
 
-    // The profitability, bonus-floor and de-risking checks are evaluated in a separate frame
-    // ({_priceAction}) to keep this function's stack within the limits of the non-via-IR
-    // pipeline. `inp` is passed by reference
-    // (one stack slot) rather than unpacking its price/totals/floor fields, which keeps the callee
-    // shallow enough to add the bonus-floor check without spilling.
     FillAction action =
       _priceAction(inp, fillCollateral, fillShares, remainingPositionCollateral, remainingPositionShares);
     if (action == FillAction.Consume) return (FillAction.Consume, fillCollateral, fillShares);
     return (action, 0, 0);
   }
 
-  /// @dev Evaluates the binding per-fill checks on the final fill amounts (pure).
-  ///      - Profitability + bonus floor ({isProfitableAboveBonusFloor}): not met =>
-  ///        {FillAction.Skip}. The offer's price is fixed by its terms, so an unprofitable or
-  ///        below-floor offer is skipped (not stopped): the walk is sorted ascending in price, and
-  ///        a below-floor offer can be followed by higher-bonus offers that still qualify.
-  ///      - Strict de-risking ({strictlyLowersLtv}): not met => {FillAction.Stop} (over max price).
-  ///      Collateral values (`seizedValue`/`remainingCollateralValue`) round down and debt values
-  ///      (`repaidDebtValue`/`remainingDebtValue`) round up, so the checks are strict in the
-  ///      protocol's favour. `repaidDebtValue > 0` since `fillShares >= 1`.
+  /// @dev Evaluates the binding per-fill checks on the final fill amounts (pure):
+  ///      profitability + bonus floor ({isProfitableAboveBonusFloor}) not met =>
+  ///      {FillAction.Skip}; strict de-risking ({strictlyLowersLtv}) not met =>
+  ///      {FillAction.Stop} (over the max price; see {FillAction}). Collateral values round down
+  ///      and debt values round up, so the checks are strict in the protocol's favour.
+  ///      `repaidDebtValue > 0` since `fillShares >= 1`.
   function _priceAction(
     ConsumeInput memory inp,
     uint256 fillCollateral,
@@ -519,12 +480,10 @@ library LibBorrowOffers {
   /// @notice Evaluates whether `remainingCollateral`/`remainingDebtShares` (the whole remaining
   ///         offer) would pass the profitability, bonus-floor and de-risking gates against the
   ///         current whole-position state.
-  /// @dev Pure helper for the `isConsumable` view, built from the same {isProfitableAboveBonusFloor}
-  ///      / {strictlyLowersLtv} checks as the consume walk so the view agrees with a real consume. It
-  ///      evaluates the offer's price vs the current LTV in isolation: it does not account for the
-  ///      cumulative LTV change of consuming cheaper offers first. Returns false if the position
-  ///      has no debt (nothing to liquidate) or the offer is degenerate; pass `minBonusBps == 0` to
-  ///      gate on strict profitability only.
+  /// @dev Backs the `isConsumable` view with the same {isProfitableAboveBonusFloor} /
+  ///      {strictlyLowersLtv} checks as the consume walk; see {IBorrowOffers.isConsumable} for
+  ///      the evaluated-in-isolation caveat. Pass `minBonusBps == 0` to gate on strict
+  ///      profitability only.
   function consumableAtPrice(
     uint256 remainingCollateral,
     uint256 remainingDebtShares,

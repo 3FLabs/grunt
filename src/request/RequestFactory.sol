@@ -9,26 +9,9 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 /// @title RequestFactory
 /// @author 3F Protocol
 /// @notice Factory contract for deploying Request instances with their associated PT and YT tokens.
-/// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
-///      - **UpgradeableBeacon**: Each contract type (Request, PT Token, YT Token) has its own beacon
-///      - **ERC1967 Beacon Proxy**: Instances are deployed as minimal proxies pointing to their beacon
-///      - **LibClone**: Gas-efficient proxy deployment via Solady's clone library
-///
-///      Architecture:
-///      - Three beacons are deployed at construction time, each with its implementation
-///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
-///      - Each `createRequest` call deploys three proxies: Request, PT Token, and YT Token
-///
-///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner
-///      2. Constructor deploys implementations and wraps them in UpgradeableBeacons
-///      3. Users call `createRequest()` to deploy new Request instances
-///      4. Each request gets its own PT and YT token proxies, all initialized atomically
-///
-///      Upgrade Flow:
-///      1. Beacon owner deploys new implementation contract
-///      2. Beacon owner calls `upgradeTo()` on the appropriate beacon
-///      3. All existing proxies immediately use the new implementation
+/// @dev The constructor deploys three UpgradeableBeacons (Request, PT Vault, YT Vault); each
+///      `createRequest` call deploys one beacon proxy per kind, and the beacon owner upgrades
+///      every proxy of a kind at once. See docs/deployment.md#factories.
 contract RequestFactory {
   using LibClone for address;
 
@@ -89,15 +72,8 @@ contract RequestFactory {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a new Request with its associated PT and YT token proxies.
-  /// @dev Deploys three ERC1967 beacon proxies and initializes them atomically:
-  ///      1. Deploys Request proxy pointing to REQUEST_BEACON
-  ///      2. Deploys PT Token proxy pointing to PT_TOKEN_BEACON
-  ///      3. Deploys YT Token proxy pointing to YT_TOKEN_BEACON
-  ///      4. Initializes Request with owner, asset, token addresses, metadata, and repayment deadline
-  ///      5. Initializes both tokens with the Request as their controller
-  ///
-  ///      The Request becomes the controller for both tokens, managing minting and burning.
-  ///      Emits a {RequestCreated} event.
+  /// @dev Deploys three ERC1967 beacon proxies (Request, PT token, YT token) and initializes them
+  ///      atomically; the Request becomes the controller of both tokens.
   /// @param owner The address that will own the Request (admin privileges)
   /// @param puller The address that will have the puller role
   /// @param consumer The address that will have the consumer role (can call consume and authorizeMinting)
@@ -105,7 +81,7 @@ contract RequestFactory {
   /// @param name The base name for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param symbol The base symbol for PT/YT tokens (prefixed with "PT-" / "YT-")
   /// @param repaymentDeadline The timestamp after which withdrawals are automatically enabled, regardless of repaid status
-  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid(uint256)
+  /// @param mintToRepaidDelay Minimum delay (seconds) between the last mint/consume and setRepaid()
   /// @return request The address of the newly deployed Request proxy
   /// @return ptToken The address of the newly deployed PT Token proxy
   /// @return ytToken The address of the newly deployed YT Token proxy

@@ -46,10 +46,14 @@ An offer can be consumed partially: YT is minted pro rata, `ytAmount = expectedR
 
 Maker nonces must start at 1 (nonce 0 is invalid) and are strictly increasing. An offer is cancelled off-chain by agreement, or on-chain by bumping the maker's stored nonce, which invalidates every offer at or below it.
 
-**Authorized minting.** The owner or consumer calls `authorizeMinting(funder, principal, yield)`; the funder then approves the asset and calls `mint()` to deposit the principal and receive PT and YT.
+**Authorized minting.** The owner or consumer calls `authorizeMinting(funder, principal, yield)`; the funder then approves the asset and calls `mint(maxPt, minYt)` to deposit the principal and receive PT and YT. The bounds protect the funder against the authorization being changed in front of the mint: `maxPt` against a raised principal, `minYt` against a lowered yield.
 
 ## Using the Funds
 
-The puller calls `pullFunds(amount, data)` to take raised assets; if `data` is non-empty, `onPullFunds(amount, data)` is invoked on the puller after the transfer. Repayment is `repay(amount)` or a direct transfer back. Redemptions open when the owner calls `setRepaid(minBalance)` (which requires the balance to be at least `minBalance`) or when `repaymentDeadline` passes.
+The puller calls `pullFunds(amount, data)` to take raised assets; if `data` is non-empty, `onPullFunds(amount, data)` is invoked on the puller after the transfer. Repayment is `repay(amount)` or a direct transfer back. Redemptions open when the owner calls `setRepaid(minBalance, maxBalance)` or when `repaymentDeadline` passes. `setRepaid` reverts unless the balance sits within `[minBalance, maxBalance]`; the two bounds guard against a facilitator draining before repayment is declared and against over-repaying to inflate YT redemptions (see [Known Issues](known-issues.md#request-ptyt); passing `type(uint256).max` disables the upper bound and its protection). It also enforces a cooling-off delay (`mintToRepaidDelay`) after the last mint or offer consumption, so a consumer cannot mint right before repayment is declared; the deadline auto-open bypasses this delay. Once set, repaid is irreversible.
+
+## MorphoFlashLoanRequest
+
+`MorphoFlashLoanRequest` is an alternative request implementation for atomic operations: instead of raising funds from lenders, it takes a Morpho Blue flash loan and runs an owner-whitelisted script (a sync deposit or withdrawal, for example) against the Facility inside the loan callback, repaying the loan in the same transaction. It holds the facilitator role on the Facility, which is why `EXECUTOR_ROLE` on it carries facilitator-equivalent trust; its `isRepaid()` means "no outstanding debt" (see [Known Issues](known-issues.md#request-ptyt)).
 
 Roles: the owner can do everything; the consumer can consume offers and authorize minting; the puller can pull funds. See [Architecture](architecture.md#roles) for who holds these.

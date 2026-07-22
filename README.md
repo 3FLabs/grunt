@@ -78,8 +78,8 @@ Detailed documentation lives in [`docs/`](docs/README.md):
 
 | Page | Contents |
 |------|----------|
-| [Architecture](docs/architecture.md) | Roles across contracts, deployment wiring, intent state transitions, access-control reference |
-| [Facility](docs/facility.md) | Intent structure and lifecycle, LP operations, facilitator operations |
+| [Architecture](docs/architecture.md) | System wiring, roles across contracts, beacon deployment and upgrades, cross-cutting safeguards |
+| [Facility](docs/facility.md) | Intent structure, lifecycle, access control, LP and facilitator operations |
 | [Request](docs/request.md) | PT/YT dual-token model, redemption formula, funding methods, nonce management |
 | [Funds](docs/funds.md) | Order state machine and the USCC, Centrifuge, Pareto, and Midas integrations |
 | [Position Manager](docs/position-manager.md) | Share accounting, deposit/withdraw/burn flows, rebalancing, fee mechanism |

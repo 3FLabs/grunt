@@ -76,22 +76,15 @@ library LibBorrowErrors {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Thrown when an offer is proposed with zero collateral or zero debt shares.
-  /// @dev Offer amounts are typed `uint128` (matching Morpho's `uint128` collateral and borrow
-  ///      totals), so the upper bound is enforced by the parameter type itself; only the
-  ///      lower-bound (> 0) needs an explicit check.
   error OfferAmountZero();
 
   /// @notice Thrown at proposal time when the offer is not profitable at the current price
-  ///         (`collateral value <= debt value`). This is a sanity filter only; the binding
-  ///         profitability/de-risking checks are re-evaluated per fill at consume time.
+  ///         (`collateral value <= debt value`); the binding checks re-run per fill at consume time.
   error OfferNotProfitable();
 
-  /// @notice Thrown at proposal time when the offer is profitable but its bonus (the excess of the
-  ///         collateral value over the debt value, as a fraction of the debt value) is below the
-  ///         admin-set minimum. Anti-griefing floor: keeps barely-profitable offers out of the
-  ///         book, where they would sort to the head and make band liquidations unattractive. The
-  ///         same floor is re-checked at consume time, where a below-floor fill is skipped (not
-  ///         reverted with this error).
+  /// @notice Thrown at proposal time when the offer's bonus is below the admin-set floor, which
+  ///         keeps barely-profitable offers out of the head of the price-sorted book. At consume
+  ///         time a below-floor fill is skipped, not reverted.
   error OfferBonusTooLow();
 
   /// @notice Thrown when an offer's `expiresAt` is not strictly after its computed `activeAt`,
@@ -117,9 +110,7 @@ library LibBorrowErrors {
   ///         `MAX_MIN_OFFER_BONUS_BPS`.
   error MinOfferBonusOutOfRange();
 
-  /// @notice Thrown when the offer (band) liquidation path is entered but nothing is fillable
-  ///         (empty / all-inactive / all-over-price / only-unprofitable list). A dedicated error
-  ///         so liquidators get a clear signal instead of Morpho's `INCONSISTENT_INPUT` from a
-  ///         zero-amount repay.
+  /// @notice Thrown when the offer (band) liquidation path is entered but nothing is fillable;
+  ///         a clear signal instead of Morpho's `INCONSISTENT_INPUT` from a zero-amount repay.
   error NoConsumableOffer();
 }

@@ -10,19 +10,11 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 
 /// @notice Fee configuration data for the PositionManager.
 /// @param feeRecipient The address that receives fee payments
-/// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%), charged
-///        on the aggregate quoted collateral of non-bad-debt positions — *not* on NAV. For a
-///        leveraged vault this basis is materially larger than the NAV. The resulting fee assets
-///        are capped at `totalAssets` so the post-fee asset base remains non-negative.
-/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
-///        performance of the levered slice only — basis `LTV_ref * Δcollat - Δdebt` (equivalently
-///        `mulDivUp(lastDebt, currentCollat, lastCollat) - currentDebt`), where
-///        `LTV_ref = lastDebt / lastCollat` is the LTV at the performance reference. The reference
-///        is held while the basis is non-positive (high-water mark) and advances only when a fee
-///        crystallizes, so debt interest accrued under a flat collateral quote and collateral
-///        drawdowns stay inside the basis. The basis is then reduced by the management fees
-///        charged since the reference last advanced (`heldManagementFeeAssets` plus the current
-///        interval's charge). Replaces the prior NAV-variation basis.
+/// @param managementFee The management fee rate in basis points per year (e.g., 200 = 2%),
+///        charged on the aggregate quoted collateral of non-bad-debt positions, not on NAV
+/// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on
+///        the levered-slice basis against a held reference (high-water mark);
+///        see docs/position-manager.md#fees
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -63,46 +55,27 @@ struct RebalanceConfig {
 /// @param borrowModules Set of approved borrow module addresses that can interact with positions.
 ///        Uses Solady's EnumerableSetLib for O(1) add/remove/contains operations.
 /// @param metadata Token metadata and asset addresses for the position manager.
-/// @param lastTotalAssets NAV component of the performance reference (`refCollat - refDebt`).
-///        Together with `lastDebt` it encodes the reference loan-to-value
-///        `LTV_ref = lastDebt / (lastTotalAssets + lastDebt)` that anchors the performance-fee
-///        basis. The reference advances to the current state only when a positive basis
-///        crystallizes (or on bootstrap); on capital flows it is rebased so the pending per-share
-///        basis is preserved (see `rebaseSnapshot`). It therefore only matches the live NAV right
-///        after a crystallizing accrual; while the reference is held it deviates from the live
-///        NAV by the carried (negative) pending basis. `lastCollat` is reconstructed on the fly
-///        as `lastTotalAssets + lastDebt` rather than stored directly, which keeps the storage
-///        layout append-only and existing integrations unchanged.
+/// @param lastTotalAssets NAV component of the performance reference. The reference collateral
+///        is reconstructed as `lastTotalAssets + lastDebt` rather than stored, keeping the
+///        storage layout append-only. See docs/position-manager.md#fees.
 /// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
 ///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
-/// @param virtualShareOffset Virtual shares offset for inflation attack protection, derived from debt asset decimals.
-///        Computed as 10^(18 - debtAsset.decimals()), so tokens with fewer decimals get stronger protection.
-///        For 18-decimal tokens the offset is 1 (weakest); for 6-decimal tokens (e.g., USDC) the offset is 1e12.
-///        @notice For debt assets with 18 decimals, the inflation front-running protection is low.
-///        To protect against this attack, vault deployers should make an initial deposit of a non-trivial amount
-///        in the vault, or depositors should check that the share price does not exceed a certain limit.
+/// @param virtualShareOffset Virtual share offset for inflation attack protection, computed as
+///        10^(18 - debtAsset.decimals()); fewer decimals give stronger protection. For 18-decimal
+///        debt assets the protection is weak and deployers must seed the vault with an initial
+///        deposit (see docs/known-issues.md#position-manager).
 /// @param lastFeeAccrualTimestamp Unix timestamp of the last fee accrual, used for
 ///        calculating time-weighted management fees.
 /// @param transferGuard Address of the TransferGuard contract that validates share transfers
 ///        for compliance (blocklist/whitelist checks). Zero address disables transfer validation.
 /// @param rebalanceConfig Rebalance parameters packed in a single struct (maxRebalanceLoss, cooldown, timestamp).
-/// @param lastDebt Debt component of the performance reference. Used together with
-///        `lastTotalAssets` to reconstruct `lastCollat = lastTotalAssets + lastDebt` for the
-///        levered-slice performance fee basis. Advanced on crystallization and rebased on flows
-///        alongside `lastTotalAssets` (see `rebaseSnapshot`), so while the reference is held it is
-///        lower than the live debt by the carried debt cost. A value of zero acts as a bootstrap
-///        sentinel: the first accrual after upgrade (or any other time `lastDebt` is zero) skips
-///        the performance fee and seeds this slot with the current debt. Subsequent accruals
-///        charge the new basis normally.
-/// @param heldManagementFeeAssets Management fee assets charged while the performance reference
-///        was held, accumulated since the reference last advanced. The performance fee must be
-///        net of management fees, so at the next crystallization this amount (plus the current
-///        interval's management fee) is deducted from the basis, and the accumulator is cleared
-///        whenever the reference advances (crystallization, bootstrap, empty vault) or the owner
-///        calls `resetPerformanceReference`. Flows scale it with the share-supply change so the
-///        per-share deduction is preserved, except a rescue flow out of a full bad-debt episode,
-///        which keeps it nominal (see `rebaseSnapshot`). Appended to the struct so the layout
-///        stays append-only; reads zero on upgrade (a clean start).
+/// @param lastDebt Debt component of the performance reference. Zero is the bootstrap sentinel:
+///        the next accrual skips the performance fee and reseeds the reference.
+///        See docs/position-manager.md#the-reference-as-a-high-water-mark.
+/// @param heldManagementFeeAssets Management fees charged while the performance reference was
+///        held; deducted from the next crystallization and cleared when the reference advances
+///        or is reset. Scaled with the share supply across flows (see `rebaseSnapshot`).
+///        See docs/position-manager.md#the-reference-as-a-high-water-mark.
 struct PositionManagerStorageData {
   FeeData feeData;
   SupplyQueueEntry[] supplyQueue;
@@ -174,75 +147,15 @@ library LibStorage {
   }
 
   /// @dev Rebases the performance reference (`lastTotalAssets`, `lastDebt`) across a capital
-  ///      flow (deposit, withdraw, burn, rebalance, module add/remove) so the pending per-share
-  ///      performance basis is preserved instead of being reset to zero.
-  ///
-  ///      The reference encodes `LTV_ref = lastDebt / (lastTotalAssets + lastDebt)`; the pending
-  ///      basis at any state is `LTV_ref * collat - debt`. Flows change collateral, debt, and
-  ///      share supply without realising a gain, so the reference must move with them: the carry
-  ///      (the negative pending basis accumulated while the reference is held, typically accrued
-  ///      debt interest under a flat collateral quote) is scaled by the share-supply change and
-  ///      re-anchored on the post-flow state. Exits shed their proportional slice of the carry,
-  ///      deposits re-attach it to the new shares, and supply-neutral flows (rebalance, module
-  ///      changes) keep it unchanged. A holder therefore cannot shed accrued debt carry by
-  ///      exiting and re-entering, and an exit does not dump its carry slice on the stayers.
-  ///
-  ///      Called after `_accrueFees` has already crystallized any positive basis, so outside a
-  ///      partial bad-debt episode the pending basis here is non-positive; `zeroFloorSub` guards
-  ///      the rounding edge at exactly zero. Rounding matches `_pendingFees` (`mulDivUp` on the
-  ///      scaled reference debt), so the carry is the exact complement of the fee basis and each
-  ///      flow can only shrink it by rounding dust, never create a spurious positive basis.
-  ///
-  ///      Partial bad-debt episode: while some (not all) modules are excluded as bad debt, the
-  ///      accrual freezes the reference instead of crystallizing (see `_pendingFees`), so a flow
-  ///      here can see a positive pending basis against the reduced aggregates. `zeroFloorSub`
-  ///      then clamps the carry to zero and the reference re-anchors at the post-flow visible
-  ///      state; the phantom gain itself is never preserved. The re-anchor is not
-  ///      direction-safe, because the pre-flow reduced aggregates are not comparable with the
-  ///      frozen full-universe mark: a flow that leaves the post-flow visible LTV at or below
-  ///      the frozen reference LTV under-reads the later recovery (LP-favorable; fees resume at
-  ///      a genuine new high), but a flow that raises it above the mark over-reads the recovery
-  ///      and can charge it as gain. The over-reading flows are a deposit with fresh borrowing
-  ///      during the window, a rebalance that borrows, and, most importantly, a rescue repayment
-  ///      (withdraw or rebalance) that pulls the excluded module back above water mid-flow: the
-  ///      re-anchor then adopts the re-entered module's near-100% LTV. Operational rule for the
-  ///      over-read: `resetPerformanceReference` does NOT correct it (the reset crystallizes a
-  ///      positive pending basis before moving); instead the owner should set the performance
-  ///      fee rate to zero right after such a flow, let the first accrual with a positive basis
-  ///      advance the reference mintlessly (a positive basis advances even at a zero rate), and
-  ///      then restore the rate. The under-read needs no action (fees resume at a genuine new
-  ///      high, or an owner reset re-anchors sooner).
-  ///
-  ///      The held management fee accumulator (`heldManagementFeeAssets`, the management fees
-  ///      charged since the reference last advanced, deducted from the next positive basis) is
-  ///      scaled by the same supply ratio: an exit takes its slice of the pending deduction along,
-  ///      a deposit re-attaches it to the new shares. A rescue flow out of a full bad-debt
-  ///      episode (`prevCollat == 0`) keeps it nominal instead: shares mint against a zero asset
-  ///      base there, so the supply ratio is unmoored and scaling would inflate the deduction
-  ///      beyond the fees ever charged. In the fallback branches it is left in place: outside a
-  ///      bad-debt window every such state (sentinel, empty vault) forces `advanceReference` on
-  ///      the next accrual, which clears the accumulator before any performance fee can consume
-  ///      it; during a window the accrual holds instead (see `_pendingFees`) and the accumulator
-  ///      keeps accruing the window's management fees for the eventual post-window netting,
-  ///      which matches its definition (fees charged since the last advance).
-  ///
-  ///      Edge cases collapse to a plain snapshot of the current state (zero carry): bootstrap
-  ///      (`lastDebt == 0` sentinel), an empty vault before the flow, and a carry exceeding the
-  ///      post-flow debt (the reference debt floors at zero, which is the bootstrap sentinel, so
-  ///      the excess is forgiven and the next accrual reseeds). An empty good-debt universe
-  ///      after the flow instead holds the reference (see the bad-debt episode below).
-  ///
-  ///      Bad-debt episode: whenever the flow leaves the good-debt universe empty
-  ///      (`newCollat == 0` with a live reference), there is no good-debt state to re-anchor on,
-  ///      so the reference is held unchanged, exactly like an accrual during the same episode.
-  ///      This covers a flow executed while every position is already underwater and, just as
-  ///      important, the flow that empties the universe itself: removing or draining the last
-  ///      healthy module while the others stay underwater must not write the bootstrap sentinel,
-  ///      or the first post-recovery accrual would reseed the high-water mark at the trough and
-  ///      re-charge the recovery from there. A flow that brings the pool back above water
-  ///      re-anchors the reference at the post-flow state (the pre-flow basis is not measurable
-  ///      against empty aggregates), so gains recovered beyond that point are charged; this is a
-  ///      documented limitation of the binary bad-debt exclusion in `LibView.totalAssets`.
+  ///      flow (deposit, withdraw, burn, rebalance, module add/remove): the carried pending
+  ///      basis is scaled by the share-supply change and re-anchored on the post-flow state, so
+  ///      exits shed their slice of the carry and deposits re-attach it to the new shares.
+  ///      Called after `_accrueFees` has crystallized any positive basis, so outside a bad-debt
+  ///      window the carry is non-positive; rounding matches `_pendingFees` (`mulDivUp` on the
+  ///      scaled reference debt), so a flow can only shrink the carry by rounding dust, never
+  ///      create a spurious positive basis. Flows inside a partial bad-debt window can
+  ///      mis-anchor the reference; for the mis-anchoring cases and their remedies see
+  ///      docs/position-manager.md#the-reference-as-a-high-water-mark.
   /// @param self The storage pointer to the PositionManagerStorageData struct.
   /// @param prevCollat The aggregate good-debt collateral before the flow (post fee accrual).
   /// @param prevDebt The aggregate good-debt debt before the flow (post fee accrual).
@@ -260,15 +173,16 @@ library LibStorage {
     uint256 newSupply
   ) internal {
     uint256 refDebt = self.lastDebt;
-    // Hold the reference across any flow that leaves the good-debt universe empty: with no
-    // good-debt state to re-anchor on, rebasing would write the bootstrap sentinel and the next
-    // accrual would reseed the high-water mark at the recovery trough, re-charging the recovery.
-    // This covers a flow executed while every position is already underwater as well as the flow
-    // that empties the universe itself (the last healthy module removed or drained while the
-    // others stay underwater). A flow that empties the vault outright is held too; the next
-    // accrual advances the reference anyway (empty vault), so no stale mark survives it.
+    // No good-debt state to re-anchor on: hold the reference. Writing the bootstrap sentinel
+    // here would let the next accrual reseed the high-water mark at the recovery trough. A flow
+    // that empties the vault outright is held too; the next accrual advances anyway (empty vault).
     if (refDebt > 0 && newCollat == 0) return;
     uint256 carry;
+    // When this branch is skipped (bootstrap sentinel, empty pre- or post-flow supply), the held
+    // management fee accumulator is deliberately left in place: outside a bad-debt window every
+    // such state forces the next accrual to advance the reference, which clears the accumulator
+    // before any performance fee can consume it; during a window the accrual holds instead and
+    // the accumulator keeps collecting that window's management fees for post-window netting.
     if (refDebt > 0 && prevSupply > 0 && newSupply > 0) {
       uint256 refCollat = self.lastTotalAssets + refDebt;
       uint256 scaledRefDebt = refDebt.mulDivUp(prevCollat, refCollat);
@@ -277,11 +191,8 @@ library LibStorage {
       carry = prevCarry.mulDiv(newSupply, prevSupply);
       if (carry > newDebt) carry = newDebt;
       // Preserve the per-share pending management fee deduction the same way. Skipped when the
-      // pre-flow good-debt universe is empty (a rescue flow out of a full bad-debt episode):
-      // shares are then minted against a zero asset base, so the supply ratio is unmoored from
-      // any price and scaling would inflate the deduction far beyond the fees ever charged. The
-      // accumulator stays nominal instead, matching its definition (fees charged since the last
-      // advance).
+      // pre-flow good-debt universe is empty (a rescue flow out of a full bad-debt episode): the
+      // supply ratio is then unmoored and scaling would inflate the deduction; it stays nominal.
       if (newSupply != prevSupply && prevCollat > 0) {
         uint256 heldManagementFeeAssets = self.heldManagementFeeAssets;
         if (heldManagementFeeAssets > 0) {

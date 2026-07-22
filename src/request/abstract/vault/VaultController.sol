@@ -17,7 +17,7 @@ import {LibRequestErrors} from "../../../libs/request/LibRequestErrors.sol";
 /// @dev Extends TokenController to add ERC4626-style vault functionality. Implements the redemption model
 ///      where principal holders are prioritized (receive up to 1:1 redemption) and yield holders receive
 ///      any excess assets. Asset distribution follows: principalAssets = min(totalAssets, ptSupply) and
-///      yieldAssets = totalAssets - principalAssets. See README for detailed examples and formulas.
+///      yieldAssets = totalAssets - principalAssets. See docs/request.md#redemption.
 abstract contract VaultController is TokenController, IVaultController {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -211,24 +211,13 @@ abstract contract VaultController is TokenController, IVaultController {
 
   /// @inheritdoc IVaultController
   /// @dev Uses `mulDiv` for asset calculation to favor the vault (rounds down assets received).
-  ///      The conversion rate reflects the current redemption value based on asset distribution.
-  ///
-  ///      Falls back to initial conversion (PT 1:1, YT 0) when:
-  ///      - The token supply is zero (avoids division by zero), OR
-  ///      - The total assets are zero AND withdrawals are not yet permitted (pre-deadline and not
-  ///        marked repaid) — pre-repayment estimate.
-  ///
-  ///      Once withdrawals are permitted, if assets are zero but supply is non-zero, `mulDiv` is used
-  ///      which correctly yields zero — allowing `burnAll` to succeed without reverting on a zero-balance
-  ///      `safeTransfer`. Previously, the initial conversion would return `ptShares` (1:1) even when no
-  ///      assets existed, causing the subsequent transfer to revert (CS-GRUNT-014).
+  ///      Falls back to initial conversion (PT 1:1, YT 0) only when the token supply is zero
+  ///      (division-by-zero guard) or when assets are zero and withdrawals are not yet permitted
+  ///      (pre-repayment estimate). Once withdrawals are permitted, zero assets with non-zero
+  ///      supply prices to zero via mulDiv, so burnAll succeeds on empty vaults.
   function convertToAssets(uint256 ptShares, uint256 ytShares) public view returns (uint256 pAssets, uint256 yAssets) {
     (uint256 totalPAssets, uint256 totalYAssets, uint256 totalPtSupply, uint256 totalYtSupply) = _assetsAndSupplies();
     bool canWithdraw_ = _canWithdraw();
-    // Use initial conversion only when supply is zero (div-by-zero guard) or when withdrawals are
-    // not yet permitted and assets are zero (pre-repayment 1:1 estimate). Once withdrawals are
-    // permitted, zero assets with non-zero supply correctly yields zero via mulDiv, preventing
-    // burnAll from reverting on empty vaults.
     pAssets = (totalPtSupply == 0 || (totalPAssets == 0 && !canWithdraw_))
       ? _initialConvertToAssets(ptShares, false)
       : ptShares.mulDiv(totalPAssets, totalPtSupply);
@@ -249,9 +238,9 @@ abstract contract VaultController is TokenController, IVaultController {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IVaultController
-  /// @dev Convenient function for fully exiting a position. Redeems both PT and YT shares in a single
-  ///      transaction using the current exchange rate. Requires appropriate allowances if caller != owner.
-  ///      Respects withdrawal permissions via `_checkCanWithdraw()`.
+  /// @dev Fully exits a position: redeems both PT and YT shares at the current exchange rate.
+  ///      Requires allowances if caller != owner; withdrawal gating happens in `_redeem` via
+  ///      `_syncWithdrawalStatus()`.
   function burnAll(address owner, address receiver)
     public
     virtual
@@ -265,17 +254,9 @@ abstract contract VaultController is TokenController, IVaultController {
   /*         CONTROLLER ENTRYPOINTS FOR CONTROLLED VAULTS       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev ERC4626 withdraw entrypoint called by individual PT or YT vault contracts.
-  ///      This function is called by ControlledVault.withdraw(). The `yt` parameter determines
-  ///      which token type is being withdrawn. Only the appropriate vault contract can call this.
-  ///      The function converts the asset amount to shares, burns the shares, and transfers assets.
-  /// @param caller The address that initiated the withdraw call (from the vault contract)
-  /// @param assets The amount of assets to withdraw (for the specific vault type)
-  /// @param receiver The address that will receive the assets
-  /// @param owner The address whose shares will be burned
-  /// @param yt True if called by YT vault, false if called by PT vault
-  /// @return shares The amount of shares burned (PT shares if yt=false, YT shares if yt=true)
-  /// @custom:reverts Unauthorized if not called by the appropriate vault contract
+  /// @dev ERC4626 withdraw entrypoint, callable only by the matching ControlledVault (PT or YT).
+  ///      Converts the asset amount to shares for the selected token and delegates to the internal withdraw.
+  /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate vault contract
   /// @custom:reverts CannotWithdraw if withdrawals are locked
   function _withdraw(address caller, uint256 assets, address receiver, address owner, bool yt)
     external
@@ -290,17 +271,9 @@ abstract contract VaultController is TokenController, IVaultController {
     shares = yt.ternary(ytShares, ptShares);
   }
 
-  /// @dev ERC4626 redeem entrypoint called by individual PT or YT vault contracts.
-  ///      This function is called by ControlledVault.redeem(). The `yt` parameter determines
-  ///      which token type is being redeemed. Only the appropriate vault contract can call this.
-  ///      The function converts the shares to assets, burns the shares, and transfers assets.
-  /// @param caller The address that initiated the redeem call (from the vault contract)
-  /// @param shares The amount of shares to redeem (for the specific vault type)
-  /// @param receiver The address that will receive the assets
-  /// @param owner The address whose shares will be burned
-  /// @param yt True if called by YT vault, false if called by PT vault
-  /// @return assets The amount of assets transferred (principal if yt=false, yield if yt=true)
-  /// @custom:reverts Unauthorized if not called by the appropriate vault contract
+  /// @dev ERC4626 redeem entrypoint, callable only by the matching ControlledVault (PT or YT).
+  ///      Converts the shares to assets for the selected token and delegates to the internal redeem.
+  /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate vault contract
   /// @custom:reverts CannotWithdraw if withdrawals are locked
   function _redeem(address caller, uint256 shares, address receiver, address owner, bool yt)
     external

@@ -36,14 +36,8 @@ abstract contract TokenController is ITokenController {
     if (msg.sender != (yt ? _ytToken() : _ptToken())) revert LibRequestErrors.UnauthorizedTokenContract();
   }
 
-  /// @dev Consumes (decreases) the allowance granted by `from` to `spender` for both PT and YT tokens.
-  ///      Implements standard ERC20 allowance consumption with infinite allowance support.
-  ///      If both PT and YT allowances are set to type(uint128).max, no allowance is consumed (infinite approval).
-  ///      Otherwise, the allowances are decreased by the specified amounts.
-  /// @param from The address that granted the allowance
-  /// @param spender The address spending the tokens
-  /// @param pt The amount of PT tokens to consume from the allowance
-  /// @param yt The amount of YT tokens to consume from the allowance
+  /// @dev Decreases the allowance granted by `from` to `spender` for both PT and YT tokens.
+  ///      If both allowances are the type(uint128).max sentinel, nothing is consumed (infinite approval).
   /// @custom:reverts InsufficientAllowance if either pt > ptAllowance or yt > ytAllowance
   function _consumeAllowance(address from, address spender, uint256 pt, uint256 yt) internal virtual {
     // casting to 'uint128' is safe because [The allowance is checked if higher than a 128 bit number]
@@ -58,16 +52,10 @@ abstract contract TokenController is ITokenController {
     }
   }
 
-  /// @dev Transfers PT and/or YT tokens from one address to another.
-  ///      Updates balances in packed storage and performs balance checks. Does NOT emit Transfer
-  ///      events — emission is the responsibility of public callers, which know which token(s)
-  ///      the user is acting on (so single-token paths do not emit a spurious zero event on the
-  ///      sibling token).
-  /// @param from The address to transfer tokens from
-  /// @param to The address to transfer tokens to
-  /// @param pt The amount of PT tokens to transfer
-  /// @param yt The amount of YT tokens to transfer
-  /// @return success Always returns true if the transfer succeeds (reverts on failure)
+  /// @dev Transfers PT and/or YT tokens from one address to another in packed storage.
+  ///      Does NOT emit Transfer events; emission is the responsibility of public callers, which
+  ///      know which token(s) the user is acting on (so single-token paths do not emit a spurious
+  ///      zero event on the sibling token).
   /// @custom:reverts InsufficientBalance if from has insufficient PT or YT balance
   function _transfer(address from, address to, uint256 pt, uint256 yt) internal virtual returns (bool) {
     to.checkNotZero();
@@ -85,20 +73,10 @@ abstract contract TokenController is ITokenController {
     }
   }
 
-  /// @dev Sets the allowance for both PT and YT tokens. Does NOT emit Approval events — emission
+  /// @dev Sets the allowance for both PT and YT tokens. Does NOT emit Approval events; emission
   ///      is the responsibility of public callers, which use the original caller-supplied amount
   ///      (so the event value matches what the user passed, per EIP-20).
-  ///
-  ///      Each amount must be either strictly below type(uint128).max (stored exactly) or exactly
-  ///      type(uint256).max (stored as the type(uint128).max infinite-allowance sentinel that is
-  ///      not decremented on transferFrom and reads back as type(uint256).max via {allowance}).
-  ///      Any value in [type(uint128).max, type(uint256).max - 1] reverts with {AllowanceTooLarge}
-  ///      because it cannot be represented exactly in uint128 storage.
-  /// @param from The address granting the allowance (token owner)
-  /// @param spender The address receiving the allowance
-  /// @param pt The PT token allowance amount to set
-  /// @param yt The YT token allowance amount to set
-  /// @return success Always returns true if the operation succeeds
+  ///      Amount validation and sentinel encoding: see {_toStored}.
   /// @custom:reverts AllowanceTooLarge if pt or yt is in [type(uint128).max, type(uint256).max - 1]
   function _setAllowance(address from, address spender, uint256 pt, uint256 yt) internal virtual returns (bool) {
     from.updateAllowance(spender, _toStored(pt), _toStored(yt));
@@ -153,7 +131,7 @@ abstract contract TokenController is ITokenController {
     unchecked {
       (uint128 ptSupply, uint128 ytSupply) = LibTokenController.totalSupplies();
       if (pt > ptSupply || yt > ytSupply) revert CommonErrors.InsufficientBalance();
-      // casting to 'uint128' is safe because [The total supply cannot be higher than the total supply which does not overflow a 128 bit number]
+      // casting to 'uint128' is safe because [the amounts are checked against the uint128 total supplies above]
       // forge-lint: disable-next-line(unsafe-typecast)
       LibTokenController.updateTotalSupply(ptSupply - uint128(pt), ytSupply - uint128(yt));
 
@@ -220,13 +198,8 @@ abstract contract TokenController is ITokenController {
   }
 
   /// @inheritdoc ITokenController
-  /// @dev Returns `type(uint256).max` if the stored allowance is the `type(uint128).max` sentinel
-  ///      (infinite allowance), for EIP-20 compatibility. Otherwise returns the stored value.
-  ///
-  ///      Under the new approve contract, the sentinel is only written when the caller approves
-  ///      exactly `type(uint256).max`; all other accepted values (strictly below `type(uint128).max`)
-  ///      round-trip exactly. Values in `[type(uint128).max, type(uint256).max - 1]` are rejected at
-  ///      approve time with {AllowanceTooLarge}.
+  /// @dev The stored `type(uint128).max` sentinel reads back as `type(uint256).max` (infinite
+  ///      allowance) for EIP-20 compatibility; all other stored values round-trip exactly.
   function allowance(address owner, address spender, bool yt) external view returns (uint256 result) {
     result = LibTokenController.allowance(owner, spender, yt);
     if (result == type(uint128).max) result = type(uint256).max;
@@ -249,9 +222,8 @@ abstract contract TokenController is ITokenController {
   }
 
   /// @inheritdoc ITokenController
-  /// @dev If the caller is not the owner, allowance is consumed. More gas efficient than calling
-  ///      transferFrom on both tokens separately. Always emits a Transfer event on each of the PT
-  ///      and YT tokens (per EIP-20, including for zero-value sides).
+  /// @dev If the caller is not the owner, allowance is consumed. Event semantics as
+  ///      {transferBatch}: a Transfer event on each token, including zero-value sides.
   /// @custom:reverts InsufficientAllowance if allowance is insufficient (when from != msg.sender)
   /// @custom:reverts InsufficientBalance if the sender has insufficient PT or YT balance
   function transferFromBatch(address from, address to, uint256 ptAmount, uint256 ytAmount)
@@ -271,9 +243,7 @@ abstract contract TokenController is ITokenController {
   /// @inheritdoc ITokenController
   /// @dev More gas efficient than calling approve on both tokens separately. Always emits an
   ///      Approval event on each of the PT and YT tokens (per EIP-20, on every successful approve).
-  ///      Each amount must be either strictly below `type(uint128).max` or exactly `type(uint256).max`;
-  ///      values in `[type(uint128).max, type(uint256).max - 1]` revert with {AllowanceTooLarge}.
-  ///      See {_setAllowance} for details.
+  ///      Amount validation: see {_toStored}.
   /// @custom:reverts AllowanceTooLarge if ptAmount or ytAmount cannot be represented exactly
   function approveBatch(address spender, uint256 ptAmount, uint256 ytAmount) public virtual returns (bool) {
     bool result = _setAllowance(msg.sender, spender, ptAmount, ytAmount);
@@ -286,18 +256,10 @@ abstract contract TokenController is ITokenController {
   /*                       Tokens internal                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Internal transfer function called by individual token contracts (PT or YT).
-  ///      This function is called by ControlledToken.transfer and ControlledToken.transferFrom.
-  ///      It handles both direct transfers and allowance-based transfers. The `yt` parameter
-  ///      determines which token (PT or YT) is being transferred while the other amount is set to 0.
-  ///      Emits exactly one Transfer event on the relevant token (PT or YT), even when amount is 0,
-  ///      and never emits a spurious zero-value event on the sibling token.
-  /// @param caller The address initiating the transfer (msg.sender from the token contract)
-  /// @param from The address to transfer tokens from
-  /// @param to The address to transfer tokens to
-  /// @param amount The amount of tokens to transfer (for the specific token type)
-  /// @param yt True if this is a YT transfer, false if this is a PT transfer
-  /// @return success Always returns true if the transfer succeeds
+  /// @dev Per-token transfer entrypoint, callable only by the matching ControlledToken (PT or YT).
+  ///      Consumes allowance when `caller != from`. Emits exactly one Transfer event on the
+  ///      relevant token, even when amount is 0, and never a spurious zero-value event on the
+  ///      sibling token.
   /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   /// @custom:reverts InsufficientAllowance if allowance is insufficient (when caller != from)
   /// @custom:reverts InsufficientBalance if the sender has insufficient balance
@@ -313,18 +275,10 @@ abstract contract TokenController is ITokenController {
     return result;
   }
 
-  /// @dev Internal approve function called by individual token contracts (PT or YT).
-  ///      This function is called by ControlledToken.approve. The `yt` parameter determines
-  ///      which token (PT or YT) allowance is being set; the sibling allowance is preserved
-  ///      verbatim (the sentinel value, if present, is left intact rather than re-validated).
-  ///      Emits exactly one Approval event on the relevant token, with the original caller-supplied
-  ///      `amount`, on every successful call.
-  ///      `amount` must be either strictly below `type(uint128).max` or exactly `type(uint256).max`.
-  /// @param from The address granting the allowance (token owner)
-  /// @param spender The address receiving the allowance
-  /// @param amount The allowance amount to set (for the specific token type)
-  /// @param yt True if this is a YT approval, false if this is a PT approval
-  /// @return success Always returns true if the approval succeeds
+  /// @dev Per-token approve entrypoint, callable only by the matching ControlledToken (PT or YT).
+  ///      The sibling allowance is preserved verbatim (its sentinel, if present, is left intact
+  ///      rather than re-validated). Emits exactly one Approval event on the relevant token, with
+  ///      the original caller-supplied `amount`. Amount validation: see {_toStored}.
   /// @custom:reverts UnauthorizedTokenContract if not called by the appropriate token contract
   /// @custom:reverts AllowanceTooLarge if amount is in [type(uint128).max, type(uint256).max - 1]
   function _approve(address from, address spender, uint256 amount, bool yt) public virtual returns (bool) {

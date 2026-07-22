@@ -157,12 +157,10 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
       _storage.metadata.debtAsset.safeTransferFrom(msg.sender, address(this), debt);
     }
 
-    // Process through withdrawal queue using the specified strategy.
-    // When the withdrawal queue covers all whitelisted positions, burn amounts are proportional
-    // to total debt/collateral so per-position LTV is maintained by construction — skip the check.
-    // When the queue is a strict subset, some positions are excluded from the proportional
-    // distribution, so queue positions may bear a disproportionate share of the withdrawal
-    // and per-position LTV checks are required.
+    // Process through withdrawal queue using the specified strategy. When the withdrawal queue
+    // covers all whitelisted positions (length equality implies set equality given the queue
+    // setter invariants), proportional burn amounts preserve per-position LTV by construction;
+    // a strict-subset queue can load queue positions disproportionately, so the check stays on.
     bool skipLtvCheck = _storage.withdrawalQueue.length == _storage.borrowModules.length();
     _storage.processWithdrawal(collateral, debt, strategy, !skipLtvCheck);
 

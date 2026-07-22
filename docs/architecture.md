@@ -39,7 +39,7 @@ Every contract uses `OwnableRoles`-style access control. This table is the canon
 | | Compliance | Emergency Admin / Compliance Bot | Pause/unpause facility, revert deposits |
 | **Request** | Owner | Protocol Admin | Mark loan as repaid, authorize minting |
 | | Puller | Facility | Pull bridge loan funds, repay funds |
-| | Consumer | Protocol Admin | Consume signed offers |
+| | Consumer | Protocol Admin | Consume signed offers, authorize minting |
 | **USCCFund** | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | | Operator | Operations Bot | Settle fund state after external operations |
 | **CentrifugeFund** | Owner / Operator | Protocol Admin / Operations Bot | Cancel vault requests via `cancelRequest()` |
@@ -51,7 +51,7 @@ Every contract uses `OwnableRoles`-style access control. This table is the canon
 | | Payment | Operations EOA | Confirm bond receipts via `unlockInstantRedeem()` |
 | | Vault Manager | Operations EOA | Set deposit and redemption vaults, manage the bond config |
 | | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
-| **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
+| **PositionManager** | Owner | Protocol Admin | Add modules, set target LTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
 | | Rebalancer | Rebalancer Contract | Execute rebalancing operations |

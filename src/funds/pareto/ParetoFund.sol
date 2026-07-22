@@ -20,14 +20,10 @@ import {BPS} from "../../libs/Constants.sol";
 /// @title ParetoFund
 /// @author 3F Protocol
 /// @notice Wrapper of the Pareto (Idle Finance) Credit Vault (IdleCDOEpochVariant).
-/// @dev - Shares of this fund are represented by WrappedAsset tokens wrapping the CDO's AA tranche token.
-///      - The order owner and receiver is always msg.sender (the depositor contract).
-///      - Deposits are synchronous via `depositAA` (between epochs) or `depositDuringEpoch` (during a running epoch).
-///        Withdrawals are epoch-gated via `requestWithdraw` + `claimWithdrawRequest`.
-///      - No recovery flow: deposits are atomic (succeed or revert), withdrawals always complete after epoch ends.
-///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
-///        from the state returned by the public state() function. The state() function queries the CDO
-///        to determine state transitions (e.g., PROCESSING → UNLOCKING when withdrawal is claimable).
+/// @dev Shares are WrappedAsset tokens wrapping the CDO's AA tranche token. Deposits are synchronous
+///      (depositAA between epochs, depositDuringEpoch during one); withdrawals are epoch-gated. There
+///      is no recovery flow (see IParetoFund). The stored internalState may differ from state(), which
+///      also queries the CDO to detect transitions that settle off-chain. See docs/funds.md#pareto-idle-cdo.
 contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -82,7 +78,6 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
 
   /// @dev Storage slot for the ParetoFund contract's main storage struct.
   ///      Computed as: keccak256(abi.encode(uint256(keccak256("pareto.fund")) - 1)) & ~bytes32(uint256(0xff))
-  ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x25d550f5e3213f45c3910fd288fb480ffdef8072a13543bd1cf85ff3f7be5900;
 
   /// @dev Returns a reference to the contract's storage struct.
@@ -151,10 +146,8 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
     IIdleCDOEpochVariant _vault = IIdleCDOEpochVariant($.vault);
     _checkVaultAllowed(address(_vault), order.mode);
 
-    // Refuse orders that would always revert at commit() time.
-    // Deposits during a running epoch use `depositDuringEpoch`, which reverts when
-    // `isDepositDuringEpochDisabled` is true. Redeems use `requestWithdraw`, which reverts
-    // when `allowAAWithdrawRequest` is false (set by `startEpoch`).
+    // Refuse orders that would always revert at commit(): `isDepositDuringEpochDisabled` blocks
+    // deposits during a running epoch, `!allowAAWithdrawRequest` blocks redeems (see IIdleCDOEpochVariant).
     if (order.mode == Mode.DEPOSIT) {
       if (_vault.isEpochRunning() && _vault.isDepositDuringEpochDisabled()) {
         revert LibFundsErrors.DepositDuringEpochDisabled();
@@ -297,11 +290,9 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev No recovery flow: deposits are atomic (depositAA/depositDuringEpoch succeed or revert in the same tx),
-  ///      and withdrawals always complete after the epoch ends (no cancel mechanism in the CDO).
+  /// @dev Always reverts; there is no recovery flow for the Pareto CDO (see IParetoFund).
   function recover(Order calldata order) external override onlyRoles(DEPOSITOR_ROLE) returns (State, uint256) {
     _checkOrderOwner(order);
-    // Always revert: recovery is not applicable for Pareto CDO
     revert LibFundsErrors.RecoverNotSupported();
   }
 
@@ -352,9 +343,7 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /// @dev Converts total wrapped share supply to assets using the CDO's virtual price.
   ///      virtualPrice is WAD-scaled (1e18) and wrappedShare totalSupply has the AA tranche's decimals (18).
   ///      Result is in underlying-asset decimals: totalSupply * virtualPrice / 1e18.
-  ///      The returned value is derived from `$.wrappedShare.totalSupply()`, so when a single
-  ///      `WrappedAsset` deployment backs multiple `ParetoFund` instances, every instance reports
-  ///      the same wrapper-wide aggregate AUM rather than AUM scoped to this fund.
+  ///      Wrapper-wide when the WrappedAsset is shared (see IFund.totalAssets).
   function totalAssets() external view override returns (uint256) {
     ParetoFundStorage storage $ = _paretoFundStorage();
     return IERC20($.wrappedShare).totalSupply().mulDiv(IIdleCDOEpochVariant($.vault).virtualPrice($.aaTranche), 1e18);
@@ -393,19 +382,10 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Internal function that returns both the dynamic state and the associated amount.
-  ///      Queries the CDO and strategy to determine state transitions.
-  ///
-  ///      For PROCESSING + DEPOSIT:
-  ///      - Checks `depositReceived >= order.output` → UNLOCKING with depositReceived
-  ///
-  ///      For PROCESSING + REDEEM:
-  ///      - Checks strategy has pending withdrawal (lastWithdrawRequest > 0) AND epoch has ended → UNLOCKING
-  ///      - Epoch ended = epochEndDate == 0 OR epochNumber > lastWithdrawRequest(this)
-  ///      - Uses lastWithdrawRequest instead of withdrawsRequests because the latter is not set
-  ///        on the apr0 path in IdleCreditVault (see _requestWithdrawApr0).
-  ///
-  ///      For all other states, returns internalState directly.
+  /// @dev Returns the dynamic state and the associated amount. A PROCESSING DEPOSIT unlocks once
+  ///      depositReceived covers the expected output (resolvedOutput when set); a PROCESSING REDEEM
+  ///      unlocks once a withdraw request exists and its epoch has ended. lastWithdrawRequest is read
+  ///      instead of withdrawsRequests, which is not set on IdleCreditVault's apr0 path (_requestWithdrawApr0).
   function _state(Order calldata order) internal view returns (State, uint256) {
     ParetoFundStorage storage $ = _paretoFundStorage();
 
@@ -435,7 +415,6 @@ contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   }
 
   /// @dev Reverts if the order owner is not the caller.
-  /// @param order The given order.
   function _checkOrderOwner(Order calldata order) internal view {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
   }

@@ -6,8 +6,8 @@ In-repo wiki for the grunt contract suite. The top-level [README](../README.md) 
 
 | Page | Contents |
 |------|----------|
-| [Architecture](architecture.md) | Roles across contracts, deployment wiring, intent state transitions, access-control reference, factory pattern, security mechanisms |
-| [Facility](facility.md) | Intent structure and lifecycle, LP operations, facilitator operations |
+| [Architecture](architecture.md) | System wiring, roles across contracts, beacon deployment and upgrades, cross-cutting safeguards |
+| [Facility](facility.md) | Intent structure, lifecycle, access control, LP and facilitator operations |
 | [Request](request.md) | PT/YT dual-token model, redemption formula, funding methods, nonce management |
 | [Funds](funds.md) | Order state machine and the USCC, Centrifuge, Pareto, and Midas integrations |
 | [Position Manager](position-manager.md) | Share accounting, deposit/withdraw/burn flows, rebalancing, fee mechanism |

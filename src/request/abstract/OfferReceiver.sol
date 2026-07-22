@@ -11,19 +11,9 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 /// @author 3F Protocol
 /// @notice Abstract contract for validating and consuming cryptographically signed bridge facilitator offers.
 /// @dev Implements EIP-712 typed data hashing and signature verification (EIP-712/EIP-1271).
-///      Manages nonces to prevent replay attacks and enable offer cancellation. Contracts inheriting
-///      from this can validate offers before processing funds from bridge facilitators.
-///
-///      Key Features:
-///      - **EIP-712 Signatures**: Type-safe structured data signing for EOAs
-///      - **EIP-1271 Support**: Smart contract signature validation for multisigs/smart wallets
-///      - **Nonce Management**: Monotonically increasing nonces prevent replay attacks
-///      - **Offer Cancellation**: Makers can invalidate pending offers by updating their nonce
-///
-///      Security Model:
-///      - Nonces must be strictly increasing (offer.nonce > stored nonce)
-///      - Nonce is updated before signature verification to prevent reentrancy replays
-///      - Expiration timestamps provide time-bound validity for offers
+///      Security model: nonces are strictly increasing (offer.nonce > stored nonce), the nonce is
+///      updated before signature verification to prevent reentrancy replays, and expiration
+///      timestamps time-bound offer validity.
 abstract contract OfferReceiver is EIP712, IOfferReceiver {
   using SignatureCheckerLib for address;
   using LibChecks for address;
@@ -64,23 +54,8 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
 
   /// @inheritdoc IOfferReceiver
   /// @dev The new nonce must be strictly greater than the current nonce. All offers with
-  ///      nonce <= newNonce become permanently invalid. This is useful for bulk cancellation.
-  ///      Emits a {NonceUpdated} event.
-  ///
-  ///      **Example - Partial Cancellation:**
-  ///      If a maker has offers with nonces 1-5 and calls setNonce(3):
-  ///      - Offers 1, 2, 3 are invalidated (nonce <= 3)
-  ///      - Offers 4, 5 remain valid (nonce > 3)
-  ///      - New offers must use nonce >= 4
-  ///
-  ///      **Example - Full Cancellation:**
-  ///      To invalidate ALL pending offers, set nonce to the highest pending offer nonce or higher.
-  ///      If offers exist with nonces 1-5, calling setNonce(5) or setNonce(type(uint256).max)
-  ///      will invalidate all of them.
-  ///
-  ///      **Warning:** Setting nonce to currentNonce + 1 only invalidates ONE offer (the next expected).
-  ///      For bulk cancellation, use a higher value.
-  ///
+  ///      nonce <= newNonce become permanently invalid; pass the highest pending offer nonce
+  ///      (or higher) to bulk-cancel. See docs/request.md#funding.
   /// @custom:reverts InvalidNonceUpdate if newNonce <= current nonce
   function setNonce(uint256 newNonce) external {
     uint256 currentNonce = nonce(msg.sender);
@@ -107,42 +82,26 @@ abstract contract OfferReceiver is EIP712, IOfferReceiver {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @dev Validates an offer and its signature, then consumes the nonce.
-  ///      Performs comprehensive validation in the following order:
-  ///      1. Checks offer parameters are non-zero (maker, amount, expectedReturn)
-  ///      2. Validates expiration timestamp has not passed
-  ///      3. Ensures offer nonce is greater than stored nonce (freshness check)
-  ///      4. Updates the stored nonce to the offer's nonce (preventing replay), emits {NonceUpdated}
-  ///      5. Verifies signature using EIP-712 (EOA) or EIP-1271 (smart contract)
-  ///
-  ///      The nonce is updated BEFORE signature verification to prevent reentrancy replays.
-  ///      This is safe because if the signature is invalid, the transaction reverts anyway.
-  ///
-  ///      Note: This function does NOT pull funds from the maker. That logic must be
-  ///      implemented separately by contracts inheriting from OfferReceiver.
-  ///
-  /// @param offer The offer struct containing all offer parameters
-  /// @param signature The cryptographic signature (EIP-712 or EIP-1271)
+  ///      The stored nonce is updated BEFORE signature verification to prevent reentrancy replays;
+  ///      this is safe because an invalid signature reverts the whole transaction.
+  ///      Does NOT pull funds from the maker; inheriting contracts implement that separately.
   /// @custom:reverts AddressZero if maker is zero address
   /// @custom:reverts AmountZero if amount or expectedReturn is zero
   /// @custom:reverts OfferExpired if block.timestamp > offer.expiration
   /// @custom:reverts InvalidNonce if offer.nonce <= stored nonce for maker
   /// @custom:reverts InvalidSignature if signature verification fails
   function _validateOffer(Offer calldata offer, bytes calldata signature) internal {
-    // Validate offer parameters are non-zero
     offer.maker.checkNotZero();
     offer.amount.checkNotZero();
     offer.expectedReturn.checkNotZero();
 
-    // Check offer has not expired
     if (offer.expiration < block.timestamp) revert LibRequestErrors.OfferExpired();
 
-    // Ensure offer nonce is fresh (greater than stored nonce)
     if (nonce(offer.maker) >= offer.nonce) revert LibRequestErrors.InvalidNonce();
 
     // Update stored nonce BEFORE signature verification to prevent reentrancy replays
     _setNonce(offer.maker, offer.nonce);
 
-    // Compute EIP-712 typed data hash and verify signature
     bytes32 digest = _hashTypedData(keccak256(abi.encode(_OFFER_TYPEHASH, offer)));
     if (!offer.maker.isValidSignatureNowCalldata(digest, signature)) revert LibRequestErrors.InvalidSignature();
   }

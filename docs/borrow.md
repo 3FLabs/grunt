@@ -28,7 +28,7 @@ Health follows the Morpho convention: `collateral * oraclePrice / ORACLE_PRICE_S
 
 ## Pre-Liquidation
 
-Instead of Morpho's native liquidation with its fixed incentive factor, the position exposes a **proportional pre-liquidation**: liquidators repay debt and seize collateral in the same proportion, so the bonus equals `1 - LTV` at liquidation time. The further underwater the position, the smaller the bonus; there is no cap on seized collateral.
+Instead of Morpho's native liquidation with its fixed incentive factor, the position exposes a **proportional pre-liquidation**: liquidators repay debt and seize collateral in the same proportion, so the bonus equals `1 - LTV` at liquidation time (profit as a fraction of the collateral seized). The further underwater the position, the smaller the bonus; there is no cap on seized collateral.
 
 For example, at 80% LTV with $100 collateral and $80 debt, repaying half the debt ($40) seizes half the collateral ($50), a 20% premium.
 
@@ -38,7 +38,7 @@ function preLiquidate(
     uint256 seizedAssets,  // collateral to seize (0 to derive from repaidShares)
     uint256 repaidShares,  // debt shares to repay (0 to derive from seizedAssets)
     bytes calldata data    // callback data (empty for none)
-) external returns (uint256 seizedAssets, uint256 repaidAssets);
+) external returns (uint256, uint256); // (seized collateral, repaid debt assets)
 ```
 
 Exactly one of `seizedAssets` and `repaidShares` must be non-zero; otherwise the call reverts with `InconsistentInput`. If `data` is non-empty, `onPreLiquidate(repaidAssets, data)` is invoked on the caller after the collateral transfer and before the debt is pulled.
@@ -47,11 +47,14 @@ Above the market LLTV the amounts are adjusted so a liquidation always leaves Mo
 
 `preLiquidate` deliberately takes no reentrancy guard: Morpho settles the seized collateral before the liquidator callback runs, and every state-changing entry point reachable during the callback is role-gated. The corollary is an invariant the deployment must maintain: a liquidator must never hold minter or facilitator roles on the composed contracts without adding a guard.
 
+The no-guard argument extends to the offer roles held on the shared `BorrowOffersRegistry`: a liquidator holding the proposer or guardian role cannot exploit the callback either. A reentrant `proposeOffer` only creates a timelocked offer (the registry's minimum timelock floor means no offer is ever consumable in the block that proposed it); a reentrant `revokeOffers` only removes offers, and the in-flight consume has already committed its fills to storage before the repay; and the registry setters have no fund impact. The minter/facilitator rule is therefore the only liquidator role restriction.
+
 ## Liquidation Offers
 
 `BorrowOffersRegistry` and `LibBorrowOffers` add an offer-based band on top of the proportional mechanism: standing on-chain offers that authorize liquidation at declared prices *before* the position reaches the pre-liquidation threshold, giving the protocol an orderly deleveraging path ahead of forced liquidation.
 
-- **Registry.** One `BorrowOffersRegistry` per deployment holds the offer configuration and roles for every position; positions reference it as an immutable, so every beacon upgrade must pass the same registry address or offer authority silently moves.
+- **Registry.** One `BorrowOffersRegistry` per deployment holds the offer configuration and roles for every position; positions reference it as an immutable, so every beacon upgrade must pass the same registry address or offer authority silently moves. Configuration is keyed by collateral token: veto-window and bonus-floor economics follow the collateral's volatility and liquidity, not the individual position.
 - **Offers.** An offer is proposed on-chain with a share-denominated debt amount and a price, and becomes consumable only after a timelock fixed at proposal time (a later timelock change can never retroactively shorten the veto window). The registry enforces a minimum timelock floor, so no offer is ever consumable in the block that proposed it. Live offers sit in a fixed slab (at most 32, bounded by a bitmap) whose walk gas is bounded.
 - **Consumption.** During `preLiquidate`, offers are walked in effective-price order. Every fill is re-checked at consumption time against two binding invariants: the fill must be profitable above the configured bonus floor, and it must *strictly lower* the position's LTV (de-risking). Rounding is conservative to the protocol throughout (the liquidator repays up, receives down); when a position-shares clamp binds, seized collateral is rescaled down to the offer's fixed ratio so the liquidator never gets a better price than the proposer authorized.
-- **Configuration.** The offer timelock can be changed, but the change itself is delayed by the current effective timelock (re-based on every call, so reductions cannot be accelerated). The bonus floor is capped: because the de-risking check bounds any fill's bonus at `(1 - LTV) / LTV`, a floor near the cap makes the band unusable at high LTV until lowered (the setter is instant).
+- **Configuration.** The offer timelock can be changed, but the change itself is delayed by the current effective timelock (re-based on every call, so reductions cannot be accelerated). The bonus floor is capped: because the de-risking check bounds any fill's bonus at `(1 - LTV) / LTV` (the same profit measured against the debt repaid rather than the collateral seized), a floor near the cap makes the band unusable at high LTV until lowered.
+- **The bonus floor takes effect immediately**, with no timelock of its own: the floor only gates consumption (it can skip fills, never force or enlarge one). Raising it stops offers whose current bonus falls below it from being consumable; lowering it instantly re-admits them with no new veto window. That re-admission is safe because offer terms were fixed at proposal, they passed admission under a floor at least as strict, they already served their veto timelock, and every fill still requires strict profitability and a strict LTV reduction. The operational corollary: revoke any standing offer that should not remain consumable rather than relying on the current floor to gate it.

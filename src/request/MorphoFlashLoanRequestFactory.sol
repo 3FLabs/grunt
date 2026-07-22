@@ -8,26 +8,9 @@ import {IMorpho} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 
 /// @title MorphoFlashLoanRequestFactory
 /// @notice Factory contract for deploying MorphoFlashLoanRequest instances.
-/// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
-///      - **UpgradeableBeacon**: The contract type (MorphoFlashLoanRequest) has its own beacon
-///      - **ERC1967 Beacon Proxy**: Instances are deployed as minimal proxies pointing to the beacon
-///      - **LibClone**: Gas-efficient proxy deployment via Solady's clone library
-///
-///      Architecture:
-///      - One beacon is deployed at construction time with the MorphoFlashLoanRequest implementation
-///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
-///      - Each `createFlashLoanRequest` call deploys one proxy: MorphoFlashLoanRequest
-///
-///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner
-///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
-///      3. Users call `createFlashLoanRequest()` to deploy new MorphoFlashLoanRequest instances
-///      4. Each request is initialized with its owner, facility, and asset
-///
-///      Upgrade Flow:
-///      1. Beacon owner deploys new MorphoFlashLoanRequest implementation contract
-///      2. Beacon owner calls `upgradeTo()` on the beacon
-///      3. All existing proxies immediately use the new implementation
+/// @dev The constructor deploys one UpgradeableBeacon; each `createFlashLoanRequest` call deploys
+///      one beacon proxy, and the beacon owner upgrades every proxy at once.
+///      See docs/deployment.md#factories.
 /// @author 3F Protocol
 contract MorphoFlashLoanRequestFactory {
   using LibClone for address;
@@ -85,12 +68,8 @@ contract MorphoFlashLoanRequestFactory {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a new MorphoFlashLoanRequest proxy.
-  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
-  ///      1. Deploys MorphoFlashLoanRequest proxy pointing to FLASH_LOAN_REQUEST_BEACON
-  ///      2. Initializes the request with owner, executor, facility, and asset
-  ///
-  ///      The owner manages scripts and can rescue tokens. The executor calls execute.
-  ///      Emits a {FlashLoanRequestCreated} event.
+  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically. The owner manages
+  ///      scripts and can rescue tokens; the executor calls execute.
   /// @param owner_ The owner who can manage scripts and rescue tokens
   /// @param executor The address granted EXECUTOR_ROLE to call execute
   /// @param facility The facility contract address

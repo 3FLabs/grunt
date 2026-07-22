@@ -183,13 +183,10 @@ interface IRetargetter {
   /// @notice Consumes a signed lender offer against the operation's Request.
   /// @dev The first consume (or nonzero mint authorization) starts the loan clock, and only
   ///      while at least the minimum deadline buffer remains before the Request's repayment
-  ///      deadline (a later start would erode the settlement room the deadline is sized
-  ///      for). From then on capital only enters while the consumption window is open (the
-  ///      tick threshold past the origin, and never once funds were pulled), for everyone
-  ///      including the owner:
-  ///      repayment prices every yield token from the origin, so capital arriving later would
-  ///      be overpaid for time it never covered and, on a default, would dilute the earlier
-  ///      lenders' recovery.
+  ///      deadline. From then on capital only enters while the consumption window is open
+  ///      (the tick threshold past the origin, and never once funds were pulled), for
+  ///      everyone including the owner; rationale in
+  ///      docs/retargetter.md#operation-lifecycle.
   /// @param offer The signed offer
   /// @param signature The maker's EIP-712 signature
   /// @param ptAmount The principal amount to consume
@@ -203,11 +200,7 @@ interface IRetargetter {
   ///      the consumption window (open through the tick threshold and shut by the first pull
   ///      of funds, which also revokes every authorization still pending). Setting both
   ///      amounts to zero revokes the account's authorization and stays possible at any time,
-  ///      window open or closed: an unminted authorization can still be minted on the Request
-  ///      directly, so the operator revokes leftovers once the funding round is over. A mint
-  ///      front-running that revocation or the settlement itself is bounded by the yield gate
-  ///      and the prorated accrual, and requires the consumer to have authorized the account
-  ///      in the first place.
+  ///      window open or closed; see docs/known-issues.md#retargetter.
   /// @param to The account allowed to call the Request's mint
   /// @param ptAmount The principal tokens to authorize; the account transfers this much asset
   ///        when it mints
@@ -243,15 +236,12 @@ interface IRetargetter {
   /// @notice Rebalances the resolved position manager under the direction guardrails.
   /// @dev Input legs (collateral, debt, SUPPLY, REPAY) support the full-balance sentinel
   ///      `type(uint256).max`, resolved to the Retargetter's current balance of the
-  ///      corresponding asset; a REPAY leg is further capped at its module's live debt, so
+  ///      corresponding asset; a REPAY leg is further capped at its module's live debt
+  ///      (reported rounded down, so a capped repayment can leave a wei of debt behind), so
   ///      folding a balance larger than the module owes repays the whole debt instead of
-  ///      reverting in the venue. The module reports that debt rounded down, so the cap can
-  ///      sit one or more wei below the true debt and a capped repayment can leave that
-  ///      remainder on the module rather than clearing it exactly. Sentinels resolve against
-  ///      one balance snapshot taken before any leg executes and do not compose: every leg
-  ///      resolves against the same pre-call balances, never the state left by earlier legs,
-  ///      so REPAY sentinels across several modules can together commit more than the shared
-  ///      balance and revert.
+  ///      reverting in the venue. Sentinels resolve against one balance snapshot taken
+  ///      before any leg executes and do not compose, so REPAY sentinels across several
+  ///      modules can together commit more than the shared balance and revert.
   /// @param data The rebalancing data forwarded to the position manager
   function rebalance(RebalancingData calldata data) external;
 
@@ -370,10 +360,10 @@ interface IRetargetter {
   function owed() external view returns (uint256);
 
   /// @notice Returns the accounts holding a registered mint authorization for the operation.
-  /// @dev Revocation and the first pull of funds remove accounts eagerly; an account whose
-  ///      authorization was minted lingers until the next consume or nonzero authorization
-  ///      prunes it lazily. The outstanding authorized principal is the sum of the Request's
-  ///      mintAuthorization over these accounts.
+  /// @dev Revocation and the first pull of funds remove accounts eagerly; a minted
+  ///      authorization is pruned lazily by the next consume or nonzero authorization. The
+  ///      outstanding authorized principal is the sum of the Request's mintAuthorization
+  ///      over these accounts.
   /// @return accounts The registered accounts
   function authorizedAccounts() external view returns (address[] memory accounts);
 

@@ -23,15 +23,12 @@ interface IFacilityLP {
   function withdraw(uint256 id, address from, address receiver, uint256 amount) external;
 
   /// @notice Reverts a user's deposit, returning the full deposited amount.
-  /// @dev Only callable by the owner or COMPLIANCE_ROLE. Verifies that the intent's deposit asset
-  ///      balance is at least equal to the total supply, meaning the intent resolution has not started
-  ///      (or the intent still has enough deposit asset balance to fully reimburse the user).
-  ///      The user receives back all deposited assets in full but forfeits any proportional claim
-  ///      to other assets that may have been added to the intent.
-  ///      When `receiver` differs from `from`, only the owner can call this to prevent the
-  ///      compliance role from redirecting user funds to an arbitrary address.
+  /// @dev Only callable by the owner or COMPLIANCE_ROLE, and only while the intent's deposit
+  ///      asset balance still covers the total supply (resolution has not consumed deposits).
+  ///      The user is reimbursed in full but forfeits any proportional claim to other assets
+  ///      the intent holds. Only the owner may set a receiver other than `from`.
   /// @param id The intent ID.
-  /// @param from The address whose deposit is being reverted (must hold intent shares).
+  /// @param from The address whose deposit is being reverted (no-op if it holds no shares).
   /// @param receiver The address to receive the deposit asset.
   function revertDeposit(uint256 id, address from, address receiver) external;
 

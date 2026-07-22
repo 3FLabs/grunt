@@ -50,33 +50,18 @@ library LibView {
 
   /// @dev Returns the total assets (sum of per-position NAVs), the aggregate debt, the
   ///      aggregate collateral of the non-bad-debt positions, and the bad-debt exclusion flag in
-  ///      a single iteration. Bad-debt positions — those where the debt value exceeds the
-  ///      collateral value — contribute zero to the three aggregates and set `hasBadDebt`, so
-  ///      `totalCollateral == amount + totalDebt` and represents the collateral of the "good"
-  ///      positions only. `totalCollateral` is consumed directly by the management fee basis and
-  ///      feeds the performance-fee basis as `currentCollat`.
-  ///
-  ///      Inclusion cliff: the `collateral >= debt` filter is binary. At exactly 100% LTV a module
-  ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
-  ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
-  ///      case in practice (liquidation is expected long before LTV reaches 100%), but worth noting.
-  ///
-  ///      Debt rounding: each module's `totalBorrowed()` returns `toAssetsDown(borrowShares)`,
-  ///      which is the same rounding Morpho applies internally when converting borrow shares to
-  ///      debt assets. The value is therefore the exact debt the underlying market recognises in
-  ///      asset terms, not a 1-wei understatement, so `collateral - debt` here matches the NAV
-  ///      Morpho itself attributes to the position. The sub-1-wei share residual left by the
-  ///      conversion is not separately enforceable as additional asset debt.
+  ///      a single iteration. Bad-debt positions (debt value exceeding collateral value)
+  ///      contribute zero to all three aggregates, so `totalCollateral == amount + totalDebt`
+  ///      covers the good positions only; the filter is binary, so a module at exactly 100% LTV
+  ///      is fully included and one wei of debt more excludes it entirely. Debt uses each
+  ///      module's `totalBorrowed()` (Morpho's `toAssetsDown`), matching the debt the underlying
+  ///      market itself recognises; see docs/known-issues.md#position-manager.
   /// @param ps The position manager storage data
   /// @return amount The total assets value (sum of `collateral - debt` for non-bad-debt positions)
   /// @return totalDebt The aggregate debt of non-bad-debt positions only
   /// @return totalCollateral The aggregate quoted collateral of non-bad-debt positions only
-  /// @return hasBadDebt True when at least one module was excluded as bad debt, i.e. the
-  ///         aggregates above cover a reduced universe. While this is set, accruals must not
-  ///         measure or advance the performance reference: the excluded module's debt is missing
-  ///         from `totalDebt`, which deleverages the visible aggregate and can make the
-  ///         performance basis read positive during a drawdown (see `_pendingFees`). Flows still
-  ///         rebase the reference (see `LibStorage.rebaseSnapshot` for the caveats).
+  /// @return hasBadDebt True when at least one module was excluded as bad debt: the aggregates
+  ///         cover a reduced universe and the performance reference is frozen (see `_pendingFees`)
   function totalAssets(PositionManagerStorageData storage ps)
     internal
     view

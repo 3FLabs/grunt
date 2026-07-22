@@ -60,22 +60,18 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   function totalAssets() external view returns (uint256);
 
   /// @notice Returns the fee configuration and accounting state.
-  /// @dev `lastTotalAssets` is the NAV component (`refCollat - refDebt`) of the performance
-  ///      reference. To reconstruct the reference collateral
-  ///      `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()` alongside this value. The
-  ///      reference advances to the current state only when a positive basis crystallizes; while
-  ///      it is held (non-positive basis) or after flow rebases it deviates from the live NAV by
-  ///      the carried pending basis.
+  /// @dev Reference semantics (advance, hold, rebase) and the reference collateral
+  ///      reconstruction (`lastCollat = lastTotalAssets + lastDebt`, with `lastDebt()`):
+  ///      see docs/position-manager.md#fees.
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days, charged on the
-  ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
-  /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
-  ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
+  ///         aggregate collateral of non-bad-debt positions (not NAV)
+  /// @return performanceFee The performance fee rate in basis points, charged on the
+  ///         levered-slice basis net of management fees
   /// @return lastTotalAssets The NAV component of the performance reference used for fee accounting
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
-  /// @return heldManagementFees The management fee assets charged since the reference last
-  ///         advanced, deducted from the next positive performance basis (cleared on advance and
-  ///         on `resetPerformanceReference`)
+  /// @return heldManagementFees The management fees charged since the reference last advanced,
+  ///         deducted from the next positive performance basis
   function feeData()
     external
     view
@@ -89,11 +85,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
     );
 
   /// @notice Returns the debt component of the performance reference.
-  /// @dev Combined with `feeData().lastTotalAssets`, callers can reconstruct
-  ///      `lastCollat = lastTotalAssets + lastDebt`. While the reference is held (non-positive
-  ///      pending basis) this is lower than the live debt by the carried debt cost. A value of
-  ///      zero is the bootstrap sentinel and means the next accrual will skip the performance fee
-  ///      and seed this slot.
+  /// @dev Zero is the bootstrap sentinel: the next accrual skips the performance fee and seeds
+  ///      this slot. See docs/position-manager.md#the-reference-as-a-high-water-mark.
   /// @return The reference debt for the performance-fee basis
   function lastDebt() external view returns (uint256);
 

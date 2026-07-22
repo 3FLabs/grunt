@@ -11,12 +11,9 @@ import {LibChecks} from "../libs/common/LibChecks.sol";
 /// @title WrappedAsset
 /// @author 3F Protocol
 /// @notice ERC20 wrapper token that wraps an underlying asset 1:1.
-/// @dev This contract holds the underlying asset and mints/burns wrapper tokens.
-///      - mint(): Pulls underlying from `from`, mints wrapper to `to`
-///      - burn(): Burns wrapper from `from`, sends underlying to `to`
-///      Multiple issuers (e.g., USCCFund instances) can mint via ISSUER_ROLE.
-///      Transfers require the token `from` address to have SENDER_ROLE (burns and mints are excluded).
-///      The underlying asset is held centrally in this contract.
+/// @dev Holds the underlying asset centrally and mints/burns wrapper tokens against it. Multiple
+///      issuers (e.g. fund instances) can mint via ISSUER_ROLE. Transfers (not mints/burns) require
+///      the sender to have SENDER_ROLE or the receiver to have RECEIVER_ROLE.
 contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using LibChecks for address;
@@ -55,13 +52,9 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
 
   /// @dev Storage slot for the WrappedAsset contract's main storage struct.
   ///      Computed as: keccak256(abi.encode(uint256(keccak256("wrapped.asset")) - 1)) & ~bytes32(uint256(0xff))
-  ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x17335d0a3e97e0293c2bb91805cb7279c336f9ba807e8dbe36cf5097172d3300;
 
   /// @dev Returns a reference to the contract's storage struct.
-  ///      Uses assembly to load the storage pointer from the fixed storage slot.
-  ///      This pattern ensures consistent storage layout when used behind proxies.
-  /// @return wrappedAssetStorage A storage pointer to the WrappedAssetStorage struct
   function _wrappedAssetStorage() internal pure returns (WrappedAssetStorage storage wrappedAssetStorage) {
     /// @solidity memory-safe-assembly
     assembly {
@@ -175,10 +168,9 @@ contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   /// @dev Enforces transfer restrictions:
   ///      - Transfers (not mints/burns) require sender to have SENDER_ROLE or receiver to have RECEIVER_ROLE
   ///      - Non-null parties must pass isAllowed check (base returns true, override for compliance)
-  ///      Note: Solady's ERC20 permits transfers to `address(0)` and treats them as a burn-by-transfer
-  ///      (this differs from OpenZeppelin's ERC20, which reverts on `to == address(0)`). EIP-20 does not
-  ///      forbid this. The `from == address(0) || to == address(0)` guards below intentionally let such
-  ///      mint/burn paths through without role or allowlist checks.
+  ///      Solady's ERC20 permits transfers to `address(0)` as a burn-by-transfer (unlike OpenZeppelin's,
+  ///      which reverts); the zero-address guards below intentionally let mint/burn paths through
+  ///      without role or allowlist checks.
   function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override {
     if (from != address(0) && to != address(0) && !hasAnyRole(to, RECEIVER_ROLE) && !hasAnyRole(from, SENDER_ROLE)) {
       revert Unauthorized();

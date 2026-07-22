@@ -21,14 +21,10 @@ import {BPS} from "../../libs/Constants.sol";
 /// @title USCCFund
 /// @author 3F Protocol
 /// @notice Wrapper of Superstate USCC fund.
-/// @dev - Shares of this fund are represented by wUSCC tokens (external ERC20). Multiple USCCFund instances can mint wUSCC.
-///        The underlying USCC tokens are held centrally by the wUSCC contract (not by individual funds).
-///        This enables shared state across all funds via wUSCC.totalSupply().
-///      - The order owner and receiver is always msg.sender (the depositor contract).
-///      - ACCEPTED / PENDING orders can be canceled back to EMPTY via cancel() before any assets/shares are committed.
-///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
-///        from the state returned by the public state() function. The state() function performs dynamic checks
-///        on asset balances to determine state transitions.
+/// @dev Shares are wUSCC tokens (an external ERC20 that multiple USCCFund instances can mint); the
+///      underlying USCC is held by the wUSCC contract itself, so wUSCC.totalSupply() reflects all funds.
+///      The stored internalState may differ from state(), which also checks token balances to detect
+///      transitions that settle off-chain. See docs/funds.md#uscc-superstate.
 contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -128,13 +124,9 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @dev Storage slot for the USCCFund contract's main storage struct.
   ///      Computed as: keccak256(abi.encode(uint256(keccak256("uscc.fund")) - 1)) & ~bytes32(uint256(0xff))
-  ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x22af3a319200d6ffd5a884897090be53ffe5ca9dd773cf69926581248771a500;
 
   /// @dev Returns a reference to the contract's storage struct.
-  ///      Uses assembly to load the storage pointer from the fixed storage slot.
-  ///      This pattern ensures consistent storage layout when used behind proxies.
-  /// @return usccFundStorage A storage pointer to the UsccFundStorage struct
   function _usccFundStorage() internal pure returns (UsccFundStorage storage usccFundStorage) {
     /// @solidity memory-safe-assembly
     assembly {
@@ -395,11 +387,8 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev We are assuming 1 USDC = 1 USD for totalAssets calculation.
-  ///      Validates the oracle round data is consistent and complete.
-  ///      The returned value is derived from `WUSCC.totalSupply()`, so when a single `WUSCC`
-  ///      deployment backs multiple `USCCFund` instances, every instance reports the same
-  ///      wrapper-wide aggregate AUM rather than AUM scoped to this fund.
+  /// @dev Assumes 1 USDC = 1 USD; validates the oracle round data is consistent and complete.
+  ///      Wrapper-wide when wUSCC backs multiple funds (see IFund.totalAssets).
   function totalAssets() external view override returns (uint256) {
     return WUSCC.totalSupply().mulDiv(_getOraclePrice(), _SCALED_UNIT);
   }
@@ -424,23 +413,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Internal function that returns both the dynamic state and the associated amount.
-  ///      This function returns the dynamic state based on balance checks, which may differ from internalState.
-  ///
-  ///      For PROCESSING state (waiting for Superstate to process the order):
-  ///      - Deposit: checks if USCC output was received → UNLOCKING if yes, PROCESSING if no
-  ///      - Redeem: checks if USDC output was received → UNLOCKING if yes, PROCESSING if no
-  ///
-  ///      For RECOVERING state (Superstate failed, attempting recovery):
-  ///      - Deposit: checks if USDC input was returned → RECOVERING if yes, PROCESSING if no
-  ///      - Redeem: checks if USCC input was returned → RECOVERING if yes, PROCESSING if no
-  ///
-  ///      For all other states (EMPTY, ACCEPTED, ENDED), returns internalState directly.
-  ///
-  ///      Returns EMPTY for any order that is not the current order (except when internalState is EMPTY or ENDED).
-  /// @param order The order to check the state for.
-  /// @return The current state based on balance checks.
-  /// @return The amount available to unlock (if UNLOCKING) or recover (if RECOVERING), 0 otherwise.
+  /// @dev Returns the dynamic state and the associated amount, derived from balance checks: PROCESSING
+  ///      flips to UNLOCKING once the output balance (USCC for deposits, USDC for redeems) covers the
+  ///      expected output, RECOVERING is claimable once the input balance is covered; resolved amounts
+  ///      take precedence. Archived orders return ENDED; any other non-current order returns EMPTY.
   function _state(Order calldata order) internal view returns (State, uint256) {
     UsccFundStorage storage _storage = _usccFundStorage();
     bytes32 _orderId = order.toId(address(this));
@@ -496,7 +472,6 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @dev Returns the validated oracle price for USCC/USD.
-  /// @return The latest oracle price as a uint256.
   function _getOraclePrice() internal view returns (uint256) {
     AggregatorV3Interface _oracle = AggregatorV3Interface(_usccFundStorage().oracle);
 
@@ -511,7 +486,6 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
 
   /// @dev Validates that the order output is within acceptable deviation from the oracle-derived expected output.
   ///      Reverts if the output deviates negatively by more than MAX_OUTPUT_DEVIATION basis points.
-  /// @param order The order to validate.
   function _validateOutput(Order calldata order) internal view {
     uint256 _price = _getOraclePrice();
     uint256 _expectedOutput;
@@ -531,8 +505,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     }
   }
 
-  /// @dev Internal function to validate and set the oracle address.
-  /// @param oracle The oracle address to set.
+  /// @dev Validates and sets the oracle address.
   function _setOracle(address oracle) private {
     oracle.checkContract();
 
@@ -545,8 +518,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     emit OracleUpdated(oracle, msg.sender);
   }
 
-  /// @dev Internal function to check that a token has the expected decimals (6).
-  /// @param token The token address to check.
+  /// @dev Reverts unless the token has the expected decimals (6).
   function _checkDecimals(address token) internal view {
     uint256 _decimals = IERC20(token).decimals();
     if (_decimals != _DECIMALS) {

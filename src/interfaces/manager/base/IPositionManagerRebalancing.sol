@@ -57,17 +57,10 @@ interface IPositionManagerRebalancing {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Rebalances liquidity across borrow positions without minting or burning shares.
-  /// @dev Only callable by accounts with the rebalancer role. This function allows redistribution of collateral and debt across positions
-  ///      to achieve desired LTV ratios. The function executes the following steps:
-  ///      1. Pulls `data.collateral` amount of collateral asset from the caller
-  ///      2. Pulls `data.debt` amount of debt asset from the caller
-  ///      3. Executes all operations in `data.operations` array in sequence:
-  ///         - REPAY: Repays debt on the specified position (consumes debt asset)
-  ///         - WITHDRAW: Withdraws collateral from the specified position (receives collateral asset)
-  ///         - BORROW: Borrows debt from the specified position (receives debt asset)
-  ///         - SUPPLY: Supplies collateral to the specified position (consumes collateral asset)
-  ///      4. Returns any excess collateral and debt assets to the receiver
-  ///      5. Verifies totalAssets didn't decrease by more than maxRebalanceLoss
+  /// @dev Only callable by accounts with the rebalancer role. Pulls `data.collateral` and
+  ///      `data.debt` from the caller, executes `data.operations` in sequence (see
+  ///      {RebalancingOperationType}), returns any excess assets to the receiver, and verifies
+  ///      totalAssets did not decrease by more than maxRebalanceLoss.
   /// @param data The rebalancing data containing amounts to pull from caller and operations to execute
   /// @param receiver The address to receive any excess collateral and debt assets
   /// @return collateralExcess The excess collateral asset amount returned to the receiver

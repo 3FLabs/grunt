@@ -22,35 +22,10 @@ struct TokenConfig {
 
 /// @title TransferGuard
 /// @author 3F Protocol
-/// @notice Gas-optimized transfer validation with single mapping for address status.
-/// @dev Uses a single mapping with enum status instead of separate blocklist/allowlist mappings.
-///      Token config (paused, mode, collateral check) is packed into a single slot per token.
-///      Deployable via beacon proxy pattern for upgradeability.
-///
-///      **Storage:** Uses ERC-7201 namespaced storage layout for proxy safety.
-///
-///      **Token modes:**
-///      Each token can be configured in one of four modes:
-///      - BLOCKLIST (default): All addresses allowed EXCEPT those with BLOCKLIST status
-///      - WHITELIST: ONLY addresses with WHITELIST or NATIVE status are allowed
-///      - NATIVE_ONLY: At least one party must be NATIVE, no BLOCKLIST allowed. Mints/burns bypass NATIVE requirement.
-///      - NATIVE_WHITELIST: All parties must be WHITELIST/NATIVE, at least one NATIVE. Mints/burns bypass NATIVE requirement.
-///
-///      **Address status behavior:**
-///      - NONE: Allowed in BLOCKLIST mode, blocked in WHITELIST/NATIVE_WHITELIST, allowed (but not NATIVE) in NATIVE_ONLY
-///      - WHITELIST: Always allowed (in all modes)
-///      - BLOCKLIST: Always blocked (in all modes)
-///      - NATIVE: Always allowed, satisfies NATIVE party requirement
-///
-///      **Collateral check:**
-///      When checkCollateralAllowed is set, the guard additionally calls the token's collateral
-///      asset's `isAllowed(account, amount)` for each non-null party. This delegates compliance
-///      enforcement (e.g., Superstate allowlist) to the WrappedAsset layer.
-///
-///      **Roles:**
-///      - Owner: Full control (set token config, manage roles)
-///      - _COMPLIANCE_ROLE: Manage address statuses
-///      - _PAUSER_ROLE: Pause/unpause tokens
+/// @notice Transfer validation with a single per-address status mapping and a per-token
+///         configuration packed into one slot.
+/// @dev Uses ERC-7201 namespaced storage; deployable behind a beacon proxy. Mode and status
+///      semantics are documented on the {ITransferGuard} enums. See docs/transfer-guard.md#modes.
 contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
   using LibPause for uint40;
   using FixedPointMathLib for bool;
@@ -143,8 +118,8 @@ contract TransferGuard is ITransferGuard, OwnableRoles, Initializable {
     if (fromStatus == AddressStatus.BLOCKLIST || toStatus == AddressStatus.BLOCKLIST) return false;
 
     // Each mode is a combination of two properties:
-    //   noneBlocked:    WHITELIST, NATIVE_WHITELIST  — NONE status addresses are blocked
-    //   nativeRequired: NATIVE_ONLY, NATIVE_WHITELIST — regular transfers need at least one NATIVE party
+    //   noneBlocked:    WHITELIST, NATIVE_WHITELIST (NONE status addresses are blocked)
+    //   nativeRequired: NATIVE_ONLY, NATIVE_WHITELIST (regular transfers need at least one NATIVE party)
     TokenMode mode = config.mode;
     bool noneBlocked = mode == TokenMode.WHITELIST || mode == TokenMode.NATIVE_WHITELIST;
     bool nativeRequired = mode >= TokenMode.NATIVE_ONLY;

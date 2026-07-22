@@ -137,20 +137,9 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /*                   INTERNALS OPERATIONS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Gets the initial parameters related to a position manager for a given intent.
-  /// @dev Retrieves the resolving intent and reads either the targetAsset or depositAsset as the selected asset,
-  ///      checks if it is a position manager, then fetches the related collateral and debt assets from the manager.
-  ///      Reverts with `InvalidPositionManagerAssets()` if collateralAsset, debtAsset, or positionManager overlap,
-  ///      preventing snapshot-based double-counting attacks (CS-GRUNT-062).
-  /// @param id The intent id.
-  /// @param useTarget If true, use the targetAsset; otherwise, use the depositAsset.
-  /// @return _intent Storage pointer to the retrieved intent struct.
-  /// @return positionManager Address of the position manager contract.
-  /// @return collateralAsset Address of the collateral asset handled by the position manager.
-  /// @return debtAsset Address of the debt asset handled by the position manager.
-  /// @return collateralSnapshot Snapshot of the collateral asset balance before the operation.
-  /// @return debtSnapshot Snapshot of the debt asset balance before the operation.
-  /// @return sharesSnapshot Snapshot of the shares balance before the operation.
+  /// @dev Reads the resolving intent, selects the targetAsset (`useTarget`) or depositAsset,
+  ///      requires it to be a position manager, fetches its collateral and debt assets, and
+  ///      snapshots the collateral, debt, and shares balances before the operation.
   function _initialPmParameters(uint256 id, bool useTarget)
     private
     view
@@ -179,6 +168,8 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     // get the position manager assets
     (collateralAsset, debtAsset) = IPositionManager(positionManager).assets();
 
+    // the position manager, collateral, and debt addresses must be pairwise distinct; an
+    // overlap would let one balance change be double-counted across the snapshots below
     // if (collateralAsset == debtAsset || collateralAsset == positionManager || debtAsset == positionManager)
     //   revert LibFacilityErrors.InvalidPositionManagerAssets();
     assembly ("memory-safe") {
@@ -194,15 +185,9 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     sharesSnapshot = LibIntent.takeBalanceSnapshot(positionManager);
   }
 
-  /// @notice Commits all balance snapshots after a position manager operation.
-  /// @dev Records balance changes for collateral, debt, and shares by comparing
-  ///      pre-operation snapshots with current balances.
-  /// @param _intent Storage pointer to the intent struct.
-  /// @param id The intent id.
-  /// @param collateralSnapshot Snapshot of the collateral asset balance before the operation.
-  /// @param debtSnapshot Snapshot of the debt asset balance before the operation.
-  /// @param sharesSnapshot Snapshot of the shares balance before the operation.
-  /// @param positionManager Address of the position manager (counterparty for collateral/debt events).
+  /// @dev Records collateral, debt, and shares balance changes by comparing the pre-operation
+  ///      snapshots with current balances; `positionManager` is the counterparty reported in
+  ///      the collateral and debt events.
   function _commitSnapshots(
     Intent storage _intent,
     uint256 id,

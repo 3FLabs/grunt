@@ -7,22 +7,17 @@ pragma solidity ^0.8.22;
 ///      `remainingDebtShares` of the position's Morpho borrow shares in exchange for up to
 ///      `remainingCollateral` collateral tokens, at the fixed ratio implied by those two amounts.
 ///
-///      Debt is denominated in Morpho borrow **shares** (not loan-token units). A fixed share
+///      Debt is denominated in Morpho borrow **shares** (not loan-token units): a fixed share
 ///      amount converts to more loan-token assets as interest accrues, so an offer's effective
-///      price worsens for the liquidator over time (and an offer can drift below profitability, at
-///      which point it is simply skipped, then eventually expires). This choice gives a precise
-///      debt-repayment quantity and a clean shares-mode Morpho settlement (no assets-mode
-///      `borrowShares` underflow).
+///      price worsens for the liquidator over time (a below-profitability offer is skipped, then
+///      eventually expires).
 ///
 ///      Packing (2 storage slots):
 ///      - slot 1: `proposer` (160) + `activeAt` (40) + `expiresAt` (40)
 ///      - slot 2: `remainingCollateral` (128) + `remainingDebtShares` (128)
 ///      The `uint128` amounts are sound because Morpho stores `Position.collateral` and the market
-///      borrow totals as `uint128`.
-///
-///      Liveness is tracked by the `liveBits` bitmap in {LibBorrowOffers.BorrowOffersStorage} (bit
-///      set <=> the slab slot holds a live offer), not by any field of this struct; a freed slot is
-///      fully zeroed. A live offer always has a non-zero proposer and both remaining amounts > 0.
+///      borrow totals as `uint128`. Liveness is tracked by the `liveBits` bitmap in
+///      {LibBorrowOffers.BorrowOffersStorage}, not by any field of this struct.
 struct Offer {
   /// @dev The account that posted the offer (accountability; also used by views).
   address proposer;

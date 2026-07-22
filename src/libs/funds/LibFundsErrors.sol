@@ -63,8 +63,7 @@ library LibFundsErrors {
   error DepositDuringEpochDisabled();
 
   /// @notice Thrown when the vault has AA-tranche withdrawal requests disabled upstream
-  ///         (e.g., during an epoch where `startEpoch` flipped `allowAAWithdrawRequest` to false),
-  ///         so any redeem accepted now would be guaranteed to revert at commit time.
+  ///         (`allowAAWithdrawRequest` false), so any redeem accepted now would revert at commit time.
   error WithdrawRequestDisabled();
 
   /// @notice Thrown when the wrapped share contract is not permissioned on the vault's share token.
@@ -97,9 +96,8 @@ library LibFundsErrors {
   ///         (deposit order, already unlocked, or redemption already executed).
   error InstantRedeemAlreadyUnlocked();
 
-  /// @notice Thrown when canceling a redeem order whose bond has already been paid; the order
-  ///         can only be completed forward (unlockInstantRedeem, then commit and unlock) or
-  ///         aborted via recovering() and recover() (the bond stays forfeited).
+  /// @notice Thrown when canceling a redeem order whose bond has already been paid; the order completes
+  ///         forward or is aborted via recovery with the bond forfeited (see docs/funds.md#midas-mtoken).
   error BondAlreadyPaid();
 
   /// @notice Thrown when a redemption pays out less than the order's minimum output: the

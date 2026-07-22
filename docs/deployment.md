@@ -4,7 +4,7 @@ How the contracts are deployed, wired together, and upgraded. The beacon proxy p
 
 ## Factories
 
-Every factory follows the same shape: its constructor deploys one `UpgradeableBeacon` per proxied contract kind (owned by the address the constructor receives), and its `create*` function deploys a beacon proxy, initializes it, and records it in the factory's registry. Upgrades never go through the factory: the beacon owner points the beacon at a new implementation and every proxy follows atomically. The registries are append-only monitoring aids, not on-chain provenance checks (see [Known Issues](known-issues.md#trust-model)).
+Every factory follows the same shape: its constructor deploys one `UpgradeableBeacon` per proxied contract kind (owned by the address the constructor receives), and its `create*` function deploys a beacon proxy, initializes it, and emits a creation event. Some factories (USCCFundFactory and the request, position-manager, borrow-position, and transfer-guard factories) additionally record the deployment in an on-chain registry with an `is*()` view; the Centrifuge, Pareto, and Midas fund factories rely on the event alone. Upgrades never go through the factory: the beacon owner points the beacon at a new implementation and every proxy follows atomically. The registries are append-only monitoring aids, not on-chain provenance checks (see [Known Issues](known-issues.md#trust-model)).
 
 The Facility itself is the one major contract not behind a factory: it is a transparent upgradeable proxy that must be deployed and initialized atomically (`upgradeAndCall`), or its `initialize()` can be front-run.
 
@@ -20,9 +20,12 @@ Deploying a proxy is never the whole job; each kind has wiring that only works i
 
 **Retargetter.** An instance is created permissionlessly and stays inert until wired:
 
-- `REBALANCER_ROLE` on the PositionManager (Solady role bits);
+- `REBALANCER_ROLE` on the PositionManager (`_ROLE_2`, bit value 4);
+- the Retargetter's own roles, granted by the instance owner: its `REBALANCER_ROLE` (`_ROLE_0`, bit value 1) and `CONSUMER_ROLE` (`_ROLE_1`, bit value 2), distinct from the PositionManager role above;
 - `maxRebalanceLoss` of at least 1 bps on the PositionManager, because Morpho share rounding produces phantom wei-level losses that a zero tolerance would revert on;
 - `DEPOSITOR_ROLE` on the fund it operates;
+- the `MorphoFlashLoanAdapter`, deployed once per chain against Morpho Blue and whitelisted on the instance alongside the funds;
+- the yield estimates, set by the instance owner before the first operation;
 - upstream venue allowlists (Superstate, Centrifuge, WrappedAsset issuer roles) for the flows it will run;
 - a *dedicated* fund instance: funds hold a single global order slot, so sharing a fund between a Retargetter and the Facility (or between two Retargetters) collides.
 

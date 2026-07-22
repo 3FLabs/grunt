@@ -8,20 +8,11 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 /// @title MidasFundFactory
 /// @author 3F Protocol
 /// @notice Factory for deploying MidasFund instances using the beacon proxy pattern.
-/// @dev Deploys a MidasFund implementation and an UpgradeableBeacon in the constructor.
-///      Each `createFund` call deploys an ERC1967 beacon proxy and initializes it atomically.
+/// @dev Deploys a MidasFund implementation and an UpgradeableBeacon in the constructor; each
+///      `createFund` call deploys an ERC1967 beacon proxy and initializes it atomically.
 ///      Multiple funds can be deployed for the same mToken to run several settlements
-///      concurrently, all sharing the same WrappedAsset.
-///      Post-deployment:
-///      - the WrappedAsset owner must grant ISSUER_ROLE to the new fund;
-///      - Midas must greenlist the new fund (and the WrappedAsset, once) when the vault
-///        greenlist is enabled or the mToken is permissioned (e.g. mGLOBAL);
-///      - the fund owner grants OPERATOR_ROLE / PAYMENT_ROLE / VAULT_MANAGER_ROLE to the
-///        relevant accounts;
-///      - the fund owner or operator can rotate the mToken/USD oracle via `setOracle`;
-///      - the fund owner or vault manager sets the bond config via `setBondConfig` when Midas
-///        requires the Repay-and-Redeem bond (the bond recipient must be greenlisted for
-///        permissioned mTokens).
+///      concurrently, all sharing the same WrappedAsset. Post-deployment wiring (roles,
+///      greenlisting, oracle, bond config): see docs/deployment.md#post-deployment-wiring.
 contract MidasFundFactory {
   using LibClone for address;
 

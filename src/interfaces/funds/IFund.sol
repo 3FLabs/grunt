@@ -6,7 +6,7 @@ import {Order, State} from "../../libs/funds/Order.sol";
 /// @title IFund
 /// @author 3F Protocol
 /// @notice Interface for on-chain fund wrappers managing asset deposits and redemptions.
-/// @dev Implements a state machine for order lifecycle management:
+/// @dev Implements a state machine for order lifecycle management (see docs/funds.md#funds):
 ///
 ///      State Machine:
 ///      ┌────────────────────────────────────────────────────────────────────────────┐
@@ -30,21 +30,10 @@ import {Order, State} from "../../libs/funds/Order.sol";
 ///      │                                                          ENDED             │
 ///      └────────────────────────────────────────────────────────────────────────────┘
 ///
-///      Order Modes:
-///      - DEPOSIT: asset → share (commit assets, unlock shares)
-///      - REDEEM:  share → asset (commit shares, unlock assets)
-///
-///      Comments:
-///      - create() returns ACCEPTED (ready for commit) or PENDING (e.g. queued/rate-limited/KYC)
-///      - PENDING orders transition to ACCEPTED when ready
-///      - ACCEPTED and PENDING orders can be canceled back to EMPTY via cancel()
-///      - ACCEPTED orders go to PROCESSING via commit()
-///      - PROCESSING splits to UNLOCKING (success) or RECOVERING (failure)
-///      - Partial unlock/recover: After claiming partial funds, state goes back to PROCESSING
-///        until remaining assets/shares become available for another unlock/recover cycle
-///      - create() and commit() NEVER reach ENDED - they advance the order forward (or revert)
-///      - Only unlock() and recover() finalize orders by reaching ENDED
-///      - Callers can batch state transitions when possible (e.g., create + commit if ACCEPTED)
+///      - Partial unlock/recover: after claiming partial funds, the state returns to PROCESSING
+///        until the remaining assets/shares become claimable for another unlock/recover cycle.
+///      - create() and commit() never reach ENDED; they advance the order forward (or revert).
+///      - Only unlock() and recover() finalize orders by reaching ENDED.
 interface IFund {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         OPERATIONS                         */
@@ -112,11 +101,9 @@ interface IFund {
   function share() external view returns (address);
 
   /// @notice Returns the total amount of the wrapper's base asset under management.
-  /// @dev Implementations typically derive this from the share token's `totalSupply()`. When the
-  ///      share token returned by `share()` is reused across multiple fund instances (e.g. a
-  ///      shared `WrappedAsset`), the value reflects the wrapper-wide aggregate AUM rather than
-  ///      AUM attributable to a single fund instance. Integrators that need per-fund AUM must
-  ///      account for this off-chain.
+  /// @dev Derived from the share token's `totalSupply()`: when `share()` is reused across multiple
+  ///      fund instances (a shared `WrappedAsset`), the value is the wrapper-wide aggregate AUM, not
+  ///      AUM attributable to this fund; per-fund AUM is an off-chain concern. See docs/known-issues.md#funds.
   /// @return The total amount of assets denominated in the asset() token.
   function totalAssets() external view returns (uint256);
 

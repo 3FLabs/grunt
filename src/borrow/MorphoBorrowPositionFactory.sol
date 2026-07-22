@@ -9,36 +9,11 @@ import {IBorrowOffersRegistry} from "../interfaces/borrow/IBorrowOffersRegistry.
 
 /// @title MorphoBorrowPositionFactory
 /// @notice Factory contract for deploying MorphoBorrowPosition instances.
-/// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
-///      - **UpgradeableBeacon**: The contract type (MorphoBorrowPosition) has its own beacon
-///      - **ERC1967 Beacon Proxy**: Instances are deployed as minimal proxies pointing to the beacon
-///      - **LibClone**: Gas-efficient proxy deployment via Solady's clone library
-///
-///      Architecture:
-///      - One beacon is deployed at construction time with the MorphoBorrowPosition implementation
-///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
-///      - Each `createBorrowPosition` call deploys one proxy: MorphoBorrowPosition
-///
-///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner
-///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
-///      3. Users call `createBorrowPosition()` to deploy new MorphoBorrowPosition instances
-///      4. Each position is initialized with its Morpho market and custom LTV
-///
-///      Upgrade Flow:
-///      1. Beacon owner deploys new MorphoBorrowPosition implementation contract
-///      2. Beacon owner calls `upgradeTo()` on the beacon
-///      3. All existing proxies immediately use the new implementation
-///
-///      Versioning:
-///      This factory revision (with the offers-registry constructor argument) is only needed for
-///      FRESH deployments, from the registry-aware version of MorphoBorrowPosition onward. On
-///      chains where a factory is already deployed, the existing instance stays in use across
-///      beacon upgrades: proxy creation is unchanged (`createBorrowPosition` and the 4-argument
-///      `initialize` keep their exact signatures) and only the implementation constructor gained
-///      the registry parameter, which flows through the beacon upgrade, not through the factory.
-///      The main goal is to keep a single beacon: every position of a deployment stays behind the
-///      one beacon the original factory created, instead of fragmenting across factory versions.
+/// @dev Beacon factory: the constructor deploys one {UpgradeableBeacon} wrapping a fresh
+///      MorphoBorrowPosition implementation, and each `createBorrowPosition` call deploys an
+///      ERC1967 beacon proxy behind it. Upgrades flow through the beacon (never through the
+///      factory), so every position of a deployment stays behind the single beacon.
+///      See docs/deployment.md#post-deployment-wiring.
 /// @author 3F Protocol
 contract MorphoBorrowPositionFactory {
   using LibClone for address;
@@ -92,14 +67,9 @@ contract MorphoBorrowPositionFactory {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Deploys the factory and creates the beacon contract with the MorphoBorrowPosition implementation.
-  /// @dev Deploys one UpgradeableBeacon wrapping a freshly deployed MorphoBorrowPosition implementation.
-  ///      The beacon owner can later upgrade the implementation for all proxies. The offers
-  ///      registry must already be deployed and initialized: its address is baked into the
-  ///      implementation as an immutable and shared by every proxy, so the fresh-chain deploy
-  ///      order is offers registry (ERC1967 proxy), then this factory. On a live chain an
-  ///      implementation upgrade does not redeploy the factory: the beacon owner deploys the new
-  ///      implementation standalone (passing the same registry) and calls `upgradeTo` on the
-  ///      beacon.
+  /// @dev The offers registry must already be deployed and initialized: its address is baked into
+  ///      the implementation as an immutable. See docs/deployment.md#post-deployment-wiring for
+  ///      the deploy order and the live-chain upgrade path.
   /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
   /// @param morpho The Morpho Blue protocol contract address
   /// @param offersRegistry The shared {BorrowOffersRegistry} proxy address
@@ -115,12 +85,9 @@ contract MorphoBorrowPositionFactory {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a new MorphoBorrowPosition proxy.
-  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
-  ///      1. Deploys MorphoBorrowPosition proxy pointing to BORROW_POSITION_BEACON
-  ///      2. Initializes the position with Morpho market and custom LTVs
-  ///
-  ///      The position manager becomes the owner and has exclusive control over the position.
-  ///      Emits a {BorrowPositionCreated} event.
+  /// @dev Deploys an ERC1967 beacon proxy pointing at BORROW_POSITION_BEACON and initializes it
+  ///      atomically. The position manager becomes the owner and has exclusive control over the
+  ///      position. Emits a {BorrowPositionCreated} event.
   /// @param marketId The Morpho market ID for this borrow position
   /// @param positionManager The address of the position manager (owner) that will control this position
   /// @param safeLtv The safe LTV threshold for position mutations (must be > 0 and < liquidationLtv)

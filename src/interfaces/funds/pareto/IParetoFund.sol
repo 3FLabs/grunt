@@ -69,18 +69,15 @@ interface IParetoFund is IFund {
   /*                       ADMINISTRATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Resolves the current order by setting its input and output amounts.
-  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner.
-  ///      This function is used to resolve stuck orders in PROCESSING state if received amounts
-  ///      differ from expected ones (e.g., due to unexpected conditions).
-  ///
-  ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id remains
-  ///      valid for `state/unlock`, but the fund will use the resolved `input/output` amounts as
-  ///      the effective thresholds for PROCESSING balance comparisons.
-  ///      It's possible to resolve multiple times if needed, always overriding the previous resolution.
-  ///
-  /// @param order The order to resolve (must match current order ID before resolution).
-  /// @param input The new input amount.
+  /// @notice Resolves the current order by overriding its expected output amount.
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, on an order stuck in
+  ///      PROCESSING because received amounts differ from expected ones.
+  ///      IMPORTANT: `resolve` must NOT change the current order identity; the original order id
+  ///      remains valid for `state`/`unlock`. Only `output` is stored, and only the DEPOSIT path of
+  ///      `state()` uses it (as the received-balance threshold); `input` is recorded solely in the
+  ///      OrderResolved event. Resolving again overrides the previous resolution.
+  /// @param order The order to resolve (must match the current order ID).
+  /// @param input The new input amount (recorded in the event only).
   /// @param output The new output amount.
   function resolve(Order memory order, uint256 input, uint256 output) external;
 

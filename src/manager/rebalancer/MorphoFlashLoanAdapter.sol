@@ -17,14 +17,6 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 ///      borrower-side security lives with the borrower (for the Retargetter, its module
 ///      whitelist and window authentication). The initiator and token of the in-flight loan
 ///      live in transient storage, so the adapter holds no persistent state.
-///
-///      Call chain:
-///      1. Initiator calls `flashLoan(token, amount, data)`
-///      2. Adapter forwards to `MORPHO.flashLoan`, which transfers the funds to the adapter
-///      3. Morpho calls back `onMorphoFlashLoan`; the adapter forwards the funds and the
-///         payload verbatim to `IFlashLoanReceiver(initiator).onFlashLoan(amount, data)`
-///      4. The adapter pulls repayment from the initiator via allowance and approves Morpho,
-///         which reclaims the funds after the callback returns
 contract MorphoFlashLoanAdapter is IFlashLoanModule, IMorphoFlashLoanCallback {
   using SafeTransferLib for address;
   using LibChecks for address;

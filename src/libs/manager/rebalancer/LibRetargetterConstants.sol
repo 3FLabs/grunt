@@ -54,24 +54,17 @@ uint16 constant MAX_PRINCIPAL_BUFFER_BPS = 2000;
 uint256 constant MAX_AUTHORIZED_ACCOUNTS = 16;
 
 /// @dev Repayment deadline offset applied to every deployed Request (the maximum the
-///      Request accepts). The deadline anchors at operation start while the loan clock
-///      starts at the first capital commitment; MIN_DEADLINE_BUFFER floors what must remain
-///      of this offset when the clock starts. Acknowledged limitation: past the deadline the
-///      Request auto-expires and bypasses the local repayment checks, so the guaranteed
-///      buffer is sized as effectively infinite for every supported settlement flow. If an
-///      operation ever runs into it regardless, remediation is arranged offchain and
-///      delivered only through beacon upgrades governed by an extensive multisig behind its
-///      own timelock; if the durations become too short for some assets, the Request and
-///      the Retargetter get upgraded with longer ones.
+///      Request accepts), sized as effectively infinite for every supported settlement
+///      flow. Past the deadline the Request auto-expires and bypasses the local repayment
+///      checks; see docs/known-issues.md#retargetter for the remediation posture.
 /// @custom:value 7,776,000 (90 days)
 uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 
 /// @dev Minimum time that must remain before the Request's repayment deadline when the loan
 ///      clock starts (the first consume or nonzero mint authorization). The deadline is
-///      fixed at operation start while the clock only starts at the first capital
-///      commitment; without this floor a late first commitment (consumer-timed) could erode
-///      the settlement buffer the deadline is sized for. Capital entry after the clock
-///      start is already bounded by the tick threshold.
+///      fixed at operation start while the clock only starts at the first commitment;
+///      without this floor a late first commitment could erode the settlement buffer the
+///      deadline is sized for.
 /// @custom:value 6,912,000 (80 days)
 uint256 constant MIN_DEADLINE_BUFFER = 80 days;
 
@@ -79,12 +72,10 @@ uint256 constant MIN_DEADLINE_BUFFER = 80 days;
 /*                        REBALANCING                         */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Sentinel amount resolved to the full balance of the corresponding asset: the
-///      Retargetter's on rebalance input legs (collateral, debt, SUPPLY, REPAY) and the
-///      Request's on pullRequestFunds; see IRetargetter.rebalance for the REPAY debt cap
-///      and the snapshot (non-composing) resolution semantics. Named because max-valued
-///      sentinels carry other meanings in the same contract (setRepaid's open upper bound,
-///      the bad-debt LTV convention); the name marks the comparisons implementing this one.
+/// @dev Sentinel amount resolved to the full balance of the corresponding asset, accepted
+///      on rebalance input legs and pullRequestFunds; see IRetargetter.rebalance for the
+///      REPAY debt cap and the snapshot (non-composing) resolution semantics. Named because
+///      max-valued sentinels carry other meanings in the same contract.
 /// @custom:value 2^256 - 1
 uint256 constant FULL_BALANCE_SENTINEL = type(uint256).max;
 

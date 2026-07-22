@@ -48,7 +48,7 @@ All state-changing functions, their required role and phase:
 | request operations (`pull`, `repay`) | Facilitator | RESOLVING | request set |
 | `depositManager` / `withdrawManager` / `burnManager` | Facilitator | RESOLVING | asset is a PositionManager |
 | `swap` | Facilitator | RESOLVING | guardian signatures meet quorum |
-| `revertDeposit` | Owner/Compliance | DEPOSITING | balance covers supply; only owner may redirect the receiver |
+| `revertDeposit` | Owner/Compliance | not RESOLVED | deposit-asset balance covers supply (so it works into RESOLVING until deposits are consumed); only owner may redirect the receiver |
 | `pauseFor` | Owner/Compliance | any | duration 0 unpauses |
 
 `revertDeposit` force-exits a single LP (compliance tool): it burns their full LP balance and returns the deposit asset. `pauseFor` pauses all LP operations for a duration.

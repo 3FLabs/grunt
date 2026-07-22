@@ -69,11 +69,8 @@ abstract contract ControlledToken is IERC20 {
   }
 
   /// @inheritdoc IERC20
-  /// @dev Allowances are internally stored as uint128. The only accepted amounts are values
-  ///      strictly below `type(uint128).max` (stored exactly) and `type(uint256).max` (stored as
-  ///      the infinite-allowance sentinel that is not decremented on transferFrom and is read back
-  ///      as `type(uint256).max` from {allowance}). Amounts in
-  ///      `[type(uint128).max, type(uint256).max - 1]` revert with `AllowanceTooLarge`.
+  /// @dev Amounts in `[type(uint128).max, type(uint256).max - 1]` revert with `AllowanceTooLarge`;
+  ///      sentinel scheme documented at {ITokenController-allowance}.
   function approve(address spender, uint256 amount) external returns (bool) {
     return TokenController(_controller())._approve(msg.sender, spender, amount, _isYtToken());
   }

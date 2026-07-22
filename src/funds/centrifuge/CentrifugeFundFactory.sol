@@ -8,23 +8,11 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title CentrifugeFundFactory
 /// @author 3F Protocol
-/// @notice Factory contract for deploying CentrifugeFund instances.
-/// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
-///      - **UpgradeableBeacon**: The contract type (CentrifugeFund) has its own beacon
-///      - **ERC1967 Beacon Proxy**: Instances are deployed as minimal proxies pointing to the beacon
-///      - **LibClone**: Gas-efficient proxy deployment via Solady's clone library
-///      Architecture:
-///      - One beacon is deployed at construction time with the CentrifugeFund implementation
-///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
-///      - Each `createFund` call deploys one proxy: CentrifugeFund
-///      - Each fund targets a different vault/wrappedShare (per-proxy storage)
-///
-///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner
-///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
-///      3. Users call `createFund()` to deploy new CentrifugeFund instances
-///      4. Each fund is initialized with per-fund parameters (vault, wrappedShare + roles)
-///      5. **Post-deployment**: WrappedAsset owner must grant ISSUER_ROLE to the new fund
+/// @notice Factory for deploying CentrifugeFund instances using the beacon proxy pattern.
+/// @dev Deploys a CentrifugeFund implementation and an UpgradeableBeacon in the constructor.
+///      Each `createFund` call deploys an ERC1967 beacon proxy and initializes it atomically.
+///      Post-deployment: the WrappedAsset owner must grant ISSUER_ROLE to the new fund.
+///      See docs/deployment.md#post-deployment-wiring.
 contract CentrifugeFundFactory {
   using LibClone for address;
   using LibChecks for address;
@@ -66,15 +54,8 @@ contract CentrifugeFundFactory {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a new CentrifugeFund proxy.
-  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
-  ///      1. Deploys CentrifugeFund proxy pointing to CENTRIFUGE_FUND_BEACON
-  ///      2. Initializes the fund with per-fund parameters
-  ///
-  ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
-  ///      to the newly deployed fund address so it can mint wrapped tokens.
-  ///
-  ///      The depositor receives DEPOSITOR_ROLE on the fund (can execute orders).
-  ///      Emits a {FundCreated} event.
+  /// @dev After deployment, the WrappedAsset owner must grant ISSUER_ROLE to the new fund
+  ///      so it can mint wrapped tokens.
   /// @param owner The address that will own the CentrifugeFund (admin privileges).
   /// @param depositor The address that will have the depositor role (must be a contract).
   /// @param vault The Centrifuge ERC-7540 vault address.

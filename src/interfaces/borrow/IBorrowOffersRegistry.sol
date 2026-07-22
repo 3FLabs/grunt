@@ -6,16 +6,12 @@ pragma solidity ^0.8.22;
 /// @notice External surface of the {BorrowOffersRegistry}: the single, protocol-wide source of
 ///         truth for the offer roles (proposer, guardian) and the per-collateral offer
 ///         configuration (timelock and minimum bonus) shared by every {MorphoBorrowPosition}.
-/// @dev Deployed once behind an ERC1967 proxy; each position implementation stores its address as
-///      an immutable, so all beacon proxies (and future implementation upgrades) read the same
-///      role book and configuration. The registry owner is the administrator: it manages roles
-///      and configuration directly (transferable with Solady's built-in two-step handover) and is
-///      always authorized by the `check*` functions. Roles are global (a proposer can post offers
-///      on any position); configuration is keyed by collateral token (the economics of a veto
-///      window and a bonus floor follow the collateral's volatility and liquidity, not the
-///      individual position). Effective timelocks are floored to `MIN_OFFER_TIMELOCK`, so a
-///      collateral that was never explicitly configured has the minimum veto window (the offer
-///      band is open by default) rather than a disabled band.
+/// @dev The registry owner is the administrator: it manages roles and configuration and is
+///      always authorized by the `check*` functions. Roles are global (a proposer can post
+///      offers on any position); configuration is keyed by collateral token. Effective timelocks
+///      are floored to `MIN_OFFER_TIMELOCK`, so a collateral that was never explicitly
+///      configured has the minimum veto window (the offer band is open by default) rather than a
+///      disabled band.
 interface IBorrowOffersRegistry {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -69,21 +65,14 @@ interface IBorrowOffersRegistry {
   /// @notice Sets the minimum offer bonus for `collateral`, in basis points. Gated to the
   ///         registry owner.
   /// @dev The floor requires a fill's collateral value to exceed the debt value it repays by at
-  ///      least this fraction of that debt value. It is enforced both when an offer is proposed
-  ///      and again per fill at consume time, so a change takes effect on the next liquidation.
-  ///      Raising it leaves live offers in the book but stops any whose current bonus is below
-  ///      the new floor from being consumable. Lowering it instantly re-admits such offers with
-  ///      no new veto window: their terms were fixed at proposal, passed admission under a floor
-  ///      at least as strict, and already served their veto timelock, and every fill still
-  ///      requires strict profitability and a strict LTV reduction, so no floor value creates
-  ///      fund exposure. Guardians must therefore revoke any standing offer that should not
-  ///      remain consumable rather than rely on the current floor gating it. Effective
-  ///      immediately, not timelocked: the floor only ever gates consumption (it can skip fills,
-  ///      never force or enlarge one), and any offer proposed under a lowered floor still faces
-  ///      its own veto timelock before becoming consumable. `minOfferBonusBps` must be at most
-  ///      `MAX_MIN_OFFER_BONUS_BPS`; an explicit 0 disables the floor (leaving only the strict
-  ///      profitability check), while a never-configured collateral reads the fail-safe
-  ///      `DEFAULT_MIN_OFFER_BONUS_BPS`.
+  ///      least this fraction of that debt value; it gates both proposal admission and every fill
+  ///      at consume time. Effective immediately, not timelocked: the floor can only skip fills,
+  ///      never force or enlarge one, but lowering it instantly re-admits standing below-floor
+  ///      offers with no new veto window, so guardians must revoke any offer that should not
+  ///      remain consumable rather than rely on the floor gating it. At most
+  ///      `MAX_MIN_OFFER_BONUS_BPS`; an explicit 0 disables the floor, while a never-configured
+  ///      collateral reads `DEFAULT_MIN_OFFER_BONUS_BPS`.
+  ///      See docs/borrow.md#liquidation-offers.
   function setMinOfferBonus(address collateral, uint16 minOfferBonusBps) external;
 
   /// @notice Returns the effective offer configuration for `collateral` in one call.

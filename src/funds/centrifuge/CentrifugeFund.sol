@@ -19,15 +19,10 @@ import {BPS} from "../../libs/Constants.sol";
 /// @title CentrifugeFund
 /// @author 3F Protocol
 /// @notice Wrapper of Centrifuge ERC-7540 vaults.
-/// @dev - Shares of this fund are represented by WrappedAsset tokens wrapping the vault's share token.
-///      - The order owner and receiver is always msg.sender (the depositor contract).
-///      - ACCEPTED / PENDING orders can be canceled back to EMPTY via cancel() before any assets/shares are committed.
-///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
-///        from the state returned by the public state() function. The state() function queries the Centrifuge
-///        vault to determine state transitions (e.g., PROCESSING → UNLOCKING when claimable).
-///      - Recovery is async: cancelRequest() → wait for Centrifuge → recover().
-///      - All vault calls use requestId = 0, which is the Centrifuge convention for
-///        "the current request for this controller" (each controller has at most one active request).
+/// @dev Shares are WrappedAsset tokens wrapping the vault's share token. The stored internalState may
+///      differ from state(), which also queries the vault to detect transitions that settle off-chain.
+///      All vault calls use requestId = 0, the Centrifuge convention for "the current request for this
+///      controller". See docs/funds.md#centrifuge-erc-7540.
 contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -77,7 +72,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
 
   /// @dev Storage slot for the CentrifugeFund contract's main storage struct.
   ///      Computed as: keccak256(abi.encode(uint256(keccak256("centrifuge.fund")) - 1)) & ~bytes32(uint256(0xff))
-  ///      This follows the ERC-7201 namespaced storage pattern to prevent storage collisions.
   bytes32 private constant _MAIN_STORAGE_SLOT = 0x28ef1884921bced10c88ede8544b3b6c142d3b6f429022b5bec0411945718000;
 
   /// @dev Returns a reference to the contract's storage struct.
@@ -424,19 +418,15 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev Converts total wrapped share supply to assets using the vault's conversion rate.
-  ///      The returned value is derived from `$.wrappedShare.totalSupply()`, so when a single
-  ///      `WrappedAsset` deployment backs multiple `CentrifugeFund` instances, every instance
-  ///      reports the same wrapper-wide aggregate AUM rather than AUM scoped to this fund.
+  /// @dev Converts total wrapped share supply to assets using the vault's conversion rate;
+  ///      wrapper-wide when the WrappedAsset is shared (see IFund.totalAssets).
   function totalAssets() external view override returns (uint256) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
     return ICentrifugeVault($.vault).convertToAssets(IERC20($.wrappedShare).totalSupply());
   }
 
   /// @inheritdoc IFund
-  /// @dev The Centrifuge vault requires `account` to be permissioned at the vault level.
-  /// In practice, only the fund contract is permissioned, so this will return 0 for
-  /// accounts that are not also permissioned on the Centrifuge vault.
+  /// @dev Returns 0 for accounts not permissioned on the Centrifuge vault; in practice only the fund is.
   function maxDeposit(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
@@ -444,9 +434,7 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IFund
-  /// @dev The Centrifuge vault requires `account` to be permissioned at the vault level.
-  /// In practice, only the fund contract is permissioned, so this will return 0 for
-  /// accounts that are not also permissioned on the Centrifuge vault.
+  /// @dev Same vault-permission caveat as `maxDeposit`.
   function maxRedeem(address account) external view override returns (uint256) {
     if (!hasAllRoles(account, DEPOSITOR_ROLE)) return 0;
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
@@ -476,24 +464,10 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Internal function that returns both the dynamic state and the associated amount.
-  ///      Queries the Centrifuge vault for claimable amounts to determine state transitions.
-  ///
-  ///      For PROCESSING state:
-  ///      - Deposit: checks vault.maxMint(this) > 0 → UNLOCKING
-  ///      - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
-  ///
-  ///      For RECOVERING state (after cancelRequest submitted):
-  ///      - First checks for fulfilled shares/assets (race condition: the Centrifuge pool can
-  ///        approve a deposit/redeem even after cancelRequest, since fulfillment is multi-step):
-  ///        - Deposit: checks vault.maxMint(this) > 0 → UNLOCKING
-  ///        - Redeem: checks vault.maxWithdraw(this) > 0 → UNLOCKING
-  ///      - Then checks for claimable cancel assets:
-  ///        - Deposit: checks vault.claimableCancelDepositRequest(_PENDING_REQUEST, this) > 0 → RECOVERING
-  ///        - Redeem: checks vault.claimableCancelRedeemRequest(_PENDING_REQUEST, this) > 0 → RECOVERING
-  ///      - If neither is claimable (cancel still pending), returns PROCESSING
-  ///
-  ///      For all other states, returns internalState directly.
+  /// @dev Returns the dynamic state and the associated claimable amount, derived from the vault's
+  ///      claimable views. In RECOVERING, fulfilled fills are checked before cancel claims: the
+  ///      Centrifuge pool can still fulfill a request after cancelRequest() since fulfillment is
+  ///      multi-step, so state() can report UNLOCKING while recovering. See docs/known-issues.md#funds.
   function _state(Order calldata order) internal view returns (State, uint256) {
     CentrifugeFundStorage storage $ = _centrifugeFundStorage();
 
@@ -528,11 +502,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     return (_internalState, 0);
   }
 
-  /// @dev Returns whether the original deposit/redeem request still has assets pending in the vault.
-  ///      Used by `unlock()` to decide whether the order returns to PROCESSING (partial fill)
-  ///      or transitions to ENDED (fully filled).
-  /// @param _vault The Centrifuge vault address.
-  /// @param _mode  The order mode (DEPOSIT or REDEEM).
+  /// @dev Returns whether the original deposit/redeem request still has assets pending in the vault;
+  ///      drives unlock()'s choice between PROCESSING (partial fill) and ENDED (fully filled).
   function _stateHasPendingRequest(address _vault, Mode _mode) internal view returns (bool) {
     if (_mode == Mode.DEPOSIT) {
       return ICentrifugeVault(_vault).pendingDepositRequest(_PENDING_REQUEST, address(this)) > 0;
@@ -544,8 +515,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   /// @dev Reverts if claimable fills exist and no pending request is active.
   ///      When a pending request exists, claimable amounts may be polluted
   ///      by attacker deposits and should not block fund operations.
-  /// @param _vault The Centrifuge vault address.
-  /// @param _mode  The order mode (DEPOSIT or REDEEM).
   function _revertIfUnclaimedFills(address _vault, Mode _mode) internal view {
     if (_stateHasPendingRequest(_vault, _mode)) return;
 
@@ -560,13 +529,8 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
     }
   }
 
-  /// @dev Returns whether a cancellation request is still pending or has claimable assets.
-  ///      Used by `recover()` and `unlock()` to decide between returning PROCESSING (partial)
-  ///      and ENDED (fully claimed). Internally the order stays in RECOVERING until complete.
-  ///      Checks both pending (not yet processed by pool) AND claimable (processed but not yet
-  ///      claimed by us), because the pool may partially process a cancellation across epochs.
-  /// @param _mode  The order mode (DEPOSIT or REDEEM).
-  /// @param _vault The Centrifuge vault address.
+  /// @dev Returns whether a cancellation request is still pending or has claimable assets. Both are
+  ///      checked because the pool may partially process a cancellation across epochs.
   function _stateHasPendingRecover(Mode _mode, address _vault) internal view returns (bool) {
     if (_mode == Mode.DEPOSIT) {
       return ICentrifugeVault(_vault).pendingCancelDepositRequest(_PENDING_REQUEST, address(this))
@@ -578,7 +542,6 @@ contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   }
 
   /// @dev Reverts if the order owner is not the caller.
-  /// @param order The given order.
   function _checkOrderOwner(Order calldata order) internal view {
     if (order.owner != msg.sender) revert LibFundsErrors.InvalidOwner();
   }

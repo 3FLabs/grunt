@@ -96,10 +96,8 @@ interface ITokenController {
 
   /// @notice Approves a spender to use both PT and YT tokens on behalf of the caller.
   /// @dev Always emits an Approval event on each of the PT and YT tokens (per EIP-20).
-  ///      Each amount must be either strictly below `type(uint128).max` (stored exactly) or exactly
-  ///      `type(uint256).max` (stored as the infinite-allowance sentinel that is not decremented on
-  ///      transferFrom). Amounts in `[type(uint128).max, type(uint256).max - 1]` revert with
-  ///      `AllowanceTooLarge` because they cannot be represented exactly in uint128 storage.
+  ///      Amounts in `[type(uint128).max, type(uint256).max - 1]` revert with `AllowanceTooLarge`;
+  ///      sentinel scheme documented at {allowance}.
   /// @param spender The address to grant allowance to
   /// @param ptAmount The PT token allowance to grant
   /// @param ytAmount The YT token allowance to grant

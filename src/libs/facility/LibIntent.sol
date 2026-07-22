@@ -149,11 +149,8 @@ library LibIntent {
   }
 
   /// @notice Syncs the intent's order state with the fund when the fund reports ENDED.
-  /// @dev Queries IFund.state(order) and clears the stale order+fund binding when the fund
-  ///      has independently ended the order (e.g. via forceEnd). Does nothing if there is
-  ///      no active order or no fund.
-  /// @param _self The intent storage reference.
-  /// @param id The intent ID.
+  /// @dev The fund can independently end an order (e.g. via forceEnd); this lazily clears the
+  ///      stale order and fund binding. Does nothing if there is no active order or no fund.
   function syncEndedOrder(Intent storage _self, uint256 id) internal {
     if (!_self.hasActiveOrder()) return;
 
@@ -186,14 +183,8 @@ library LibIntent {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes an intent with the deposit asset, quorum, and transferable flag.
-  /// @dev Sets the deposit asset, quorum, and transferableIntent flag, then emits IntentCreated.
-  ///      The deposit asset must be a deployed contract.
-  ///      Does not check if the intent already exists - caller must ensure this.
-  /// @param _self The intent storage reference.
-  /// @param id The intent ID.
-  /// @param depositAsset The deposit asset configuration.
-  /// @param quorum The quorum threshold required for guardian approvals.
-  /// @param transferableIntent Whether intent token transfers are allowed.
+  /// @dev The deposit asset must be a deployed contract.
+  ///      Does not check if the intent already exists; the caller must ensure this.
   function init(Intent storage _self, uint256 id, Asset calldata depositAsset, uint8 quorum, bool transferableIntent)
     internal
   {
@@ -251,10 +242,8 @@ library LibIntent {
   }
 
   /// @notice Removes the order and fund from the intent.
-  /// @dev Emits FundUpdated on success.
-  ///      Before calling, we must ensure the order is not active.
-  /// @param _self The intent storage reference.
-  /// @param id The intent ID.
+  /// @dev The caller must have settled any active order with the fund first (cancelled or
+  ///      ENDED); this only clears the intent-side binding. Emits FundUpdated.
   function removeOrderAndFund(Intent storage _self, uint256 id) internal {
     delete _self.order;
     LibStorage.facilityStorage().abandonFund(_self.fund);
@@ -282,12 +271,6 @@ library LibIntent {
   /// @notice Transfers tokens from the intent to a recipient and updates accounting.
   /// @dev Updates intent accounting before performing the transfer (checks-effects-interactions)
   ///      to prevent read-only reentrancy via token callbacks observing inconsistent state.
-  ///      Emits TokenSent on success.
-  /// @param _self The intent storage reference.
-  /// @param id The intent ID.
-  /// @param token The token address to transfer.
-  /// @param to The recipient address.
-  /// @param amount The amount to transfer.
   function transferTokenTo(Intent storage _self, uint256 id, address token, address to, uint256 amount) internal {
     _transferredTokenTo(_self, id, token, to, amount);
     token.safeTransfer(to, amount);
@@ -364,14 +347,8 @@ library LibIntent {
   /*                          PRIVATE                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Validates that the deposit asset, target asset, and guard key are compatible.
-  /// @dev At least one asset must be a position manager.
-  ///      When only the deposit is a PM, the guard key must match it.
-  ///      When only the target is a PM, the guard key must match it and the deposit must be its collateral or debt.
-  ///      When both are PMs, they must share the same collateral and debt assets.
-  /// @param depositAsset The deposit asset configuration.
-  /// @param targetAsset The target asset configuration.
-  /// @param guardKey The guard key address (must be one of the position managers).
+  /// @dev At least one of the deposit and target assets must be a position manager, and the
+  ///      guard key must be one of the position managers; each branch below states its rule.
   function _checkAssetsAndGuardKey(Asset memory depositAsset, Asset memory targetAsset, address guardKey) private view {
     bool depositIsPm = depositAsset.isPositionManager;
     bool targetIsPm = targetAsset.isPositionManager;

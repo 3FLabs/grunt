@@ -25,12 +25,9 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Accrues fees before adding the module to checkpoint totalAssets.
-  ///      Rebases the performance reference (`lastTotalAssets` and `lastDebt`) after adding via
-  ///      `rebaseSnapshot`, so the new module's assets and debt enter the next fee period's basis
-  ///      as a flow (any carried pending basis is preserved, not written off).
-  ///      Validates that the module's collateral and debt assets match the position manager's,
-  ///      the module's owner is this contract, and the module's safe LTV is >= the PM LTV.
+  /// @dev Accrues fees before adding the module to checkpoint totalAssets, then rebases the
+  ///      performance reference so the new module's assets and debt enter the next fee period's
+  ///      basis as a flow (carried pending basis preserved, not written off).
   function addBorrowModule(address module) external override onlyOwner {
     (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
@@ -57,11 +54,9 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Accrues fees before removing the module to checkpoint totalAssets.
-  ///      Rebases the performance reference (`lastTotalAssets` and `lastDebt`) after removing via
-  ///      `rebaseSnapshot`, so the removed module's assets and debt leave the next fee period's
-  ///      basis as a flow (any carried pending basis is preserved, not written off).
-  ///      Reverts with {LibManagerErrors.ModuleStillInQueue} if the module is still in supply or withdrawal queue.
+  /// @dev Accrues fees before removing the module to checkpoint totalAssets, then rebases the
+  ///      performance reference so the removed module's assets and debt leave the basis as a
+  ///      flow. The module must not be in either queue ({LibManagerErrors.ModuleStillInQueue}).
   function removeBorrowModule(address module) external override onlyOwner {
     (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
@@ -173,16 +168,10 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
   }
 
   /// @inheritdoc IPositionManagerAdmin
-  /// @dev Accrues fees first: a positive pending basis crystallizes normally before the reference
-  ///      moves, so the reset never mints on past gains; it only forgives the carried negative
-  ///      basis going forward. The forgiven carry includes the debt interest accrued since the
-  ///      last crystallization, which the next positive accrual will no longer net (see the
-  ///      interface timing note: reset as soon as possible after a positive charge). While every
-  ///      position is excluded as bad debt the aggregates read (0, 0), so a reset writes the
-  ///      bootstrap sentinel and the next accrual reseeds the reference at whatever state it
-  ///      observes. When only some positions are excluded, the reset anchors on the reduced
-  ///      good-debt universe: an excluded module recovering later re-enters the basis as new gain
-  ///      and is charged (the reset accepted that module's loss).
+  /// @dev Accrues fees first, so a positive pending basis crystallizes before the reference
+  ///      moves and the reset never mints on past gains; it only forgives the carried basis
+  ///      going forward. Timing guidance and behavior while modules are excluded as bad debt:
+  ///      see docs/position-manager.md#the-reference-as-a-high-water-mark.
   function resetPerformanceReference() external override onlyOwner {
     (uint256 currentTotalAssets, uint256 currentDebt) = _accrueFees();
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();

@@ -8,21 +8,9 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 /// @title TransferGuardFactory
 /// @author 3F Protocol
 /// @notice Factory contract for deploying TransferGuard instances via beacon proxy pattern.
-/// @dev Architecture:
-///      - One beacon is deployed at construction time with the TransferGuard implementation
-///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
-///      - Each `createTransferGuard` call deploys an ERC1967 beacon proxy
-///
-///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner
-///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
-///      3. Users call `createTransferGuard()` to deploy new TransferGuard instances
-///      4. Each transfer guard is initialized with its owner
-///
-///      Upgrade Flow:
-///      1. Beacon owner deploys new TransferGuard implementation contract
-///      2. Beacon owner calls `upgradeTo()` on the beacon
-///      3. All existing proxies immediately use the new implementation
+/// @dev The constructor deploys one UpgradeableBeacon holding the implementation; the beacon
+///      owner upgrades every deployed proxy at once by pointing the beacon at a new
+///      implementation. See docs/architecture.md#deployment-and-upgrades.
 contract TransferGuardFactory {
   using LibClone for address;
 
@@ -64,13 +52,7 @@ contract TransferGuardFactory {
   /*                      FACTORY METHODS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Creates a new TransferGuard proxy.
-  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
-  ///      1. Deploys guard proxy pointing to TRANSFER_GUARD_BEACON
-  ///      2. Calls `initialize(owner)` on the proxy
-  ///      3. Records the proxy in `_isTransferGuard`
-  ///
-  ///      Emits a {TransferGuardCreated} event.
+  /// @notice Creates a new TransferGuard proxy and initializes it atomically.
   /// @param owner The address that will own the guard
   /// @return transferGuard The address of the newly deployed guard proxy
   function createTransferGuard(address owner) external returns (address transferGuard) {

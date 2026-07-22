@@ -87,23 +87,17 @@ interface IUSCCFund is IFund {
   /*                       ADMINISTRATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Sets the fund internal state to RECOVERING (if issues arise with Superstate).
+  /// @notice Sets the fund internal state to RECOVERING; emergency signal that Superstate failed
+  ///         to process the order.
   /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
-  ///      This is an emergency function to signal that Superstate failed to process the order.
-  ///      Once set to RECOVERING, the state() function will check if recovery funds (original input)
-  ///      have been returned. If yes, it shows RECOVERING. If no, it falls back to PROCESSING.
-  /// @param orderId The order ID that must match the current order being processed.
-  ///        Required to prevent a stale pending transaction from targeting the wrong order if
-  ///        the current order completes and a new one enters PROCESSING before it is mined.
+  /// @param orderId Must match the current order; prevents a stale pending transaction from
+  ///        targeting the wrong order if a new one enters PROCESSING before it is mined.
   function recovering(bytes32 orderId) external;
 
-  /// @notice Cancels the RECOVERING state, reverting back to PROCESSING.
+  /// @notice Cancels the RECOVERING state back to PROCESSING, for when recovering() was called
+  ///         by mistake and Superstate delivered the output tokens.
   /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
-  ///      Use this if recovering() was called by mistake and Superstate delivered the output tokens.
-  ///      Once back to PROCESSING, the state() function will check for output tokens normally.
-  /// @param orderId The order ID that must match the current order in RECOVERING state.
-  ///        Required to prevent a stale pending transaction from targeting the wrong order if
-  ///        the current order completes and a new one enters RECOVERING before it is mined.
+  /// @param orderId Must match the current order; same stale-transaction guard as `recovering`.
   function cancelRecovering(bytes32 orderId) external;
 
   /// @notice Sets the oracle address.
@@ -112,15 +106,12 @@ interface IUSCCFund is IFund {
   function setOracle(address oracle) external;
 
   /// @notice Resolves the current order by setting its input and output amounts.
-  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
-  ///      This function is used to resolve stuck orders in PROCESSING or RECOVERING state if received amounts
-  ///      differ from expected ones (e.g., due to unexpected conditions).
-  ///
-  ///      IMPORTANT: `resolve` must NOT change the current order identity. The original order id remains
-  ///      valid for `state/unlock/recover`, but the fund will use the resolved `input/output` amounts as
-  ///      the effective thresholds for PROCESSING/RECOVERING balance comparisons.
-  ///      It's possible to resolve multiple times if needed, always overriding the previous resolution.
-  ///
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner, on an order in
+  ///      PROCESSING or RECOVERING state whose received amounts differ from the expected ones.
+  ///      IMPORTANT: `resolve` must NOT change the current order identity; the original order id
+  ///      remains valid for `state`/`unlock`/`recover`, but the resolved `input`/`output` become
+  ///      the effective thresholds for PROCESSING/RECOVERING balance comparisons. Resolving again
+  ///      overrides the previous resolution.
   /// @param order The order to resolve (must match current order ID before resolution).
   /// @param input The new input amount.
   /// @param output The new output amount.

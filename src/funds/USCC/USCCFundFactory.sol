@@ -8,29 +8,11 @@ import {LibChecks} from "../../libs/common/LibChecks.sol";
 
 /// @title USCCFundFactory
 /// @author 3F Protocol
-/// @notice Factory contract for deploying USCCFund instances.
-/// @dev This contract implements the beacon proxy pattern for upgradeable deployments:
-///      - **UpgradeableBeacon**: The contract type (USCCFund) has its own beacon
-///      - **ERC1967 Beacon Proxy**: Instances are deployed as minimal proxies pointing to the beacon
-///      - **LibClone**: Gas-efficient proxy deployment via Solady's clone library
-///
-///      Architecture:
-///      - One beacon is deployed at construction time with the USCCFund implementation
-///      - The beacon owner can upgrade all proxies by updating the beacon's implementation
-///      - Each `createFund` call deploys one proxy: USCCFund
-///      - Multiple USCCFund instances can share the same WrappedAsset token
-///
-///      Deployment Flow:
-///      1. Factory is deployed with an initial beacon owner and token addresses
-///      2. Constructor deploys implementation and wraps it in an UpgradeableBeacon
-///      3. Users call `createFund()` to deploy new USCCFund instances
-///      4. Each fund is initialized with per-fund parameters (recipient + oracle + roles)
-///      5. **Post-deployment**: WrappedAsset owner must grant ISSUER_ROLE to the new fund
-///
-///      Upgrade Flow:
-///      1. Beacon owner deploys new USCCFund implementation contract
-///      2. Beacon owner calls `upgradeTo()` on the beacon
-///      3. All existing proxies immediately use the new implementation
+/// @notice Factory for deploying USCCFund instances using the beacon proxy pattern.
+/// @dev Deploys a USCCFund implementation and an UpgradeableBeacon in the constructor. Each
+///      `createFund` call deploys an ERC1967 beacon proxy and initializes it atomically; all
+///      funds share the same USDC/USCC/wUSCC tokens. Post-deployment: the WrappedAsset owner
+///      must grant ISSUER_ROLE to the new fund. See docs/deployment.md#post-deployment-wiring.
 contract USCCFundFactory {
   using LibClone for address;
   using LibChecks for address;
@@ -105,15 +87,8 @@ contract USCCFundFactory {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a new USCCFund proxy.
-  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically:
-  ///      1. Deploys USCCFund proxy pointing to USCC_FUND_BEACON
-  ///      2. Initializes the fund with per-fund parameters (owner, depositor, recipient, oracle)
-  ///
-  ///      **IMPORTANT**: After deployment, the WrappedAsset owner must grant ISSUER_ROLE
-  ///      to the newly deployed fund address so it can mint wrapped tokens.
-  ///
-  ///      The depositor receives _DEPOSITOR_ROLE on the fund (can execute orders).
-  ///      Emits a {FundCreated} event.
+  /// @dev After deployment, the WrappedAsset owner must grant ISSUER_ROLE to the new fund
+  ///      so it can mint wrapped tokens.
   /// @param owner The address that will own the USCCFund (admin privileges)
   /// @param depositor The address that will have the depositor role (must be a contract)
   /// @param recipient The Superstate address receiving USDC to mint USCC

@@ -11,24 +11,11 @@ import {IBorrowOffersRegistry} from "../interfaces/borrow/IBorrowOffersRegistry.
 /// @notice The single, protocol-wide source of truth for the offer roles (proposer, guardian) and
 ///         the per-collateral offer configuration (timelock and minimum bonus) of the offer-based
 ///         pre-liquidation feature of {MorphoBorrowPosition}.
-/// @dev Deployed once behind an ERC1967 proxy (via Solady's `ERC1967Factory`; the factory admin
-///      controls upgrades, so this implementation carries no upgrade surface of its own). Each
-///      {MorphoBorrowPosition} implementation stores this contract's address as an immutable, so
-///      every beacon proxy (and every future implementation upgrade) shares one role book and one
-///      configuration source; positions hold no role or configuration storage of their own.
-///
-///      The registry owner is the administrator: it grants and revokes roles, tunes the
-///      configuration, and is always authorized by the `check*` functions (by derivation, not by
-///      holding a role, so an ownership handover never leaves the new owner without powers).
-///      Ownership is transferable with Solady's built-in two-step handover
-///      (`requestOwnershipHandover` / `completeOwnershipHandover`).
-///
-///      Roles are global: a proposer can post offers on any position, a guardian can revoke
-///      offers on any position. Configuration is keyed by collateral token: the economics of a
-///      veto window and a bonus floor follow the collateral's volatility and liquidity. Effective
-///      timelocks are floored to `MIN_OFFER_TIMELOCK`, so a collateral that was never explicitly
-///      configured has the minimum veto window (the offer band is open by default) and no
-///      zero-timelock state exists; {setOfferTimelock} raises the window per collateral.
+/// @dev See {IBorrowOffersRegistry} for the role and configuration semantics. Deployed once
+///      behind an ERC1967 proxy (via Solady's `ERC1967Factory`, whose admin controls upgrades, so
+///      this implementation carries no upgrade surface of its own); each {MorphoBorrowPosition}
+///      implementation stores this contract's address as an immutable.
+///      See docs/deployment.md#post-deployment-wiring.
 /// @author 3F Protocol
 contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRoles {
   using LibChecks for address;
@@ -51,38 +38,26 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Lower bound for a collateral's offer timelock, and the implicit default: effective
-  ///         timelocks are floored to this value (see {offerConfig}), so an unconfigured
-  ///         collateral has the minimum veto window rather than a disabled band. The positive
-  ///         floor guarantees that every offer has a non-zero veto window, so an offer can never
-  ///         be same-block consumable (a key reentrancy assumption; see {MorphoBorrowPosition}
-  ///         security notes).
+  ///         timelocks are floored to this value, so an unconfigured collateral has the minimum
+  ///         veto window rather than a disabled band. The positive floor means an offer can never
+  ///         be same-block consumable (a key reentrancy assumption of `preLiquidate`).
   uint40 public constant MIN_OFFER_TIMELOCK = 15 minutes;
 
-  /// @notice Upper bound for a collateral's offer timelock. A firm ceiling so a malicious or
-  ///         compromised owner cannot grief by (a) giving every future offer an absurd `activeAt`
-  ///         (freezing the band) or (b) self-locking: because any timelock change is itself
-  ///         delayed by the *current* effective timelock, an unbounded value would also delay its
-  ///         own correction. With this cap, both the worst-case freeze and the time to recover
-  ///         from one are bounded by `MAX_OFFER_TIMELOCK`.
+  /// @notice Upper bound for a collateral's offer timelock. Because a timelock change is itself
+  ///         delayed by the current effective timelock, this ceiling bounds both the worst-case
+  ///         band freeze a compromised owner can cause and the time to recover from one.
   uint40 public constant MAX_OFFER_TIMELOCK = 7 days;
 
-  /// @notice Default minimum offer bonus, in basis points, for a collateral whose floor was never
-  ///         explicitly set (100 = 1%). The bonus analogue of the timelock floor: an unconfigured
-  ///         collateral keeps the anti-griefing floor instead of silently running without one
-  ///         (fail-safe default). An explicit {setMinOfferBonus} of 0 still disables the floor.
+  /// @notice Default minimum offer bonus, in basis points (100 = 1%), for a collateral whose
+  ///         floor was never explicitly set (fail-safe default). An explicit {setMinOfferBonus}
+  ///         of 0 still disables the floor.
   uint16 public constant DEFAULT_MIN_OFFER_BONUS_BPS = 100;
 
-  /// @notice Upper bound for a collateral's minimum offer bonus (1000 = 10%). A sanity ceiling in
-  ///         the same spirit as `MAX_OFFER_TIMELOCK`: a (trusted but fallible) owner cannot
-  ///         demand an absurd bonus floor that no realistic offer could clear.
-  /// @dev The floor gates both proposals and every fill, and it stacks under the strict
-  ///      de-risking check (each fill must strictly lower the LTV): for a position at
-  ///      loan-to-value `LTV`, that check already caps any fill's bonus at `(1 - LTV) / LTV`
-  ///      measured as a fraction of the debt value (the same denomination the floor uses). So a
-  ///      floor near this ceiling can make the band unusable for high-LTV configurations until
-  ///      the owner lowers it again (the setter is instant): e.g. at `LTV = 0.9` the debt-value
-  ///      cap is only `~11.1%`, so a `10%` floor still just clears, while at `LTV >= 1 / 1.1
-  ///      (~0.909)` a `10%` floor admits no consumable fill.
+  /// @notice Upper bound for a collateral's minimum offer bonus (1000 = 10%): a sanity ceiling so
+  ///         the owner cannot demand a floor no realistic offer could clear.
+  /// @dev The de-risking check caps any fill's bonus at `(1 - LTV) / LTV` of the debt value, so a
+  ///      floor near this ceiling can make the band unusable at high LTV until the owner lowers
+  ///      it again (the setter is instant). See docs/borrow.md#liquidation-offers.
   uint16 public constant MAX_MIN_OFFER_BONUS_BPS = 1_000;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -135,10 +110,8 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Initializes the registry with its owner.
-  /// @dev Collaterals need no seeding: an unconfigured collateral reads the floored
-  ///      `MIN_OFFER_TIMELOCK` veto window and the `DEFAULT_MIN_OFFER_BONUS_BPS` bonus floor
-  ///      (fail-safe defaults); the owner retunes both per collateral via {setOfferTimelock} and
-  ///      {setMinOfferBonus}.
+  /// @dev Collaterals need no seeding: an unconfigured collateral reads the fail-safe defaults
+  ///      (see the configuration-bound constants above).
   /// @param owner_ The registry owner (governance); manages roles and configuration, transferable
   ///        with Solady's built-in two-step handover.
   function initialize(address owner_) external initializer {
@@ -187,15 +160,11 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IBorrowOffersRegistry
-  /// @dev The change lands only after the collateral's *current* effective timelock elapses
-  ///      (re-based on each call, so a reduction can never be accelerated; the effective timelock
-  ///      is floored to `MIN_OFFER_TIMELOCK`, so even the first configuration of a collateral is
-  ///      delayed by at least the floor). Bounded to `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`:
-  ///      the floor guarantees a non-zero veto window; the ceiling stops the owner from freezing
-  ///      the band (and, because a change is delayed by the current timelock, from self-locking
-  ///      the correction). Over many sequential steps the owner can still ratchet the timelock
-  ///      down, but each step costs at least the current timelock and is monitorable; that is the
-  ///      intended trade-off.
+  /// @dev The change lands only after the collateral's *current* effective timelock elapses,
+  ///      re-based on each call, so a reduction can never be accelerated (ratcheting the timelock
+  ///      down over sequential steps is possible but each step costs at least the current
+  ///      timelock and is monitorable). Bounded to `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
+  ///      See docs/borrow.md#liquidation-offers.
   function setOfferTimelock(address collateral, uint40 timelock) external override onlyOwner {
     collateral.checkNotZero();
     if (timelock < MIN_OFFER_TIMELOCK || timelock > MAX_OFFER_TIMELOCK) {
@@ -210,10 +179,8 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   }
 
   /// @inheritdoc IBorrowOffersRegistry
-  /// @dev Stored biased by one (see {OfferConfig.minOfferBonusBpsPlusOne}), so an explicit set,
-  ///      including an explicit 0 (disable), is distinguishable from the never-set state that
-  ///      reads `DEFAULT_MIN_OFFER_BONUS_BPS`. The bias cannot overflow: the bound is checked
-  ///      first and `MAX_MIN_OFFER_BONUS_BPS + 1` fits `uint16`.
+  /// @dev Stored biased by one (see {OfferConfig.minOfferBonusBpsPlusOne}). The bias cannot
+  ///      overflow: the bound is checked first and `MAX_MIN_OFFER_BONUS_BPS + 1` fits `uint16`.
   function setMinOfferBonus(address collateral, uint16 minOfferBonusBps) external override onlyOwner {
     collateral.checkNotZero();
     if (minOfferBonusBps > MAX_MIN_OFFER_BONUS_BPS) revert LibBorrowErrors.MinOfferBonusOutOfRange();
@@ -236,10 +203,9 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
     }
   }
 
-  /// @dev Floors a stored timelock to `MIN_OFFER_TIMELOCK`. A collateral that was never
-  ///      explicitly configured stores zero; flooring makes it behave as if configured with the
-  ///      minimum veto window, so the offer band is open by default and no zero-timelock state is
-  ///      observable anywhere (neither by readers nor by the change-delay re-basing).
+  /// @dev Floors a stored timelock to `MIN_OFFER_TIMELOCK`: a never-configured collateral stores
+  ///      zero, and flooring makes that zero unobservable everywhere (the offer band is open by
+  ///      default).
   function _floorTimelock(uint40 timelock) internal pure returns (uint40) {
     return timelock < MIN_OFFER_TIMELOCK ? MIN_OFFER_TIMELOCK : timelock;
   }
@@ -270,10 +236,7 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   }
 
   /// @inheritdoc IBorrowOffersRegistry
-  /// @dev A due-but-not-yet-promoted change reads as no pending change: it is already the
-  ///      effective value reported by {offerConfig} (promotion is lazy and writes only on the
-  ///      next {setOfferTimelock}), so reporting it as pending would misread as "still
-  ///      outstanding".
+  /// @dev A due-but-not-yet-promoted change reads as no pending change (see the interface note).
   function pendingOfferTimelock(address collateral) external view override returns (uint40 value, uint40 effectiveAt) {
     OfferConfig storage config = _registryStorage().configs[collateral];
     if (config.pendingTimelockAt == 0 || block.timestamp >= config.pendingTimelockAt) return (0, 0);

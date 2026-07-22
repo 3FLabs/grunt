@@ -104,10 +104,8 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
   }
 
   /// @inheritdoc IFacilityLP
-  /// @dev Checks that deposit asset balance >= totalSupply to ensure the intent has not been
-  ///      resolved or still has enough balance to reimburse. When receiver differs from the
-  ///      share holder, only the owner can call this to prevent the compliance role from
-  ///      redirecting user funds.
+  /// @dev Requires the deposit asset balance to cover totalSupply. Only the owner may set a
+  ///      receiver other than `from`, so the compliance role cannot redirect user funds.
   function revertDeposit(uint256 id, address from, address receiver)
     external
     nonReentrant
@@ -120,13 +118,10 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
     if (balance == 0) return;
     Intent storage _intent = LibStorage.facilityStorage().getIntent(id);
     address _depositAsset = _intent.properties.depositAsset.asset;
-    // ensure the intent has not been resolved and the deposit asset balance covers the
-    // total supply — this guarantees resolution has not started consuming deposits
-    // (or there is still enough to fully reimburse the user).
-    // we access `_values` directly instead of `get()` to avoid reverting with
-    // EnumerableMapKeyNotFound when the deposit asset key has been removed from the map
-    // (fully drained). A missing key returns 0 which is < totalSupply, so AlreadyResolving
-    // is correctly emitted.
+    // the deposit asset balance must cover the total supply: resolution has not started
+    // consuming deposits, or there is still enough to fully reimburse the user.
+    // `_values` is read directly instead of `get()` so a drained (removed) key reads 0
+    // and triggers AlreadyResolving instead of reverting with EnumerableMapKeyNotFound.
     if (_intent.isResolved() || _intent.amounts._values[_depositAsset] < _intent.totalSupply) {
       revert LibFacilityErrors.AlreadyResolving(id);
     }

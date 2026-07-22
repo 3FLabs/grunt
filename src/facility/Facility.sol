@@ -155,7 +155,6 @@ contract Facility is
   /// @dev Overrides ERC6909.transfer to block transfers to address(0).
   ///      ERC6909's transfer() credits balances to address(0), which would break totalSupply tracking
   ///      since _beforeTokenTransfer decrements supply but shares would still exist at address(0).
-  ///      Use the proper withdraw/claim mechanism to remove tokens from circulation.
   function transfer(address to, uint256 id, uint256 amount) public payable override returns (bool) {
     if (to == address(0)) revert LibFacilityErrors.TransferToZeroAddress();
     return super.transfer(to, id, amount);

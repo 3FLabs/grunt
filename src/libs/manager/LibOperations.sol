@@ -17,20 +17,10 @@ library LibOperations {
   using FixedPointMathLib for uint256;
   using LibExecutor for address;
 
-  /// @dev Processes a deposit by iterating through the supply queue, supplying collateral and borrowing
-  ///      debt from each position while respecting the position manager's target LTV.
-  ///
-  ///      For each position in the supply queue (until all debt is fulfilled):
-  ///        1. Determine the maximum borrow: min(available liquidity, entry.maxBorrow, remainingDebt).
-  ///        2. Ask the position how much additional collateral is needed to borrow that amount at the
-  ///           target LTV, accounting for any existing collateral/debt in the position.
-  ///        3. If the required collateral exceeds what's available, reduce the borrow amount to what
-  ///           the remaining collateral can support at the target LTV.
-  ///        4. Supply the collateral (if any) and execute the borrow.
-  ///
-  ///      After the loop, any leftover collateral (not needed for borrowing) is deposited into the
-  ///      first supply queue position as idle collateral.
-  ///
+  /// @dev Processes a deposit by iterating through the supply queue until the requested debt is
+  ///      fully borrowed. Each position's borrow is capped by available liquidity, the entry's
+  ///      maxBorrow, and the remaining debt, then reduced to what the remaining collateral
+  ///      supports at the target LTV; leftover collateral goes to the first queue position.
   ///      Reverts with {LibManagerErrors.InsufficientBorrowCapacity} if the requested debt cannot
   ///      be fully borrowed across all positions in the queue.
   /// @param _storage The position manager storage data.
@@ -93,6 +83,10 @@ library LibOperations {
   /// @param collateral The amount of collateral to withdraw
   /// @param debt The amount of debt to repay
   /// @param strategy The withdrawal strategy (SEQUENTIAL or PROPORTIONAL)
+  /// @param checkLtv When true, proportional withdrawals verify each position can release its
+  ///        collateral at the storage LTV. Withdrawals always pass true; burns pass false only
+  ///        when the withdrawal queue covers every whitelisted module (proportional amounts then
+  ///        preserve per-position LTV by construction), and true otherwise
   function processWithdrawal(
     PositionManagerStorageData storage _storage,
     uint256 collateral,
