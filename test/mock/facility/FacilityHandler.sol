@@ -294,10 +294,8 @@ contract FacilityHandler is Test {
     uint256 id = depositingIds[intentSeed % depositingIds.length];
 
     (IntentProperties memory props,,,) = facility.getIntent(id);
-    uint256 currentSupply = facility.totalSupply(id);
-    if (currentSupply >= props.depositCap) return;
-
-    uint256 remaining = props.depositCap - currentSupply;
+    // the absolute cap is the remaining capacity: it decrements on deposits
+    uint256 remaining = props.depositCap;
     uint256 maxDeposit = remaining < 1_000_000e18 ? remaining : 1_000_000e18;
     if (maxDeposit < 1e18) return;
 
@@ -327,9 +325,9 @@ contract FacilityHandler is Test {
         depositNotOneToOne = true;
       }
 
-      // FAC-4: Verify deposit did not push supply above cap
+      // FAC-4: Verify the deposit consumed exactly `amount` of the remaining cap
       (IntentProperties memory propsAfter,,,) = facility.getIntent(id);
-      if (facility.totalSupply(id) > propsAfter.depositCap) {
+      if (propsAfter.depositCap != props.depositCap - amount) {
         depositExceededCap = true;
       }
 

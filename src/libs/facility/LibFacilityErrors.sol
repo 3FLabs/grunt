@@ -57,11 +57,16 @@ library LibFacilityErrors {
   /*                         DEPOSITS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when the deposit cap is exceeded.
+  /// @notice Thrown when a deposit exceeds the remaining absolute deposit capacity.
   /// @param id The intent ID.
-  /// @param depositCap The configured deposit cap.
-  /// @param attemptedTotal The attempted total supply after deposit.
-  error DepositCapExceeded(uint256 id, uint256 depositCap, uint256 attemptedTotal);
+  /// @param remainingCap The remaining deposit capacity.
+  /// @param amount The attempted deposit amount.
+  error DepositCapExceeded(uint256 id, uint256 remainingCap, uint256 amount);
+
+  /// @notice Thrown when setting a deposit cap with an invalid encoding
+  ///         (unknown type byte, non-zero unused bits, or an unusable multiplier).
+  /// @param newDepositCap The rejected deposit cap word.
+  error InvalidDepositCap(uint256 newDepositCap);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ASSETS                            */

@@ -711,6 +711,8 @@ contract FacilityIntentsTest is FacilityBaseTest {
   }
 
   function testFuzz_createIntent_withDifferentDepositCaps(uint256 cap) public {
+    // keep the top type byte zero so the cap reads as ABSOLUTE
+    cap = bound(cap, 0, (uint256(1) << 248) - 1);
     IntentProperties memory params = _defaultIntentProperties();
     params.depositCap = cap;
 
@@ -735,6 +737,8 @@ contract FacilityIntentsTest is FacilityBaseTest {
   }
 
   function testFuzz_setDepositCap_withDifferentValues(uint256 cap) public {
+    // keep the top type byte zero so the cap reads as ABSOLUTE
+    cap = bound(cap, 0, (uint256(1) << 248) - 1);
     uint256 intentId = _createDefaultIntent();
 
     vm.prank(facilitator);
