@@ -10,7 +10,11 @@ import {IFlashLoanReceiver} from "src/interfaces/manager/rebalancer/IFlashLoanRe
 import {LibRetargetterErrors} from "src/libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
-import {RebalancingOperationType} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
+import {
+  RebalancingData,
+  RebalancingOperation,
+  RebalancingOperationType
+} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
@@ -81,9 +85,30 @@ contract PartialDeliveryFlashLoanModule is IFlashLoanModule {
   }
 }
 
+/// @dev Flash-loan module delivering nothing of its own and instead trying to make the
+///      Retargetter borrow the principal out of the position manager before the callback,
+///      so the delivery check would read a balance it never funded. Step authority only
+///      covers the committed payload, so the rebalance call must revert Unauthorized.
+contract SelfFundingFlashLoanModule is IFlashLoanModule {
+  address public immutable BORROW_MODULE;
+
+  constructor(address borrowModule_) {
+    BORROW_MODULE = borrowModule_;
+  }
+
+  function flashLoan(address, uint256 amount, bytes calldata data) external {
+    RebalancingData memory borrowLeg;
+    borrowLeg.operations = new RebalancingOperation[](1);
+    borrowLeg.operations[0] =
+      RebalancingOperation({position: BORROW_MODULE, operationType: RebalancingOperationType.BORROW, amount: amount});
+    IRetargetter(msg.sender).rebalance(borrowLeg);
+    IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
+  }
+}
+
 /// @dev Third party attempting a privileged Retargetter call while a flash-loan window is
-///      open. Window authority is bound to the module address, so the call must revert
-///      Unauthorized before reaching any other check.
+///      open. Step authority is bound to the module's committed payload, so the call must
+///      revert Unauthorized before reaching any other check.
 contract WindowThirdParty {
   function callPrivileged(address retargetter) external {
     IRetargetter(retargetter).cancelOrder();
@@ -649,6 +674,32 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     );
 
     _assertNoTrace();
+  }
+
+  /// @notice The module cannot fund the delivery out of the position manager: step
+  ///         authority covers the committed payload only, so a rebalance the module sends
+  ///         from its own frame (before the callback) is an ordinary unauthorized call.
+  ///         Without this scoping the delivery check would accept a balance the module
+  ///         borrowed through the Retargetter rather than delivered.
+  function test_startSyncRetargetting_moduleCannotFundDeliveryFromPosition() public {
+    _seedPosition(10_000e18, 1_000e18);
+    SelfFundingFlashLoanModule selfFundingModule = new SelfFundingFlashLoanModule(address(borrowPosition1));
+    vm.startPrank(owner);
+    retargetter.setFlashLoanModule(address(selfFundingModule), true);
+    // A naked BORROW leg sweeps value out to the Retargetter, which the position manager
+    // accounts as a rebalance loss; widen the tolerance so the authorization check is what
+    // fires rather than the loss guard underneath
+    positionManager.setRebalanceConfig(1000, 0);
+    vm.stopPrank();
+
+    vm.prank(rebalancer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(selfFundingModule), 500e18, address(fund), new bytes[](0)
+    );
+
+    _assertNoTrace();
+    _assertZeroResidual();
   }
 
   /// @notice A pre-window donation cannot stand in for delivery: the callback checks the

@@ -362,7 +362,9 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
     _mintCollateral(address(retargetter), 500e18);
 
     vm.prank(rebalancer);
-    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.TotalAssetsIncreased.selector, 5_000e18, 5_500e18));
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRetargetterErrors.PositionValueIncreased.selector, int256(5_000e18), int256(5_500e18))
+    );
     retargetter.rebalance(_rebalancingData(500e18, 0, RebalancingOperationType.SUPPLY, 500e18));
   }
 
@@ -373,7 +375,9 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
     _mintDebt(address(retargetter), 100e18);
 
     vm.prank(rebalancer);
-    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.TotalAssetsIncreased.selector, 5_000e18, 5_100e18));
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRetargetterErrors.PositionValueIncreased.selector, int256(5_000e18), int256(5_100e18))
+    );
     retargetter.rebalance(_rebalancingData(0, 100e18, RebalancingOperationType.REPAY, 100e18));
   }
 
@@ -385,7 +389,9 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
     _mintCollateral(address(retargetter), 500e18);
 
     vm.prank(owner);
-    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.TotalAssetsIncreased.selector, 5_000e18, 5_500e18));
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRetargetterErrors.PositionValueIncreased.selector, int256(5_000e18), int256(5_500e18))
+    );
     retargetter.rebalance(_rebalancingData(500e18, 0, RebalancingOperationType.SUPPLY, 500e18));
   }
 
@@ -403,6 +409,45 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
 
     assertEq(positionManager.totalAssets(), 5_000e18, "totalAssets exactly conserved");
     assertEq(debtToken.balanceOf(address(retargetter)), 500e18, "borrowed value swept back for the repayment");
+  }
+
+  /// @dev The gate measures the whole book, underwater modules included: the position
+  ///      manager's totalAssets drops any module whose debt exceeds its collateral, so it
+  ///      reads flat while bridge capital is poured into such a module. Here a price crash
+  ///      puts the book underwater (4_000 quoted collateral against 5_000 debt, totalAssets
+  ///      zero) and a repay-only leg still has to be rejected.
+  function test_rebalance_repayIntoUnderwaterBook_reverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintDebt(address(retargetter), 900e18);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 4 / 10);
+
+    assertEq(positionManager.totalAssets(), 0, "underwater book reads zero totalAssets");
+
+    // Net value: -1_000e18 before (4_000 collateral, 5_000 debt), -100e18 after the repayment
+    vm.prank(rebalancer);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRetargetterErrors.PositionValueIncreased.selector, -int256(1_000e18), -int256(100e18))
+    );
+    retargetter.rebalance(_rebalancingData(0, 900e18, RebalancingOperationType.REPAY, 900e18));
+  }
+
+  /// @dev Same blind spot on the collateral side: supplying into an underwater book leaves
+  ///      totalAssets at zero while the net value climbs, and is rejected.
+  function test_rebalance_supplyIntoUnderwaterBook_reverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintCollateral(address(retargetter), 2_000e18);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 4 / 10);
+
+    assertEq(positionManager.totalAssets(), 0, "underwater book reads zero totalAssets");
+
+    // The 2_000 supplied quotes at 800 under the crashed price: -1_000e18 to -200e18
+    vm.prank(rebalancer);
+    vm.expectRevert(
+      abi.encodeWithSelector(LibRetargetterErrors.PositionValueIncreased.selector, -int256(1_000e18), -int256(200e18))
+    );
+    retargetter.rebalance(_rebalancingData(2_000e18, 0, RebalancingOperationType.SUPPLY, 2_000e18));
   }
 
   /// @dev Once the Request is repaid the gate disarms and folding value back into the

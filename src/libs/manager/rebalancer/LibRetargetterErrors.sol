@@ -72,13 +72,14 @@ library LibRetargetterErrors {
   /// @param position The offending borrow module
   error PositionAboveTarget(address position);
 
-  /// @notice Thrown when a rebalance grows the position manager's totalAssets while the
+  /// @notice Thrown when a rebalance grows the position manager's net value while the
   ///         operation's Request is unrepaid and short of its deadline (the growth would be
   ///         bridge capital left in the position manager with no shares backing it, exposed
   ///         to capture by any LP exit before the Request is repaid).
-  /// @param totalAssetsBefore The totalAssets snapshot before the rebalance
-  /// @param totalAssetsAfter The totalAssets value after the rebalance
-  error TotalAssetsIncreased(uint256 totalAssetsBefore, uint256 totalAssetsAfter);
+  /// @param valueBefore The net value snapshot before the rebalance (quoted collateral minus
+  ///        debt, summed over every module including underwater ones, so it may be negative)
+  /// @param valueAfter The net value after the rebalance, under the same convention
+  error PositionValueIncreased(int256 valueBefore, int256 valueAfter);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ORDERS                           */

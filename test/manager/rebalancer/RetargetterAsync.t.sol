@@ -1103,7 +1103,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   ///         been converted to collateral, supplying it without borrowing the repayment back
   ///         out reverts on the value-conservation gate, so existing position manager
   ///         shareholders can never absorb Request-funded collateral.
-  function test_async_supplyWithoutBorrow_revertsTotalAssetsIncreased() public {
+  function test_async_supplyWithoutBorrow_revertsPositionValueIncreased() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
     _consume(request, 6_000e18, 60e18, 6_000e18);
@@ -1121,7 +1121,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
 
     // The supply-only tail: no BORROW leg pulls the repayment back out of the position
     vm.prank(rebalancer);
-    vm.expectPartialRevert(LibRetargetterErrors.TotalAssetsIncreased.selector);
+    vm.expectPartialRevert(LibRetargetterErrors.PositionValueIncreased.selector);
     retargetter.rebalance(_rebalancingData(MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL));
   }
 

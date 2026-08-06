@@ -447,12 +447,12 @@ contract RetargetterHandler is Test {
     (uint256 target,) = positionManager.config();
     uint256 ltvBefore = _positionManagerLtv();
     bool bridgeOutstanding = _bridgeOutstanding();
-    uint256 totalAssetsBefore = positionManager.totalAssets();
+    int256 valueBefore = _positionValue();
     vm.prank(rebalancer);
     try retargetter.rebalance(data) {
       uint256 ltvAfter = _positionManagerLtv();
       if (ltvAfter > target && ltvAfter >= ltvBefore) directionViolated = true;
-      if (bridgeOutstanding && positionManager.totalAssets() > totalAssetsBefore) valueConservationViolated = true;
+      if (bridgeOutstanding && _positionValue() > valueBefore) valueConservationViolated = true;
     } catch {}
   }
 
@@ -461,6 +461,13 @@ contract RetargetterHandler is Test {
   function _bridgeOutstanding() internal view returns (bool) {
     (, address request,,, uint40 repaymentDeadline,,,) = retargetter.operation();
     return request != address(0) && block.timestamp < repaymentDeadline && !IRequest(request).isRepaid();
+  }
+
+  /// @dev Net value of the whole position, underwater modules included (the position
+  ///      manager's totalAssets drops those, and would read flat while value is poured into
+  ///      one).
+  function _positionValue() internal view returns (int256) {
+    return int256(positionManager.collateralAmountQuoted()) - int256(positionManager.debtAmount());
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
