@@ -40,6 +40,13 @@ library LibBorrowErrors {
   /// @notice Thrown when attempting to liquidate a healthy position.
   error PositionHealthy();
 
+  /// @notice Thrown when a band (offer) pre-liquidation settles without strictly lowering the
+  ///         position's LTV. The walk's pre-checks run on a snapshot of Morpho's totals; on a
+  ///         virtual-share boundary the settled totals can round a dust-sized fill into a flat or
+  ///         higher LTV, which repeated fills could walk past `liquidationLtv`, so the settled
+  ///         state is re-checked and such fills revert.
+  error LtvNotReduced();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           LTV                              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -82,16 +89,16 @@ library LibBorrowErrors {
   error OfferAmountZero();
 
   /// @notice Thrown at proposal time when the offer is not profitable at the current price
-  ///         (`collateral value <= debt value`). This is a sanity filter only; the binding
-  ///         profitability/de-risking checks are re-evaluated per fill at consume time.
+  ///         (`collateral value <= debt value`). This is a sanity filter only; the binding checks
+  ///         are re-evaluated at consume time (profitability per offer, de-risking per fill).
   error OfferNotProfitable();
 
   /// @notice Thrown at proposal time when the offer is profitable but its bonus (the excess of the
   ///         collateral value over the debt value, as a fraction of the debt value) is below the
   ///         admin-set minimum. Anti-griefing floor: keeps barely-profitable offers out of the
   ///         book, where they would sort to the head and make band liquidations unattractive. The
-  ///         same floor is re-checked at consume time, where a below-floor fill is skipped (not
-  ///         reverted with this error).
+  ///         same floor is re-checked at consume time on the offer's whole remaining amounts,
+  ///         where a below-floor offer is skipped (not reverted with this error).
   error OfferBonusTooLow();
 
   /// @notice Thrown when an offer's `expiresAt` is not strictly after its computed `activeAt`,

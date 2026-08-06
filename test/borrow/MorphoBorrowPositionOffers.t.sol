@@ -270,18 +270,20 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   function test_revokeOffers_revertsForNonGuardian() public {
+    _enterBand(0.7e18);
     uint8[] memory ids = new uint8[](1);
-    ids[0] = 0;
+    ids[0] = _proposeAtPrice(_positionShares() / 4, 1.2e18);
     vm.prank(makeAddr("rando"));
     vm.expectRevert(Unauthorized.selector);
     pos.revokeOffers(ids);
   }
 
-  /// @notice The position owner (PositionManager) cannot revoke either: revoke stays with the
-  ///         registry guardians and the registry owner.
+  /// @notice The position owner (PositionManager) cannot revoke someone else's offer: revoke
+  ///         stays with the offer's proposer, the registry guardians and the registry owner.
   function test_revokeOffers_revertsForPositionOwner() public {
+    _enterBand(0.7e18);
     uint8[] memory ids = new uint8[](1);
-    ids[0] = 0;
+    ids[0] = _proposeAtPrice(_positionShares() / 4, 1.2e18);
     vm.prank(positionManager);
     vm.expectRevert(Unauthorized.selector);
     pos.revokeOffers(ids);
@@ -337,6 +339,8 @@ contract MorphoBorrowPositionOffersTest is Test {
     _enterBand(0.7e18);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
+    // A standing offer from a plain proposer, the target of the old owner's revoke attempt below.
+    uint8 standing = _propose(coll, uint128(shares));
 
     // Two-step handover: the new owner requests, the current owner completes.
     address newOwner = makeAddr("newRegistryOwner");
@@ -345,21 +349,25 @@ contract MorphoBorrowPositionOffersTest is Test {
     vm.prank(registryOwner);
     registry.completeOwnershipHandover(newOwner);
 
-    // The old owner is a stranger to the registry now: no propose, no revoke.
+    // The old owner is a stranger to the registry now: no propose, no revoke of others' offers.
     vm.prank(registryOwner);
     vm.expectRevert(Unauthorized.selector);
     pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
     uint8[] memory ids = new uint8[](1);
-    ids[0] = 0;
+    ids[0] = standing;
     vm.prank(registryOwner);
     vm.expectRevert(Unauthorized.selector);
     pos.revokeOffers(ids);
 
-    // The new owner holds the full owner powers by derivation.
+    // The new owner holds the full owner powers by derivation: propose, revoke its own offer,
+    // and revoke the plain proposer's standing offer.
     vm.prank(newOwner);
     uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
     assertEq(pos.offer(id).proposer, newOwner, "new registry owner may propose");
     ids[0] = id;
+    vm.prank(newOwner);
+    pos.revokeOffers(ids);
+    ids[0] = standing;
     vm.prank(newOwner);
     pos.revokeOffers(ids);
     assertEq(pos.offerCount(), 0, "new registry owner may revoke");
@@ -778,6 +786,100 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(n, 2, "both offers touched");
   }
 
+  /// @notice Settlement guard regression: a dust-sized fill can pass the walk's snapshot checks
+  ///         while Morpho's settled totals round the remaining debt back to its pre-fill value,
+  ///         so the LTV does not strictly decrease (repeated flat fills would bleed collateral
+  ///         and walk the LTV upward). The call must revert instead of committing such a fill,
+  ///         in both target modes; the walk-only previewConsume still quotes the fill (the guard
+  ///         runs solely on the real call).
+  function test_preLiquidate_dustFillLeavesLtvFlat_reverts() public {
+    _enterBand(0.7e18);
+    _proposeAtPrice(_positionShares() / 2, 1.2e18);
+    _warpActive();
+
+    // A one-atom seize target repays fewer borrow shares than one loan atom is worth (Morpho's
+    // virtual ratio is 1e6 shares per asset), so the settled remaining debt re-rounds up to its
+    // entry value while the position's collateral (value) drops by one atom.
+    (uint256 previewSeized, uint256 previewShares) = pos.previewConsume(1, 0);
+    assertEq(previewSeized, 1, "the walk itself quotes the dust fill");
+    assertLt(previewShares, 1e6, "dust fill repays less than one loan atom in shares");
+    vm.expectRevert(LibBorrowErrors.LtvNotReduced.selector);
+    pos.preLiquidate(address(pos), 1, 0, "");
+
+    // Same flat fill through the repaidShares-mode target: the guard takes no mode-dependent
+    // input, so the shares-mode dust call must revert identically.
+    vm.expectRevert(LibBorrowErrors.LtvNotReduced.selector);
+    pos.preLiquidate(address(pos), 0, previewShares, "");
+  }
+
+  /// @notice Partition invariance: splitting a seize target across two calls must fill from the
+  ///         same (best) offer as the single-call fill. The bonus floor is evaluated on the
+  ///         offer's whole remaining amounts, so an exactly-at-floor offer (the most
+  ///         owner-favorable admissible price) cannot be skipped for a worse one just because a
+  ///         chunk's rounded-up share fill prices it a hair below the floor.
+  function test_consume_partitionedTarget_doesNotSkipAtFloorOffer() public {
+    _enterBand(0.7e18);
+    uint256 shares = _positionShares() / 4;
+
+    // Offer A sits on the 1% bonus floor (smallest admissible collateral, mirroring the
+    // proposal-time boundary in {test_proposeOffer_minBonusExactBoundary}, plus a few atoms of
+    // slack so the post-chunk remainder's floored value stays admissible too; the zero-slack
+    // chunk decision is pinned in LibBorrowOffers.t.sol); offer B is clearly worse for the owner.
+    (uint256 tba, uint256 tbs) = _borrowTotals();
+    uint256 debt = shares.toAssetsUp(tba, tbs);
+    uint256 minExcess = (debt * MIN_OFFER_BONUS_BPS + BPS - 1) / BPS;
+    uint256 price = oracle.price();
+    uint128 collA = uint128(((debt + minExcess) * SCALE + price - 1) / price) + 10;
+    uint8 a = _propose(collA, uint128(shares));
+    uint8 b = _proposeAtPrice(shares, 1.3e18);
+    uint128 collB = pos.offer(b).remainingCollateral;
+    _warpActive();
+
+    (uint256 fullSeized,) = pos.previewConsume(collA, 0);
+    assertEq(fullSeized, collA, "a single call would fill all of A");
+
+    // Split A's collateral into two odd-sized chunks (the shape that baits per-chunk rounding).
+    uint256 firstChunk = uint256(collA) / 2 + 1;
+    (uint256 seized1,) = pos.preLiquidate(address(pos), firstChunk, 0, "");
+    (uint256 seized2,) = pos.preLiquidate(address(pos), collA - firstChunk, 0, "");
+
+    assertEq(seized1 + seized2, fullSeized, "split target seized the same total collateral");
+    assertEq(pos.offer(a).proposer, address(0), "at-floor offer A fully consumed across the split");
+    assertEq(pos.offer(b).remainingCollateral, collB, "worse offer B untouched by either chunk");
+    assertEq(pos.offerCount(), 1, "only A removed");
+  }
+
+  /// @notice A partial fill that leaves an offer holding only unusable dust releases the slot:
+  ///         the leftover cannot clear the profitability gate, so keeping it live would hold a
+  ///         slab slot (and, across the whole book, block new proposals and starve the band)
+  ///         until expiry or a revoke.
+  function test_consume_unusableDustRemainder_releasesSlot() public {
+    _enterBand(0.7e18);
+    uint8 id = _proposeAtPrice(_positionShares() / 2, 1.2e18);
+    _warpActive();
+
+    // Seize all but three collateral atoms: the leftover's value rounds down to less than the
+    // rounded-up debt it still asks, so no future fill from it can pass the gates.
+    uint128 coll = pos.offer(id).remainingCollateral;
+    vm.recordLogs();
+    (uint256 seized,) = pos.preLiquidate(address(pos), uint256(coll) - 3, 0, "");
+    assertEq(seized, uint256(coll) - 3, "target met");
+
+    // The release is reported as an exhausted consume and the slot is freed for new proposals.
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    uint256 n;
+    for (uint256 i; i < logs.length; ++i) {
+      if (logs[i].emitter != address(pos) || logs[i].topics[0] != IBorrowOffers.OfferConsumed.selector) continue;
+      (uint128 collFilled,, bool exhausted) = abi.decode(logs[i].data, (uint128, uint128, bool));
+      assertEq(collFilled, coll - 3, "partial fill amounts reported");
+      assertTrue(exhausted, "dust release reported as exhausted");
+      ++n;
+    }
+    assertEq(n, 1, "one offer touched");
+    assertEq(pos.offerCount(), 0, "dust remainder released the slot");
+    assertEq(pos.offer(id).proposer, address(0), "slot zeroed");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      TIMELOCK / EXPIRY                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -1068,6 +1170,89 @@ contract MorphoBorrowPositionOffersTest is Test {
     vm.prank(guardian);
     vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
     pos.revokeOffers(ids);
+  }
+
+  /// @notice Liveness is resolved before authorization: an unknown id reverts {OfferNotFound} for
+  ///         every caller, including one with no registry role at all.
+  function test_revokeOffers_unknownIdRevertsNotFound_forUnauthorizedCaller() public {
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = 5;
+    vm.prank(makeAddr("rando"));
+    vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
+    pos.revokeOffers(ids);
+
+    ids[0] = uint8(MAX_OFFERS); // out-of-range ids take the same path
+    vm.prank(makeAddr("rando"));
+    vm.expectRevert(LibBorrowErrors.OfferNotFound.selector);
+    pos.revokeOffers(ids);
+  }
+
+  /// @notice The recorded proposer can cancel its own offer while it is still timelocked: a
+  ///         mistaken offer does not have to stand until a guardian reacts.
+  function test_revokeOffers_proposerCancelsOwnOffer_beforeActive() public {
+    _enterBand(0.7e18);
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    assertLt(block.timestamp, pos.offer(id).activeAt, "offer still timelocked");
+
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = id;
+    vm.expectEmit(true, true, false, false, address(pos));
+    emit IBorrowOffers.OfferRevoked(id, proposer);
+    vm.prank(proposer);
+    pos.revokeOffers(ids);
+    assertEq(pos.offerCount(), 0, "proposer cancelled its own timelocked offer");
+    assertEq(pos.offer(id).proposer, address(0), "slot freed");
+  }
+
+  /// @notice Proposer self-revoke is not limited to the timelock window: the proposer can also
+  ///         pull its own offer once it is active (and consumable).
+  function test_revokeOffers_proposerCancelsOwnOffer_afterActive() public {
+    _enterBand(0.7e18);
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    _warpActive();
+    assertTrue(pos.isConsumable(id), "offer is live and consumable");
+
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = id;
+    vm.prank(proposer);
+    pos.revokeOffers(ids);
+    assertEq(pos.offerCount(), 0, "proposer cancelled its own active offer");
+  }
+
+  /// @notice Self-revoke does not extend to other proposers' offers: a batch touching a foreign
+  ///         offer requires the guardian/registry-owner power and reverts atomically without it.
+  function test_revokeOffers_proposerCannotRevokeForeignOffer() public {
+    _enterBand(0.7e18);
+    address proposerB = makeAddr("proposerB");
+    vm.prank(registryOwner);
+    registry.setProposer(proposerB, true);
+
+    uint256 shares = _positionShares() / 8;
+    uint8 own = _proposeAtPrice(shares, 1.2e18);
+    uint128 collB = _collForPrice(shares, 1.3e18); // precompute (external calls would consume the prank)
+    vm.prank(proposerB);
+    uint8 foreign = pos.proposeOffer(collB, uint128(shares), uint40(block.timestamp + 30 days));
+
+    // The foreign offer alone is out of reach.
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = foreign;
+    vm.prank(proposer);
+    vm.expectRevert(Unauthorized.selector);
+    pos.revokeOffers(ids);
+
+    // A mixed batch (own + foreign) reverts atomically: the own offer stays live too.
+    uint8[] memory mixed = new uint8[](2);
+    mixed[0] = own;
+    mixed[1] = foreign;
+    vm.prank(proposer);
+    vm.expectRevert(Unauthorized.selector);
+    pos.revokeOffers(mixed);
+    assertEq(pos.offerCount(), 2, "both offers still live after the failed batch");
+
+    // A guardian can revoke the same mixed batch.
+    vm.prank(guardian);
+    pos.revokeOffers(mixed);
+    assertEq(pos.offerCount(), 0, "guardian revoked both");
   }
 
   function test_slab_recyclesFreedSlots() public {

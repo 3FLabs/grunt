@@ -416,29 +416,80 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      `_isHealthy(LLTV)` holds; every fill strictly lowers LTV, so the post-withdraw state that
   ///      Morpho re-checks inside `withdrawCollateral` retains margin. The conservative rounding in
   ///      the fill math is load-bearing at the knife edge.
+  ///
+  ///      Settlement guard: the walk's per-fill checks run against a snapshot of Morpho's totals,
+  ///      and on a virtual-share boundary the settled totals can round the remaining debt such
+  ///      that an accepted dust-sized fill leaves the LTV flat or higher (and repeated fills could
+  ///      walk it past `liquidationLtv` into the proportional path). After the repay settles, the
+  ///      position is re-quoted at the entry price and the call reverts unless the LTV strictly
+  ///      decreased ({_checkLtvReduced}); with the entry LTV at or below `liquidationLtv`, a
+  ///      strict decrease also keeps the settled LTV within the band's bound.
   function _offerPreLiquidate(address borrower, uint256 seizedAssets, uint256 repaidShares, bytes calldata data)
     internal
     returns (uint256, uint256)
   {
+    // One oracle read for the whole call: the walk, the entry quote and the settlement guard all
+    // price collateral identically, so a mid-call price move (e.g. from the liquidator callback)
+    // cannot skew the entry/exit comparison.
+    uint256 price = IOracle(_borrowPositionStorage().marketParams.oracle).price();
+    (uint256 entryDebtValue, uint256 entryCollateralValue) = _positionLtvFrame(price);
+
     // The walk reads market/position once (post-accrual, so exact) and applies all offer mutations
     // as effects before the repay below. Scoped in a helper to keep this function's stack shallow.
-    (uint256 totalSeized, uint256 totalDebtShares) = _consumeOffers(borrower, seizedAssets, repaidShares);
+    (uint256 totalSeized, uint256 totalDebtShares) = _consumeOffers(borrower, seizedAssets, repaidShares, price);
 
     // Mandatory: a zero-amount repay would hit Morpho's exactlyOneZero (INCONSISTENT_INPUT); this
     // gives liquidators a clear signal when the band is entered but nothing is fillable.
     if (totalSeized == 0 || totalDebtShares == 0) revert LibBorrowErrors.NoConsumableOffer();
 
-    bytes memory callbackData = abi.encode(totalSeized, borrower, msg.sender, data);
-    (uint256 repaidAssets,) =
-      MORPHO.repay(_borrowPositionStorage().marketParams, 0, totalDebtShares, borrower, callbackData);
+    uint256 repaidAssets = _settleOfferRepay(borrower, totalSeized, totalDebtShares, data);
+
+    _checkLtvReduced(price, entryDebtValue, entryCollateralValue);
 
     return (totalSeized, repaidAssets);
   }
 
-  /// @dev Reads the post-accrual market/position snapshot and runs the offer consume walk. Returns
+  /// @dev Performs the single shares-mode Morpho repay that settles a band pre-liquidation.
+  ///      Scoped out of {_offerPreLiquidate} so the callback bytes do not coexist on its stack
+  ///      with the entry-frame values (this codebase compiles without the via-IR pipeline).
+  function _settleOfferRepay(address borrower, uint256 totalSeized, uint256 totalDebtShares, bytes calldata data)
+    internal
+    returns (uint256 repaidAssets)
+  {
+    bytes memory callbackData = abi.encode(totalSeized, borrower, msg.sender, data);
+    (repaidAssets,) = MORPHO.repay(_borrowPositionStorage().marketParams, 0, totalDebtShares, borrower, callbackData);
+  }
+
+  /// @dev Quotes the position's debt and collateral values at `price` from the current Morpho
+  ///      state (post-accrual totals; debt rounds up, collateral rounds down, matching
+  ///      {_isHealthy}). Called by {_offerPreLiquidate} before the consume and after the repay
+  ///      settles, so the two frames differ only by the fill's real effect on Morpho's totals.
+  function _positionLtvFrame(uint256 price) internal view returns (uint256 debtValue, uint256 collateralValue) {
+    BorrowPositionStorage storage _storage = _borrowPositionStorage();
+    Position memory position = MORPHO.position(_storage.marketId, address(this));
+    Market memory market = MORPHO.market(_storage.marketId);
+    debtValue =
+      uint256(position.borrowShares).toAssetsUp(uint256(market.totalBorrowAssets), uint256(market.totalBorrowShares));
+    collateralValue = uint256(position.collateral).mulDiv(price, ORACLE_PRICE_SCALE);
+  }
+
+  /// @dev Reverts {LibBorrowErrors.LtvNotReduced} unless the settled position's LTV is strictly
+  ///      below the entry frame's: `exitDebt / exitCollateral < entryDebt / entryCollateral`,
+  ///      compared exactly by cross-multiplication (`fullMulDiv` floors, so
+  ///      `floor(a / d) < y <=> a < y * d` makes the comparison exact). `entryDebtValue > 0` in
+  ///      the band (the position has debt, rounded up).
+  function _checkLtvReduced(uint256 price, uint256 entryDebtValue, uint256 entryCollateralValue) internal view {
+    (uint256 exitDebtValue, uint256 exitCollateralValue) = _positionLtvFrame(price);
+    if (FixedPointMathLib.fullMulDiv(exitDebtValue, entryCollateralValue, entryDebtValue) >= exitCollateralValue) {
+      revert LibBorrowErrors.LtvNotReduced();
+    }
+  }
+
+  /// @dev Reads the post-accrual market/position snapshot and runs the offer consume walk at the
+  ///      caller-provided oracle `price` (read once per call in {_offerPreLiquidate}). Returns
   ///      the aggregate `(totalSeized, totalDebtShares)`. Split out of {_offerPreLiquidate} so the
   ///      large `Market`/`Position` memory structs do not coexist on the stack with the repay.
-  function _consumeOffers(address borrower, uint256 seizedAssets, uint256 repaidShares)
+  function _consumeOffers(address borrower, uint256 seizedAssets, uint256 repaidShares, uint256 price)
     internal
     returns (uint256 totalSeized, uint256 totalDebtShares)
   {
@@ -450,7 +501,7 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     LibBorrowOffers.ConsumeInput memory input = LibBorrowOffers.ConsumeInput({
       seizedTarget: seizedAssets,
       repaidSharesTarget: repaidShares,
-      price: IOracle(_storage.marketParams.oracle).price(),
+      price: price,
       totalBorrowAssets: uint256(market.totalBorrowAssets),
       totalBorrowShares: uint256(market.totalBorrowShares),
       positionCollateral: uint256(position.collateral),
@@ -890,11 +941,10 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      Both gates evaluate {LibBorrowOffers.isProfitableAboveBonusFloor} (the single
   ///      implementation of the floor's inequality and rounding); the strict profitability
   ///      comparison is split out first only to pick the right error. They are proposal-time
-  ///      filters against the state now; the same
-  ///      checks are re-evaluated per fill at consume time (see {LibBorrowOffers._priceAction}), so
-  ///      a live offer whose bonus later drifts below the floor via price or accrued-interest
-  ///      movement is skipped by the consume walk rather than dragging the band's profitability
-  ///      down (a guardian can also revoke it).
+  ///      filters against the state now; the same checks are re-evaluated per offer at consume
+  ///      time on its whole remaining amounts, so a live offer whose bonus later drifts below the
+  ///      floor via price or accrued-interest movement is skipped by the consume walk rather than
+  ///      dragging the band's profitability down (a guardian can also revoke it).
   function _checkOfferProfitable(uint128 collateral, uint128 debtShares, uint16 minBonusBps) internal view {
     BorrowPositionStorage storage _storage = _borrowPositionStorage();
     (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) =
@@ -908,19 +958,26 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   }
 
   /// @inheritdoc IBorrowOffers
-  /// @dev Gated by {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or the registry
-  ///      owner). Removes each id from the offer book (the guardian veto inside the timelock
-  ///      window, and the kill switch for a bad standing offer at any later stage). Self-revoke
-  ///      by a plain proposer is deliberately not offered: revoke stays with the guardians and
-  ///      the registry owner, who can already remove any offer.
+  /// @dev Authorization is per offer: the recorded proposer may revoke its own offer at any time
+  ///      (a mistaken offer must not stand just because no guardian reacted before `activeAt`);
+  ///      any other caller must pass {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or
+  ///      the registry owner), the veto inside the timelock window and the kill switch for a bad
+  ///      standing offer at any later stage. Liveness is checked before the proposer read so an
+  ///      unknown id reverts {LibBorrowErrors.OfferNotFound} for every caller; an empty batch
+  ///      performs no authorization check and is a no-op.
   function revokeOffers(uint8[] calldata ids) external override {
-    OFFERS_REGISTRY.checkCanRevokeOffer(msg.sender);
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
+    bool checkedCanRevokeAny; // the registry guardian/owner check passes at most once
     // Cache the calldata length once, and each id into a stack variable, so the loop performs a
     // single CALLDATALOAD per iteration instead of re-reading `ids.length` and `ids[i]` twice each.
     uint256 length = ids.length;
     for (uint256 i; i < length; ++i) {
       uint8 id = ids[i];
+      if (!o.isLive(id)) revert LibBorrowErrors.OfferNotFound();
+      if (o.slab[id].proposer != msg.sender && !checkedCanRevokeAny) {
+        OFFERS_REGISTRY.checkCanRevokeOffer(msg.sender);
+        checkedCanRevokeAny = true;
+      }
       o.removeOffer(id);
       emit OfferRevoked(id, msg.sender);
     }
