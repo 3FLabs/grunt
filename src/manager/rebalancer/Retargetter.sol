@@ -481,13 +481,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       }
     }
 
-    // Bridge value conservation: the snapshot is armed only while the operation's Request
-    // is unrepaid and short of its deadline; see {_bridgeValueSnapshot}/{_checkBridgeValue}
-    int256 valueBefore = _bridgeValueSnapshot(positionManager);
-
-    // Snapshot the goalposts: target, aggregate LTV and per-module LTVs
+    // Snapshot the goalposts: target, aggregate LTV, net value and per-module LTVs. Both
+    // aggregate quantities come from one read of the position, then the value gate is
+    // disarmed unless the bridge is outstanding, by parking the snapshot at the sentinel
+    // no live value can exceed; see {_bridgeOutstanding} and the post-call check
     (uint256 target,) = IPositionManager(positionManager).config();
-    uint256 ltvBefore = _positionManagerLtv(positionManager);
+    (uint256 ltvBefore, int256 valueBefore) = _positionSnapshot(positionManager);
+    if (!_bridgeOutstanding()) valueBefore = type(int256).max;
     address[] memory modules = IPositionManager(positionManager).borrowModules();
     uint256 modulesLength = modules.length;
     uint256[] memory moduleLtvsBefore = new uint256[](modulesLength);
@@ -502,14 +502,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     if (resolved.collateral > 0) collateralAsset.safeApprove(positionManager, 0);
     if (resolved.debt > 0) debtAsset.safeApprove(positionManager, 0);
 
-    _checkBridgeValue(positionManager, valueBefore);
+    // Value conservation on the way out, then the direction checks read the LTV it returns
+    uint256 ltvAfter = _checkValueConservation(positionManager, valueBefore);
 
     // Direction checks; owner bypass is evaluated on msg.sender only, never through the
     // window (inside a window msg.sender is the flash-loan module). The aggregate must
     // strictly improve while above target; a single module only must not worsen, so a
     // module the payload never touched cannot block the other legs
     if (msg.sender != owner()) {
-      uint256 ltvAfter = _positionManagerLtv(positionManager);
       if (ltvAfter > target && ltvAfter >= ltvBefore) {
         revert LibRetargetterErrors.AboveTargetLtv(ltvAfter, ltvBefore, target);
       }
@@ -909,55 +909,56 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
   }
 
-  /// @dev Arms the rebalance value-conservation gate: returns the position manager's current
-  ///      net value while the operation's Request is unrepaid, and the max sentinel (gate
-  ///      disarmed) otherwise. Once the Request is repaid, or auto-expired past its deadline
-  ///      with holders redeeming its remaining balance, folding residual value back into the
-  ///      position must reopen, which is why the gate keys on the effective repaid state
-  ///      rather than the operation being active. Read through the state-mutating sync (the
-  ///      same one resolve gates on) so a past-deadline Request reads repaid here instead of
-  ///      wedging the gate on a stale flag; that makes this the only non-view step of the
-  ///      rebalance guardrails.
-  function _bridgeValueSnapshot(address positionManager) internal returns (int256) {
+  /// @dev Whether the bridge is still outstanding, which is what arms the rebalance
+  ///      value-conservation gate. Once the Request is repaid, or auto-expired past its
+  ///      deadline with holders redeeming its remaining balance, folding residual value back
+  ///      into the position must reopen, which is why this keys on the effective repaid
+  ///      state rather than the operation being active. Read through the state-mutating sync
+  ///      (the same one resolve gates on) so a past-deadline Request reads repaid here
+  ///      instead of wedging the gate on a stale flag; that makes this the only non-view
+  ///      step of the rebalance guardrails.
+  function _bridgeOutstanding() internal returns (bool) {
     address request = LibStorage.operationStorage().request;
-    if (request == address(0) || IRequest(request).syncRepaidStatus()) return type(int256).max;
-    return _positionValue(positionManager);
+    return request != address(0) && !IRequest(request).syncRepaidStatus();
   }
 
   /// @dev Value-conservation gate, applied to every caller (unlike the direction checks,
   ///      this guards Request lenders rather than the steering): with the gate armed (a
-  ///      non-sentinel snapshot), the position manager's net value must not have grown
-  ///      across the rebalance. Growth would be Request capital parked in the position with
-  ///      no shares backing it, exposed to capture by any LP exit before the Request is
-  ///      repaid; pairing each input leg with an equivalent output leg in the same call
-  ///      (SUPPLY with BORROW, REPAY with WITHDRAW) is what keeps the bridge whole. Equality
-  ///      passes, so an operator sizing the output leg must cover any quoting round-up on
-  ///      the input leg; a leg one atom short of neutral is rejected rather than tolerated.
-  function _checkBridgeValue(address positionManager, int256 valueBefore) internal view {
-    if (valueBefore == type(int256).max) return;
-    int256 valueAfter = _positionValue(positionManager);
+  ///      non-sentinel snapshot), the position's net value must not have grown across the
+  ///      rebalance. Growth would be Request capital parked in the position with no shares
+  ///      backing it, exposed to capture by any LP exit before the Request is repaid;
+  ///      pairing each input leg with an equivalent output leg in the same call (SUPPLY with
+  ///      BORROW, REPAY with WITHDRAW) is what keeps the bridge whole. Equality passes, so
+  ///      an operator sizing the output leg must cover any quoting round-up on the input
+  ///      leg; a leg one atom short of neutral is rejected rather than tolerated. Returns
+  ///      the aggregate LTV read in the same pass, so the direction checks do not re-read
+  ///      the position.
+  function _checkValueConservation(address positionManager, int256 valueBefore)
+    internal
+    view
+    returns (uint256 ltvAfter)
+  {
+    int256 valueAfter;
+    (ltvAfter, valueAfter) = _positionSnapshot(positionManager);
     if (valueAfter > valueBefore) {
       revert LibRetargetterErrors.PositionValueIncreased(valueBefore, valueAfter);
     }
   }
 
-  /// @dev Net value of the whole position: quoted collateral minus debt summed over every
-  ///      module, negative when the book is underwater. Deliberately not the position
-  ///      manager's totalAssets, which drops any module whose debt exceeds its collateral
-  ///      and so reads flat while value is poured into an underwater module; the gate above
-  ///      must see that value, hence the bad-debt-inclusive aggregates. Both operands are
+  /// @dev Both aggregate snapshot quantities from one read of the position: the LTV under
+  ///      the convention below, and the net value as quoted collateral minus debt, negative
+  ///      when the book is underwater. The value is deliberately not the position manager's
+  ///      totalAssets, which drops any module whose debt exceeds its collateral and so reads
+  ///      flat while value is poured into an underwater module, and which jumps by a whole
+  ///      module's worth as one wei of debt crosses that inclusion cliff; the gate compares
+  ///      snapshots, so it needs a continuous, bad-debt-inclusive measure. Both operands are
   ///      sums of token amounts far below the signed range.
-  function _positionValue(address positionManager) internal view returns (int256) {
+  function _positionSnapshot(address positionManager) internal view returns (uint256 ltv, int256 value) {
     uint256 collateralQuoted = IPositionManager(positionManager).collateralAmountQuoted();
     uint256 debt = IPositionManager(positionManager).debtAmount();
+    ltv = _ltv(debt, collateralQuoted);
     // forge-lint: disable-next-line(unsafe-typecast)
-    return int256(collateralQuoted) - int256(debt);
-  }
-
-  /// @dev Aggregate position manager LTV under the snapshot convention.
-  function _positionManagerLtv(address positionManager) internal view returns (uint256) {
-    return
-      _ltv(IPositionManager(positionManager).debtAmount(), IPositionManager(positionManager).collateralAmountQuoted());
+    value = int256(collateralQuoted) - int256(debt);
   }
 
   /// @dev Single borrow module LTV under the snapshot convention.
