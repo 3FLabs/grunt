@@ -373,7 +373,7 @@ contract RetargetterQuoterTest is Test {
     uint256 principal = 1_000_000e18;
     uint256 yr = 0.04e18;
     uint256 dt = 365 days / 12;
-    int256 delta = quoter.remediationDelta(principal, yr, dt, 1.02e18);
+    int256 delta = quoter.remediationDelta(principal, yr, 0, dt, 1.02e18);
 
     uint256 repayment = principal.fullMulDiv(WAD + _scaled(yr, dt), WAD);
     assertEq(delta, int256(repayment.fullMulDiv(0.02e18, WAD)), "surplus formula");
@@ -382,7 +382,7 @@ contract RetargetterQuoterTest is Test {
     assertApproxEqRel(uint256(delta), 20_066.66e18, 1e15, "anchor");
 
     // Floor rounding demonstrated on a tiny fixture: 101 * 0.5 = 50.5 floors to 50
-    assertEq(quoter.remediationDelta(101, 0, 0, 1.5e18), int256(50), "rounds down");
+    assertEq(quoter.remediationDelta(101, 0, 0, 0, 1.5e18), int256(50), "rounds down");
   }
 
   function test_remediationDelta_negativeDrift() public view {
@@ -390,19 +390,65 @@ contract RetargetterQuoterTest is Test {
     uint256 principal = 1_000_000e18;
     uint256 yr = 0.04e18;
     uint256 dt = 365 days / 12;
-    int256 delta = quoter.remediationDelta(principal, yr, dt, 0.98e18);
+    int256 delta = quoter.remediationDelta(principal, yr, 0, dt, 0.98e18);
 
     uint256 repayment = principal.fullMulDiv(WAD + _scaled(yr, dt), WAD);
     assertEq(delta, -int256(repayment.fullMulDivUp(0.02e18, WAD)), "shortfall formula");
     assertLt(delta, 0, "negative sign");
 
     // Ceiling rounding demonstrated on a tiny fixture: 101 * 0.5 = 50.5 rounds up to 51
-    assertEq(quoter.remediationDelta(101, 0, 0, 0.5e18), int256(-51), "magnitude rounds up");
+    assertEq(quoter.remediationDelta(101, 0, 0, 0, 0.5e18), int256(-51), "magnitude rounds up");
   }
 
   function test_remediationDelta_zeroDriftIsZero() public view {
-    // rho == 1: proceeds match the repayment exactly, no remediation either way
-    assertEq(quoter.remediationDelta(1_000_000e18, 0.04e18, 30 days, WAD), int256(0), "zero at unity");
+    // rho == 1 with no expected collateral yield: proceeds match the repayment exactly
+    assertEq(quoter.remediationDelta(1_000_000e18, 0.04e18, 0, 30 days, WAD), int256(0), "zero at unity");
+  }
+
+  function test_remediationDelta_expectedCollateralYieldIsNotASurplus() public view {
+    // The price moves exactly by the expected collateral yield (rho == 1 + Yc): the freed
+    // collateral redeems into precisely the repayment and there is nothing to remediate.
+    // A mis-derivation measuring drift against unity instead of the expected growth would
+    // report a phantom repayment * Yc surplus here.
+    uint256 yr = 0.05e18;
+    uint256 yc = 0.05e18;
+    uint256 dt = 30 days;
+    uint256 rho = WAD + _scaled(yc, dt);
+    assertEq(quoter.remediationDelta(1_000_000e18, yr, yc, dt, rho), int256(0), "forecast yield is not a surplus");
+  }
+
+  function test_remediationDelta_matchesFreedCollateralProceeds() public view {
+    // Pins the helper against the settlement cash flows computed independently: the freed
+    // collateral (sized by ltvDownPrincipal) redeems at rho and repays the fixed bridge
+    // repayment. Sizing rounds the withdrawal up while the helper floors the surplus, so the
+    // quote may undershoot by a few wei but must never overstate the surplus.
+    uint256 k = 10_000e18;
+    uint256 d = 8_000e18;
+    uint256 tau = 0.7e18;
+    uint256 yr = 0.04e18;
+    uint256 rb = 0.05e18;
+    uint256 yc = 0.03e18;
+    uint256 dt = 30 days;
+
+    (uint256 principal, uint256 collateralToFreeQuoted) = quoter.ltvDownPrincipal(k, d, tau, yr, rb, yc, dt);
+    uint256 repayment = principal.fullMulDiv(WAD + _scaled(yr, dt), WAD);
+
+    // Surplus side: rho above the expected growth
+    uint256 expectedGrowth = WAD + _scaled(yc, dt);
+    uint256 rho = 1.02e18;
+    int256 proceedsDelta = int256(collateralToFreeQuoted.fullMulDiv(rho, WAD)) - int256(repayment);
+    int256 delta = quoter.remediationDelta(principal, yr, yc, dt, rho);
+    assertEq(delta, int256(repayment.fullMulDiv(rho - expectedGrowth, expectedGrowth)), "surplus formula");
+    assertLe(delta, proceedsDelta, "surplus never overstated");
+    assertApproxEqAbs(delta, proceedsDelta, 3, "matches surplus proceeds");
+
+    // Shortfall side: rho below the expected growth
+    rho = 0.98e18;
+    proceedsDelta = int256(collateralToFreeQuoted.fullMulDiv(rho, WAD)) - int256(repayment);
+    delta = quoter.remediationDelta(principal, yr, yc, dt, rho);
+    assertEq(delta, -int256(repayment.fullMulDivUp(expectedGrowth - rho, expectedGrowth)), "shortfall formula");
+    assertLe(delta, proceedsDelta, "shortfall never understated");
+    assertApproxEqAbs(delta, proceedsDelta, 3, "matches shortfall proceeds");
   }
 
   function test_remediationDelta_revertsOnOverflow() public {
@@ -412,30 +458,33 @@ contract RetargetterQuoterTest is Test {
     uint256 hugePrincipal = uint256(1) << 255;
     // Surplus branch: repayment == 2^255, magnitude == 2^255 > int256 max
     vm.expectRevert(LibRetargetterErrors.InvalidParameters.selector);
-    quoter.remediationDelta(hugePrincipal, 0, 0, 2e18);
+    quoter.remediationDelta(hugePrincipal, 0, 0, 0, 2e18);
     // Shortfall branch: rho == 0 makes the magnitude the full repayment, 2^255 > int256 max
     vm.expectRevert(LibRetargetterErrors.InvalidParameters.selector);
-    quoter.remediationDelta(hugePrincipal, 0, 0, 0);
+    quoter.remediationDelta(hugePrincipal, 0, 0, 0, 0);
   }
 
-  function testFuzz_remediationDelta_sign(uint256 principal, uint256 yr, uint256 dt, uint256 priceDriftWad)
+  function testFuzz_remediationDelta_sign(uint256 principal, uint256 yr, uint256 yc, uint256 dt, uint256 priceDriftWad)
     public
     view
   {
     principal = bound(principal, 0, 1e30);
     yr = bound(yr, 0, 1e18);
+    yc = bound(yc, 0, 1e18);
     dt = bound(dt, 0, 366 days);
     priceDriftWad = bound(priceDriftWad, 0, 100e18);
 
-    int256 delta = quoter.remediationDelta(principal, yr, dt, priceDriftWad);
+    int256 delta = quoter.remediationDelta(principal, yr, yc, dt, priceDriftWad);
 
-    if (priceDriftWad >= WAD) {
+    // The sign pivots at the expected collateral growth, not at unity
+    uint256 expectedGrowth = WAD + _scaled(yc, dt);
+    if (priceDriftWad >= expectedGrowth) {
       assertGe(delta, 0, "surplus is nonnegative");
     } else {
       assertLe(delta, 0, "shortfall is nonpositive");
       // With an actual repayment outstanding, ceiling rounding makes any downward drift owe
-      if (principal > 0 && priceDriftWad < WAD) assertLt(delta, 0, "strict shortfall");
+      if (principal > 0) assertLt(delta, 0, "strict shortfall");
     }
-    if (priceDriftWad == WAD) assertEq(delta, 0, "zero at unity");
+    if (priceDriftWad == expectedGrowth) assertEq(delta, 0, "zero at expected growth");
   }
 }

@@ -28,9 +28,10 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///        Rb = scaled borrowRate, the venue interest drifting the existing debt
 ///        Yc = scaled collateralYieldRate, the yield growing the existing collateral value
 ///
-///      Sizing assumes the collateral price holds over the window (settlement price ratio
-///      rho = 1). Realized drift is absorbed at settlement by the remediation step (LTV-down)
-///      or leaves a bounded deviation from target that a later operation corrects (LTV-up).
+///      Sizing assumes the collateral price moves exactly as forecast by its yield over the
+///      window (settlement price ratio rho = 1 + Yc). Realized drift beyond that forecast is
+///      absorbed at settlement by the remediation step (LTV-down) or leaves a bounded
+///      deviation from target that a later operation corrects (LTV-up).
 ///
 ///      Direction dispatch (`retargetPrincipal`): the current ratio D / K picks the flow,
 ///      routing under-leveraged positions to the LTV-up formula over the subscription window
@@ -69,14 +70,18 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///        x = (D * (1 + Rb) - t * K * (1 + Yc)) / (1 + Rb - t * (1 + Yr))
 ///
 ///      Settlement drift (`remediationDelta`): the LTV-down repayment `x * (1 + Yr)` is fixed
-///      when the operation is sized, while the redemption settles at the realized price. With
-///      rho the settlement price ratio, the proceeds are `x * (1 + Yr) * rho`, leaving the cash
-///      mismatch
+///      when the operation is sized, while the redemption settles at the realized price. The
+///      freed collateral `w = x * (1 + Yr) / (1 + Yc)` already discounts its own expected
+///      yield, so with rho the settlement price ratio the proceeds are
+///      `w * rho = x * (1 + Yr) * rho / (1 + Yc)`, leaving the cash mismatch
 ///
-///        delta = x * (1 + Yr) * (rho - 1)
+///        delta = x * (1 + Yr) * (rho / (1 + Yc) - 1)
 ///
-///      A surplus (rho > 1) folds into the position as a debt repayment; a shortfall (rho < 1)
-///      is topped up with an owner-authorized borrow. Either way the position absorbs the drift.
+///      Only drift beyond the expected growth `1 + Yc` is a mismatch: when the price moves
+///      exactly as forecast (rho = 1 + Yc) the proceeds equal the repayment and the delta is
+///      zero. A surplus (rho > 1 + Yc) folds into the position as a debt repayment; a
+///      shortfall (rho < 1 + Yc) is topped up with an owner-authorized borrow. Either way the
+///      position absorbs the drift.
 ///
 ///      Repayment pricing (`paidDuration`, `repaymentOwed`): a bridge loan tokenizes its
 ///      obligation as a principal supply P (ptSupply) plus an approved absolute yield supply Y
@@ -206,24 +211,29 @@ contract RetargetterQuoter is IRetargetterQuoter {
   }
 
   /// @inheritdoc IRetargetterQuoter
-  function remediationDelta(uint256 principal, uint256 requestYieldRate, uint256 duration, uint256 priceDriftWad)
-    external
-    pure
-    returns (int256 delta)
-  {
+  function remediationDelta(
+    uint256 principal,
+    uint256 requestYieldRate,
+    uint256 collateralYieldRate,
+    uint256 duration,
+    uint256 priceDriftWad
+  ) external pure returns (int256 delta) {
     // The fixed bridge repayment the redemption proceeds are measured against
     uint256 repayment = principal.fullMulDiv(WAD + _scaledRate(requestYieldRate, duration), WAD);
+    // The freed collateral was sized net of its own expected yield (see ltvDownPrincipal),
+    // so only drift beyond the expected growth 1 + Yc is a mismatch
+    uint256 expectedGrowth = WAD + _scaledRate(collateralYieldRate, duration);
     uint256 magnitude;
-    if (priceDriftWad >= WAD) {
+    if (priceDriftWad >= expectedGrowth) {
       // Surplus: proceeds exceed the repayment; rounds down so the fold never overshoots
-      magnitude = repayment.fullMulDiv(priceDriftWad - WAD, WAD);
+      magnitude = repayment.fullMulDiv(priceDriftWad - expectedGrowth, expectedGrowth);
       if (magnitude > uint256(type(int256).max)) revert LibRetargetterErrors.InvalidParameters();
       // Safe: bounded by the check above
       // forge-lint: disable-next-line(unsafe-typecast)
       delta = int256(magnitude);
     } else {
       // Shortfall: rounds up so a remediation sized from this value always covers the gap
-      magnitude = repayment.fullMulDivUp(WAD - priceDriftWad, WAD);
+      magnitude = repayment.fullMulDivUp(expectedGrowth - priceDriftWad, expectedGrowth);
       if (magnitude > uint256(type(int256).max)) revert LibRetargetterErrors.InvalidParameters();
       // Safe: bounded by the check above
       // forge-lint: disable-next-line(unsafe-typecast)
