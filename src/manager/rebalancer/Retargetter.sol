@@ -439,10 +439,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      one-atom improvement flooring flattens to an equal value, passes), and no module
   ///      may end with debt against zero collateral. LTV convention throughout: zero when
   ///      debt is zero (idle modules and an emptied position pass), the max sentinel for bad
-  ///      debt. While the operation's Request is unrepaid and short of its deadline, the
-  ///      position's net value must not grow across the call, for every caller including the
-  ///      owner; see {_bridgeValueSnapshot} and {_checkBridgeValue}. The position manager's own loss,
-  ///      cooldown and safe-LTV checks apply underneath. A sentinel resolving to zero (an
+  ///      debt. While the operation's Request is unrepaid, the position's net value must not
+  ///      grow across the call, for every caller including the owner; see
+  ///      {_bridgeOutstanding} and {_checkValueConservation}. The position manager's own
+  ///      loss, cooldown and safe-LTV checks apply underneath. A sentinel resolving to zero (an
   ///      empty balance, or a REPAY leg on a debt-free module) produces a zero-amount leg,
   ///      which the borrow modules reject; the whole call reverts atomically.
   function rebalance(RebalancingData calldata data) external onlyOwnerOrRebalancer nonReentrant {
