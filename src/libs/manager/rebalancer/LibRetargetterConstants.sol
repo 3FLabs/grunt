@@ -132,6 +132,20 @@ bytes32 constant MODULE_TSLOT = 0x3766ddc68b0c7bb3c206ee7037a0b3dd14384ba84828df
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.amount")) - 1)
 bytes32 constant AMOUNT_TSLOT = 0xc37562d71acab34fa73520c0ed6a5ead38685eb8f5e228c3c887ece9e742319b;
 
+/// @dev Transient slot for the keccak256 digest of the flash-loan payload built by
+///      startSyncRetargetting (zeroed on callback entry alongside the module slot). The
+///      callback requires its incoming data to hash to this digest, so a module can only
+///      forward the payload verbatim, never substitute its own step calls.
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.payload")) - 1)
+bytes32 constant PAYLOAD_TSLOT = 0x82d191e7de0d5f5912d24aa67206a4049e4b39e437d0e09fea37efbbc2449b0f;
+
+/// @dev Transient slot for the Retargetter's debt-asset balance snapshot taken just before
+///      the flash loan is requested. The callback requires the live balance to have grown by
+///      the nominal amount, so a module cannot collect the repayment approval for funds it
+///      never delivered.
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.balance")) - 1)
+bytes32 constant BALANCE_TSLOT = 0x0420a475633bdc4ca97e276f4192fd3de522d15a099866aba16352c41acd46eb;
+
 /// @dev Transient slot for the reentrancy guard flag (nonzero while a guarded call runs).
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.reentrancy")) - 1)
 bytes32 constant REENTRANCY_TSLOT = 0x9085860804617f26160a86c0245a6d09a1576cd7c916d029770b32608c92fe70;

@@ -251,7 +251,10 @@ interface IRetargetter {
   ///      one balance snapshot taken before any leg executes and do not compose: every leg
   ///      resolves against the same pre-call balances, never the state left by earlier legs,
   ///      so REPAY sentinels across several modules can together commit more than the shared
-  ///      balance and revert.
+  ///      balance and revert. While the operation's Request is unrepaid and short of its
+  ///      deadline, the position manager's totalAssets must not grow across the call (every
+  ///      caller, owner included): Request capital may enter the position only against
+  ///      equivalent value flowing back out in the same call.
   /// @param data The rebalancing data forwarded to the position manager
   function rebalance(RebalancingData calldata data) external;
 
@@ -276,8 +279,10 @@ interface IRetargetter {
 
   /// @notice Runs a whole retargetting operation atomically inside a flash loan.
   /// @dev The steps are supplied as a multicall payload executed inside the flash-loan
-  ///      callback. At window close no order may be stored and the Retargetter's balances
-  ///      of both bound assets must be within the configured residual tolerance.
+  ///      callback. The callback is bound to this exact payload (digest match) and requires
+  ///      the loan delivered in full before any step runs. At window close no order may be
+  ///      stored and the Retargetter's balances of both bound assets must be within the
+  ///      configured residual tolerance.
   /// @param positionManager The position manager to retarget (must match the bound pair)
   /// @param flashLoanModule The whitelisted flash-loan module to borrow through
   /// @param flashLoanAmount The flash-loan size, checked against the principal cap

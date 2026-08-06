@@ -66,6 +66,15 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
     positionManager.setRebalanceConfig(maxLossBps, 0);
   }
 
+  /// @dev Marks the operation's untouched Request repaid (nothing consumed, owed zero),
+  ///      disarming the value-conservation gate for mechanics tests whose legs fold donated
+  ///      value into the position; the gate itself is covered in the VALUE CONSERVATION
+  ///      section below.
+  function _settleBridge() internal {
+    vm.prank(rebalancer);
+    retargetter.repay();
+  }
+
   /// @dev Deploys a third borrow module on its own oracle, funds it through the rebalancer
   ///      path (a fresh leg landing at or below target passes G2), then zeroes its oracle so
   ///      the module reads debt against zero quoted collateral (the max-sentinel module LTV)
@@ -90,6 +99,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
 
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
 
     _mintCollateral(address(retargetter), 1_000e18);
     vm.prank(rebalancer);
@@ -172,6 +182,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     _setTargetLtv(0.3e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintDebt(address(retargetter), 100e18);
 
     vm.prank(rebalancer);
@@ -241,6 +252,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_freshLegAboveTarget_reverts() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintCollateral(address(retargetter), 100e18);
 
     // The new borrowPosition2 leg lands at 71/100 = 0.71, above the 0.70 target but below
@@ -274,6 +286,137 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
 
     assertEq(_currentLtv(), 0.51e18, "owner may worsen an above-target book");
     assertEq(debtToken.balanceOf(address(retargetter)), 100e18, "borrowed debt swept back to the retargetter");
+  }
+
+  /// @dev (j) Untouched module above target: with two modules above a lowered target, a
+  ///      payload repaying only one of them passes while the other sits exactly at its
+  ///      snapshot; a module ending above target reverts only when it worsened, so an
+  ///      untouched module no longer blocks the improving legs.
+  function test_rebalance_untouchedModuleAboveTarget_passes() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _settleBridge();
+
+    // Owner-driven shaping (direction checks skipped, both calls value-neutral): split the
+    // collateral, then open a second debt position on borrowPosition2 with a paired supply
+    // and borrow, leaving the swept debt tokens here for the repayment below
+    vm.prank(owner);
+    retargetter.rebalance(
+      _dataOn2(
+        0,
+        0,
+        address(borrowPosition1),
+        RebalancingOperationType.WITHDRAW,
+        2_000e18,
+        address(borrowPosition2),
+        RebalancingOperationType.SUPPLY,
+        2_000e18
+      )
+    );
+    _mintCollateral(address(retargetter), 1_000e18);
+    vm.prank(owner);
+    retargetter.rebalance(
+      _dataOn2(
+        1_000e18,
+        0,
+        address(borrowPosition2),
+        RebalancingOperationType.SUPPLY,
+        1_000e18,
+        address(borrowPosition2),
+        RebalancingOperationType.BORROW,
+        1_000e18
+      )
+    );
+    // Both modules end above the lowered target: borrowPosition1 at 5000/8000 = 0.625,
+    // borrowPosition2 at 1000/3000; the payload below repays only borrowPosition2
+    _setTargetLtv(0.3e18);
+
+    RebalancingData memory data;
+    data.debt = 500e18;
+    data.operations = new RebalancingOperation[](1);
+    data.operations[0] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.REPAY, amount: 500e18
+    });
+
+    vm.prank(rebalancer);
+    retargetter.rebalance(data);
+
+    assertEq(
+      borrowPosition1.totalBorrowed() * WAD / borrowPosition1.totalCollateralQuoted(),
+      0.625e18,
+      "untouched module equal to its snapshot while above target"
+    );
+    assertEq(borrowPosition2.totalBorrowed(), 500e18, "repay leg landed on the touched module");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     VALUE CONSERVATION                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev A supply-only rebalance while the Request is unrepaid would park bridge capital in
+  ///      the position manager with no shares backing it, where any LP exit could capture it
+  ///      before repayment; the value-conservation gate rejects the totalAssets growth.
+  function test_rebalance_supplyOnlyWhileBridgeOutstanding_reverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintCollateral(address(retargetter), 500e18);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.TotalAssetsIncreased.selector, 5_000e18, 5_500e18));
+    retargetter.rebalance(_rebalancingData(500e18, 0, RebalancingOperationType.SUPPLY, 500e18));
+  }
+
+  /// @dev A repay-only rebalance grows totalAssets the same way and is equally rejected.
+  function test_rebalance_repayOnlyWhileBridgeOutstanding_reverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintDebt(address(retargetter), 100e18);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.TotalAssetsIncreased.selector, 5_000e18, 5_100e18));
+    retargetter.rebalance(_rebalancingData(0, 100e18, RebalancingOperationType.REPAY, 100e18));
+  }
+
+  /// @dev The gate binds the owner too: it protects Request lenders, not the steering, so
+  ///      the owner bypass of the direction checks does not extend to it.
+  function test_rebalance_valueGateBindsOwner() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintCollateral(address(retargetter), 500e18);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.TotalAssetsIncreased.selector, 5_000e18, 5_500e18));
+    retargetter.rebalance(_rebalancingData(500e18, 0, RebalancingOperationType.SUPPLY, 500e18));
+  }
+
+  /// @dev Pairing the input leg with an equal-value output leg in the same call holds
+  ///      totalAssets exactly flat, which the gate allows (equality passes).
+  function test_rebalance_matchedLegsWhileBridgeOutstanding_pass() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _mintCollateral(address(retargetter), 500e18);
+
+    vm.prank(rebalancer);
+    retargetter.rebalance(
+      _rebalancingData2(500e18, 0, RebalancingOperationType.SUPPLY, 500e18, RebalancingOperationType.BORROW, 500e18)
+    );
+
+    assertEq(positionManager.totalAssets(), 5_000e18, "totalAssets exactly conserved");
+    assertEq(debtToken.balanceOf(address(retargetter)), 500e18, "borrowed value swept back for the repayment");
+  }
+
+  /// @dev Once the Request is repaid the gate disarms and folding value back into the
+  ///      position passes (the surplus-fold tail of the canonical flows).
+  function test_rebalance_afterRepay_foldPasses() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(1_000e18, 100);
+    _settleBridge();
+    _mintCollateral(address(retargetter), 500e18);
+
+    vm.prank(rebalancer);
+    retargetter.rebalance(_rebalancingData(500e18, 0, RebalancingOperationType.SUPPLY, 500e18));
+
+    assertEq(positionManager.totalAssets(), 5_500e18, "fold lands once the bridge is settled");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -330,6 +473,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_collateralAndSupplySentinelsResolveToFullBalance() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintCollateral(address(retargetter), 500e18);
 
     vm.prank(rebalancer);
@@ -344,6 +488,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_debtAndRepaySentinelsResolveToFullBalance() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintDebt(address(retargetter), 500e18);
 
     vm.prank(rebalancer);
@@ -359,6 +504,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_repaySentinelCappedAtModuleDebt() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintDebt(address(retargetter), 6_000e18);
 
     vm.prank(rebalancer);
@@ -464,6 +610,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_fullDebtRepaymentLandsAtZeroLtv() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintDebt(address(retargetter), 5_000e18);
 
     vm.prank(rebalancer);
@@ -500,6 +647,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_onEmptiedPositionManager_snapshotsZeroAndPasses() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
 
     // Empty the position manager through the LP surface (the rebalance surface cannot: see
     // the loss-guard test above); the minter holds the seeded debt tokens from the deposit
@@ -523,6 +671,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_scrubsApprovals() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintCollateral(address(retargetter), 100e18);
     _mintDebt(address(retargetter), 50e18);
 
@@ -538,6 +687,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_emitsRebalancedWithResolvedSentinels() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     _mintCollateral(address(retargetter), 300e18);
     _mintDebt(address(retargetter), 40e18);
 
@@ -596,6 +746,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   function test_rebalance_pmCooldownAppliesUnderneath() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(1_000e18, 100);
+    _settleBridge();
     vm.prank(owner);
     positionManager.setRebalanceConfig(1, 1 hours);
     _mintCollateral(address(retargetter), 200e18);

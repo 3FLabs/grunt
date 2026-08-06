@@ -158,4 +158,13 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   function invariant_authorizeRespectsLiveCap() public view {
     assertFalse(handler.capViolatedAtAuthorize(), "RT-10: authorize admitted committed principal above the live cap");
   }
+
+  /// @notice RT-11: Bridge value conservation: no successful rebalance grew the position
+  ///         manager's totalAssets while the operation's Request was unrepaid and short of
+  ///         its deadline (recorded by the handler around every act_rebalance).
+  function invariant_bridgeValueConservation() public view {
+    assertFalse(
+      handler.valueConservationViolated(), "RT-11: rebalance grew totalAssets while the bridge was outstanding"
+    );
+  }
 }

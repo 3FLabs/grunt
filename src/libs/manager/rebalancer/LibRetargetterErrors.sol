@@ -68,9 +68,17 @@ library LibRetargetterErrors {
   /// @param target The position manager's target LTV (WAD)
   error AboveTargetLtv(uint256 ltvAfter, uint256 ltvBefore, uint256 target);
 
-  /// @notice Thrown when a rebalance leaves a single position above target without improving it.
+  /// @notice Thrown when a rebalance leaves a single position above target while worsening it.
   /// @param position The offending borrow module
   error PositionAboveTarget(address position);
+
+  /// @notice Thrown when a rebalance grows the position manager's totalAssets while the
+  ///         operation's Request is unrepaid and short of its deadline (the growth would be
+  ///         bridge capital left in the position manager with no shares backing it, exposed
+  ///         to capture by any LP exit before the Request is repaid).
+  /// @param totalAssetsBefore The totalAssets snapshot before the rebalance
+  /// @param totalAssetsAfter The totalAssets value after the rebalance
+  error TotalAssetsIncreased(uint256 totalAssetsBefore, uint256 totalAssetsAfter);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ORDERS                           */
@@ -99,8 +107,13 @@ library LibRetargetterErrors {
   /*                        FLASH LOANS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when onFlashLoan is not called by the expected module with the expected amount.
+  /// @notice Thrown when onFlashLoan is not called by the expected module with the expected
+  ///         amount and the exact payload committed at the window open.
   error UnauthorizedFlashLoanCallback();
+
+  /// @notice Thrown when the flash-loan module has not delivered the full nominal amount
+  ///         before the callback payload runs.
+  error PrincipalNotDelivered();
 
   /// @notice Thrown when the adapter's provider callback is not called by the provider,
   ///         or no flash loan is in flight.
