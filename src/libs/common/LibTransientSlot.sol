@@ -21,13 +21,6 @@ library LibTransientSlot {
     }
   }
 
-  /// @dev Reads a bytes32 from a transient slot.
-  function tLoadBytes32(bytes32 slot) internal view returns (bytes32 value) {
-    assembly ("memory-safe") {
-      value := tload(slot)
-    }
-  }
-
   /// @dev Writes an address to a transient slot.
   function tStoreAddress(bytes32 slot, address value) internal {
     assembly ("memory-safe") {
@@ -37,13 +30,6 @@ library LibTransientSlot {
 
   /// @dev Writes a uint256 to a transient slot.
   function tStoreUint(bytes32 slot, uint256 value) internal {
-    assembly ("memory-safe") {
-      tstore(slot, value)
-    }
-  }
-
-  /// @dev Writes a bytes32 to a transient slot.
-  function tStoreBytes32(bytes32 slot, bytes32 value) internal {
     assembly ("memory-safe") {
       tstore(slot, value)
     }

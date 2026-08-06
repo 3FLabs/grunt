@@ -251,10 +251,11 @@ interface IRetargetter {
   ///      one balance snapshot taken before any leg executes and do not compose: every leg
   ///      resolves against the same pre-call balances, never the state left by earlier legs,
   ///      so REPAY sentinels across several modules can together commit more than the shared
-  ///      balance and revert. While the operation's Request is unrepaid and short of its
-  ///      deadline, the position manager's totalAssets must not grow across the call (every
-  ///      caller, owner included): Request capital may enter the position only against
-  ///      equivalent value flowing back out in the same call.
+  ///      balance and revert. While the operation's Request is unrepaid, the position's net
+  ///      value (quoted collateral minus debt over every module, underwater ones included)
+  ///      must not grow across the call, for every caller including the owner: Request
+  ///      capital may enter the position only against equivalent value flowing back out in
+  ///      the same call.
   /// @param data The rebalancing data forwarded to the position manager
   function rebalance(RebalancingData calldata data) external;
 

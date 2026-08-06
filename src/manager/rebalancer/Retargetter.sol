@@ -567,7 +567,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     bytes memory payload = abi.encode(data);
     MODULE_TSLOT.tStoreAddress(flashLoanModule);
     AMOUNT_TSLOT.tStoreUint(flashLoanAmount);
-    PAYLOAD_TSLOT.tStoreBytes32(keccak256(payload));
+    PAYLOAD_TSLOT.tStoreUint(uint256(keccak256(payload)));
     BALANCE_TSLOT.tStoreUint(debtAsset.balanceOf(address(this)));
 
     IFlashLoanModule(flashLoanModule).flashLoan(debtAsset, flashLoanAmount, payload);
@@ -575,7 +575,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     // The module has pulled its repayment; close the window and scrub any leftover approval
     MODULE_TSLOT.tStoreAddress(address(0));
     AMOUNT_TSLOT.tStoreUint(0);
-    PAYLOAD_TSLOT.tStoreBytes32(bytes32(0));
+    PAYLOAD_TSLOT.tStoreUint(0);
     BALANCE_TSLOT.tStoreUint(0);
     debtAsset.safeApprove(flashLoanModule, 0);
 
@@ -605,12 +605,12 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     address module = MODULE_TSLOT.tLoadAddress();
     if (
       module == address(0) || msg.sender != module || amount != AMOUNT_TSLOT.tLoadUint()
-        || keccak256(data) != PAYLOAD_TSLOT.tLoadBytes32()
+        || uint256(keccak256(data)) != PAYLOAD_TSLOT.tLoadUint()
     ) {
       revert LibRetargetterErrors.UnauthorizedFlashLoanCallback();
     }
     MODULE_TSLOT.tStoreAddress(address(0));
-    PAYLOAD_TSLOT.tStoreBytes32(bytes32(0));
+    PAYLOAD_TSLOT.tStoreUint(0);
     address debtAsset = LibStorage.assetsStorage().debtAsset;
     if (debtAsset.balanceOf(address(this)) < BALANCE_TSLOT.tLoadUint() + amount) {
       revert LibRetargetterErrors.PrincipalNotDelivered();
@@ -910,20 +910,17 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @dev Arms the rebalance value-conservation gate: returns the position manager's current
-  ///      net value while the operation's Request is unrepaid and short of its deadline, and
-  ///      the max sentinel (gate disarmed) otherwise. Once the Request is repaid, or
-  ///      auto-expired past its deadline with holders redeeming its remaining balance,
-  ///      folding residual value back into the position must reopen, which is why the gate
-  ///      keys on the effective repaid state rather than the operation being active.
-  function _bridgeValueSnapshot(address positionManager) internal view returns (int256) {
-    RetargetterOperation storage operation_ = LibStorage.operationStorage();
-    address request = operation_.request;
-    if (
-      request == address(0) || block.timestamp >= operation_.repaymentDeadline
-        || IRequestInteractions(request).isRepaid()
-    ) {
-      return type(int256).max;
-    }
+  ///      net value while the operation's Request is unrepaid, and the max sentinel (gate
+  ///      disarmed) otherwise. Once the Request is repaid, or auto-expired past its deadline
+  ///      with holders redeeming its remaining balance, folding residual value back into the
+  ///      position must reopen, which is why the gate keys on the effective repaid state
+  ///      rather than the operation being active. Read through the state-mutating sync (the
+  ///      same one resolve gates on) so a past-deadline Request reads repaid here instead of
+  ///      wedging the gate on a stale flag; that makes this the only non-view step of the
+  ///      rebalance guardrails.
+  function _bridgeValueSnapshot(address positionManager) internal returns (int256) {
+    address request = LibStorage.operationStorage().request;
+    if (request == address(0) || IRequest(request).syncRepaidStatus()) return type(int256).max;
     return _positionValue(positionManager);
   }
 

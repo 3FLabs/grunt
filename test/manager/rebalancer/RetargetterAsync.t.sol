@@ -1045,10 +1045,14 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
     retargetter.repay();
 
-    // Fold the pulled funds back into the position debt (below target is always allowed),
-    // then resolve through the state-mutating repaid sync
+    // The fold grows the position's net value, so it only lands because the value gate reads
+    // the Request through the same state-mutating sync resolve uses: past the deadline the
+    // Request reads repaid (and its stale flag is synced here) and the gate disarms
+    assertFalse(IRequest(request).isRepaid(), "repaid flag still stale before the rebalance");
     vm.prank(rebalancer);
     retargetter.rebalance(_rebalancingData(0, MAX_SENTINEL, RebalancingOperationType.REPAY, MAX_SENTINEL));
+    assertTrue(IRequest(request).isRepaid(), "rebalance synced the auto-expired Request");
+
     vm.prank(rebalancer);
     retargetter.resolve();
     assertFalse(retargetter.isActive(), "resolved");
