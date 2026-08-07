@@ -465,9 +465,9 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      {_isHealthy}). Called by {_offerPreLiquidate} before the consume and after the repay
   ///      settles, so the two frames differ only by the fill's real effect on Morpho's totals.
   function _positionLtvFrame(uint256 price) internal view returns (uint256 debtValue, uint256 collateralValue) {
-    BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    Position memory position = MORPHO.position(_storage.marketId, address(this));
-    Market memory market = MORPHO.market(_storage.marketId);
+    Id _marketId = _borrowPositionStorage().marketId;
+    Position memory position = MORPHO.position(_marketId, address(this));
+    Market memory market = MORPHO.market(_marketId);
     debtValue =
       uint256(position.borrowShares).toAssetsUp(uint256(market.totalBorrowAssets), uint256(market.totalBorrowShares));
     collateralValue = uint256(position.collateral).mulDiv(price, ORACLE_PRICE_SCALE);
@@ -475,9 +475,13 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
 
   /// @dev Reverts {LibBorrowErrors.LtvNotReduced} unless the settled position's LTV is strictly
   ///      below the entry frame's: `exitDebt / exitCollateral < entryDebt / entryCollateral`,
-  ///      compared exactly by cross-multiplication (`fullMulDiv` floors, so
-  ///      `floor(a / d) < y <=> a < y * d` makes the comparison exact). `entryDebtValue > 0` in
-  ///      the band (the position has debt, rounded up).
+  ///      cross-multiplied to `exitDebt * entryCollateral < entryDebt * exitCollateral` so the
+  ///      comparison is exact. The product goes through `fullMulDiv`'s 512-bit intermediate
+  ///      rather than a plain multiplication: the collateral values are price-scaled (`price` is
+  ///      an unbounded oracle value at 1e36 scale) and can exceed 128 bits, so the direct product
+  ///      can overflow 256 bits and checked multiplication would turn a legitimate fill into a
+  ///      spurious revert. Flooring keeps it exact (`floor(a * b / d) >= c <=> a * b >= c * d`
+  ///      for integers). `entryDebtValue > 0` in the band (the position has debt, rounded up).
   function _checkLtvReduced(uint256 price, uint256 entryDebtValue, uint256 entryCollateralValue) internal view {
     (uint256 exitDebtValue, uint256 exitCollateralValue) = _positionLtvFrame(price);
     if (FixedPointMathLib.fullMulDiv(exitDebtValue, entryCollateralValue, entryDebtValue) >= exitCollateralValue) {
@@ -493,9 +497,9 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     internal
     returns (uint256 totalSeized, uint256 totalDebtShares)
   {
-    BorrowPositionStorage storage _storage = _borrowPositionStorage();
-    Position memory position = MORPHO.position(_storage.marketId, borrower);
-    Market memory market = MORPHO.market(_storage.marketId);
+    Id _marketId = _borrowPositionStorage().marketId;
+    Position memory position = MORPHO.position(_marketId, borrower);
+    Market memory market = MORPHO.market(_marketId);
 
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
     LibBorrowOffers.ConsumeInput memory input = LibBorrowOffers.ConsumeInput({
@@ -960,25 +964,17 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   /// @inheritdoc IBorrowOffers
   /// @dev Authorization is per offer: the recorded proposer may revoke its own offer at any time
   ///      (a mistaken offer must not stand just because no guardian reacted before `activeAt`);
-  ///      any other caller must pass {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or
-  ///      the registry owner), the veto inside the timelock window and the kill switch for a bad
-  ///      standing offer at any later stage. Liveness is checked before the proposer read so an
-  ///      unknown id reverts {LibBorrowErrors.OfferNotFound} for every caller; an empty batch
-  ///      performs no authorization check and is a no-op.
+  ///      any other caller needs the registry's revoke power
+  ///      ({IBorrowOffersRegistry.canRevokeOffer}: a guardian, or the registry owner), read once
+  ///      for the whole batch and enforced per offer inside {LibBorrowOffers.removeOffer}. An
+  ///      empty batch is a no-op.
   function revokeOffers(uint8[] calldata ids) external override {
     LibBorrowOffers.BorrowOffersStorage storage o = LibBorrowOffers.borrowOffersStorage();
-    bool checkedCanRevokeAny; // the registry guardian/owner check passes at most once
-    // Cache the calldata length once, and each id into a stack variable, so the loop performs a
-    // single CALLDATALOAD per iteration instead of re-reading `ids.length` and `ids[i]` twice each.
+    bool isGuardian = OFFERS_REGISTRY.canRevokeOffer(msg.sender);
     uint256 length = ids.length;
     for (uint256 i; i < length; ++i) {
       uint8 id = ids[i];
-      if (!o.isLive(id)) revert LibBorrowErrors.OfferNotFound();
-      if (o.slab[id].proposer != msg.sender && !checkedCanRevokeAny) {
-        OFFERS_REGISTRY.checkCanRevokeOffer(msg.sender);
-        checkedCanRevokeAny = true;
-      }
-      o.removeOffer(id);
+      o.removeOffer(id, msg.sender, isGuardian);
       emit OfferRevoked(id, msg.sender);
     }
   }

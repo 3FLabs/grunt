@@ -1255,6 +1255,57 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(pos.offerCount(), 0, "guardian revoked both");
   }
 
+  /// @notice An empty batch is a no-op for every caller class: no revert, no state change and no
+  ///         events (the registry revoke-power read is a state-neutral view).
+  function test_revokeOffers_emptyBatchIsNoOp() public {
+    _enterBand(0.7e18);
+    _proposeAtPrice(_positionShares() / 4, 1.2e18);
+
+    uint8[] memory none = new uint8[](0);
+    vm.recordLogs();
+    vm.prank(makeAddr("rando"));
+    pos.revokeOffers(none);
+    vm.prank(guardian);
+    pos.revokeOffers(none);
+    assertEq(pos.offerCount(), 1, "book untouched by empty batches");
+    assertEq(vm.getRecordedLogs().length, 0, "no events emitted");
+  }
+
+  /// @notice The guardian power is not limited to the timelock window: a standing (active,
+  ///         consumable) offer can still be pulled at any later stage.
+  function test_revokeOffers_guardianRevokesActiveOffer() public {
+    _enterBand(0.7e18);
+    uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
+    _warpActive();
+    assertTrue(pos.isConsumable(id), "offer is live and consumable");
+
+    uint8[] memory ids = new uint8[](1);
+    ids[0] = id;
+    vm.prank(guardian);
+    pos.revokeOffers(ids);
+    assertEq(pos.offerCount(), 0, "guardian revoked the active offer");
+  }
+
+  /// @notice A multi-offer batch emits one {OfferRevoked} per removed offer, each attributed to
+  ///         the batch caller.
+  function test_revokeOffers_batchEmitsPerOffer() public {
+    _enterBand(0.7e18);
+    uint256 shares = _positionShares() / 8;
+    uint8 a = _proposeAtPrice(shares, 1.2e18);
+    uint8 b = _proposeAtPrice(shares, 1.3e18);
+
+    uint8[] memory ids = new uint8[](2);
+    ids[0] = a;
+    ids[1] = b;
+    vm.expectEmit(true, true, false, false, address(pos));
+    emit IBorrowOffers.OfferRevoked(a, guardian);
+    vm.expectEmit(true, true, false, false, address(pos));
+    emit IBorrowOffers.OfferRevoked(b, guardian);
+    vm.prank(guardian);
+    pos.revokeOffers(ids);
+    assertEq(pos.offerCount(), 0, "both revoked");
+  }
+
   function test_slab_recyclesFreedSlots() public {
     _enterBand(0.7e18);
     uint256 shares = _positionShares() / 8;

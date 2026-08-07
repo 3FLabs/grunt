@@ -78,6 +78,12 @@ library LibBorrowErrors {
   /// @notice Thrown when the callback is called by an address other than Morpho.
   error NotMorpho();
 
+  /// @notice Thrown when the caller of {IBorrowOffers.revokeOffers} is neither the offer's
+  ///         recorded proposer nor a registry guardian/owner. Deliberately the same selector as
+  ///         Solady's `Unauthorized()`, which the registry's own authorization checks revert
+  ///         with, so callers see one selector for every authorization failure.
+  error Unauthorized();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          OFFERS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

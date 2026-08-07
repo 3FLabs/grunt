@@ -143,6 +143,17 @@ library LibBorrowOffers {
     delete s.slab[id];
   }
 
+  /// @notice Authorized removal for {IBorrowOffers.revokeOffers}: `isGuardian` callers (the
+  ///         registry's guardian/owner revoke power, resolved once per batch by the caller) may
+  ///         remove any offer; any other caller must be the offer's recorded proposer.
+  /// @dev Liveness resolves first, so an unknown id reverts {LibBorrowErrors.OfferNotFound} for
+  ///      every caller; an unauthorized caller then reverts {LibBorrowErrors.Unauthorized}.
+  function removeOffer(BorrowOffersStorage storage s, uint8 id, address caller, bool isGuardian) internal {
+    if (!isLive(s, id)) revert LibBorrowErrors.OfferNotFound();
+    if (!isGuardian && s.slab[id].proposer != caller) revert LibBorrowErrors.Unauthorized();
+    removeOffer(s, id);
+  }
+
   /// @dev Allocates the lowest free slab index and marks it live, or reverts
   ///      {LibBorrowErrors.TooManyOffers} when all `MAX_OFFERS` slots hold unexpired offers.
   ///      Expired offers are pruned first (bit cleared, slot zeroed; housekeeping only, mirroring
@@ -162,6 +173,8 @@ library LibBorrowOffers {
     uint256 freeBits = ~liveBits & ((uint256(1) << MAX_OFFERS) - 1);
     if (freeBits == 0) revert LibBorrowErrors.TooManyOffers();
     id = uint8(LibBit.ffs(freeBits));
+    // Only bits below `MAX_OFFERS` (32) survive the mask above, so the cast cannot truncate.
+    // forge-lint: disable-next-line(unsafe-typecast)
     s.liveBits = uint32(liveBits | (uint256(1) << id));
   }
 
@@ -224,6 +237,8 @@ library LibBorrowOffers {
       }
       emit IBorrowOffers.OfferConsumed(walkOffer.id, walkOffer.filledCollateral, walkOffer.filledShares, exhausted);
     }
+    // Clearing bits of an already-`uint32` value cannot truncate.
+    // forge-lint: disable-next-line(unsafe-typecast)
     if (clearBits != 0) s.liveBits = uint32(s.liveBits & ~clearBits);
   }
 
@@ -263,6 +278,8 @@ library LibBorrowOffers {
       }
       if (block.timestamp < offer.activeAt) continue;
       WalkOffer memory walkOffer = offers[walkLength];
+      // `id` indexes a set bit of the 32-bit live bitmap, so the cast cannot truncate.
+      // forge-lint: disable-next-line(unsafe-typecast)
       walkOffer.id = uint8(id);
       walkOffer.remainingCollateral = offer.remainingCollateral;
       walkOffer.remainingDebtShares = offer.remainingDebtShares;
@@ -331,10 +348,12 @@ library LibBorrowOffers {
 
       // CONSUME. `fillCollateral <= remainingCollateral` and `fillShares <= remainingDebtShares`
       // by construction, so the uint128 casts and subtractions cannot overflow/underflow.
+      // forge-lint: disable-start(unsafe-typecast)
       walkOffer.remainingCollateral -= uint128(fillCollateral);
       walkOffer.remainingDebtShares -= uint128(fillShares);
       walkOffer.filledCollateral = uint128(fillCollateral);
       walkOffer.filledShares = uint128(fillShares);
+      // forge-lint: disable-end(unsafe-typecast)
       totalSeized += fillCollateral;
       totalDebtShares += fillShares;
 

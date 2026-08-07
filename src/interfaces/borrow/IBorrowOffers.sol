@@ -96,9 +96,12 @@ interface IBorrowOffers {
   function proposeOffer(uint128 collateral, uint128 debtShares, uint40 expiresAt) external returns (uint8 id);
 
   /// @notice Revokes one or more offers (batch). Authorization is per offer: the recorded
-  ///         proposer may revoke its own offer at any time; any other caller must pass
-  ///         {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or the registry owner).
-  /// @dev Reverts {LibBorrowErrors.OfferNotFound} if any id is not a currently-live offer.
+  ///         proposer may revoke its own offer at any time; any other caller needs the registry's
+  ///         revoke power ({IBorrowOffersRegistry.canRevokeOffer}: a guardian, or the registry
+  ///         owner).
+  /// @dev Reverts {LibBorrowErrors.OfferNotFound} if any id is not a currently-live offer, and
+  ///      {LibBorrowErrors.Unauthorized} if any offer in the batch belongs to another proposer
+  ///      while the caller lacks the registry's revoke power.
   /// @param ids The slab ids to revoke.
   function revokeOffers(uint8[] calldata ids) external;
 
