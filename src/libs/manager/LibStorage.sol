@@ -70,9 +70,10 @@ struct RebalanceConfig {
 ///        crystallizes (or on bootstrap); on capital flows it is rebased so the pending per-share
 ///        basis is preserved (see `rebaseSnapshot`). It therefore only matches the live NAV right
 ///        after a crystallizing accrual; while the reference is held it deviates from the live
-///        NAV by the carried (negative) pending basis. `lastCollat` is reconstructed on the fly
-///        as `lastTotalAssets + lastDebt` rather than stored directly, which keeps the storage
-///        layout append-only and existing integrations unchanged.
+///        NAV by the carried (negative) pending basis; after a seizure loss, flows convert the
+///        NAV drawdown against it into that carry (see `rebaseSnapshot`). `lastCollat` is
+///        reconstructed on the fly as `lastTotalAssets + lastDebt` rather than stored directly,
+///        which keeps the storage layout append-only and existing integrations unchanged.
 /// @param ltv Loan-to-value ratio in 18-decimal fixed point (e.g., 0.86e18 = 86%).
 ///        A small buffer above the target LTV that determines how much collateral can be withdrawn.
 /// @param virtualShareOffset Virtual shares offset for inflation attack protection, derived from debt asset decimals.
@@ -182,36 +183,44 @@ library LibStorage {
   ///      share supply without realising a gain, so the reference must move with them: the carry
   ///      (the negative pending basis accumulated while the reference is held, typically accrued
   ///      debt interest under a flat collateral quote) is scaled by the share-supply change and
-  ///      re-anchored on the post-flow state. Exits shed their proportional slice of the carry,
+  ///      re-anchored on the post-flow state. When the carry reads zero while NAV sits below
+  ///      the mark (a seizure leaves a NAV deficit with a non-negative levered read), the
+  ///      deficit is converted into carry form, so the high-water mark that the NAV-gain cap
+  ///      in `_pendingFees` measures against survives flows; an ordinary drawdown (nonzero
+  ///      carry) keeps the pre-existing semantics, under which a flow re-anchors the mark at
+  ///      NAV plus the levered carry only. Exits shed their proportional slice of the carry,
   ///      deposits re-attach it to the new shares, and supply-neutral flows (rebalance, module
   ///      changes) keep it unchanged. A holder therefore cannot shed accrued debt carry by
   ///      exiting and re-entering, and an exit does not dump its carry slice on the stayers.
   ///
-  ///      Called after `_accrueFees` has already crystallized any positive basis, so outside a
-  ///      partial bad-debt episode the pending basis here is non-positive; `zeroFloorSub` guards
-  ///      the rounding edge at exactly zero. Rounding matches `_pendingFees` (`mulDivUp` on the
-  ///      scaled reference debt), so the carry is the exact complement of the fee basis and each
-  ///      flow can only shrink it by rounding dust, never create a spurious positive basis.
+  ///      Called after `_accrueFees`, which crystallizes a positive basis except in two held
+  ///      states: a NAV-capped basis (seizure loss, see the cap in `_pendingFees`) and a
+  ///      performance entitlement that converts to zero fee shares. In both, the flow forgives
+  ///      the pending levered gain (for the zero-share hold the forgiven entitlement is
+  ///      bounded by one share's assets); for the seizure the converted deficit keeps the cap
+  ///      suspending fees after the flow. The held management fee accumulator is not cleared
+  ///      by the forgiveness and nets against the next crystallization. Rounding matches
+  ///      `_pendingFees` (`mulDivUp` on the scaled reference debt), so the carry is the exact
+  ///      complement of the fee basis and each flow can only shrink it by rounding dust, never
+  ///      create a spurious positive basis.
   ///
   ///      Partial bad-debt episode: while some (not all) modules are excluded as bad debt, the
-  ///      accrual freezes the reference instead of crystallizing (see `_pendingFees`), so a flow
-  ///      here can see a positive pending basis against the reduced aggregates. `zeroFloorSub`
-  ///      then clamps the carry to zero and the reference re-anchors at the post-flow visible
-  ///      state; the phantom gain itself is never preserved. The re-anchor is not
-  ///      direction-safe, because the pre-flow reduced aggregates are not comparable with the
-  ///      frozen full-universe mark: a flow that leaves the post-flow visible LTV at or below
-  ///      the frozen reference LTV under-reads the later recovery (LP-favorable; fees resume at
-  ///      a genuine new high), but a flow that raises it above the mark over-reads the recovery
-  ///      and can charge it as gain. The over-reading flows are a deposit with fresh borrowing
-  ///      during the window, a rebalance that borrows, and, most importantly, a rescue repayment
-  ///      (withdraw or rebalance) that pulls the excluded module back above water mid-flow: the
-  ///      re-anchor then adopts the re-entered module's near-100% LTV. Operational rule for the
-  ///      over-read: `resetPerformanceReference` does NOT correct it (the reset crystallizes a
-  ///      positive pending basis before moving); instead the owner should set the performance
-  ///      fee rate to zero right after such a flow, let the first accrual with a positive basis
-  ///      advance the reference mintlessly (a positive basis advances even at a zero rate), and
-  ///      then restore the rate. The under-read needs no action (fees resume at a genuine new
-  ///      high, or an owner reset re-anchors sooner).
+  ///      accrual freezes the reference instead of crystallizing (see `_pendingFees`), so a
+  ///      flow here compares the frozen full-universe mark with reduced aggregates and the
+  ///      re-anchor is approximate; the phantom gain itself is never preserved. When the
+  ///      visible carry reads zero (the visible LTV sits below the frozen reference LTV), the
+  ///      seizure conversion measures the deficit against the reduced universe; it typically
+  ///      exceeds the post-flow debt, so the sentinel clamp writes the bootstrap sentinel and
+  ///      the first post-window accrual reseeds the reference at the state it observes without
+  ///      charging (the window recovery is forgiven, LP-favorable). With a positive visible
+  ///      carry the ordinary carry semantics re-anchor instead, which can under- or over-read
+  ///      the later recovery. Remedies for a mis-anchored window flow: an owner reset once the
+  ///      window has closed re-anchors at the live state, but it crystallizes any positive
+  ///      pending basis first, so to avoid charging a mis-read recovery the owner should
+  ///      instead set the performance fee rate to zero right after the flow, let the first
+  ///      accrual with a positive basis advance the reference mintlessly (a positive basis
+  ///      advances even at a zero rate), and then restore the rate. An under-read needs no
+  ///      action (fees resume at a genuine new high, or an owner reset re-anchors sooner).
   ///
   ///      The held management fee accumulator (`heldManagementFeeAssets`, the management fees
   ///      charged since the reference last advanced, deducted from the next positive basis) is
@@ -229,8 +238,12 @@ library LibStorage {
   ///      Edge cases collapse to a plain snapshot of the current state (zero carry): bootstrap
   ///      (`lastDebt == 0` sentinel), an empty vault before the flow, and a carry exceeding the
   ///      post-flow debt (the reference debt floors at zero, which is the bootstrap sentinel, so
-  ///      the excess is forgiven and the next accrual reseeds). An empty good-debt universe
-  ///      after the flow instead holds the reference (see the bad-debt episode below).
+  ///      the excess is forgiven and the next accrual reseeds). The last case includes an
+  ///      oversized converted seizure deficit, e.g. a flow that unwinds debt below the seizure
+  ///      loss: the reseed then lands at the state the next accrual observes, and the recovery
+  ///      from there is charged unless the owner applies the temporary zero-rate remedy above.
+  ///      An empty good-debt universe after the flow instead holds the reference (see the
+  ///      bad-debt episode below).
   ///
   ///      Bad-debt episode: whenever the flow leaves the good-debt universe empty
   ///      (`newCollat == 0` with a live reference), there is no good-debt state to re-anchor on,
@@ -273,6 +286,16 @@ library LibStorage {
       uint256 refCollat = self.lastTotalAssets + refDebt;
       uint256 scaledRefDebt = refDebt.mulDivUp(prevCollat, refCollat);
       uint256 prevCarry = FixedPointMathLib.zeroFloorSub(prevDebt, scaledRefDebt);
+      // Seizure state: a liquidation leaves NAV below the mark while the levered read is
+      // non-negative, so `prevCarry` reads zero and the re-anchor below would drop the mark to
+      // the post-loss trough. Carry the NAV deficit (mark minus pre-flow NAV, zero when NAV is
+      // at or above the mark) instead: the mark then lands at `NAV + deficit`, and later flows
+      // read the same deficit back through the standard carry path. The empty pre-flow
+      // universe is excluded (full-episode re-anchor, see the header); the oversized-deficit
+      // edge is covered by the sentinel clamp below (see the header's edge cases).
+      if (prevCarry == 0 && prevCollat > 0) {
+        prevCarry = FixedPointMathLib.zeroFloorSub(self.lastTotalAssets + prevDebt, prevCollat);
+      }
       // Preserve the per-share carry across the supply change.
       carry = prevCarry.mulDiv(newSupply, prevSupply);
       if (carry > newDebt) carry = newDebt;
