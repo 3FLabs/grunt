@@ -313,9 +313,13 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(100e18, 0);
     assertEq(positionManager.balanceOf(feeRecipient), 0, "flow does not crystallize");
 
-    // The excluded module re-enters the aggregates on recovery: no spurious positive basis.
+    // The excluded module re-enters the aggregates on recovery: the raw levered read can be
+    // positive against the flow-preserved reference, but NAV still sits below the preserved
+    // mark, so the capped basis is zero and nothing is pending or minted.
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
-    assertLe(_pendingBasis(), 0, "module re-entry does not manufacture a gain");
+    assertLt(positionManager.totalAssets(), _lastTotalAssets(), "NAV below the preserved mark at re-entry");
+    (,,, uint256 reentryShares) = positionManager.pendingFees();
+    assertEq(reentryShares, 0, "module re-entry does not manufacture a fee");
     _accrue();
     assertEq(positionManager.balanceOf(feeRecipient), 0, "no fee on the module re-entry");
 
@@ -416,42 +420,52 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference advanced with the crystallization");
   }
 
-  /// @notice A window flow with a zero visible carry forgives the deficit through the bootstrap
-  ///         sentinel: the reference reseeds mintlessly at the first post-window accrual, so the
-  ///         window recovery is not charged (LP-favorable) and no phantom gain ever mints.
-  function test_badDebt_partialExclusionFlowForgivesDeficitViaSentinel() public {
+  /// @notice A window flow with a zero visible carry converts the deficit measured against the
+  ///         reduced universe into the mark. Even though the deficit exceeds the post-flow debt,
+  ///         the oversized-carry encoding keeps the reference out of the bootstrap sentinel, so
+  ///         the window recovery is charged only past the preserved (per-share) mark instead of
+  ///         being reseeded, and forgiven, at the trough.
+  function test_badDebt_partialExclusionFlowPreservesMarkViaOversizedCarry() public {
     _setFees(0, PERF_FEE);
     _setupDebtHeavyExclusionWindow();
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
 
     // Unlevered deposit routed to the healthy module: the flow's accrual must not mint. The
-    // visible carry reads zero (visible LTV 22% below reference LTV 30%), so the seizure
-    // conversion measures the deficit against the reduced universe (14_000 + 1_000 - 4_500 =
-    // 10_500, scaled to 11_850); it exceeds the post-flow debt (1_000), so the sentinel clamp
-    // fires and the reference debt floors at the bootstrap sentinel.
+    // visible carry reads zero (visible LTV 22% below reference LTV 30%), so the conversion
+    // takes the deficit against the reduced universe (14_000 + 1_000 - 4_500 = 10_500, scaled
+    // to 11_850); it exceeds the post-flow debt (1_000), so the mark re-anchors at
+    // NAV + deficit (3_950 + 11_850) with the reference debt at the 30% pre-flow reference
+    // LTV instead of collapsing to the sentinel.
     SupplyQueueEntry[] memory queue1 = new SupplyQueueEntry[](1);
     queue1[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
     vm.prank(curator);
     positionManager.setSupplyQueue(queue1);
     _leveredDeposit(1_000e18, 0);
     assertEq(positionManager.balanceOf(feeRecipient), 0, "window flow does not crystallize the phantom");
-    assertEq(positionManager.lastDebt(), 0, "oversized window deficit forgiven through the sentinel");
-    assertEq(_lastTotalAssets(), 4_950e18, "reference re-anchored at the post-flow visible collateral");
+    uint256 mark = _lastTotalAssets();
+    assertApproxEqAbs(mark, 15_800e18, 2, "mark preserved at NAV + the scaled deficit");
+    assertEq(
+      positionManager.lastDebt(),
+      mark.mulDivUp(6_000e18, 14_000e18),
+      "reference debt at the pre-flow reference LTV, not the sentinel"
+    );
 
-    // B re-enters on recovery: the sentinel accrual reseeds at the observed state, mintless.
+    // B re-enters on recovery: NAV (15_000) still sits below the preserved mark, so the
+    // accrual holds and mints nothing.
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
     _accrue();
-    assertEq(positionManager.balanceOf(feeRecipient), 0, "the reseeding accrual mints nothing");
-    assertEq(positionManager.lastDebt(), 6_000e18, "reference reseeded on the recovered full universe");
-    assertEq(_lastTotalAssets(), 15_000e18, "mark reseeded at the recovered NAV");
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "recovery below the preserved mark mints nothing");
+    assertEq(_lastTotalAssets(), mark, "the accrual holds the preserved mark");
 
-    // Fees resume on genuine gains above the reseeded reference.
+    // Fees resume only past the preserved mark, on the capped basis.
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
-    int256 basis = _pendingBasis();
-    assertGt(basis, 0, "gain above the reseeded reference");
+    uint256 navGain = positionManager.totalAssets() - _lastTotalAssets();
+    assertGt(navGain, 0, "NAV cleared the preserved mark");
+    uint256 basisUsed = uint256(_pendingBasis()).min(navGain);
     (,,, uint256 perfShares) = positionManager.pendingFees();
-    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "fees resume on the genuine gain");
+    assertEq(perfShares, _expectedPerfShares(basisUsed), "fees resume only above the preserved mark");
+    assertGt(perfShares, 0, "genuine gain above the mark still charges");
   }
 
   /// @notice The bootstrap seed is also gated: a sentinel reference (`lastDebt == 0`) must not
@@ -486,11 +500,12 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
   }
 
   /// @notice A rescue repayment mid-window pulls the excluded module back above water. The
-  ///         visible carry reads zero, so the seizure conversion measures the deficit against
-  ///         the reduced universe; it exceeds the post-rescue debt and the sentinel clamp
-  ///         fires: the first post-window accrual reseeds mintlessly at the recovered state,
-  ///         so the window recovery is forgiven instead of charged from the trough.
-  function test_badDebt_partialExclusionRescueFlowForgivenViaSentinel() public {
+  ///         visible carry reads zero, so the conversion takes the deficit measured against the
+  ///         reduced universe; it exceeds the post-rescue debt, and the oversized-carry
+  ///         encoding re-anchors the mark at the post-rescue NAV plus the deficit (the
+  ///         pre-episode mark adjusted for the rescue's own contribution) instead of writing
+  ///         the sentinel, so the window recovery is charged only past that mark.
+  function test_badDebt_partialExclusionRescueFlowPreservesMark() public {
     _setFees(0, PERF_FEE);
     _setupDebtHeavyExclusionWindow();
 
@@ -499,7 +514,8 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     // Rescue: the rebalancer repays 2_500 of B's debt, pulling B (4_500 quoted vs 2_500 debt)
     // back above water mid-flow. The visible carry reads zero, so the conversion picks up the
     // deficit (14_000 + 1_000 - 4_500 = 10_500); it exceeds the post-rescue debt (3_500), so
-    // the reference debt floors at the bootstrap sentinel.
+    // the mark re-anchors at NAV + deficit (5_500 + 10_500, the supply is unchanged) with the
+    // reference debt at the 30% pre-flow reference LTV.
     uint256 repay = 2_500e18;
     RebalancingOperation[] memory ops = new RebalancingOperation[](1);
     ops[0] = RebalancingOperation({
@@ -512,23 +528,22 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     positionManager.rebalance(data, rebalancer);
     vm.stopPrank();
     assertEq(positionManager.balanceOf(feeRecipient), 0, "the rescue flow itself does not crystallize");
-    assertEq(positionManager.lastDebt(), 0, "oversized window deficit forgiven through the sentinel");
-    assertEq(_lastTotalAssets(), 9_000e18, "reference re-anchored at the post-rescue visible collateral");
+    assertEq(_lastTotalAssets(), 16_000e18, "mark preserved at the rescue-adjusted pre-episode level");
+    assertEq(
+      positionManager.lastDebt(),
+      uint256(16_000e18).mulDivUp(6_000e18, 14_000e18),
+      "reference debt at the pre-flow reference LTV, not the sentinel"
+    );
 
-    // Recovery to the original quote: the sentinel accrual reseeds at the recovered state,
-    // mintless, instead of charging the trough-measured phantom (which would exceed 4_000).
+    // Recovery to the original quote: NAV (16_500) clears the preserved mark by 500, and only
+    // that excess is charged, not the trough-measured recovery.
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
-    _accrue();
-    assertEq(positionManager.balanceOf(feeRecipient), 0, "the reseeding accrual mints nothing");
-    assertEq(positionManager.lastDebt(), 3_500e18, "reference reseeded on the recovered universe");
-    assertEq(_lastTotalAssets(), 16_500e18, "mark reseeded at the recovered NAV");
-
-    // Fees resume only on genuine gains above the reseeded reference.
-    oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
-    int256 basis = _pendingBasis();
-    assertGt(basis, 0, "genuine gain above the reseeded reference");
+    uint256 navGain = positionManager.totalAssets() - _lastTotalAssets();
+    assertEq(navGain, 500e18, "recovery past the preserved mark");
+    uint256 basisUsed = uint256(_pendingBasis()).min(navGain);
     (,,, uint256 perfShares) = positionManager.pendingFees();
-    assertEq(perfShares, _expectedPerfShares(uint256(basis)), "post-reseed gains charge normally");
+    assertEq(perfShares, _expectedPerfShares(basisUsed), "only the excess above the preserved mark is charged");
+    assertGt(perfShares, 0, "the excess above the mark charges");
   }
 
   /// @notice A flow that empties the good-debt universe (the owner removes the last healthy
@@ -1689,10 +1704,11 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt re-anchored");
   }
 
-  /// @notice A flow during a zero-share hold forgives the sub-share pending entitlement
-  ///         (bounded by one share's assets) and re-anchors the reference at the live state;
-  ///         the accumulated gain is not preserved across flows, only across accruals.
-  function test_checkpointSplitting_flowForgivesSubShareEntitlement() public {
+  /// @notice A flow during a zero-share hold preserves the sub-share pending entitlement: the
+  ///         rebase re-encodes it as reference debt above the live debt (scaled with the
+  ///         supply), so the capped basis reads back unchanged after the flow and checkpoint
+  ///         splitting cannot erase the fee through the flow path either.
+  function test_checkpointSplitting_flowPreservesSubShareEntitlement() public {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
@@ -1710,11 +1726,174 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(positionManager.lastDebt(), refDebt, "reference held on the zero-share hold");
     assertEq(_lastTotalAssets(), refNav, "mark held on the zero-share hold");
 
-    // A flow re-anchors at the live state: the sub-share entitlement is forgiven.
+    // The capped pending entitlement right before the flow.
+    uint256 supplyBefore = positionManager.totalSupply();
+    uint256 gainBefore = uint256(_pendingBasis()).min(positionManager.totalAssets() - refNav);
+    assertGt(gainBefore, 0, "held entitlement pending at the flow");
+
+    // The flow preserves the entitlement: the mark lands below the live NAV by exactly the
+    // supply-scaled gain and the reference debt re-encodes it above the live debt.
     _mintCollateral(minter, 1_000e18);
     vm.prank(minter);
     positionManager.deposit(1_000e18, 0);
-    assertEq(_lastTotalAssets(), positionManager.totalAssets(), "the flow re-anchors the mark at the live NAV");
-    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "the flow re-anchors the reference debt");
+    uint256 gainScaled = gainBefore.mulDiv(positionManager.totalSupply(), supplyBefore);
+    assertEq(
+      _lastTotalAssets(),
+      positionManager.totalAssets() - gainScaled,
+      "the mark sits below the live NAV by the preserved gain"
+    );
+    assertEq(
+      positionManager.lastDebt(),
+      positionManager.debtAmount() + gainScaled,
+      "the entitlement is re-encoded as reference debt above the live debt"
+    );
+    assertEq(
+      uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets()),
+      gainScaled,
+      "the capped entitlement reads back unchanged after the flow"
+    );
+  }
+
+  /// @notice The flow-path attack from the 3F-481 review: repeated economically empty
+  ///         rebalances during a zero-share hold must not erase the entitlement. Each empty
+  ///         rebalance is supply-neutral, so the preservation is exact, and the eventual mint
+  ///         matches a single checkpoint over the same aggregate gain.
+  function test_checkpointSplitting_emptyRebalancesConserveEntitlement() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 11);
+    _accrue();
+    uint256 refDebt = positionManager.lastDebt();
+    uint256 refNav = _lastTotalAssets();
+    uint256 balanceAtLift = positionManager.balanceOf(feeRecipient);
+
+    // Enter the zero-share hold with a tiny gain.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 11 + 1.5e16);
+    (,,, uint256 pending) = positionManager.pendingFees();
+    assertEq(pending, 0, "entitlement converts to zero shares");
+    uint256 gainHeld = uint256(_pendingBasis()).min(positionManager.totalAssets() - refNav);
+    assertGt(gainHeld, 0, "nonzero held entitlement");
+
+    // Zero-op rebalances at will (supply-neutral flows): the entitlement survives each one.
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: 0, operations: new RebalancingOperation[](0)});
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.prank(rebalancer);
+      positionManager.rebalance(data, rebalancer);
+      assertEq(
+        uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets()),
+        gainHeld,
+        "empty rebalance preserves the held entitlement"
+      );
+    }
+    assertEq(positionManager.balanceOf(feeRecipient), balanceAtLift, "nothing minted during the hold");
+
+    // The next real gain mints over the whole accumulated basis, matching (to ceil dust) a
+    // single checkpoint against the pre-hold reference.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 12);
+    uint256 basisUsed = uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets());
+    uint256 singleCheckpointBasis = refDebt.mulDivUp(
+      positionManager.totalAssets() + positionManager.debtAmount(), refNav + refDebt
+    ) - positionManager.debtAmount();
+    assertApproxEqAbs(basisUsed, singleCheckpointBasis, 2, "the accumulated basis matches a single checkpoint");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(basisUsed), "the accumulated basis mints in full");
+    assertGt(perfShares, 0, "the fee survived the empty rebalances");
+  }
+
+  /// @notice First rounding stage of 3F-481: a positive net entitlement whose BPS
+  ///         multiplication rounds to zero fee assets must hold the reference, exactly like the
+  ///         share-conversion stage; advancing would consume the sub-BPS basis, so splitting
+  ///         one gain across many checkpoints could erase the fee without ever minting.
+  function test_checkpointSplitting_bpsStageRoundingHoldsReference() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 3);
+    _accrue();
+    uint256 refDebt = positionManager.lastDebt();
+    uint256 refNav = _lastTotalAssets();
+    uint256 balanceAtLift = positionManager.balanceOf(feeRecipient);
+
+    // A wei-scale quote bump: the basis is positive but 15% of it rounds to zero fee assets
+    // (the price step below moves the quoted collateral by one wei per unit of i).
+    uint256 priceStep = ORACLE_PRICE_SCALE / COLLATERAL_AMOUNT;
+    bool found;
+    for (uint256 i = 1; i <= 64 && !found; ++i) {
+      oracle.setPrice(DEFAULT_ORACLE_PRICE * 3 + i * priceStep);
+      int256 basis = _pendingBasis();
+      found = basis > 0 && uint256(basis) * PERF_FEE / 10_000 == 0;
+    }
+    assertTrue(found, "an alignment with a sub-BPS entitlement exists");
+
+    _accrue();
+    assertEq(positionManager.lastDebt(), refDebt, "reference debt held on the BPS-stage hold");
+    assertEq(_lastTotalAssets(), refNav, "mark held on the BPS-stage hold");
+    assertEq(positionManager.balanceOf(feeRecipient), balanceAtLift, "nothing minted on the BPS-stage hold");
+
+    // The gain keeps accumulating against the held reference and eventually mints in full.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 4);
+    uint256 basisUsed = uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets());
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, _expectedPerfShares(basisUsed), "the accumulated basis mints in full");
+    assertGt(perfShares, 0, "the fee is not erased by the sub-BPS checkpoint");
+  }
+
+  /// @notice Reviewer follow-up on the NAV cap (3F-470): a near-full liquidation can leave a
+  ///         NAV deficit larger than the remaining debt. The flow rebase must keep the mark out
+  ///         of the bootstrap sentinel (which would reseed at the trough and charge the
+  ///         recovery) by re-anchoring at NAV + deficit with the pre-flow reference LTV.
+  function test_navCap_markSurvivesFlowAfterNearFullLiquidation() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    uint256 refNav = _lastTotalAssets();
+    uint256 refDebt = positionManager.lastDebt();
+
+    // Crash and liquidate most of the position, then restore the quote: the NAV deficit
+    // exceeds the remaining debt.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 60 / 100);
+    address liquidator = makeAddr("liquidator");
+    debtToken.setBalance(liquidator, DEBT_AMOUNT);
+    vm.startPrank(liquidator);
+    debtToken.approve(address(morpho), type(uint256).max);
+    morpho.liquidate(marketParams1, address(borrowPosition1), 7_500e18, 0, "");
+    vm.stopPrank();
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    uint256 deficit = refNav - positionManager.totalAssets();
+    assertGt(deficit, positionManager.debtAmount(), "the NAV deficit exceeds the remaining debt");
+
+    // A routine flow: the mark must survive at NAV + deficit instead of collapsing to the
+    // bootstrap sentinel.
+    uint256 supplyBefore = positionManager.totalSupply();
+    _mintCollateral(minter, 100e18);
+    vm.prank(minter);
+    positionManager.deposit(100e18, 0);
+    uint256 carry = deficit.mulDiv(positionManager.totalSupply(), supplyBefore);
+    uint256 expectedMark = positionManager.totalAssets() + carry;
+    assertGt(positionManager.lastDebt(), 0, "the reference debt does not collapse to the sentinel");
+    assertEq(_lastTotalAssets(), expectedMark, "the mark survives the flow at NAV + deficit");
+    assertEq(
+      positionManager.lastDebt(), expectedMark.mulDivUp(refDebt, refNav), "reference debt at the pre-flow reference LTV"
+    );
+
+    // The next accrual holds the surviving mark (a sentinel would reseed at the trough here).
+    _accrue();
+    assertEq(_lastTotalAssets(), expectedMark, "the accrual holds the surviving mark");
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "nothing minted below the surviving mark");
+
+    // Recovery below the mark still mints nothing.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    assertLt(positionManager.totalAssets(), _lastTotalAssets(), "still below the surviving mark");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "no fee on recovery below the surviving mark");
+
+    // Past the mark, only the capped excess is charged.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 5 / 2);
+    uint256 navGain = positionManager.totalAssets() - _lastTotalAssets();
+    assertGt(navGain, 0, "NAV cleared the surviving mark");
+    uint256 basisUsed = uint256(_pendingBasis()).min(navGain);
+    (,,, uint256 resumedShares) = positionManager.pendingFees();
+    assertEq(resumedShares, _expectedPerfShares(basisUsed), "charged only above the surviving mark");
+    assertGt(resumedShares, 0, "fees resume past the surviving mark");
   }
 }
