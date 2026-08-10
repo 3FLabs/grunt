@@ -41,13 +41,15 @@ struct RetargetterWhitelists {
 }
 
 /// @notice The one in-flight operation (namespace "retargetter.operation").
-/// @dev `positionManager != address(0)` is the operation-active flag. An ASYNC operation uses
-///      every field and is zeroed at resolve; a SYNC flash-loan window populates only the
-///      addresses the steps need (`positionManager`, `fund`) and zeroes them at window close,
-///      so `request == address(0)` inside a window is what gates the ASYNC-only steps. The
-///      stored order is partial: `owner` and `receiver` are always the Retargetter (enforced
-///      at create) so {LibStorage.order} rebuilds the full Order in memory.
-/// @param positionManager The operation's position manager
+/// @dev `fund != address(0)` is the operation-active flag: both start paths set it and only
+///      {clearOperation} clears it, and no fund can be the zero address (setFund contract-
+///      checks it). The position manager an operation runs against is the instance-bound one
+///      ({RetargetterAssets.positionManager}), which cannot change while active, so it is not
+///      duplicated here. An ASYNC operation uses every field and is zeroed at resolve; a SYNC
+///      flash-loan window populates only `fund` and zeroes it at window close, so
+///      `request == address(0)` inside a window is what gates the ASYNC-only steps. The stored
+///      order is partial: `owner` and `receiver` are always the Retargetter (enforced at
+///      create) so {LibStorage.order} rebuilds the full Order in memory.
 /// @param startedAt The loan clock origin, set at the first consume or nonzero mint
 ///        authorization (0 until then); rewound to 0 by a revocation that leaves the
 ///        operation with no PT, no YT and no pending authorization
@@ -74,7 +76,6 @@ struct RetargetterWhitelists {
 ///        eagerly, a completed mint is pruned lazily by the next write-path computation, and
 ///        resolve empties the set
 struct RetargetterOperation {
-  address positionManager;
   uint40 startedAt;
   uint16 operationMaxYieldBps;
   bool consumptionClosed;
@@ -135,12 +136,13 @@ library LibStorage {
   /*                      OPERATION GATES                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Reverts unless an operation is active (ASYNC or SYNC window); returns its position
-  ///      manager.
+  /// @dev Reverts unless an operation is active (ASYNC or SYNC window), keyed on the fund flag;
+  ///      returns the instance-bound position manager the operation runs against (always set
+  ///      while active, since it was required at start and cannot be unbound mid-operation).
   /// @param self The storage pointer to the operation
   function checkActive(RetargetterOperation storage self) internal view returns (address positionManager) {
-    positionManager = self.positionManager;
-    if (positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    if (self.fund == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    positionManager = assetsStorage().positionManager;
   }
 
   /// @dev Reverts unless an ASYNC operation is active (SYNC windows carry no Request);
@@ -305,7 +307,6 @@ library LibStorage {
   ///      each removal a plain pop); the order fields are cleared separately as orders end.
   /// @param self The storage pointer to the operation
   function clearOperation(RetargetterOperation storage self) internal {
-    self.positionManager = address(0);
     self.startedAt = 0;
     self.operationMaxYieldBps = 0;
     self.consumptionClosed = false;

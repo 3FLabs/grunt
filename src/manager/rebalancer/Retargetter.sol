@@ -234,7 +234,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
         0
       );
 
-    operation_.positionManager = positionManager;
+    // fund is the operation-active flag (see {RetargetterOperation}); the position manager it
+    // runs against is the instance-bound one, not duplicated here
     operation_.operationMaxYieldBps = effectiveYieldCap;
     operation_.request = request;
     operation_.repaymentDeadline = repaymentDeadline;
@@ -275,7 +276,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     operation_.checkYield(offer.amount, offer.expectedReturn);
     operation_.checkConsumptionWindow();
     ytAmount = IRequest(request).consume(offer, signature, ptAmount);
-    operation_.checkPrincipalCap(request, 0, _maxPrincipal(operation_.positionManager, operation_.operationMaxYieldBps));
+    operation_.checkPrincipalCap(
+      request, 0, _maxPrincipal(LibStorage.assetsStorage().positionManager, operation_.operationMaxYieldBps)
+    );
     emit OfferConsumed(request, offer.maker, ptAmount, ytAmount);
   }
 
@@ -306,7 +309,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
         ptAmount,
         ytAmount,
         ptAmount,
-        _maxPrincipal(operation_.positionManager, operation_.operationMaxYieldBps)
+        _maxPrincipal(LibStorage.assetsStorage().positionManager, operation_.operationMaxYieldBps)
       );
       // The capacity bound keeps every loop over the set within gas reach; see the constant
       accounts.add(to, MAX_AUTHORIZED_ACCOUNTS);
@@ -388,7 +391,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   function resolve() external onlyOwnerOrRebalancer nonReentrant {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
-    address positionManager = operation_.positionManager;
+    address positionManager = LibStorage.assetsStorage().positionManager;
     if (!IRequest(request).syncRepaidStatus()) revert LibRetargetterErrors.RequestNotRepaid();
     operation_.checkNoPendingOrder(operation_.fund);
     _checkResidual();
@@ -595,15 +598,15 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       revert LibRetargetterErrors.ModuleNotWhitelisted();
     }
 
-    // Open the window: the operation storage carries the addresses the steps read (and locks
-    // out nested starts); the module slot authenticates the callback and is zeroed on its
-    // entry (single-shot). The payload digest and the pre-loan debt balance bind the callback
-    // to this exact payload and to the full delivery of the principal, so a whitelisted
-    // module can neither substitute its own step calls nor collect the repayment approval
-    // for funds it never delivered. Step authority is not handed out here: the window slot
-    // is set inside the callback around the payload alone, so the module holds no authority
-    // in its own frame and cannot source the delivery from the position manager itself
-    operation_.positionManager = positionManager;
+    // Open the window: the operation's fund both records the venue the steps read and flags
+    // the operation active (locking out nested starts). The module slot authenticates the
+    // callback and is zeroed on its entry (single-shot). The payload digest and the pre-loan
+    // debt balance bind the callback to this exact payload and to the full delivery of the
+    // principal, so a whitelisted module can neither substitute its own step calls nor collect
+    // the repayment approval for funds it never delivered. Step authority is not handed out
+    // here: the window slot is set inside the callback around the payload alone, so the module
+    // holds no authority in its own frame and cannot source the delivery from the position
+    // manager itself
     operation_.fund = fund;
     address debtAsset = LibStorage.assetsStorage().debtAsset;
     bytes memory payload = abi.encode(data);
@@ -730,7 +733,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      PositionManagerNotBound meanwhile). Every start-gate and principal-cap read trusts
   ///      the bound address, which is why the binding is owner-curated, not caller-supplied.
   function setPositionManager(address positionManager) external onlyOwner nonReentrant {
-    if (LibStorage.operationStorage().positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
+    if (LibStorage.operationStorage().fund != address(0)) revert LibRetargetterErrors.OperationActive();
     _bindPositionManager(positionManager);
   }
 
@@ -763,8 +766,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     )
   {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    // The operation runs against the instance-bound position manager while active (fund set),
+    // and zero when idle: derived rather than stored on the operation
     return (
-      operation_.positionManager,
+      operation_.fund != address(0) ? LibStorage.assetsStorage().positionManager : address(0),
       operation_.request,
       operation_.fund,
       operation_.startedAt,
@@ -780,7 +785,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @inheritdoc IRetargetter
   function isActive() external view returns (bool) {
-    return LibStorage.operationStorage().positionManager != address(0);
+    return LibStorage.operationStorage().fund != address(0);
   }
 
   /// @inheritdoc IRetargetter
@@ -882,7 +887,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     view
     returns (address positionManager)
   {
-    if (operation_.positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
+    if (operation_.fund != address(0)) revert LibRetargetterErrors.OperationActive();
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
     positionManager = LibStorage.assetsStorage().positionManager;
     if (positionManager == address(0)) revert LibRetargetterErrors.PositionManagerNotBound();

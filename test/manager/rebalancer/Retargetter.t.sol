@@ -1062,30 +1062,29 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(accounts.length, 1, "one registered account");
     assertEq(accounts[0], broker, "broker registered");
 
-    // Slot A: positionManager (bits 0..159) | startedAt (160..199) | operationMaxYieldBps
-    // (200..215) | consumptionClosed (216..223) | horizon (224..255): full, no wasted bits
+    // Slot A: startedAt (bits 0..39) | operationMaxYieldBps (40..55) | consumptionClosed
+    // (56..63) | horizon (64..95) | request (96..255): full, no wasted bits (no stored
+    // position manager: it is the instance-bound one, and fund is the active flag)
     uint256 slotA = uint256(vm.load(address(retargetter), OPERATION_STORAGE_SLOT));
-    assertEq(address(uint160(slotA)), address(positionManager), "position manager bits");
-    assertEq(uint40(slotA >> 160), uint40(startTime + 1 days), "startedAt bits");
-    assertEq(uint16(slotA >> 200), 100, "operation max yield bits");
-    assertEq(uint8(slotA >> 216), 0, "consumption closed bit clear");
-    assertEq(slotA >> 224, DEFAULT_HORIZON, "horizon bits");
+    assertEq(uint40(slotA), uint40(startTime + 1 days), "startedAt bits");
+    assertEq(uint16(slotA >> 40), 100, "operation max yield bits");
+    assertEq(uint8(slotA >> 56), 0, "consumption closed bit clear");
+    assertEq(uint32(slotA >> 64), DEFAULT_HORIZON, "horizon bits");
+    assertEq(address(uint160(slotA >> 96)), request, "request bits");
 
-    // Slot B: request (bits 0..159) | repaymentDeadline (160..199) | tickDuration (200..223)
-    // | tickThreshold (224..247)
+    // Slot B: repaymentDeadline (bits 0..39) | tickDuration (40..63) | tickThreshold (64..87)
+    // | fund (88..247) | orderMode (248..255): full
     uint256 slotB = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 1)));
-    assertEq(address(uint160(slotB)), request, "request bits");
-    assertEq(uint40(slotB >> 160), uint40(startTime + 90 days), "repayment deadline bits");
-    assertEq(uint24(slotB >> 200), DEFAULT_TICK_DURATION, "tick duration bits");
-    assertEq(uint24(slotB >> 224), DEFAULT_TICK_THRESHOLD, "tick threshold bits");
-    assertEq(slotB >> 248, 0, "slot B upper bits clean");
+    assertEq(uint40(slotB), uint40(startTime + 90 days), "repayment deadline bits");
+    assertEq(uint24(slotB >> 40), DEFAULT_TICK_DURATION, "tick duration bits");
+    assertEq(uint24(slotB >> 64), DEFAULT_TICK_THRESHOLD, "tick threshold bits");
+    assertEq(address(uint160(slotB >> 88)), address(fund), "fund bits");
+    assertEq(uint8(slotB >> 248), uint8(Mode.REDEEM), "order mode bits");
 
-    // Slot C: fund (bits 0..159) | orderMode (160..167) | orderLive (168..175)
+    // Slot C: orderLive (bits 0..7)
     uint256 slotC = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 2)));
-    assertEq(address(uint160(slotC)), address(fund), "fund bits");
-    assertEq(uint8(slotC >> 160), uint8(Mode.REDEEM), "order mode bits");
-    assertEq(uint8(slotC >> 168), 1, "order live bits");
-    assertEq(slotC >> 176, 0, "slot C upper bits clean");
+    assertEq(uint8(slotC), 1, "order live bits");
+    assertEq(slotC >> 8, 0, "slot C upper bits clean");
 
     // Slots D to F: the stored order's input, output and salt
     assertEq(
@@ -1098,15 +1097,15 @@ contract RetargetterTest is RetargetterBaseTest {
       vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 5)), bytes32(uint256(42)), "order salt"
     );
 
-    // Pulling funds flips the consumption-closed bit (216..223) and nothing else in slot A
+    // Pulling funds flips the consumption-closed bit (56..63) and nothing else in slot A
     vm.prank(rebalancer);
     retargetter.pullRequestFunds(1);
     slotA = uint256(vm.load(address(retargetter), OPERATION_STORAGE_SLOT));
-    assertEq(address(uint160(slotA)), address(positionManager), "position manager bits unchanged");
-    assertEq(uint40(slotA >> 160), uint40(startTime + 1 days), "startedAt bits unchanged");
-    assertEq(uint16(slotA >> 200), 100, "operation max yield bits unchanged");
-    assertEq(uint8(slotA >> 216), 1, "consumption closed bit set");
-    assertEq(slotA >> 224, DEFAULT_HORIZON, "horizon bits unchanged by the pull");
+    assertEq(uint40(slotA), uint40(startTime + 1 days), "startedAt bits unchanged");
+    assertEq(uint16(slotA >> 40), 100, "operation max yield bits unchanged");
+    assertEq(uint8(slotA >> 56), 1, "consumption closed bit set");
+    assertEq(uint32(slotA >> 64), DEFAULT_HORIZON, "horizon bits unchanged by the pull");
+    assertEq(address(uint160(slotA >> 96)), request, "request bits unchanged by the pull");
   }
 
   function test_storageLayout_assetsPacking() public view {
