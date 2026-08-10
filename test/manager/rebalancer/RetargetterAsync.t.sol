@@ -172,7 +172,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
 
     // Zero estimates: cap = (debt - target * collateral) / (1 - target), plus the 1% buffer
     uint256 expectedCap = (uint256(2_000e18) * WAD / 0.7e18) * 10_100 / 10_000;
-    assertEq(retargetter.maxPrincipal(address(positionManager)), expectedCap, "down principal cap");
+    assertEq(retargetter.maxPrincipal(), expectedCap, "down principal cap");
 
     address request = _startAsync(2_857e18, 100);
     _consume(request, 2_857e18, 28e18, 2_857e18);
@@ -800,9 +800,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     retargetter.setFund(address(stickyFund), true);
     _seedPosition(10_000e18, 5_000e18);
     vm.prank(rebalancer);
-    retargetter.startRetargetting(
-      address(positionManager), 4_000e18, 100, address(stickyFund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    retargetter.startRetargetting(4_000e18, 100, address(stickyFund), REQUEST_NAME, REQUEST_SYMBOL);
 
     vm.startPrank(rebalancer);
     retargetter.create(_order(Mode.DEPOSIT, 100e18, 100e18, bytes32(uint256(14))));
@@ -1230,7 +1228,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // size. Consume is already shut by the pulled funding round (its window check runs
     // before the Request call), so the collapsed cap surfaces through the authorization gate
     (uint128 ptSupply,) = ITokenController(request).totalSupplies();
-    assertLt(retargetter.maxPrincipal(address(positionManager)), uint256(ptSupply), "cap collapsed");
+    assertLt(retargetter.maxPrincipal(), uint256(ptSupply), "cap collapsed");
 
     Offer memory offer = _createOffer(100e18, 1e18);
     bytes memory signature = _signOffer(offer, request);
@@ -1300,9 +1298,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // The gate admits exactly the cap and rejects a single wei more
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.startRetargetting(
-      address(positionManager), cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    retargetter.startRetargetting(cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
     address request = _startAsync(cap, DEFAULT_MAX_YIELD_BPS);
     _consume(request, cap, cap / 10, cap);
@@ -1367,11 +1363,11 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   /// @notice After resolve a fresh operation starts; the fund archives ended order ids, so

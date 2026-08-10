@@ -16,12 +16,7 @@ import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {Order, Mode, State} from "../../libs/funds/Order.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";
-import {
-  LibStorage,
-  RetargetterAssets,
-  RetargetterOperation,
-  RetargetterWhitelists
-} from "../../libs/manager/rebalancer/LibStorage.sol";
+import {LibStorage, RetargetterAssets, RetargetterOperation} from "../../libs/manager/rebalancer/LibStorage.sol";
 import {
   REBALANCER_ROLE,
   CONSUMER_ROLE,
@@ -166,17 +161,24 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Initializes the proxy instance and binds it to its asset pair.
-  /// @dev The pair is never mutable afterwards. Whitelists start empty; zero estimates are
+  /// @notice Initializes the proxy instance, binds it to its asset pair, and optionally binds
+  ///         its position manager.
+  /// @dev The pair is never mutable afterwards. A nonzero positionManager_ is bound here (its
+  ///      assets are checked against the pair); a zero value leaves the instance unbound until
+  ///      the owner calls {setPositionManager}. Whitelists start empty; zero estimates are
   ///      valid and degrade the principal cap to the zero-rate ideal formula.
   /// @param owner_ The address that will own the instance
   /// @param collateralAsset_ The collateral asset of the bound pair
   /// @param debtAsset_ The debt asset of the bound pair
+  /// @param positionManager_ The position manager to bind, or the zero address to bind later
   /// @param config_ The initial configuration, validated against the documented bounds
-  function initialize(address owner_, address collateralAsset_, address debtAsset_, RetargetterConfig calldata config_)
-    external
-    initializer
-  {
+  function initialize(
+    address owner_,
+    address collateralAsset_,
+    address debtAsset_,
+    address positionManager_,
+    RetargetterConfig calldata config_
+  ) external initializer {
     owner_.checkNotZero();
     collateralAsset_.checkContract();
     debtAsset_.checkContract();
@@ -185,6 +187,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     assets_.collateralAsset = collateralAsset_;
     assets_.debtAsset = debtAsset_;
+    // Optional bind at init; the owner can (re)bind later while no operation is active
+    if (positionManager_ != address(0)) _setPositionManager(positionManager_);
     _initializeOwner(owner_);
   }
 
@@ -206,20 +210,23 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      operation storage (the Request does not expose it) so the loan clock can only
   ///      start while at least MIN_DEADLINE_BUFFER remains before it; see
   ///      {LibStorage.checkConsumptionWindow}. The Retargetter becomes the Request's owner,
-  ///      puller and consumer.
+  ///      puller and consumer. The operation runs against the bound position manager.
   function startRetargetting(
-    address positionManager,
     uint256 principal,
     uint16 maxYieldBps_,
     address fund,
     string calldata requestName,
     string calldata requestSymbol
   ) external onlyOwnerOrRebalancer nonReentrant returns (address request) {
-    uint16 configCap = LibStorage.configStorage().maxYieldBps;
-    uint16 effectiveYieldCap = maxYieldBps_ < configCap ? maxYieldBps_ : configCap;
+    // Block-scoped so configCap does not deepen the stack for the rest of the function
+    uint16 effectiveYieldCap;
+    {
+      uint16 configCap = LibStorage.configStorage().maxYieldBps;
+      effectiveYieldCap = maxYieldBps_ < configCap ? maxYieldBps_ : configCap;
+    }
 
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
-    _checkStart(operation_, positionManager, fund, principal, effectiveYieldCap);
+    address positionManager = _checkStart(operation_, fund, principal, effectiveYieldCap);
 
     // Safe: block.timestamp + 90 days fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -586,17 +593,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      window close, so nothing persists past the transaction. Atomicity is the
   ///      settlement invariant: either the whole retarget lands (loan repaid, no stored
   ///      order, residual within the configured tolerance) or the transaction reverts.
-  function startSyncRetargetting(
-    address positionManager,
-    address flashLoanModule,
-    uint256 flashLoanAmount,
-    address fund,
-    bytes[] calldata data
-  ) external onlyOwnerOrRebalancer {
+  function startSyncRetargetting(address flashLoanModule, uint256 flashLoanAmount, address fund, bytes[] calldata data)
+    external
+    onlyOwnerOrRebalancer
+  {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     // The flash repayment carries no yield, so the window's principal cap is sized on a
     // zero yield cap (the pure one-trip headroom bound)
-    _checkStart(operation_, positionManager, fund, flashLoanAmount, 0);
+    address positionManager = _checkStart(operation_, fund, flashLoanAmount, 0);
     if (!LibStorage.whitelistsStorage().flashLoanModules[flashLoanModule]) {
       revert LibRetargetterErrors.ModuleNotWhitelisted();
     }
@@ -730,19 +734,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev Mirrors setFund: the pair is checked once here instead of at every operation
-  ///      start, and removal is blocked while the position manager is bound to the active
-  ///      operation. Every start-gate and principal-cap read trusts what the bound address
-  ///      reports about itself, which is why the binding is owner-curated.
-  function setPositionManager(address positionManager, bool whitelisted) external onlyOwner nonReentrant {
-    if (whitelisted) {
-      positionManager.checkContract();
-      _checkPair(positionManager);
-    } else if (LibStorage.operationStorage().positionManager == positionManager) {
-      revert LibRetargetterErrors.OperationActive();
-    }
-    LibStorage.whitelistsStorage().positionManagers[positionManager] = whitelisted;
-    emit PositionManagerSet(positionManager, whitelisted);
+  /// @dev Binds the single position manager every operation runs against. Rebindable only
+  ///      while no operation is active, so a live operation's binding never moves under it.
+  ///      Every start-gate and principal-cap read trusts what the bound address reports about
+  ///      itself, which is why the binding is owner-curated rather than caller-supplied.
+  function setPositionManager(address positionManager) external onlyOwner nonReentrant {
+    if (LibStorage.operationStorage().positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
+    _setPositionManager(positionManager);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -799,9 +797,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      carry, so this view is a safe floor for every permissible operation; the operation
   ///      gates size on the effective per-operation cap instead (zero for a SYNC window,
   ///      whose flash repayment carries no yield) and can admit up to that looser bound.
-  ///      See {_maxPrincipal} for the formula.
-  function maxPrincipal(address positionManager) public view returns (uint256) {
-    return _maxPrincipal(positionManager, LibStorage.configStorage().maxYieldBps);
+  ///      See {_maxPrincipal} for the formula. Reverts if no position manager is bound.
+  function maxPrincipal() public view returns (uint256) {
+    return _maxPrincipal(LibStorage.assetsStorage().positionManager, LibStorage.configStorage().maxYieldBps);
   }
 
   /// @inheritdoc IRetargetter
@@ -842,8 +840,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  function isPositionManager(address positionManager) external view returns (bool) {
-    return LibStorage.whitelistsStorage().positionManagers[positionManager];
+  function boundPositionManager() external view returns (address) {
+    return LibStorage.assetsStorage().positionManager;
   }
 
   /// @inheritdoc IRetargetter
@@ -881,27 +879,34 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     emit ConfigSet(config_);
   }
 
-  /// @dev Shared start gate of both entry points. One operation at a time: the position
-  ///      manager doubles as the active flag, and a SYNC window keeps it populated, so this
-  ///      also locks out starts smuggled into a window payload. No leftover order,
-  ///      whitelisted position manager (its pair was checked at setPositionManager),
+  /// @dev Validates and stores the bound position manager, emitting {PositionManagerBound}.
+  ///      Checks it is a contract and its assets match the bound pair, so every later
+  ///      start-gate and cap read can trust the binding. Shared by {initialize} and
+  ///      {setPositionManager}; the active-operation guard lives in the external setter.
+  function _setPositionManager(address positionManager) internal {
+    positionManager.checkContract();
+    _checkPair(positionManager);
+    LibStorage.assetsStorage().positionManager = positionManager;
+    emit PositionManagerBound(positionManager);
+  }
+
+  /// @dev Shared start gate of both entry points, returning the bound position manager. One
+  ///      operation at a time: the operation's position manager doubles as the active flag,
+  ///      and a SYNC window keeps it populated, so this also locks out starts smuggled into a
+  ///      window payload. Requires a bound position manager (its pair was checked at bind), a
   ///      whitelisted fund, and the requested amount within the live principal cap sized on
-  ///      the operation's yield cap (fail-fast for ASYNC, where the binding check re-runs at
-  ///      every consume; zero for SYNC, whose flash repayment carries no yield).
-  function _checkStart(
-    RetargetterOperation storage operation_,
-    address positionManager,
-    address fund,
-    uint256 amount,
-    uint16 yieldCapBps
-  ) internal view {
+  ///      the operation's yield cap (fail-fast for ASYNC, where the cap re-runs at every
+  ///      consume; zero for SYNC, whose flash repayment carries no yield).
+  function _checkStart(RetargetterOperation storage operation_, address fund, uint256 amount, uint16 yieldCapBps)
+    internal
+    view
+    returns (address positionManager)
+  {
     if (operation_.positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
-    RetargetterWhitelists storage whitelists_ = LibStorage.whitelistsStorage();
-    if (!whitelists_.positionManagers[positionManager]) {
-      revert LibRetargetterErrors.PositionManagerNotWhitelisted();
-    }
-    if (!whitelists_.funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
+    positionManager = LibStorage.assetsStorage().positionManager;
+    if (positionManager == address(0)) revert LibRetargetterErrors.PositionManagerNotBound();
+    if (!LibStorage.whitelistsStorage().funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
     if (amount > _maxPrincipal(positionManager, yieldCapBps)) revert LibRetargetterErrors.PrincipalCapExceeded();
   }
 

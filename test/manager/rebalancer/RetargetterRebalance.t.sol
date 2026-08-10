@@ -774,7 +774,7 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
       )
     );
 
-    assertEq(retargetter.maxPrincipal(address(positionManager)), 0, "cap collapsed at target");
+    assertEq(retargetter.maxPrincipal(), 0, "cap collapsed at target");
 
     // The principal gate rejects any further consume once the Request call returns; the
     // offer is signed and approved so the revert comes from the cap re-check

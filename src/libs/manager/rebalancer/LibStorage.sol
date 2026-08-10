@@ -17,24 +17,26 @@ import {
   MIN_DEADLINE_BUFFER
 } from "./LibRetargetterConstants.sol";
 
-/// @notice The Retargetter's bound asset pair (namespace "retargetter.assets").
-/// @dev Written once at initialize, never mutated afterwards.
+/// @notice The Retargetter's instance bindings (namespace "retargetter.assets").
+/// @dev The pair is written once at initialize and never mutated; the position manager is
+///      owner-bound and rebindable while no operation is active.
 /// @param collateralAsset The collateral asset every position manager and fund must match
 /// @param debtAsset The debt asset every position manager, fund and Request must match
+/// @param positionManager The single position manager every operation runs against, bound by
+///        the owner (its assets are checked against the pair at bind time)
 struct RetargetterAssets {
   address collateralAsset;
   address debtAsset;
+  address positionManager;
 }
 
 /// @notice The Retargetter's whitelists (namespace "retargetter.whitelists").
 /// @dev Plain mappings without enumeration; indexers use the add/remove events.
 /// @param funds The owner-approved venues
 /// @param flashLoanModules The owner-approved flash-loan adapters
-/// @param positionManagers The owner-approved position managers an operation may bind to
 struct RetargetterWhitelists {
   mapping(address fund => bool) funds;
   mapping(address module => bool) flashLoanModules;
-  mapping(address positionManager => bool) positionManagers;
 }
 
 /// @notice The one in-flight operation (namespace "retargetter.operation").

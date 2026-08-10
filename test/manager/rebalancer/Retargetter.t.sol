@@ -44,8 +44,9 @@ contract RetargetterTest is RetargetterBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_factory_createRetargetterDeploysInitializesAndRegisters() public {
-    address instance =
-      retargetterFactory.createRetargetter(owner, address(collateralToken), address(debtToken), _defaultConfig());
+    address instance = retargetterFactory.createRetargetter(
+      owner, address(collateralToken), address(debtToken), address(0), _defaultConfig()
+    );
 
     assertGt(instance.code.length, 0, "proxy deployed");
     assertTrue(retargetterFactory.isRetargetter(instance), "registered");
@@ -56,20 +57,41 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(collateralAsset, address(collateralToken), "collateral asset initialized");
     assertEq(debtAsset, address(debtToken), "debt asset initialized");
     assertEq(Retargetter(instance).owner(), owner, "owner initialized");
+    assertEq(Retargetter(instance).boundPositionManager(), address(0), "unbound when created with the zero address");
+  }
+
+  function test_factory_createRetargetterBindsPositionManagerAtInit() public {
+    // Passing a position manager at creation binds it through the init path
+    address instance = retargetterFactory.createRetargetter(
+      owner, address(collateralToken), address(debtToken), address(positionManager), _defaultConfig()
+    );
+    assertEq(Retargetter(instance).boundPositionManager(), address(positionManager), "bound at init");
+  }
+
+  function test_factory_createRetargetterRevertsOnPairMismatchAtInit() public {
+    // The init bind runs the same pair check as the setter
+    MockERC20 otherDebt = new MockERC20("Other Debt", "ODEBT", 18);
+    vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
+    retargetterFactory.createRetargetter(
+      owner, address(collateralToken), address(otherDebt), address(positionManager), _defaultConfig()
+    );
   }
 
   function test_factory_createRetargetterEmitsEvent() public {
     // The proxy address is not known ahead of the call, so topic 1 is unchecked
     vm.expectEmit(false, true, true, true, address(retargetterFactory));
     emit RetargetterFactory.RetargetterCreated(address(0), owner, address(collateralToken), address(debtToken));
-    retargetterFactory.createRetargetter(owner, address(collateralToken), address(debtToken), _defaultConfig());
+    retargetterFactory.createRetargetter(
+      owner, address(collateralToken), address(debtToken), address(0), _defaultConfig()
+    );
   }
 
   function test_factory_permissionlessCreation() public {
     address randomCreator = makeAddr("randomCreator");
     vm.prank(randomCreator);
-    address instance =
-      retargetterFactory.createRetargetter(user, address(collateralToken), address(debtToken), _defaultConfig());
+    address instance = retargetterFactory.createRetargetter(
+      user, address(collateralToken), address(debtToken), address(0), _defaultConfig()
+    );
 
     assertTrue(retargetterFactory.isRetargetter(instance), "registered");
     assertEq(Retargetter(instance).owner(), user, "owner is the passed owner, not the creator");
@@ -90,7 +112,7 @@ contract RetargetterTest is RetargetterBaseTest {
       Retargetter(UpgradeableBeacon(retargetterFactory.RETARGETTER_BEACON()).implementation());
 
     vm.expectRevert(Initializable.InvalidInitialization.selector);
-    implementation.initialize(owner, address(collateralToken), address(debtToken), _defaultConfig());
+    implementation.initialize(owner, address(collateralToken), address(debtToken), address(0), _defaultConfig());
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -136,27 +158,29 @@ contract RetargetterTest is RetargetterBaseTest {
 
   function test_initialize_revertZeroOwner() public {
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
-    retargetterFactory.createRetargetter(address(0), address(collateralToken), address(debtToken), _defaultConfig());
+    retargetterFactory.createRetargetter(
+      address(0), address(collateralToken), address(debtToken), address(0), _defaultConfig()
+    );
   }
 
   function test_initialize_revertNonContractAssets() public {
     address nonContract = makeAddr("nonContract");
 
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, nonContract));
-    retargetterFactory.createRetargetter(owner, nonContract, address(debtToken), _defaultConfig());
+    retargetterFactory.createRetargetter(owner, nonContract, address(debtToken), address(0), _defaultConfig());
 
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, nonContract));
-    retargetterFactory.createRetargetter(owner, address(collateralToken), nonContract, _defaultConfig());
+    retargetterFactory.createRetargetter(owner, address(collateralToken), nonContract, address(0), _defaultConfig());
   }
 
   function test_initialize_revertIdenticalAssets() public {
     vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
-    retargetterFactory.createRetargetter(owner, address(debtToken), address(debtToken), _defaultConfig());
+    retargetterFactory.createRetargetter(owner, address(debtToken), address(debtToken), address(0), _defaultConfig());
   }
 
   function test_initialize_revertDoubleInitialize() public {
     vm.expectRevert(Initializable.InvalidInitialization.selector);
-    retargetter.initialize(owner, address(collateralToken), address(debtToken), _defaultConfig());
+    retargetter.initialize(owner, address(collateralToken), address(debtToken), address(0), _defaultConfig());
   }
 
   function test_initialize_revertConfigBoundViolations() public {
@@ -341,7 +365,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
     // Zero-estimate cap: the one-trip bound (target * K - D) / (1 + yieldCap - target)
     // undercuts the buffered ideal (see test_maxPrincipal_upBranchZeroEstimates)
-    uint256 capBefore = retargetter.maxPrincipal(address(positionManager));
+    uint256 capBefore = retargetter.maxPrincipal();
     assertEq(
       capBefore, (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / yieldCapDenominator, "zero-estimate cap"
     );
@@ -361,7 +385,7 @@ contract RetargetterTest is RetargetterBaseTest {
     retargetter.setEstimates(estimates);
 
     // The drifted debt D * 1.1 tightens both formulas; the one-trip bound still binds
-    uint256 capAfter = retargetter.maxPrincipal(address(positionManager));
+    uint256 capAfter = retargetter.maxPrincipal();
     uint256 driftedDebt = debt * (WAD + 0.1e18) / WAD;
     assertEq(
       capAfter,
@@ -490,15 +514,15 @@ contract RetargetterTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.setPositionManager(address(positionManager), false);
+    retargetter.setPositionManager(address(positionManager));
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, stranger));
-    retargetter.setPositionManager(stranger, true);
+    retargetter.setPositionManager(stranger);
   }
 
   function test_setPositionManager_revertAssetMismatch() public {
-    // A position manager on a different asset pair never gets whitelisted
+    // A position manager on a different asset pair cannot be bound
     MockERC20 otherCollateral = new MockERC20("Other Collateral", "OCOLL", 18);
     MockERC20 otherDebt = new MockERC20("Other Debt", "ODEBT", 18);
     PositionManager otherPositionManager = PositionManager(LibClone.clone(address(new PositionManager())));
@@ -518,13 +542,14 @@ contract RetargetterTest is RetargetterBaseTest {
 
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
-    retargetter.setPositionManager(address(otherPositionManager), true);
+    retargetter.setPositionManager(address(otherPositionManager));
   }
 
-  function test_setPositionManager_emitsAndWhitelists() public {
-    assertTrue(retargetter.isPositionManager(address(positionManager)), "fixture manager whitelisted");
+  function test_setPositionManager_rebindsWhileIdle() public {
+    // The fixture bound its manager at creation
+    assertEq(retargetter.boundPositionManager(), address(positionManager), "fixture manager bound");
 
-    // A fresh manager on the bound pair whitelists cleanly
+    // A fresh manager on the bound pair rebinds cleanly while idle
     PositionManager second = PositionManager(LibClone.clone(address(new PositionManager())));
     second.initialize(
       owner,
@@ -539,35 +564,22 @@ contract RetargetterTest is RetargetterBaseTest {
       0,
       0
     );
-    assertFalse(retargetter.isPositionManager(address(second)), "not whitelisted before");
 
     vm.prank(owner);
     vm.expectEmit(address(retargetter));
-    emit IRetargetter.PositionManagerSet(address(second), true);
-    retargetter.setPositionManager(address(second), true);
-    assertTrue(retargetter.isPositionManager(address(second)), "whitelisted after");
-
-    // Removal skips the pair check and emits the same event, flag down
-    vm.prank(owner);
-    vm.expectEmit(address(retargetter));
-    emit IRetargetter.PositionManagerSet(address(second), false);
-    retargetter.setPositionManager(address(second), false);
-    assertFalse(retargetter.isPositionManager(address(second)), "removed after");
+    emit IRetargetter.PositionManagerBound(address(second));
+    retargetter.setPositionManager(address(second));
+    assertEq(retargetter.boundPositionManager(), address(second), "rebound to the new manager");
   }
 
-  function test_setPositionManager_revertOperationActiveForBoundManager() public {
+  function test_setPositionManager_revertOperationActive() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(4_000e18, 100);
 
-    // The operation's manager cannot be removed while the operation is active
+    // The binding cannot move while an operation is active
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.setPositionManager(address(positionManager), false);
-
-    // Re-whitelisting the bound manager is a harmless no-op
-    vm.prank(owner);
-    retargetter.setPositionManager(address(positionManager), true);
-    assertTrue(retargetter.isPositionManager(address(positionManager)), "still whitelisted");
+    retargetter.setPositionManager(address(positionManager));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -672,7 +684,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
   function test_maxPrincipal_revertEmptyPosition() public {
     vm.expectRevert(LibRetargetterErrors.EmptyPosition.selector);
-    retargetter.maxPrincipal(address(positionManager));
+    retargetter.maxPrincipal();
   }
 
   function test_maxPrincipal_revertBadDebtPosition() public {
@@ -681,14 +693,14 @@ contract RetargetterTest is RetargetterBaseTest {
     oracle.setPrice(0);
 
     vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.BadDebtPosition.selector, address(positionManager)));
-    retargetter.maxPrincipal(address(positionManager));
+    retargetter.maxPrincipal();
   }
 
   function test_maxPrincipal_zeroExactlyAtTarget() public {
     // LTV 7000/10000 == the 0.7 target: neither direction applies, the cap is zero
     _seedPosition(10_000e18, 7_000e18);
     assertEq(_currentLtv(), POSITION_MANAGER_LTV, "position exactly at target");
-    assertEq(retargetter.maxPrincipal(address(positionManager)), 0, "cap is zero at target");
+    assertEq(retargetter.maxPrincipal(), 0, "cap is zero at target");
   }
 
   function test_maxPrincipal_upBranchZeroEstimates() public {
@@ -704,7 +716,7 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 oneTrip = numerator * WAD / (WAD + uint256(DEFAULT_MAX_YIELD_BPS) * WAD / BPS - POSITION_MANAGER_LTV);
     assertLt(oneTrip, buffered, "the one-trip bound binds");
 
-    assertEq(retargetter.maxPrincipal(address(positionManager)), oneTrip, "up cap");
+    assertEq(retargetter.maxPrincipal(), oneTrip, "up cap");
   }
 
   function test_maxPrincipal_downBranchZeroEstimates() public {
@@ -719,7 +731,7 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 idealPrincipal = (debt - target * collateralQuoted / WAD) * WAD / (WAD - target);
     uint256 expectedCap = idealPrincipal * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS;
 
-    assertEq(retargetter.maxPrincipal(address(positionManager)), expectedCap, "down cap");
+    assertEq(retargetter.maxPrincipal(), expectedCap, "down cap");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -732,7 +744,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   function test_startRetargetting_revertFundNotWhitelisted() public {
@@ -740,46 +752,35 @@ contract RetargetterTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.FundNotWhitelisted.selector);
-    retargetter.startRetargetting(
-      address(positionManager), 1e18, 100, address(strangerFund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    retargetter.startRetargetting(1e18, 100, address(strangerFund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
-  function test_startRetargetting_revertPositionManagerNotWhitelisted() public {
-    // A position manager on the right pair that the owner never whitelisted
-    PositionManager strangerPositionManager = PositionManager(LibClone.clone(address(new PositionManager())));
-    strangerPositionManager.initialize(
-      owner,
-      PositionManagerMetadata({
-        name: "Stranger Position Manager",
-        symbol: "SPMS",
-        collateralAsset: address(collateralToken),
-        debtAsset: address(debtToken)
-      }),
-      POSITION_MANAGER_LTV,
-      address(0),
-      0,
-      0
+  function test_startRetargetting_revertPositionManagerNotBound() public {
+    // A fresh instance created without a bound position manager (address(0) at init)
+    Retargetter unbound = Retargetter(
+      retargetterFactory.createRetargetter(
+        owner, address(collateralToken), address(debtToken), address(0), _defaultConfig()
+      )
     );
+    vm.prank(owner);
+    unbound.grantRoles(rebalancer, RETARGETTER_REBALANCER_ROLE);
+    vm.prank(owner);
+    unbound.setFund(address(fund), true);
 
     vm.prank(rebalancer);
-    vm.expectRevert(LibRetargetterErrors.PositionManagerNotWhitelisted.selector);
-    retargetter.startRetargetting(
-      address(strangerPositionManager), 1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    vm.expectRevert(LibRetargetterErrors.PositionManagerNotBound.selector);
+    unbound.startRetargetting(1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   function test_startRetargetting_revertPrincipalCapExceeded() public {
     _seedPosition(10_000e18, 5_000e18);
     // The view sizes the cap on the config yield-cap ceiling; a start at that same ceiling
     // is gated by exactly this value
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    uint256 cap = retargetter.maxPrincipal();
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.startRetargetting(
-      address(positionManager), cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    retargetter.startRetargetting(cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   function test_startRetargetting_revertUnauthorized() public {
@@ -787,7 +788,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
     vm.prank(user);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.startRetargetting(address(positionManager), 6_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(6_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   function test_startRetargetting_effectiveYieldCapCallerLower() public {
@@ -797,7 +798,7 @@ contract RetargetterTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     vm.expectEmit(true, false, true, true, address(retargetter));
     emit IRetargetter.RetargettingStarted(address(positionManager), address(0), address(fund), 6_000e18, 100);
-    retargetter.startRetargetting(address(positionManager), 6_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(6_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
     (,,,,, uint16 operationMaxYieldBps,,,,,) = retargetter.operation();
     assertEq(operationMaxYieldBps, 100, "caller cap recorded");
@@ -813,9 +814,7 @@ contract RetargetterTest is RetargetterBaseTest {
     emit IRetargetter.RetargettingStarted(
       address(positionManager), address(0), address(fund), 4_000e18, DEFAULT_MAX_YIELD_BPS
     );
-    retargetter.startRetargetting(
-      address(positionManager), 4_000e18, 2_000, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    retargetter.startRetargetting(4_000e18, 2_000, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
     (,,,,, uint16 operationMaxYieldBps,,,,,) = retargetter.operation();
     assertEq(operationMaxYieldBps, DEFAULT_MAX_YIELD_BPS, "config cap recorded");
@@ -870,7 +869,7 @@ contract RetargetterTest is RetargetterBaseTest {
   function test_consume_revertPrincipalCapExceededCumulative() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    uint256 cap = retargetter.maxPrincipal();
     assertLt(cap, 7_000e18, "cap sanity");
 
     _consume(request, 6_000e18, 60e18, 6_000e18);
@@ -1028,9 +1027,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
     _seedPosition(10_000e18, 5_000e18);
     vm.startPrank(rebalancer);
-    retargetter.startRetargetting(
-      address(positionManager), 0, 100, address(reenteringFund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    retargetter.startRetargetting(0, 100, address(reenteringFund), REQUEST_NAME, REQUEST_SYMBOL);
     retargetter.create(_order(Mode.DEPOSIT, 100e18, 100e18, bytes32(uint256(1))));
 
     vm.expectRevert(LibRetargetterErrors.Reentrancy.selector);
@@ -1126,6 +1123,11 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 slot1 = uint256(vm.load(address(retargetter), bytes32(uint256(ASSETS_STORAGE_SLOT) + 1)));
     assertEq(address(uint160(slot1)), address(debtToken), "debt asset in second slot");
     assertEq(slot1 >> 160, 0, "assets slot 1 upper bits clean");
+
+    // The bound position manager occupies the third slot (bound at creation in the fixture)
+    uint256 slot2 = uint256(vm.load(address(retargetter), bytes32(uint256(ASSETS_STORAGE_SLOT) + 2)));
+    assertEq(address(uint160(slot2)), address(positionManager), "bound position manager in third slot");
+    assertEq(slot2 >> 160, 0, "assets slot 2 upper bits clean");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -1135,7 +1137,7 @@ contract RetargetterTest is RetargetterBaseTest {
   /// @dev Expects the next factory creation with the given config to revert InvalidParameters.
   function _expectCreateInvalidParameters(RetargetterConfig memory config_) internal {
     vm.expectRevert(LibRetargetterErrors.InvalidParameters.selector);
-    retargetterFactory.createRetargetter(owner, address(collateralToken), address(debtToken), config_);
+    retargetterFactory.createRetargetter(owner, address(collateralToken), address(debtToken), address(0), config_);
   }
 
   /// @dev Computes an ERC-7201 slot: keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~0xff.

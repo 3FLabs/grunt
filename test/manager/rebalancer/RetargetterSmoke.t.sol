@@ -77,7 +77,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     );
 
     vm.prank(rebalancer);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     assertFalse(retargetter.isActive(), "no persistent operation");
     assertEq(debtToken.balanceOf(address(retargetter)), 0, "zero debt residual");
@@ -99,7 +99,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     _plantStrayOrder();
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OrderActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   function test_startSyncRetargetting_revertsOrderActiveOnStrayOrder() public {
@@ -107,9 +107,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     _plantStrayOrder();
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OrderActive.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1e18, address(fund), new bytes[](0));
   }
 
   function test_repay_zeroShortfallWhenRequestBalanceCovers() public {

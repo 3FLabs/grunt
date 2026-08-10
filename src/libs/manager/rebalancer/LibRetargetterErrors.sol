@@ -36,8 +36,8 @@ library LibRetargetterErrors {
   /// @notice Thrown when binding a fund that is not owner-whitelisted.
   error FundNotWhitelisted();
 
-  /// @notice Thrown when binding a position manager that is not owner-whitelisted.
-  error PositionManagerNotWhitelisted();
+  /// @notice Thrown when starting an operation before the owner has bound a position manager.
+  error PositionManagerNotBound();
 
   /// @notice Thrown when using a flash-loan module that is not owner-whitelisted.
   error ModuleNotWhitelisted();

@@ -151,10 +151,9 @@ interface IRetargetter {
   /// @param whitelisted Whether the module is now whitelisted
   event FlashLoanModuleSet(address indexed module, bool whitelisted);
 
-  /// @notice Emitted when a position manager's whitelist entry is set.
-  /// @param positionManager The position manager
-  /// @param whitelisted Whether the position manager is now whitelisted
-  event PositionManagerSet(address indexed positionManager, bool whitelisted);
+  /// @notice Emitted when the owner binds the instance to a position manager.
+  /// @param positionManager The position manager the instance is now bound to
+  event PositionManagerBound(address indexed positionManager);
 
   /// @notice Emitted when the yield estimates are updated.
   /// @param estimates The new estimates
@@ -168,11 +167,11 @@ interface IRetargetter {
   /*                        ASYNC FLOW                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Starts an asynchronous retargetting operation by deploying a fresh Request.
+  /// @notice Starts an asynchronous retargetting operation against the bound position manager
+  ///         by deploying a fresh Request.
   /// @dev The repayment terms (horizon, tick duration, tick threshold) and the effective
   ///      yield cap are snapshotted into the operation here; a later setConfig does not
-  ///      reprice a started operation.
-  /// @param positionManager The owner-whitelisted position manager to retarget
+  ///      reprice a started operation. Reverts if no position manager is bound.
   /// @param principal The intended principal, fail-fast checked against the cap
   /// @param maxYieldBps_ The caller's yield cap; the effective cap is min(config, caller)
   /// @param fund The whitelisted fund to bind to the operation
@@ -180,7 +179,6 @@ interface IRetargetter {
   /// @param requestSymbol The base symbol for the Request's PT/YT tokens
   /// @return request The deployed Request
   function startRetargetting(
-    address positionManager,
     uint256 principal,
     uint16 maxYieldBps_,
     address fund,
@@ -302,27 +300,23 @@ interface IRetargetter {
   /*                         SYNC FLOW                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Runs a whole retargetting operation atomically inside a flash loan.
+  /// @notice Runs a whole retargetting operation against the bound position manager atomically
+  ///         inside a flash loan.
   /// @dev The steps are supplied as a multicall payload executed inside the flash-loan
   ///      callback. The callback is bound to this exact payload (digest match) and requires
   ///      the loan delivered in full before any step runs. At window close no order may be
   ///      stored and the Retargetter's balances of both bound assets must be within the
-  ///      configured residual tolerance. The position manager's rebalance cooldown is
-  ///      enforced per rebalance call, so with a nonzero cooldown compatible legs must be
-  ///      packed into a single rebalance step, and a route needing an intervening fund action
-  ///      between two rebalances runs as separate transactions.
-  /// @param positionManager The owner-whitelisted position manager to retarget
+  ///      configured residual tolerance. Reverts if no position manager is bound. The position
+  ///      manager's rebalance cooldown is enforced per rebalance call, so with a nonzero
+  ///      cooldown compatible legs must be packed into a single rebalance step, and a route
+  ///      needing an intervening fund action between two rebalances runs as separate
+  ///      transactions.
   /// @param flashLoanModule The whitelisted flash-loan module to borrow through
   /// @param flashLoanAmount The flash-loan size, checked against the principal cap
   /// @param fund The whitelisted fund the payload may create orders against
   /// @param data The step calls executed inside the flash-loan window
-  function startSyncRetargetting(
-    address positionManager,
-    address flashLoanModule,
-    uint256 flashLoanAmount,
-    address fund,
-    bytes[] calldata data
-  ) external;
+  function startSyncRetargetting(address flashLoanModule, uint256 flashLoanAmount, address fund, bytes[] calldata data)
+    external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       CONFIGURATION                        */
@@ -354,15 +348,14 @@ interface IRetargetter {
   /// @param whitelisted Whether the module should be whitelisted
   function setFlashLoanModule(address module, bool whitelisted) external;
 
-  /// @notice Sets a position manager's whitelist entry.
-  /// @dev Operations only bind to whitelisted position managers: every start-gate and
-  ///      principal-cap read trusts what the bound address reports about itself, so the
-  ///      binding is owner-curated like funds and flash-loan modules. Whitelisting checks
-  ///      the position manager is a contract and its assets match the bound pair; removal
-  ///      skips those checks but reverts while it is bound to the active operation.
-  /// @param positionManager The position manager
-  /// @param whitelisted Whether the position manager should be whitelisted
-  function setPositionManager(address positionManager, bool whitelisted) external;
+  /// @notice Binds the single position manager every operation runs against.
+  /// @dev Operations never take a position manager as an argument: they run against this
+  ///      binding, so every start-gate and principal-cap read trusts an owner-curated
+  ///      address rather than a caller-supplied one. Checks the position manager is a
+  ///      contract and its assets match the bound pair, and reverts while an operation is
+  ///      active (the binding can only be rotated while idle). Also settable at initialize.
+  /// @param positionManager The position manager to bind
+  function setPositionManager(address positionManager) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
@@ -412,7 +405,7 @@ interface IRetargetter {
   ///         flash-loan window for the duration of its transaction).
   function isActive() external view returns (bool);
 
-  /// @notice Computes the current principal cap for a position manager.
+  /// @notice Computes the current principal cap for the bound position manager.
   /// @dev Quoter formula on live state with the owner estimates, auto-detected direction,
   ///      times one plus the principal buffer. Below target the cap is further bounded by
   ///      the one-trip repayment bound, so a cap-sized, fully deployed operation can always
@@ -420,10 +413,10 @@ interface IRetargetter {
   ///      This view sizes that bound on the config yield-cap ceiling, a safe floor for
   ///      every permissible operation; the operation gates size it on the effective
   ///      per-operation cap (zero for a SYNC window, whose flash repayment carries no
-  ///      yield) and can admit up to that looser bound.
-  /// @param positionManager The position manager to size against
+  ///      yield) and can admit up to that looser bound. Reverts if no position manager is
+  ///      bound.
   /// @return The principal cap in debt-asset units
-  function maxPrincipal(address positionManager) external view returns (uint256);
+  function maxPrincipal() external view returns (uint256);
 
   /// @notice Returns the current amount owed on the active operation's Request.
   function owed() external view returns (uint256);
@@ -447,9 +440,8 @@ interface IRetargetter {
   /// @param module The module to check
   function isFlashLoanModule(address module) external view returns (bool);
 
-  /// @notice Returns whether a position manager is whitelisted.
-  /// @param positionManager The position manager to check
-  function isPositionManager(address positionManager) external view returns (bool);
+  /// @notice Returns the bound position manager (zero when none is bound).
+  function boundPositionManager() external view returns (address);
 
   /// @notice Returns the quoter holding the sizing math.
   function quoter() external view returns (address);

@@ -226,7 +226,7 @@ contract RetargetterHandler is Test {
   function act_startAsync(uint256 principalSeed, uint256 yieldCapSeed) external trackStartedAt {
     if (retargetter.isActive()) return;
     uint256 cap;
-    try retargetter.maxPrincipal(address(positionManager)) returns (uint256 cap_) {
+    try retargetter.maxPrincipal() returns (uint256 cap_) {
       cap = cap_;
     } catch {
       return;
@@ -235,9 +235,7 @@ contract RetargetterHandler is Test {
     // Above the 1000 bps config ceiling half the time so the min() clamp gets exercised
     uint16 yieldCap = uint16(_bound(yieldCapSeed, 0, 2000));
     vm.prank(rebalancer);
-    try retargetter.startRetargetting(
-      address(positionManager), principal, yieldCap, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    ) returns (
+    try retargetter.startRetargetting(principal, yieldCap, address(fund), REQUEST_NAME, REQUEST_SYMBOL) returns (
       address request
     ) {
       lastRequest = request;
@@ -544,7 +542,7 @@ contract RetargetterHandler is Test {
     if (retargetter.isActive()) return;
     uint256 shape = _bound(uint256(shapeSeed), 0, 2);
     uint256 cap;
-    try retargetter.maxPrincipal(address(positionManager)) returns (uint256 cap_) {
+    try retargetter.maxPrincipal() returns (uint256 cap_) {
       cap = cap_;
     } catch {
       return;
@@ -575,7 +573,7 @@ contract RetargetterHandler is Test {
     }
 
     vm.prank(rebalancer);
-    try retargetter.startSyncRetargetting(address(positionManager), flashLoanAdapter, amount, address(fund), calls) {
+    try retargetter.startSyncRetargetting(flashLoanAdapter, amount, address(fund), calls) {
       syncSuccessCount++;
     } catch {}
 

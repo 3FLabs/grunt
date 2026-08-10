@@ -30,11 +30,12 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///      3. Deploy the MorphoFlashLoanAdapter once per chain (its constructor takes Morpho
 ///         Blue's address).
 ///      4. The instance owner grants the Retargetter's own REBALANCER_ROLE (Solady _ROLE_0,
-///         bit value 1) and CONSUMER_ROLE (Solady _ROLE_1, bit value 2), whitelists funds,
-///         the adapter and the served PositionManagers, and sets the yield estimates. Grant
-///         a PositionManager's REBALANCER_ROLE to at most one Retargetter: the
-///         one-operation-at-a-time guard is per instance, so a second grantee could admit
-///         the full principal cap on its own.
+///         bit value 1) and CONSUMER_ROLE (Solady _ROLE_1, bit value 2), whitelists funds
+///         and the adapter, binds the served PositionManager (at creation or via
+///         setPositionManager), and sets the yield estimates. Each instance runs against one
+///         bound PositionManager; grant a PositionManager's REBALANCER_ROLE to at most one
+///         Retargetter, since the one-operation-at-a-time guard is per instance and a second
+///         bound Retargetter could admit the full principal cap on its own.
 contract RetargetterFactory {
   using LibClone for address;
 
@@ -84,23 +85,26 @@ contract RetargetterFactory {
   /*                      FACTORY METHODS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Creates a new Retargetter proxy bound to an asset pair.
+  /// @notice Creates a new Retargetter proxy bound to an asset pair and, optionally, a
+  ///         position manager.
   /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically. Emits a
   ///      {RetargetterCreated} event.
   /// @param owner The address that will own the Retargetter
   /// @param collateralAsset The collateral asset of the bound pair
   /// @param debtAsset The debt asset of the bound pair
+  /// @param positionManager The position manager to bind, or the zero address to bind later
   /// @param config The initial configuration
   /// @return retargetter The address of the newly deployed Retargetter proxy
   function createRetargetter(
     address owner,
     address collateralAsset,
     address debtAsset,
+    address positionManager,
     RetargetterConfig calldata config
   ) external returns (address retargetter) {
     retargetter = RETARGETTER_BEACON.deployERC1967BeaconProxy();
 
-    Retargetter(retargetter).initialize(owner, collateralAsset, debtAsset, config);
+    Retargetter(retargetter).initialize(owner, collateralAsset, debtAsset, positionManager, config);
 
     _isRetargetter[retargetter] = true;
 

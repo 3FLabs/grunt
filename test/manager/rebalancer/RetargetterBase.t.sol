@@ -83,8 +83,11 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     requestFactory = new RequestFactory(owner);
     retargetterQuoter = new RetargetterQuoter();
     retargetterFactory = new RetargetterFactory(owner, address(retargetterQuoter), address(requestFactory));
+    // The instance is bound to its position manager at creation (the init bind path)
     retargetter = Retargetter(
-      retargetterFactory.createRetargetter(owner, address(collateralToken), address(debtToken), _defaultConfig())
+      retargetterFactory.createRetargetter(
+        owner, address(collateralToken), address(debtToken), address(positionManager), _defaultConfig()
+      )
     );
     fund = new MockRetargetterFund(address(debtToken), address(collateralToken));
     flashLoanAdapter = new MorphoFlashLoanAdapter(address(morpho));
@@ -94,7 +97,6 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     retargetter.grantRoles(consumer, RETARGETTER_CONSUMER_ROLE);
     retargetter.setFund(address(fund), true);
     retargetter.setFlashLoanModule(address(flashLoanAdapter), true);
-    retargetter.setPositionManager(address(positionManager), true);
     positionManager.grantRoles(address(retargetter), _ROLE_REBALANCER);
     // One basis point absorbs the Morpho rounding dust, no cooldown between steps
     positionManager.setRebalanceConfig(1, 0);
@@ -156,9 +158,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
   /// @dev Starts a default ASYNC operation as the rebalancer.
   function _startAsync(uint256 principal, uint16 maxYieldBps) internal returns (address request) {
     vm.prank(rebalancer);
-    request = retargetter.startRetargetting(
-      address(positionManager), principal, maxYieldBps, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    request = retargetter.startRetargetting(principal, maxYieldBps, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   /// @dev Builds a fresh offer from the maker wallet with a one-shot nonce.
