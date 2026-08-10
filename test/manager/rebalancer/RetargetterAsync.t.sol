@@ -1045,10 +1045,14 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
     retargetter.repay();
 
-    // Fold the pulled funds back into the position debt (below target is always allowed),
-    // then resolve through the state-mutating repaid sync
+    // The fold grows the position's net value, so it only lands because the value gate reads
+    // the Request through the same state-mutating sync resolve uses: past the deadline the
+    // Request reads repaid (and its stale flag is synced here) and the gate disarms
+    assertFalse(IRequest(request).isRepaid(), "repaid flag still stale before the rebalance");
     vm.prank(rebalancer);
     retargetter.rebalance(_rebalancingData(0, MAX_SENTINEL, RebalancingOperationType.REPAY, MAX_SENTINEL));
+    assertTrue(IRequest(request).isRepaid(), "rebalance synced the auto-expired Request");
+
     vm.prank(rebalancer);
     retargetter.resolve();
     assertFalse(retargetter.isActive(), "resolved");
@@ -1099,6 +1103,32 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     retargetter.consume(offer, signature, 100e18);
   }
 
+  /// @notice The bridge cannot be dissolved into the position: once Request principal has
+  ///         been converted to collateral, supplying it without borrowing the repayment back
+  ///         out reverts on the value-conservation gate, so existing position manager
+  ///         shareholders can never absorb Request-funded collateral.
+  function test_async_supplyWithoutBorrow_revertsPositionValueIncreased() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(6_000e18, 100);
+    _consume(request, 6_000e18, 60e18, 6_000e18);
+    vm.prank(rebalancer);
+    retargetter.pullRequestFunds(6_000e18);
+
+    vm.startPrank(rebalancer);
+    retargetter.create(_order(Mode.DEPOSIT, 6_000e18, 6_000e18, bytes32(uint256(42))));
+    retargetter.commit();
+    vm.stopPrank();
+    vm.warp(block.timestamp + 2 days);
+    fund.settle();
+    vm.prank(rebalancer);
+    retargetter.unlock();
+
+    // The supply-only tail: no BORROW leg pulls the repayment back out of the position
+    vm.prank(rebalancer);
+    vm.expectPartialRevert(LibRetargetterErrors.PositionValueIncreased.selector);
+    retargetter.rebalance(_rebalancingData(MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL));
+  }
+
   /// @notice One operation at a time: starting while active reverts for everyone, including
   ///         the owner.
   function test_startRetargetting_whileActive_reverts() public {
@@ -1128,8 +1158,10 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     retargetter.create(_order(Mode.DEPOSIT, 10e18, 10e18, salt));
     retargetter.commit();
     retargetter.unlock();
-    retargetter.rebalance(_rebalancingData(MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL));
+    // Settle the untouched Request first: folding the settled shares in grows totalAssets,
+    // which the value-conservation gate rejects while the Request is unrepaid
     retargetter.repay();
+    retargetter.rebalance(_rebalancingData(MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL));
     retargetter.resolve();
     vm.stopPrank();
     assertFalse(retargetter.isActive(), "first operation resolved");

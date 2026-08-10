@@ -10,7 +10,11 @@ import {IFlashLoanReceiver} from "src/interfaces/manager/rebalancer/IFlashLoanRe
 import {LibRetargetterErrors} from "src/libs/manager/rebalancer/LibRetargetterErrors.sol";
 import {LibFundsErrors} from "src/libs/funds/LibFundsErrors.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
-import {RebalancingOperationType} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
+import {
+  RebalancingData,
+  RebalancingOperation,
+  RebalancingOperationType
+} from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
@@ -38,19 +42,73 @@ contract WrongAmountFlashLoanModule is IFlashLoanModule {
   }
 }
 
-/// @dev Flash-loan module replaying the callback after the first one returns, without moving
-///      any funds. The second call must revert: the Retargetter zeroes its expected-module
-///      transient slot on callback entry, making the callback single-shot.
+/// @dev Flash-loan module delivering the principal, then replaying the callback after the
+///      first one returns. The second call must revert: the Retargetter zeroes its
+///      expected-module transient slot on callback entry, making the callback single-shot.
 contract ReplayingFlashLoanModule is IFlashLoanModule {
-  function flashLoan(address, uint256 amount, bytes calldata data) external {
+  using SafeTransferLib for address;
+
+  function flashLoan(address token, uint256 amount, bytes calldata data) external {
+    token.safeTransfer(msg.sender, amount);
     IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
     IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
   }
 }
 
+/// @dev Flash-loan module delivering the principal but forwarding its own payload instead of
+///      the one committed at the window open. The Retargetter must reject the digest
+///      mismatch before executing any step.
+contract PayloadSubstitutingFlashLoanModule is IFlashLoanModule {
+  using SafeTransferLib for address;
+
+  function flashLoan(address token, uint256 amount, bytes calldata) external {
+    token.safeTransfer(msg.sender, amount);
+    IFlashLoanReceiver(msg.sender).onFlashLoan(amount, abi.encode(new bytes[](0)));
+  }
+}
+
+/// @dev Flash-loan module forwarding the payload verbatim while delivering `shortfall` less
+///      than the nominal amount (nothing when the shortfall covers it). The Retargetter must
+///      reject the missing delivery before executing any step.
+contract PartialDeliveryFlashLoanModule is IFlashLoanModule {
+  using SafeTransferLib for address;
+
+  uint256 public immutable shortfall;
+
+  constructor(uint256 shortfall_) {
+    shortfall = shortfall_;
+  }
+
+  function flashLoan(address token, uint256 amount, bytes calldata data) external {
+    if (amount > shortfall) token.safeTransfer(msg.sender, amount - shortfall);
+    IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
+  }
+}
+
+/// @dev Flash-loan module delivering nothing of its own and instead trying to make the
+///      Retargetter borrow the principal out of the position manager before the callback,
+///      so the delivery check would read a balance it never funded. Step authority only
+///      covers the committed payload, so the rebalance call must revert Unauthorized.
+contract SelfFundingFlashLoanModule is IFlashLoanModule {
+  address public immutable BORROW_MODULE;
+
+  constructor(address borrowModule_) {
+    BORROW_MODULE = borrowModule_;
+  }
+
+  function flashLoan(address, uint256 amount, bytes calldata data) external {
+    RebalancingData memory borrowLeg;
+    borrowLeg.operations = new RebalancingOperation[](1);
+    borrowLeg.operations[0] =
+      RebalancingOperation({position: BORROW_MODULE, operationType: RebalancingOperationType.BORROW, amount: amount});
+    IRetargetter(msg.sender).rebalance(borrowLeg);
+    IFlashLoanReceiver(msg.sender).onFlashLoan(amount, data);
+  }
+}
+
 /// @dev Third party attempting a privileged Retargetter call while a flash-loan window is
-///      open. Window authority is bound to the module address, so the call must revert
-///      Unauthorized before reaching any other check.
+///      open. Step authority is bound to the module's committed payload, so the call must
+///      revert Unauthorized before reaching any other check.
 contract WindowThirdParty {
   function callPrivileged(address retargetter) external {
     IRetargetter(retargetter).cancelOrder();
@@ -547,16 +605,119 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
   function test_startSyncRetargetting_replayedCallbackReverts() public {
     _seedPosition(10_000e18, 5_000e18);
-    // Owner-whitelisted hostile module: the first callback succeeds (empty payload, no
-    // funds needed), the replay after it returns must hit the zeroed module slot
+    // Owner-whitelisted hostile module: the first callback succeeds (empty payload, funds
+    // delivered in full), the replay after it returns must hit the zeroed module slot
     ReplayingFlashLoanModule replayingModule = new ReplayingFlashLoanModule();
     vm.prank(owner);
     retargetter.setFlashLoanModule(address(replayingModule), true);
+    _mintDebt(address(replayingModule), 1_000e18);
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
     retargetter.startSyncRetargetting(
       address(positionManager), address(replayingModule), 1_000e18, address(fund), new bytes[](0)
+    );
+
+    _assertNoTrace();
+  }
+
+  function test_startSyncRetargetting_substitutedPayloadReverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    PayloadSubstitutingFlashLoanModule substitutingModule = new PayloadSubstitutingFlashLoanModule();
+    vm.prank(owner);
+    retargetter.setFlashLoanModule(address(substitutingModule), true);
+    uint256 amount = 1_000e18;
+    _mintDebt(address(substitutingModule), amount);
+
+    // A nonempty committed payload; the module swaps in an empty one of its own, which
+    // fails the digest check before any step executes
+    bytes[] memory calls = new bytes[](1);
+    calls[0] = abi.encodeCall(retargetter.cancelOrder, ());
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(substitutingModule), amount, address(fund), calls
+    );
+
+    _assertNoTrace();
+  }
+
+  function test_startSyncRetargetting_zeroDeliveryReverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    uint256 amount = 1_000e18;
+    PartialDeliveryFlashLoanModule zeroDeliveryModule = new PartialDeliveryFlashLoanModule(amount);
+    vm.prank(owner);
+    retargetter.setFlashLoanModule(address(zeroDeliveryModule), true);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalNotDelivered.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(zeroDeliveryModule), amount, address(fund), new bytes[](0)
+    );
+
+    _assertNoTrace();
+  }
+
+  function test_startSyncRetargetting_partialDeliveryReverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+    uint256 amount = 1_000e18;
+    PartialDeliveryFlashLoanModule partialDeliveryModule = new PartialDeliveryFlashLoanModule(1);
+    vm.prank(owner);
+    retargetter.setFlashLoanModule(address(partialDeliveryModule), true);
+    _mintDebt(address(partialDeliveryModule), amount - 1);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalNotDelivered.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(partialDeliveryModule), amount, address(fund), new bytes[](0)
+    );
+
+    _assertNoTrace();
+  }
+
+  /// @notice The module cannot fund the delivery out of the position manager: step
+  ///         authority covers the committed payload only, so a rebalance the module sends
+  ///         from its own frame (before the callback) is an ordinary unauthorized call.
+  ///         Without this scoping the delivery check would accept a balance the module
+  ///         borrowed through the Retargetter rather than delivered.
+  function test_startSyncRetargetting_moduleCannotFundDeliveryFromPosition() public {
+    _seedPosition(10_000e18, 1_000e18);
+    SelfFundingFlashLoanModule selfFundingModule = new SelfFundingFlashLoanModule(address(borrowPosition1));
+    vm.startPrank(owner);
+    retargetter.setFlashLoanModule(address(selfFundingModule), true);
+    // A naked BORROW leg sweeps value out to the Retargetter, which the position manager
+    // accounts as a rebalance loss; widen the tolerance so the authorization check is what
+    // fires rather than the loss guard underneath
+    positionManager.setRebalanceConfig(1000, 0);
+    vm.stopPrank();
+
+    vm.prank(rebalancer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(selfFundingModule), 500e18, address(fund), new bytes[](0)
+    );
+
+    _assertNoTrace();
+    _assertZeroResidual();
+  }
+
+  /// @notice A pre-window donation cannot stand in for delivery: the callback checks the
+  ///         balance against the pre-loan snapshot plus the nominal amount, not against the
+  ///         raw balance.
+  function test_startSyncRetargetting_donationDoesNotCoverDelivery() public {
+    _seedPosition(10_000e18, 5_000e18);
+    uint256 amount = 1_000e18;
+    PartialDeliveryFlashLoanModule partialDeliveryModule = new PartialDeliveryFlashLoanModule(1);
+    vm.prank(owner);
+    retargetter.setFlashLoanModule(address(partialDeliveryModule), true);
+    _mintDebt(address(partialDeliveryModule), amount - 1);
+    _mintDebt(address(retargetter), 10);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalNotDelivered.selector);
+    retargetter.startSyncRetargetting(
+      address(positionManager), address(partialDeliveryModule), amount, address(fund), new bytes[](0)
     );
 
     _assertNoTrace();

@@ -31,6 +31,8 @@ import {
   WINDOW_TSLOT,
   MODULE_TSLOT,
   AMOUNT_TSLOT,
+  PAYLOAD_TSLOT,
+  BALANCE_TSLOT,
   REENTRANCY_TSLOT
 } from "../../libs/manager/rebalancer/LibRetargetterConstants.sol";
 import {BPS} from "../../libs/Constants.sol";
@@ -59,10 +61,11 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///        transaction.
 ///
 ///      Trust model: fully trusted owner, semi-trusted rebalancer boxed in by the guardrails
-///      (direction checks, principal and yield caps, whitelists, residual settlement gates),
-///      untrusted everyone else. The Retargetter holds no value at rest: `resolve` and the end
-///      of the flash-loan window both require its balances of the two bound assets to stay
-///      within the configured residual tolerance (exact zero by default).
+///      (direction checks, the bridge value-conservation gate, principal and yield caps,
+///      whitelists, residual settlement gates), untrusted everyone else. The Retargetter
+///      holds no value at rest: `resolve` and the end of the flash-loan window both require
+///      its balances of the two bound assets to stay within the configured residual
+///      tolerance (exact zero by default).
 ///
 ///      Derive, do not store: everything readable from the composed contracts (direction,
 ///      consumed principal, order liveness progress, repaid status) is recomputed fresh at
@@ -93,13 +96,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*                         MODIFIERS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Passes when the caller is the module driving an open flash-loan window (the
+  /// @dev Passes when the caller is the module whose committed payload is executing (the
   ///      payload steps are delegatecalled from the callback, so `msg.sender` there is the
   ///      module), when the caller is the owner, or when the caller holds the rebalancer
-  ///      role. Outside a window the slot reads the zero address, which never matches a
-  ///      caller, and a third party gaining execution control inside a window stays an
-  ///      ordinary unauthorized caller. The body lives in a function so the modifier costs
-  ///      a jump at each of its many use sites instead of an inlined copy (contract size).
+  ///      role. Outside the payload the slot reads the zero address, which never matches a
+  ///      caller, so the module has no authority in its own frame either side of the
+  ///      callback, and a third party gaining execution control mid-window stays an ordinary
+  ///      unauthorized caller. The body lives in a function so the modifier costs a jump at
+  ///      each of its many use sites instead of an inlined copy (contract size).
   modifier onlyOwnerOrRebalancer() {
     _checkOwnerOrRebalancer();
     _;
@@ -429,14 +433,18 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /// @inheritdoc IRetargetter
   /// @dev Snapshots the target and the aggregate and per-module LTVs before the call, so no
   ///      mid-call state change can move the goalposts. After the call (skipped for direct
-  ///      owner calls, always applied inside a window): the aggregate and every module may
-  ///      end above target only while strictly improving on their snapshot, and no module may
-  ///      end with debt against zero collateral. LTV convention throughout: zero when debt is
-  ///      zero (idle modules and an emptied position pass), the max sentinel for bad debt.
-  ///      The position manager's own loss, cooldown and safe-LTV checks apply underneath.
-  ///      A sentinel resolving to zero (an empty balance, or a REPAY leg on a debt-free
-  ///      module) produces a zero-amount leg, which the borrow modules reject; the whole
-  ///      call reverts atomically.
+  ///      owner calls, always applied inside a window): the aggregate may end above target
+  ///      only while strictly improving on its snapshot, a module may end above target only
+  ///      while not worsening its snapshot (a module the payload never touched, or one whose
+  ///      one-atom improvement flooring flattens to an equal value, passes), and no module
+  ///      may end with debt against zero collateral. LTV convention throughout: zero when
+  ///      debt is zero (idle modules and an emptied position pass), the max sentinel for bad
+  ///      debt. While the operation's Request is unrepaid, the position's net value must not
+  ///      grow across the call, for every caller including the owner; see
+  ///      {_bridgeOutstanding} and {_checkValueConservation}. The position manager's own
+  ///      loss, cooldown and safe-LTV checks apply underneath. A sentinel resolving to zero (an
+  ///      empty balance, or a REPAY leg on a debt-free module) produces a zero-amount leg,
+  ///      which the borrow modules reject; the whole call reverts atomically.
   function rebalance(RebalancingData calldata data) external onlyOwnerOrRebalancer nonReentrant {
     address positionManager = LibStorage.operationStorage().checkActive();
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
@@ -473,9 +481,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       }
     }
 
-    // Snapshot the goalposts: target, aggregate LTV and per-module LTVs
+    // Snapshot the goalposts: target, aggregate LTV, net value and per-module LTVs. Both
+    // aggregate quantities come from one read of the position, then the value gate is
+    // disarmed unless the bridge is outstanding, by parking the snapshot at the sentinel
+    // no live value can exceed; see {_bridgeOutstanding} and the post-call check
     (uint256 target,) = IPositionManager(positionManager).config();
-    uint256 ltvBefore = _positionManagerLtv(positionManager);
+    (uint256 ltvBefore, int256 valueBefore) = _positionSnapshot(positionManager);
+    if (!_bridgeOutstanding()) valueBefore = type(int256).max;
     address[] memory modules = IPositionManager(positionManager).borrowModules();
     uint256 modulesLength = modules.length;
     uint256[] memory moduleLtvsBefore = new uint256[](modulesLength);
@@ -490,10 +502,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     if (resolved.collateral > 0) collateralAsset.safeApprove(positionManager, 0);
     if (resolved.debt > 0) debtAsset.safeApprove(positionManager, 0);
 
+    // Value conservation on the way out, then the direction checks read the LTV it returns
+    uint256 ltvAfter = _checkValueConservation(positionManager, valueBefore);
+
     // Direction checks; owner bypass is evaluated on msg.sender only, never through the
-    // window (inside a window msg.sender is the flash-loan module)
+    // window (inside a window msg.sender is the flash-loan module). The aggregate must
+    // strictly improve while above target; a single module only must not worsen, so a
+    // module the payload never touched cannot block the other legs
     if (msg.sender != owner()) {
-      uint256 ltvAfter = _positionManagerLtv(positionManager);
       if (ltvAfter > target && ltvAfter >= ltvBefore) {
         revert LibRetargetterErrors.AboveTargetLtv(ltvAfter, ltvBefore, target);
       }
@@ -501,7 +517,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
         address module = modules[i];
         uint256 moduleLtvAfter = _moduleLtv(module);
         if (moduleLtvAfter == type(uint256).max) revert LibRetargetterErrors.BadDebtPosition(module);
-        if (moduleLtvAfter > target && moduleLtvAfter >= moduleLtvsBefore[i]) {
+        if (moduleLtvAfter > target && moduleLtvAfter > moduleLtvsBefore[i]) {
           revert LibRetargetterErrors.PositionAboveTarget(module);
         }
       }
@@ -538,22 +554,29 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
 
     // Open the window: the operation storage carries the addresses the steps read (and locks
-    // out nested starts); the window slot hands step authority to the module alone for the
-    // whole window, while the module slot authenticates the callback and is zeroed on its
-    // entry (single-shot), which is why the module address lives in both
+    // out nested starts); the module slot authenticates the callback and is zeroed on its
+    // entry (single-shot). The payload digest and the pre-loan debt balance bind the callback
+    // to this exact payload and to the full delivery of the principal, so a whitelisted
+    // module can neither substitute its own step calls nor collect the repayment approval
+    // for funds it never delivered. Step authority is not handed out here: the window slot
+    // is set inside the callback around the payload alone, so the module holds no authority
+    // in its own frame and cannot source the delivery from the position manager itself
     operation_.positionManager = positionManager;
     operation_.fund = fund;
-    WINDOW_TSLOT.tStoreAddress(flashLoanModule);
+    address debtAsset = LibStorage.assetsStorage().debtAsset;
+    bytes memory payload = abi.encode(data);
     MODULE_TSLOT.tStoreAddress(flashLoanModule);
     AMOUNT_TSLOT.tStoreUint(flashLoanAmount);
+    PAYLOAD_TSLOT.tStoreUint(uint256(keccak256(payload)));
+    BALANCE_TSLOT.tStoreUint(debtAsset.balanceOf(address(this)));
 
-    address debtAsset = LibStorage.assetsStorage().debtAsset;
-    IFlashLoanModule(flashLoanModule).flashLoan(debtAsset, flashLoanAmount, abi.encode(data));
+    IFlashLoanModule(flashLoanModule).flashLoan(debtAsset, flashLoanAmount, payload);
 
     // The module has pulled its repayment; close the window and scrub any leftover approval
-    WINDOW_TSLOT.tStoreAddress(address(0));
     MODULE_TSLOT.tStoreAddress(address(0));
     AMOUNT_TSLOT.tStoreUint(0);
+    PAYLOAD_TSLOT.tStoreUint(0);
+    BALANCE_TSLOT.tStoreUint(0);
     debtAsset.safeApprove(flashLoanModule, 0);
 
     // Settlement gates, then zero the operation storage so nothing survives the window
@@ -565,9 +588,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @notice Provider-agnostic flash-loan callback executing the operation payload.
-  /// @dev Only callable by the transient module with the exact transient amount; the module
-  ///      slot is zeroed on entry so the callback is single-shot (a nested or replayed
-  ///      callback, including one smuggled into the payload, fails). The payload runs through
+  /// @dev Only callable by the transient module with the exact transient amount and a
+  ///      payload hashing to the transient digest committed at the window open, so the
+  ///      module can only forward the step calls verbatim; the module and digest slots are
+  ///      zeroed on entry so the callback is single-shot (a nested or replayed callback,
+  ///      including one smuggled into the payload, fails). The loan must have been delivered
+  ///      in full before any step runs: the live debt-asset balance is checked against the
+  ///      pre-loan snapshot plus the nominal amount, so a module cannot collect the
+  ///      repayment approval for funds it never delivered. The payload runs through
   ///      Solady's `_multicall`: each element is delegatecalled on this contract, so the
   ///      steps run their own modifiers with `msg.sender` being the module; authorization
   ///      flows through the window slot holding the module address.
@@ -575,10 +603,18 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /// @param data The ABI-encoded step calls supplied to startSyncRetargetting
   function onFlashLoan(uint256 amount, bytes calldata data) external {
     address module = MODULE_TSLOT.tLoadAddress();
-    if (module == address(0) || msg.sender != module || amount != AMOUNT_TSLOT.tLoadUint()) {
+    if (
+      module == address(0) || msg.sender != module || amount != AMOUNT_TSLOT.tLoadUint()
+        || uint256(keccak256(data)) != PAYLOAD_TSLOT.tLoadUint()
+    ) {
       revert LibRetargetterErrors.UnauthorizedFlashLoanCallback();
     }
     MODULE_TSLOT.tStoreAddress(address(0));
+    PAYLOAD_TSLOT.tStoreUint(0);
+    address debtAsset = LibStorage.assetsStorage().debtAsset;
+    if (debtAsset.balanceOf(address(this)) < BALANCE_TSLOT.tLoadUint() + amount) {
+      revert LibRetargetterErrors.PrincipalNotDelivered();
+    }
     // `data` is the abi.encode of the step calls built by startSyncRetargetting and forwarded
     // verbatim by the module; point a calldata array at it in place instead of copying it
     bytes[] calldata calls;
@@ -587,9 +623,15 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       calls.offset := add(arrayOffset, 0x20)
       calls.length := calldataload(arrayOffset)
     }
+    // Step authority lasts exactly as long as the committed payload: the module is
+    // authorized while its own steps run (they are delegatecalled, so `msg.sender` is the
+    // module) and holds none of it before or after, which is what keeps the delivery check
+    // above honest
+    WINDOW_TSLOT.tStoreAddress(module);
     _multicall(calls);
+    WINDOW_TSLOT.tStoreAddress(address(0));
     // The module pulls its repayment through this allowance after the callback returns
-    LibStorage.assetsStorage().debtAsset.safeApproveWithRetry(module, amount);
+    debtAsset.safeApproveWithRetry(module, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -867,10 +909,56 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
   }
 
-  /// @dev Aggregate position manager LTV under the snapshot convention.
-  function _positionManagerLtv(address positionManager) internal view returns (uint256) {
-    return
-      _ltv(IPositionManager(positionManager).debtAmount(), IPositionManager(positionManager).collateralAmountQuoted());
+  /// @dev Whether the bridge is still outstanding, which is what arms the rebalance
+  ///      value-conservation gate. Once the Request is repaid, or auto-expired past its
+  ///      deadline with holders redeeming its remaining balance, folding residual value back
+  ///      into the position must reopen, which is why this keys on the effective repaid
+  ///      state rather than the operation being active. Read through the state-mutating sync
+  ///      (the same one resolve gates on) so a past-deadline Request reads repaid here
+  ///      instead of wedging the gate on a stale flag; that makes this the only non-view
+  ///      step of the rebalance guardrails.
+  function _bridgeOutstanding() internal returns (bool) {
+    address request = LibStorage.operationStorage().request;
+    return request != address(0) && !IRequest(request).syncRepaidStatus();
+  }
+
+  /// @dev Value-conservation gate, applied to every caller (unlike the direction checks,
+  ///      this guards Request lenders rather than the steering): with the gate armed (a
+  ///      non-sentinel snapshot), the position's net value must not have grown across the
+  ///      rebalance. Growth would be Request capital parked in the position with no shares
+  ///      backing it, exposed to capture by any LP exit before the Request is repaid;
+  ///      pairing each input leg with an equivalent output leg in the same call (SUPPLY with
+  ///      BORROW, REPAY with WITHDRAW) is what keeps the bridge whole. Equality passes, so
+  ///      an operator sizing the output leg must cover any quoting round-up on the input
+  ///      leg; a leg one atom short of neutral is rejected rather than tolerated. Returns
+  ///      the aggregate LTV read in the same pass, so the direction checks do not re-read
+  ///      the position.
+  function _checkValueConservation(address positionManager, int256 valueBefore)
+    internal
+    view
+    returns (uint256 ltvAfter)
+  {
+    int256 valueAfter;
+    (ltvAfter, valueAfter) = _positionSnapshot(positionManager);
+    if (valueAfter > valueBefore) {
+      revert LibRetargetterErrors.PositionValueIncreased(valueBefore, valueAfter);
+    }
+  }
+
+  /// @dev Both aggregate snapshot quantities from one read of the position: the LTV under
+  ///      the convention below, and the net value as quoted collateral minus debt, negative
+  ///      when the book is underwater. The value is deliberately not the position manager's
+  ///      totalAssets, which drops any module whose debt exceeds its collateral and so reads
+  ///      flat while value is poured into an underwater module, and which jumps by a whole
+  ///      module's worth as one wei of debt crosses that inclusion cliff; the gate compares
+  ///      snapshots, so it needs a continuous, bad-debt-inclusive measure. Both operands are
+  ///      sums of token amounts far below the signed range.
+  function _positionSnapshot(address positionManager) internal view returns (uint256 ltv, int256 value) {
+    uint256 collateralQuoted = IPositionManager(positionManager).collateralAmountQuoted();
+    uint256 debt = IPositionManager(positionManager).debtAmount();
+    ltv = _ltv(debt, collateralQuoted);
+    // forge-lint: disable-next-line(unsafe-typecast)
+    value = int256(collateralQuoted) - int256(debt);
   }
 
   /// @dev Single borrow module LTV under the snapshot convention.

@@ -109,6 +109,11 @@ contract RetargetterHandler is Test {
   ///         strictly improving on its before snapshot.
   bool public directionViolated;
 
+  /// @notice Set if a successful rebalance grew the position manager's totalAssets while the
+  ///         operation's Request was unrepaid and short of its deadline (the shape that arms
+  ///         the value-conservation gate).
+  bool public valueConservationViolated;
+
   /// @notice Set if any SYNC attempt (successful or reverted) left persistent state behind.
   bool public syncStatePersisted;
 
@@ -441,11 +446,28 @@ contract RetargetterHandler is Test {
 
     (uint256 target,) = positionManager.config();
     uint256 ltvBefore = _positionManagerLtv();
+    bool bridgeOutstanding = _bridgeOutstanding();
+    int256 valueBefore = _positionValue();
     vm.prank(rebalancer);
     try retargetter.rebalance(data) {
       uint256 ltvAfter = _positionManagerLtv();
       if (ltvAfter > target && ltvAfter >= ltvBefore) directionViolated = true;
+      if (bridgeOutstanding && _positionValue() > valueBefore) valueConservationViolated = true;
     } catch {}
+  }
+
+  /// @dev Whether the operation's Request is unrepaid and short of its deadline, the shape
+  ///      that arms the rebalance value-conservation gate.
+  function _bridgeOutstanding() internal view returns (bool) {
+    (, address request,,, uint40 repaymentDeadline,,,) = retargetter.operation();
+    return request != address(0) && block.timestamp < repaymentDeadline && !IRequest(request).isRepaid();
+  }
+
+  /// @dev Net value of the whole position, underwater modules included (the position
+  ///      manager's totalAssets drops those, and would read flat while value is poured into
+  ///      one).
+  function _positionValue() internal view returns (int256) {
+    return int256(positionManager.collateralAmountQuoted()) - int256(positionManager.debtAmount());
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
