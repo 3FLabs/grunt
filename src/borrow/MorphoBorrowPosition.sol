@@ -419,20 +419,20 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///
   ///      Settlement guard: the walk's per-fill checks run against a snapshot of Morpho's totals,
   ///      and on a virtual-share boundary the settled totals can round the remaining debt such
-  ///      that an accepted dust-sized fill leaves the LTV flat or higher (and repeated fills could
-  ///      walk it past `liquidationLtv` into the proportional path). After the repay settles, the
-  ///      position is re-quoted at the entry price and the call reverts unless the LTV strictly
-  ///      decreased ({_checkLtvReduced}); with the entry LTV at or below `liquidationLtv`, a
-  ///      strict decrease also keeps the settled LTV within the band's bound.
+  ///      that an accepted dust-sized fill leaves the LTV flat or higher (and, at the band's upper
+  ///      edge, tips the floored health check into the proportional path). The call reverts unless
+  ///      the fill strictly decreased the LTV ({_checkLtvStrictlyReduced}); with the entry LTV at or
+  ///      below `liquidationLtv`, a strict decrease also keeps the settled LTV within the band's
+  ///      bound. The guard runs before the repay on a frame derived from the fill amounts, so a
+  ///      liquidator callback cannot manipulate the state it reads.
   function _offerPreLiquidate(address borrower, uint256 seizedAssets, uint256 repaidShares, bytes calldata data)
     internal
     returns (uint256, uint256)
   {
-    // One oracle read for the whole call: the walk, the entry quote and the settlement guard all
-    // price collateral identically, so a mid-call price move (e.g. from the liquidator callback)
-    // cannot skew the entry/exit comparison.
+    // One oracle read for the whole call: the walk and the settlement guard price collateral
+    // identically, so a mid-call price move (e.g. from the liquidator callback) cannot skew the
+    // entry/exit comparison.
     uint256 price = IOracle(_borrowPositionStorage().marketParams.oracle).price();
-    (uint256 entryDebtValue, uint256 entryCollateralValue) = _positionLtvFrame(price);
 
     // The walk reads market/position once (post-accrual, so exact) and applies all offer mutations
     // as effects before the repay below. Scoped in a helper to keep this function's stack shallow.
@@ -442,9 +442,15 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     // gives liquidators a clear signal when the band is entered but nothing is fillable.
     if (totalSeized == 0 || totalDebtShares == 0) revert LibBorrowErrors.NoConsumableOffer();
 
-    uint256 repaidAssets = _settleOfferRepay(borrower, totalSeized, totalDebtShares, data);
+    // Settlement guard, evaluated BEFORE the repay on the frame DERIVED from the fill amounts, so a
+    // liquidator callback cannot move the state it reads. The Morpho `repay` withdraws the seized
+    // collateral and then hands control to `onPreLiquidate`; since `repay` and `supplyCollateral`
+    // are permissionless, a post-repay live re-quote could be neutralised by a callback that drains
+    // the position through the proportional path and re-supplies a dust atom, letting a fill that
+    // does not de-risk the position stand. The derived frame is immune to that.
+    _checkLtvStrictlyReduced(price, totalSeized, totalDebtShares);
 
-    _checkLtvReduced(price, entryDebtValue, entryCollateralValue);
+    uint256 repaidAssets = _settleOfferRepay(borrower, totalSeized, totalDebtShares, data);
 
     return (totalSeized, repaidAssets);
   }
@@ -460,30 +466,44 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
     (repaidAssets,) = MORPHO.repay(_borrowPositionStorage().marketParams, 0, totalDebtShares, borrower, callbackData);
   }
 
-  /// @dev Quotes the position's debt and collateral values at `price` from the current Morpho
-  ///      state (post-accrual totals; debt rounds up, collateral rounds down, matching
-  ///      {_isHealthy}). Called by {_offerPreLiquidate} before the consume and after the repay
-  ///      settles, so the two frames differ only by the fill's real effect on Morpho's totals.
-  function _positionLtvFrame(uint256 price) internal view returns (uint256 debtValue, uint256 collateralValue) {
+  /// @dev Reverts {LibBorrowErrors.LtvNotReduced} unless the fill strictly lowers the position LTV:
+  ///      `exitDebt / exitCollateral < entryDebt / entryCollateral`, cross-multiplied to
+  ///      `exitDebt * entryCollateral < entryDebt * exitCollateral` so the comparison is exact.
+  ///
+  ///      The exit frame is DERIVED from the fill amounts against the current (pre-repay) Morpho
+  ///      snapshot rather than re-read live after the repay, so it measures the fill alone and no
+  ///      liquidator callback can move it. It reproduces Morpho's shares-mode `repay` settlement
+  ///      exactly: the repaid assets round up, the market totals drop by (`repaidAssets`,
+  ///      `totalDebtShares`) with a saturating subtraction on the assets (Morpho's `repaidAssets`
+  ///      may exceed `totalBorrowAssets` by one), and the remaining debt rounds up on the reduced
+  ///      totals. Interest was accrued at entry and the in-flight repay re-accrues with zero elapsed
+  ///      time, so these totals equal the settled ones; the derived frame is therefore the exact
+  ///      state a post-repay quote would read absent a callback (debt rounds up, collateral rounds
+  ///      down, matching {_isHealthy}).
+  ///
+  ///      The product goes through `fullMulDiv`'s 512-bit intermediate rather than a plain
+  ///      multiplication: the collateral values are price-scaled (`price` is an unbounded oracle
+  ///      value at 1e36 scale) and can exceed 128 bits, so the direct product can overflow 256 bits
+  ///      and checked multiplication would turn a legitimate fill into a spurious revert. Flooring
+  ///      keeps it exact (`floor(a * b / d) >= c <=> a * b >= c * d` for integers). `entryDebtValue`
+  ///      and `totalDebtShares` are non-zero in the band (the position has debt; the fill repaid at
+  ///      least one share).
+  function _checkLtvStrictlyReduced(uint256 price, uint256 totalSeized, uint256 totalDebtShares) internal view {
     Id _marketId = _borrowPositionStorage().marketId;
     Position memory position = MORPHO.position(_marketId, address(this));
     Market memory market = MORPHO.market(_marketId);
-    debtValue =
-      uint256(position.borrowShares).toAssetsUp(uint256(market.totalBorrowAssets), uint256(market.totalBorrowShares));
-    collateralValue = uint256(position.collateral).mulDiv(price, ORACLE_PRICE_SCALE);
-  }
+    uint256 totalBorrowAssets = uint256(market.totalBorrowAssets);
+    uint256 totalBorrowShares = uint256(market.totalBorrowShares);
 
-  /// @dev Reverts {LibBorrowErrors.LtvNotReduced} unless the settled position's LTV is strictly
-  ///      below the entry frame's: `exitDebt / exitCollateral < entryDebt / entryCollateral`,
-  ///      cross-multiplied to `exitDebt * entryCollateral < entryDebt * exitCollateral` so the
-  ///      comparison is exact. The product goes through `fullMulDiv`'s 512-bit intermediate
-  ///      rather than a plain multiplication: the collateral values are price-scaled (`price` is
-  ///      an unbounded oracle value at 1e36 scale) and can exceed 128 bits, so the direct product
-  ///      can overflow 256 bits and checked multiplication would turn a legitimate fill into a
-  ///      spurious revert. Flooring keeps it exact (`floor(a * b / d) >= c <=> a * b >= c * d`
-  ///      for integers). `entryDebtValue > 0` in the band (the position has debt, rounded up).
-  function _checkLtvReduced(uint256 price, uint256 entryDebtValue, uint256 entryCollateralValue) internal view {
-    (uint256 exitDebtValue, uint256 exitCollateralValue) = _positionLtvFrame(price);
+    uint256 entryDebtValue = uint256(position.borrowShares).toAssetsUp(totalBorrowAssets, totalBorrowShares);
+    uint256 entryCollateralValue = uint256(position.collateral).mulDiv(price, ORACLE_PRICE_SCALE);
+
+    // Settled frame derived from the fill (matches Morpho's shares-mode repay rounding).
+    uint256 repaidAssets = totalDebtShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
+    uint256 exitDebtValue = (uint256(position.borrowShares) - totalDebtShares)
+    .toAssetsUp(totalBorrowAssets.zeroFloorSub(repaidAssets), totalBorrowShares - totalDebtShares);
+    uint256 exitCollateralValue = (uint256(position.collateral) - totalSeized).mulDiv(price, ORACLE_PRICE_SCALE);
+
     if (FixedPointMathLib.fullMulDiv(exitDebtValue, entryCollateralValue, entryDebtValue) >= exitCollateralValue) {
       revert LibBorrowErrors.LtvNotReduced();
     }
