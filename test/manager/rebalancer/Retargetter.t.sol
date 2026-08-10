@@ -146,6 +146,23 @@ contract RetargetterTest is RetargetterBaseTest {
     retargetterFactory.createRetargetter(owner, nonContract, _defaultConfig());
   }
 
+  function test_initialize_unboundWhenZeroPositionManager() public {
+    // Created with the zero address: no manager and no pair yet; the first bind sets both
+    Retargetter unbound = Retargetter(retargetterFactory.createRetargetter(owner, address(0), _defaultConfig()));
+    assertEq(unbound.boundPositionManager(), address(0), "created unbound");
+    (address collateralAsset, address debtAsset) = unbound.assets();
+    assertEq(collateralAsset, address(0), "pair unset before the first bind");
+    assertEq(debtAsset, address(0), "pair unset before the first bind");
+
+    // The first bind derives and locks the pair from the position manager
+    vm.prank(owner);
+    unbound.setPositionManager(address(positionManager));
+    assertEq(unbound.boundPositionManager(), address(positionManager), "bound");
+    (collateralAsset, debtAsset) = unbound.assets();
+    assertEq(collateralAsset, address(collateralToken), "pair derived on the first bind");
+    assertEq(debtAsset, address(debtToken), "pair derived on the first bind");
+  }
+
   function test_initialize_revertDoubleInitialize() public {
     vm.expectRevert(Initializable.InvalidInitialization.selector);
     retargetter.initialize(owner, address(positionManager), _defaultConfig());

@@ -349,14 +349,14 @@ interface IRetargetter {
   function setFlashLoanModule(address module, bool whitelisted) external;
 
   /// @notice Rotates (or clears) the single position manager every operation runs against.
-  /// @dev A position manager is bound at initialize (its assets define the instance's pair);
-  ///      this rotates the binding to another position manager on the same pair, or unbinds
-  ///      it with the zero address to abandon the instance (operations then revert until a
-  ///      same-pair manager is bound again). Operations never take a position manager as an
-  ///      argument, so every start-gate and principal-cap read trusts an owner-curated address
-  ///      rather than a caller-supplied one. A nonzero manager is checked to be a contract on
-  ///      the bound pair; both paths revert while an operation is active (the binding can only
-  ///      change while idle).
+  /// @dev The instance's asset pair is derived from the first position manager ever bound (at
+  ///      initialize or here) and is immutable after; this rotates the binding to another
+  ///      position manager on that pair, or unbinds it with the zero address to abandon the
+  ///      instance (operations then revert until a same-pair manager is bound again).
+  ///      Operations never take a position manager as an argument, so every start-gate and
+  ///      principal-cap read trusts an owner-curated address rather than a caller-supplied
+  ///      one. A nonzero manager is checked to be a contract on the bound pair; both paths
+  ///      revert while an operation is active (the binding can only change while idle).
   /// @param positionManager The position manager to bind, or the zero address to unbind
   function setPositionManager(address positionManager) external;
 

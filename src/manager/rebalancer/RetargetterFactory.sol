@@ -32,11 +32,12 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///      4. The instance owner grants the Retargetter's own REBALANCER_ROLE (Solady _ROLE_0,
 ///         bit value 1) and CONSUMER_ROLE (Solady _ROLE_1, bit value 2), whitelists funds
 ///         and the adapter, and sets the yield estimates. The served PositionManager is bound
-///         at creation (its assets define the instance's pair) and can be rotated to another
-///         same-pair PositionManager via setPositionManager while idle. Each instance runs
-///         against one bound PositionManager; grant a PositionManager's REBALANCER_ROLE to at
-///         most one Retargetter, since the one-operation-at-a-time guard is per instance and a
-///         second bound Retargetter could admit the full principal cap on its own.
+///         at creation or later via setPositionManager (the first bind's assets define the
+///         instance's immutable pair) and can be rotated to another same-pair PositionManager
+///         while idle. Each instance runs against one bound PositionManager; grant a
+///         PositionManager's REBALANCER_ROLE to at most one Retargetter, since the
+///         one-operation-at-a-time guard is per instance and a second bound Retargetter could
+///         admit the full principal cap on its own.
 contract RetargetterFactory {
   using LibClone for address;
 
@@ -86,11 +87,13 @@ contract RetargetterFactory {
   /*                      FACTORY METHODS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Creates a new Retargetter proxy bound to a position manager.
-  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically; the asset pair is
-  ///      derived from the position manager. Emits a {RetargetterCreated} event.
+  /// @notice Creates a new Retargetter proxy, optionally bound to a position manager.
+  /// @dev Deploys an ERC1967 beacon proxy and initializes it atomically; when a position
+  ///      manager is passed the asset pair is derived from it, and the zero address leaves the
+  ///      instance unbound until the owner binds one. Emits a {RetargetterCreated} event.
   /// @param owner The address that will own the Retargetter
-  /// @param positionManager The position manager to bind (the pair is derived from its assets)
+  /// @param positionManager The position manager to bind (the pair is derived from its
+  ///        assets), or the zero address to bind later
   /// @param config The initial configuration
   /// @return retargetter The address of the newly deployed Retargetter proxy
   function createRetargetter(address owner, address positionManager, RetargetterConfig calldata config)

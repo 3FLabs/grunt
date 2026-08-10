@@ -163,29 +163,22 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @notice Initializes the proxy instance and binds it to a position manager, deriving the
   ///         asset pair from that manager.
-  /// @dev The pair is read from the position manager once and never mutated; every later
-  ///      rebind through {setPositionManager} must report the same pair. Whitelists start
-  ///      empty; zero estimates are valid and degrade the principal cap to the zero-rate
-  ///      ideal formula.
+  /// @dev The pair is read from the position manager on the first bind and never mutated;
+  ///      every later rebind through {setPositionManager} must report the same pair. Passing
+  ///      the zero address leaves the instance unbound until the owner binds one. Whitelists
+  ///      start empty; zero estimates are valid and degrade the principal cap to the
+  ///      zero-rate ideal formula.
   /// @param owner_ The address that will own the instance
-  /// @param positionManager_ The position manager to bind (the pair is derived from its assets)
+  /// @param positionManager_ The position manager to bind (the pair is derived from its
+  ///        assets), or the zero address to bind later
   /// @param config_ The initial configuration, validated against the documented bounds
   function initialize(address owner_, address positionManager_, RetargetterConfig calldata config_)
     external
     initializer
   {
     owner_.checkNotZero();
-    positionManager_.checkContract();
     _setConfig(config_);
-    // Derive the bound pair from the position manager, the single source of truth. The pair
-    // is immutable afterwards, so setFund can validate a fund once and every rebind stays on
-    // the same pair (see {_checkPair})
-    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
-    (address collateralAsset, address debtAsset) = IPositionManager(positionManager_).assets();
-    assets_.collateralAsset = collateralAsset;
-    assets_.debtAsset = debtAsset;
-    assets_.positionManager = positionManager_;
-    emit PositionManagerBound(positionManager_);
+    _bindPositionManager(positionManager_);
     _initializeOwner(owner_);
   }
 
@@ -732,19 +725,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @inheritdoc IRetargetter
   /// @dev Rotates the bound position manager, only while no operation is active so a live
-  ///      operation's binding never moves under it. A nonzero manager is checked to be a
-  ///      contract on the immutable bound pair; the zero address unbinds the instance,
+  ///      operation's binding never moves under it. The zero address unbinds the instance,
   ///      abandoning it until a same-pair manager is bound again (operations revert
   ///      PositionManagerNotBound meanwhile). Every start-gate and principal-cap read trusts
   ///      the bound address, which is why the binding is owner-curated, not caller-supplied.
   function setPositionManager(address positionManager) external onlyOwner nonReentrant {
     if (LibStorage.operationStorage().positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
-    if (positionManager != address(0)) {
-      positionManager.checkContract();
-      _checkPair(positionManager);
-    }
-    LibStorage.assetsStorage().positionManager = positionManager;
-    emit PositionManagerBound(positionManager);
+    _bindPositionManager(positionManager);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -918,16 +905,26 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     order_ = operation_.order();
   }
 
-  /// @dev Reverts unless the position manager's assets equal the bound pair; run once at
-  ///      setPositionManager. The fund's tokens were validated against the pair at setFund
-  ///      and the Request is created with the debt asset, so a matching position manager
-  ///      makes the whole operation match.
-  function _checkPair(address positionManager) internal view {
+  /// @dev Binds (or unbinds) the position manager, emitting {PositionManagerBound}. Shared by
+  ///      {initialize} and {setPositionManager}. A nonzero manager must be a contract; its
+  ///      assets define the instance's pair on the first bind (while the stored pair is still
+  ///      zero) and must match that pair on every later bind, so the pair is write-once and
+  ///      immutable. The zero address unbinds the instance and leaves the pair untouched, so a
+  ///      later rebind still has to match it.
+  function _bindPositionManager(address positionManager) internal {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
-    (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
-    if (collateralAsset != assets_.collateralAsset || debtAsset != assets_.debtAsset) {
-      revert LibRetargetterErrors.AssetMismatch();
+    if (positionManager != address(0)) {
+      positionManager.checkContract();
+      (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
+      if (assets_.collateralAsset == address(0)) {
+        assets_.collateralAsset = collateralAsset;
+        assets_.debtAsset = debtAsset;
+      } else if (collateralAsset != assets_.collateralAsset || debtAsset != assets_.debtAsset) {
+        revert LibRetargetterErrors.AssetMismatch();
+      }
     }
+    assets_.positionManager = positionManager;
+    emit PositionManagerBound(positionManager);
   }
 
   /// @dev The live principal cap for an operation carrying the given yield cap. Recomputed
