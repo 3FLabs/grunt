@@ -188,6 +188,26 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getHeldManagementFeeAssets(), 100e18, "deduction stays nominal at zero pre-flow NAV");
   }
 
+  /// @notice An exit that empties the good-debt universe (reference-hold early return) leaves
+  ///         the deduction nominal like any other exit while shares remain, but a flow that
+  ///         burns the last share clears it: no holders, no one owed the deduction, and during
+  ///         a bad-debt window the empty-vault reseed clear never runs (Cantina #7).
+  function test_rebaseSnapshot_fullExitClearsHeldManagementFees() public {
+    harness.setReference(5_000e18, 5_000e18);
+    harness.setHeldManagementFeeAssets(100e18);
+
+    // Partial exit draining the last healthy module: shares remain, so the deduction stays
+    // nominal and the reference is held.
+    harness.rebaseSnapshot(8_000e18, 4_100e18, 100e18, 0, 0, 80e18);
+    assertEq(harness.getLastDebt(), 5_000e18, "empty good-debt exit holds the reference");
+    assertEq(harness.getHeldManagementFeeAssets(), 100e18, "partial exit keeps the deduction nominal");
+
+    // The remaining shares exit too: the terminal clear fires, the reference hold is untouched.
+    harness.rebaseSnapshot(0, 0, 80e18, 0, 0, 0);
+    assertEq(harness.getLastDebt(), 5_000e18, "reference still held across the full exit");
+    assertEq(harness.getHeldManagementFeeAssets(), 0, "full exit clears the deduction");
+  }
+
   /// @notice In the sentinel fallback the accumulator is left in place: the sentinel forces the
   ///         next accrual to advance the reference, which clears it before any performance fee
   ///         could consume it.

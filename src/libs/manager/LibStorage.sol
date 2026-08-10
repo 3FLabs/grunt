@@ -102,7 +102,9 @@ struct RebalanceConfig {
 ///        interval's management fee) is deducted from the basis. A crystallizing advance
 ///        consumes the accumulator only up to the basis and carries the excess (a dust-positive
 ///        basis must not write the whole deduction off, see `_pendingFees`); a reseed advance
-///        (bootstrap, empty vault) or `resetPerformanceReference` clears it. Capital flows
+///        (bootstrap, empty vault) or `resetPerformanceReference` clears it, as does a flow
+///        that burns the last share (no holders left, so no one is owed the deduction —
+///        Cantina #7). Capital flows
 ///        never rescale it: the supply ratio is a permissionless value-detached lever — up
 ///        would manufacture credit near zero NAV, down would let a deposit/exit round trip
 ///        grind the deduction away (see `rebaseSnapshot`). Appended to the struct so the layout
@@ -245,7 +247,13 @@ library LibStorage {
   ///      deduction dilutes or concentrates with the supply; the residual recipient-side
   ///      cost — a large exit leaves a deduction accrued mostly by the departed shares — is
   ///      bounded by fees the recipient already collected and remediable via
-  ///      `resetPerformanceReference`, which clears it. In the fallback branches too: outside a
+  ///      `resetPerformanceReference`, which clears it. The one flow that does write it is a
+  ///      full exit (`newSupply == 0`): no holders, no one owed the deduction, and during a
+  ///      bad-debt window the empty-vault reseed clear is suppressed, so without the terminal
+  ///      clear a post-window depositor would inherit the departed cohort's credit
+  ///      (Cantina #7). An exit that merely empties the good-debt universe while shares
+  ///      remain (the reference-hold early return) leaves it nominal like any other exit.
+  ///      In the fallback branches too: outside a
   ///      bad-debt window every such state (sentinel, empty vault) forces `advanceReference` on
   ///      the next accrual, which clears the accumulator before any performance fee can consume
   ///      it; during a window the accrual holds instead (see `_pendingFees`) and the accumulator
@@ -288,6 +296,15 @@ library LibStorage {
     uint256 newDebt,
     uint256 newSupply
   ) internal {
+    // A flow that burns the last share clears the pending management fee deduction: with no
+    // holders left no one is owed it, and it must not survive as a shield for a later cohort
+    // that never paid the fees (Cantina #7). Outside a bad-debt window the next accrual's
+    // empty-vault reseed clears the accumulator anyway; during a window that accrual holds
+    // instead (see `_pendingFees`), so without this clear a post-window depositor would
+    // inherit the departed cohort's credit. Unlike a supply-ratio rescale, the terminal clear
+    // is not a permissionless lever: only the sole remaining holder can trigger it, and the
+    // only shield it destroys is their own.
+    if (newSupply == 0) self.heldManagementFeeAssets = 0;
     uint256 refDebt = self.lastDebt;
     // Hold the reference across any flow that leaves the good-debt universe empty: with no
     // good-debt state to re-anchor on, rebasing would write the bootstrap sentinel and the next

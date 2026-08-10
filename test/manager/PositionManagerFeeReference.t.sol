@@ -1254,6 +1254,47 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(_heldManagementFees(), held, "deduction stays nominal across the dust-NAV deposit");
   }
 
+  /// @notice A flow that burns the last share clears the pending deduction in the same
+  ///         transaction: the empty-vault reseed clear only runs on a later accrual — and not
+  ///         at all while bad debt is present — so the terminal clear in `rebaseSnapshot`
+  ///         keeps a departed cohort's credit from sitting in storage for a future cohort
+  ///         that never paid the fees (Cantina #7).
+  function test_managementFee_fullExitClearsHeldDeduction() public {
+    // Route to the interest-free market so the exit's proportional repay is exact: accrued
+    // interest would leave wei-level debt dust that blocks the all-but-dust collateral
+    // withdrawal on the way out.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    assertGt(_heldManagementFees(), 0, "management fees accumulated while held");
+
+    // Consolidate every share on the minter (burn is MINTER_ROLE-gated), then exit fully.
+    uint256 recipientShares = positionManager.balanceOf(feeRecipient);
+    vm.prank(feeRecipient);
+    positionManager.transfer(minter, recipientShares);
+
+    _mintDebt(minter, 2 * DEBT_AMOUNT);
+    uint256 minterShares = positionManager.balanceOf(minter);
+    vm.prank(minter);
+    positionManager.burn(minterShares, WithdrawalStrategy.PROPORTIONAL);
+
+    assertEq(positionManager.totalSupply(), 0, "every share exited");
+    assertEq(_heldManagementFees(), 0, "the last burn clears the deduction");
+
+    // A fresh cohort starts with a clean slate.
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    assertEq(_heldManagementFees(), 0, "the new cohort inherits no deduction");
+  }
+
   /// @notice A fee holiday (no recipient) neither wipes nor grows the deduction: it survives
   ///         held holiday accruals and still nets the crystallization once fees are re-enabled,
   ///         while a positive-basis advance during the holiday clears it like any other advance.
