@@ -139,10 +139,11 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getLastDebt(), 5_100e18, "reference debt stays out of the sentinel");
   }
 
-  /// @notice The held management fee accumulator scales with the share-supply change (an exit
-  ///         takes its slice of the pending deduction along) and is untouched by supply-neutral
-  ///         and underwater flows.
-  function test_rebaseSnapshot_scalesHeldManagementFeesWithSupply() public {
+  /// @notice The held management fee accumulator is never rescaled by a flow: a deposit/exit
+  ///         round trip that restores the vault state must hand the deduction back whole (a
+  ///         down-only rule would let reversible capital grind it toward zero), and
+  ///         supply-neutral and underwater flows are untouched too.
+  function test_rebaseSnapshot_keepsHeldManagementFeesNominalAcrossFlows() public {
     harness.setReference(5_000e18, 5_000e18);
     harness.setHeldManagementFeeAssets(100e18);
 
@@ -150,13 +151,18 @@ contract LibManagerStorageTest is Test {
     harness.rebaseSnapshot(10_000e18, 5_100e18, 100e18, 8_000e18, 4_100e18, 100e18);
     assertEq(harness.getHeldManagementFeeAssets(), 100e18, "supply-neutral flow keeps the deduction");
 
-    // Half the shares exit: deduction halves with the supply.
-    harness.rebaseSnapshot(8_000e18, 4_100e18, 100e18, 4_000e18, 2_050e18, 50e18);
-    assertEq(harness.getHeldManagementFeeAssets(), 50e18, "exit sheds its slice of the deduction");
+    // A deposit doubles the supply: the deduction stays nominal (per-share dilution).
+    harness.rebaseSnapshot(8_000e18, 4_100e18, 100e18, 16_000e18, 8_200e18, 200e18);
+    assertEq(harness.getHeldManagementFeeAssets(), 100e18, "deposit leaves the deduction nominal");
+
+    // The deposit exits again, restoring the pre-deposit state: the deduction comes back
+    // whole, not halved (the round-trip grind).
+    harness.rebaseSnapshot(16_000e18, 8_200e18, 200e18, 8_000e18, 4_100e18, 100e18);
+    assertEq(harness.getHeldManagementFeeAssets(), 100e18, "round trip hands the deduction back whole");
 
     // Underwater flow (both sides empty): everything held, deduction included.
-    harness.rebaseSnapshot(0, 0, 50e18, 0, 0, 50e18);
-    assertEq(harness.getHeldManagementFeeAssets(), 50e18, "underwater flow holds the deduction");
+    harness.rebaseSnapshot(0, 0, 100e18, 0, 0, 100e18);
+    assertEq(harness.getHeldManagementFeeAssets(), 100e18, "underwater flow holds the deduction");
   }
 
   /// @notice A rescue flow out of a full bad-debt episode (empty pre-flow aggregates) keeps the
@@ -169,6 +175,17 @@ contract LibManagerStorageTest is Test {
     harness.rebaseSnapshot(0, 0, 100e18, 5_200e18, 5_000e18, 1e30);
     assertEq(harness.getLastDebt(), 5_000e18, "reference re-anchored on the post-flow state");
     assertEq(harness.getHeldManagementFeeAssets(), 100e18, "deduction stays nominal across the rescue");
+  }
+
+  /// @notice A flow from a universe pinned at `collateral == debt` (zero NAV but still good
+  ///         debt, so gross collateral is positive) keeps the accumulator nominal too: the mint
+  ///         denominator is the virtual asset base, so a dust deposit doubles the supply and
+  ///         would double the credit with it (Cantina #30).
+  function test_rebaseSnapshot_zeroNavFlowKeepsHeldManagementFeesNominal() public {
+    harness.setReference(1_000e18, 4_000e18);
+    harness.setHeldManagementFeeAssets(100e18);
+    harness.rebaseSnapshot(5_000e18, 5_000e18, 100e18, 5_000e18 + 1, 5_000e18, 200e18);
+    assertEq(harness.getHeldManagementFeeAssets(), 100e18, "deduction stays nominal at zero pre-flow NAV");
   }
 
   /// @notice In the sentinel fallback the accumulator is left in place: the sentinel forces the
@@ -234,9 +251,7 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getLastDebt(), expectedRefDebt, "reference debt carries the scaled basis");
     assertEq(harness.getLastTotalAssets(), expectedRefNav, "reference NAV re-anchored on post-flow collateral");
     assertEq(
-      harness.getHeldManagementFeeAssets(),
-      FixedPointMathLib.mulDiv(heldMgmtSeed, newSupply, prevSupply),
-      "held management fee deduction scales with supply"
+      harness.getHeldManagementFeeAssets(), heldMgmtSeed, "held management fee deduction is never rescaled by a flow"
     );
   }
 }

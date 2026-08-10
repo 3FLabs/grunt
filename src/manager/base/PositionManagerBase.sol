@@ -101,8 +101,8 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      whole deduction off and overcharge the next crystallization (Cantina #6). The
   ///      accumulator clears on a reseed advance (bootstrap sentinel or empty vault, zero
   ///      basis — the fallback branches of `LibStorage.rebaseSnapshot` rely on that clear) and
-  ///      on `resetPerformanceReference`; flows scale it with the share supply so the per-share
-  ///      deduction is preserved (see `LibStorage.rebaseSnapshot`).
+  ///      on `resetPerformanceReference`; capital flows never rescale it (see
+  ///      `LibStorage.rebaseSnapshot`).
   ///
   ///      Capital flows (deposit/withdraw/burn/rebalance/module changes) do not advance the
   ///      reference either; they rebase it so the pending per-share basis is preserved — see

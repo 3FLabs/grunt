@@ -1120,9 +1120,10 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertGt(stepShares, 0, "the real gain still charges");
   }
 
-  /// @notice The pending deduction scales with the share supply across a flow: an exit takes its
-  ///         slice along instead of donating it to the stayers.
-  function test_flow_scalesHeldManagementFeesWithSupply() public {
+  /// @notice A deposit/exit round trip must hand the pending deduction back whole: neither leg
+  ///         rescales it, or reversible capital could repeat the cycle to grind the deduction
+  ///         toward zero and overcharge the next crystallization.
+  function test_flow_roundTripKeepsHeldManagementFeesNominal() public {
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
@@ -1131,18 +1132,21 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     uint256 heldBefore = _heldManagementFees();
     assertGt(heldBefore, 0, "management fees accumulated while held");
 
-    // Exit half the pool in the same block: the burn's internal accrual is zero-elapsed, so the
-    // only supply change is the burn itself and the deduction must scale with it.
+    // Deposit doubling the pool, then burn exactly the minted shares in the same block (the
+    // internal accruals are zero-elapsed): the vault returns to its pre-flow state and the
+    // deduction must come back whole, not halved.
     uint256 supplyBefore = positionManager.totalSupply();
-    uint256 sharesToBurn = positionManager.balanceOf(minter) / 2;
-    _mintDebt(minter, DEBT_AMOUNT);
-    vm.prank(minter);
-    positionManager.burn(sharesToBurn, WithdrawalStrategy.PROPORTIONAL);
+    uint256 balanceBefore = positionManager.balanceOf(minter);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    uint256 minted = positionManager.balanceOf(minter) - balanceBefore;
+    assertEq(_heldManagementFees(), heldBefore, "deposit leaves the deduction nominal");
 
-    uint256 supplyAfter = positionManager.totalSupply();
-    assertEq(
-      _heldManagementFees(), heldBefore.mulDiv(supplyAfter, supplyBefore), "deduction scales with the share supply"
-    );
+    _mintDebt(minter, 2 * DEBT_AMOUNT);
+    vm.prank(minter);
+    positionManager.burn(minted, WithdrawalStrategy.PROPORTIONAL);
+
+    assertEq(positionManager.totalSupply(), supplyBefore, "round trip restored the share supply");
+    assertEq(_heldManagementFees(), heldBefore, "round trip hands the deduction back whole");
   }
 
   /// @notice A rescue deposit out of a full bad-debt episode mints shares against a zero asset
@@ -1176,6 +1180,78 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
       "crystallization nets exactly the fees actually charged"
     );
     assertGt(perfShares, 0, "recovery gain above the re-anchor still charges");
+  }
+
+  /// @notice Cantina #30: a dust deposit made while the pool is pinned at zero NAV (collateral
+  ///         exactly equal to debt, still inside the good-debt universe) mints against the
+  ///         virtual asset base and roughly doubles the supply; the held deduction must stay
+  ///         nominal instead of scaling with that unmoored supply ratio.
+  function test_managementFee_zeroNavDepositKeepsHeldDeductionNominal() public {
+    // Route to the interest-free market so the debt stays put and NAV can be pinned exactly.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Halve the price: quoted collateral == debt exactly, so NAV is zero while the module is
+    // still included as good debt (the exclusion filter is `collateral >= debt`).
+    oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
+    assertEq(positionManager.totalAssets(), 0, "pool pinned at zero NAV");
+
+    // A dust deposit mints against the virtual asset base and roughly doubles the supply.
+    uint256 supplyBefore = positionManager.totalSupply();
+    _leveredDeposit(2, 0);
+    assertGe(positionManager.totalSupply(), 2 * supplyBefore, "dust deposit doubled the supply");
+    assertEq(_heldManagementFees(), held, "deduction stays nominal across the zero-NAV deposit");
+  }
+
+  /// @notice Cantina #30, dust-positive variant: a permissionless dust repay lifts NAV one atom
+  ///         off zero, so a zero-NAV guard alone would readmit the scaling; the mint denominator
+  ///         is still virtually the offset base, and a matching dust deposit nearly doubles the
+  ///         supply. The credit must stay nominal on any deposit.
+  function test_managementFee_dustPositiveNavDepositKeepsHeldDeductionNominal() public {
+    // Route to the interest-free market so the debt stays put and NAV can be pinned exactly.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Pin NAV to zero, then dust-repay on the module: NAV is now dust-positive.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
+    debtToken.setBalance(user, 1e6);
+    vm.startPrank(user);
+    debtToken.approve(address(morpho), type(uint256).max);
+    morpho.repay(marketParams2, 1e6, 0, address(borrowPosition2), "");
+    vm.stopPrank();
+    uint256 nav = positionManager.totalAssets();
+    assertGt(nav, 0, "dust repay lifts NAV off zero");
+    assertLt(nav, held, "NAV is dust next to the credit");
+
+    // A NAV-sized dust deposit still mints against the virtual base and ~doubles the supply.
+    uint256 supplyBefore = positionManager.totalSupply();
+    _leveredDeposit(2 * nav, 0);
+    assertGe(positionManager.totalSupply(), supplyBefore * 3 / 2, "dust deposit blew up the supply");
+    assertEq(_heldManagementFees(), held, "deduction stays nominal across the dust-NAV deposit");
   }
 
   /// @notice A fee holiday (no recipient) neither wipes nor grows the deduction: it survives
