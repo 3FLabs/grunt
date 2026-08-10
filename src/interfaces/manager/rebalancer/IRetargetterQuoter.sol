@@ -90,6 +90,33 @@ interface IRetargetterQuoter {
     uint256 duration
   ) external pure returns (uint256 principal, uint256 collateralToFreeQuoted);
 
+  /// @notice Computes the one-trip repayment bound of an LTV-up operation.
+  /// @dev The largest principal whose worst permitted repayment (the principal plus the full
+  ///      flat yield cap) can still be borrowed at target once the subscription has landed as
+  ///      collateral: `P * (1 + yieldCap) <= targetLtv * (K * (1 + Yc) + P) - D * (1 + Rb)`.
+  ///      Same accrual conventions as `ltvUpPrincipal`; the bridge yield estimate is replaced
+  ///      by the flat cap because repayment prices actual YT supply, not the estimate.
+  ///      Returns 0 when the position is at or above target once the accruals are applied.
+  ///      Reverts with `InvalidParameters` only at a full target LTV combined with a zero
+  ///      yield cap.
+  /// @param collateralQuoted The aggregate collateral value in debt-asset units
+  /// @param debt The aggregate debt in debt-asset units
+  /// @param targetLtv The target loan-to-value ratio (WAD)
+  /// @param maxYieldBps The flat yield cap bounding the operation's YT supply (basis points)
+  /// @param borrowRate The venue borrow rate on existing debt (WAD per 365 days)
+  /// @param collateralYieldRate The collateral yield rate (WAD per 365 days)
+  /// @param duration The expected subscription settlement duration in seconds
+  /// @return principal The one-trip repayment bound in debt-asset units (rounded down)
+  function ltvUpOneTripPrincipal(
+    uint256 collateralQuoted,
+    uint256 debt,
+    uint256 targetLtv,
+    uint256 maxYieldBps,
+    uint256 borrowRate,
+    uint256 collateralYieldRate,
+    uint256 duration
+  ) external pure returns (uint256 principal);
+
   /// @notice Quantizes an elapsed loan duration to whole repayment ticks.
   /// @dev From the first second the borrower owes one full tick; the count promotes to the
   ///      next tick each time the elapsed duration passes a whole number of ticks plus the

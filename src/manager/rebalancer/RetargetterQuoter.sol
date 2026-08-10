@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {IRetargetterQuoter} from "../../interfaces/manager/rebalancer/IRetargetterQuoter.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";
+import {BPS} from "../../libs/Constants.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title RetargetterQuoter
@@ -50,6 +51,17 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///      and solving for x yields the implemented formula
 ///
 ///        x = (t * K * (1 + Yc) - D * (1 + Rb)) / (1 - t + Yr)
+///
+///      One-trip repayment bound (`ltvUpOneTripPrincipal`): repayment prices the actual YT
+///      supply, bounded by the flat yield cap y rather than the Yr estimate, so the worst
+///      permitted repayment of a fully deployed principal x is `x * (1 + y)`. Requiring it to
+///      stay borrowable at target once the subscription has landed,
+///
+///        x * (1 + y) <= t * (K * (1 + Yc) + x) - D * (1 + Rb)
+///
+///      and solving for x yields the same formula with y in place of Yr:
+///
+///        x = (t * K * (1 + Yc) - D * (1 + Rb)) / (1 + y - t)
 ///
 ///      LTV-down sizing (`ltvDownPrincipal`), for over-leveraged positions (D / K > t): borrow
 ///      x, repay x of position debt, withdraw collateral of quoted value w and redeem it, and
@@ -152,6 +164,25 @@ contract RetargetterQuoter is IRetargetterQuoter {
     if (grownTarget <= driftedDebt) return 0;
     // Denominator 1 - targetLtv + Yr; zero only at targetLtv == WAD with a zero yield estimate
     uint256 denominator = WAD - targetLtv + _scaledRate(requestYieldRate, duration);
+    if (denominator == 0) revert LibRetargetterErrors.InvalidParameters();
+    principal = (grownTarget - driftedDebt).fullMulDiv(WAD, denominator);
+  }
+
+  /// @inheritdoc IRetargetterQuoter
+  function ltvUpOneTripPrincipal(
+    uint256 collateralQuoted,
+    uint256 debt,
+    uint256 targetLtv,
+    uint256 maxYieldBps,
+    uint256 borrowRate,
+    uint256 collateralYieldRate,
+    uint256 duration
+  ) public pure returns (uint256 principal) {
+    uint256 grownTarget = _grownTarget(collateralQuoted, targetLtv, collateralYieldRate, duration);
+    uint256 driftedDebt = _driftedDebt(debt, borrowRate, duration);
+    if (grownTarget <= driftedDebt) return 0;
+    // Denominator 1 + y - targetLtv; zero only at targetLtv == WAD with a zero yield cap
+    uint256 denominator = WAD + maxYieldBps * WAD / BPS - targetLtv;
     if (denominator == 0) revert LibRetargetterErrors.InvalidParameters();
     principal = (grownTarget - driftedDebt).fullMulDiv(WAD, denominator);
   }

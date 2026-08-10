@@ -16,7 +16,12 @@ import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {Order, Mode, State} from "../../libs/funds/Order.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";
-import {LibStorage, RetargetterAssets, RetargetterOperation} from "../../libs/manager/rebalancer/LibStorage.sol";
+import {
+  LibStorage,
+  RetargetterAssets,
+  RetargetterOperation,
+  RetargetterWhitelists
+} from "../../libs/manager/rebalancer/LibStorage.sol";
 import {
   REBALANCER_ROLE,
   CONSUMER_ROLE,
@@ -50,7 +55,8 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 /// @notice Orchestrator that brings PositionManagers back to their target LTV by composing
 ///         Requests (bridge loans), funds (subscription/redemption) and PositionManager
 ///         rebalancing. Bound to one (collateralAsset, debtAsset) pair at initialization and
-///         runs one operation at a time against any PositionManager on that pair.
+///         runs one operation at a time against an owner-whitelisted PositionManager on that
+///         pair.
 /// @dev Two entry points:
 ///      - ASYNC (`startRetargetting`): deploys a fresh Request through the audited
 ///        RequestFactory; the operation spans the fund's settlement window and ends with a
@@ -62,7 +68,10 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///
 ///      Trust model: fully trusted owner, semi-trusted rebalancer boxed in by the guardrails
 ///      (direction checks, the bridge value-conservation gate, principal and yield caps,
-///      whitelists, residual settlement gates), untrusted everyone else. The Retargetter
+///      whitelists, residual settlement gates), untrusted everyone else. The
+///      one-operation-at-a-time guarantee is scoped to this instance: grant a
+///      PositionManager's rebalancer role to at most one Retargetter, or each holder can
+///      admit the full principal cap independently. The Retargetter
 ///      holds no value at rest: `resolve` and the end of the flash-loan window both require
 ///      its balances of the two bound assets to stay within the configured residual
 ///      tolerance (exact zero by default).
@@ -206,11 +215,11 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     string calldata requestName,
     string calldata requestSymbol
   ) external onlyOwnerOrRebalancer nonReentrant returns (address request) {
-    RetargetterOperation storage operation_ = LibStorage.operationStorage();
-    _checkStart(operation_, positionManager, fund, principal);
-
     uint16 configCap = LibStorage.configStorage().maxYieldBps;
     uint16 effectiveYieldCap = maxYieldBps_ < configCap ? maxYieldBps_ : configCap;
+
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    _checkStart(operation_, positionManager, fund, principal, effectiveYieldCap);
 
     // Safe: block.timestamp + 90 days fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -233,6 +242,15 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     operation_.request = request;
     operation_.repaymentDeadline = repaymentDeadline;
     operation_.fund = fund;
+    // The repayment terms join the yield cap in the operation snapshot, so a later setConfig
+    // cannot reprice a funded operation (block-scoped so the pointer does not deepen the
+    // stack for the rest of the function)
+    {
+      RetargetterConfig storage config_ = LibStorage.configStorage();
+      operation_.horizon = config_.horizon;
+      operation_.tickDuration = config_.tickDuration;
+      operation_.tickThreshold = config_.tickThreshold;
+    }
 
     emit RetargettingStarted(positionManager, request, fund, principal, effectiveYieldCap);
   }
@@ -242,7 +260,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      `expectedReturn * BPS <= amount * operationMaxYieldBps`. The gate is flat because
   ///      repayment itself is duration-prorated by the tick formula. The principal gate is
   ///      cumulative through the Request's PT supply plus the outstanding mint authorizations,
-  ///      which together are the complete capital accounting for the Request.
+  ///      which together are the complete capital accounting for the Request. It runs after
+  ///      the Request call, when the minted amount already sits in the PT supply: the maker
+  ///      callback inside Request.consume can move the live cap (a liquidation shrinks it),
+  ///      and only a post-call read cannot be invalidated. The call is atomic, so failing
+  ///      late rolls back the callback, the transfer and the mint alike, and a maker cannot
+  ///      inflate capacity just for the check: once the call returns, only the position
+  ///      manager's owner or rebalancer can move collateral back out.
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)
@@ -251,10 +275,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
-    operation_.checkOffer(
-      request, offer.amount, offer.expectedReturn, ptAmount, maxPrincipal(operation_.positionManager)
-    );
+    operation_.checkYield(offer.amount, offer.expectedReturn);
+    operation_.checkConsumptionWindow();
     ytAmount = IRequest(request).consume(offer, signature, ptAmount);
+    operation_.checkPrincipalCap(request, 0, _maxPrincipal(operation_.positionManager, operation_.operationMaxYieldBps));
     emit OfferConsumed(request, offer.maker, ptAmount, ytAmount);
   }
 
@@ -264,7 +288,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      account's current one is replaced, not added to). A nonzero authorization starts the
   ///      loan clock, must land inside the consumption window and is capped in count by
   ///      MAX_AUTHORIZED_ACCOUNTS; the zero-amount revocation skips every gate because it
-  ///      only shrinks exposure and must stay available after the window closes.
+  ///      only shrinks exposure and must stay available after the window closes. Unlike
+  ///      consume there is no maker callback between the gates and the Request write, so the
+  ///      principal gate stays pre-call here.
   function authorizeMinting(address to, uint128 ptAmount, uint128 ytAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)
@@ -278,9 +304,22 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     EnumerableSetLib.AddressSet storage accounts = operation_.authorizedAccounts;
     accounts.remove(to);
     if (ptAmount != 0 || ytAmount != 0) {
-      operation_.checkOffer(request, ptAmount, ytAmount, ptAmount, maxPrincipal(operation_.positionManager));
+      operation_.checkOffer(
+        request,
+        ptAmount,
+        ytAmount,
+        ptAmount,
+        _maxPrincipal(operation_.positionManager, operation_.operationMaxYieldBps)
+      );
       // The capacity bound keeps every loop over the set within gas reach; see the constant
       accounts.add(to, MAX_AUTHORIZED_ACCOUNTS);
+    } else if (operation_.startedAt != 0 && accounts.length() == 0) {
+      // The loan clock only runs while the operation carries an obligation: a revocation
+      // leaving no supply and no pending authorization rewinds it to unstarted, so an
+      // economically empty operation is not forced through a resolve-and-restart cycle by
+      // an expired consumption window
+      (uint128 ptSupply, uint128 ytSupply) = ITokenController(request).totalSupplies();
+      if (ptSupply == 0 && ytSupply == 0) operation_.startedAt = 0;
     }
     IRequest(request).authorizeMinting(to, ptAmount, ytAmount);
     emit MintingAuthorized(request, to, ptAmount, ytAmount);
@@ -288,6 +327,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @inheritdoc IRetargetter
   /// @dev Naturally bounded by the Request's balance, which the principal cap already bounded.
+  ///      A zero amount is the named close of the funding round: no capital moves, the round
+  ///      still shuts the same way.
   function pullRequestFunds(uint256 amount) external onlyOwnerOrRebalancer nonReentrant {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
@@ -303,7 +344,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /// @dev With no consume the owed amount is zero and this simply marks the Request repaid,
   ///      which is how an untouched operation gets abandoned. Transfers only the shortfall
   ///      between the owed amount and the Request's balance, never more, so position-derived
-  ///      funds cannot overpay YT holders. The open upper bound at setRepaid keeps third-party
+  ///      funds cannot overpay YT holders. The owed yield floors at one full tick, so consumed
+  ///      principal left sitting in the Request (never pulled) still owes that tick out of
+  ///      position-derived funds. The open upper bound at setRepaid keeps third-party
   ///      donations to the Request from blocking repayment. Once the Request passes its
   ///      90-day deadline it auto-expires and this function reverts AlreadyRepaid; proceeds
   ///      settling after that point cannot be delivered to lenders locally. The expiry
@@ -408,9 +451,12 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
+  /// @dev The fund must report the canceled order EMPTY before the local order state is
+  ///      cleared; a fund still processing the order keeps it stored and reverts, so the
+  ///      expectation is enforced on the IFund contract rather than assumed.
   function cancelOrder() external onlyOwnerOrRebalancer nonReentrant {
     (RetargetterOperation storage operation_, address fund, Order memory order_) = _liveOrder();
-    IFund(fund).cancel(order_);
+    if (IFund(fund).cancel(order_) != State.EMPTY) revert LibRetargetterErrors.OrderPending();
     operation_.clearOrder();
     emit OrderCanceled(fund, order_);
   }
@@ -548,7 +594,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     bytes[] calldata data
   ) external onlyOwnerOrRebalancer {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
-    _checkStart(operation_, positionManager, fund, flashLoanAmount);
+    // The flash repayment carries no yield, so the window's principal cap is sized on a
+    // zero yield cap (the pure one-trip headroom bound)
+    _checkStart(operation_, positionManager, fund, flashLoanAmount, 0);
     if (!LibStorage.whitelistsStorage().flashLoanModules[flashLoanModule]) {
       revert LibRetargetterErrors.ModuleNotWhitelisted();
     }
@@ -639,8 +687,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IRetargetter
-  /// @dev Changes take effect immediately, including for an in-flight operation; the
-  ///      recorded per-operation yield cap is the exception, fixed at start.
+  /// @dev Changes take effect immediately, except for an in-flight operation's snapshot: the
+  ///      repayment terms (horizon, tick duration, tick threshold) and the yield cap are
+  ///      fixed at operation start, so this cannot move value between the borrower and
+  ///      lenders who already committed capital.
   function setConfig(RetargetterConfig calldata config_) external onlyOwner nonReentrant {
     _setConfig(config_);
   }
@@ -679,6 +729,22 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     emit FlashLoanModuleSet(module, whitelisted);
   }
 
+  /// @inheritdoc IRetargetter
+  /// @dev Mirrors setFund: the pair is checked once here instead of at every operation
+  ///      start, and removal is blocked while the position manager is bound to the active
+  ///      operation. Every start-gate and principal-cap read trusts what the bound address
+  ///      reports about itself, which is why the binding is owner-curated.
+  function setPositionManager(address positionManager, bool whitelisted) external onlyOwner nonReentrant {
+    if (whitelisted) {
+      positionManager.checkContract();
+      _checkPair(positionManager);
+    } else if (LibStorage.operationStorage().positionManager == positionManager) {
+      revert LibRetargetterErrors.OperationActive();
+    }
+    LibStorage.whitelistsStorage().positionManagers[positionManager] = whitelisted;
+    emit PositionManagerSet(positionManager, whitelisted);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -700,6 +766,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       uint40 startedAt,
       uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
+      uint32 horizon,
+      uint24 tickDuration,
+      uint24 tickThreshold,
       Order memory order,
       bool orderLive
     )
@@ -712,6 +781,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       operation_.startedAt,
       operation_.repaymentDeadline,
       operation_.operationMaxYieldBps,
+      operation_.horizon,
+      operation_.tickDuration,
+      operation_.tickThreshold,
       operation_.order(),
       operation_.orderLive
     );
@@ -723,34 +795,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev Recomputed from live position manager state, so the cap self-corrects: once a
-  ///      rebalance moves the position to target the cap collapses toward zero and further
-  ///      consumption is blocked. An empty position reverts EmptyPosition; debt against zero
-  ///      collateral reverts BadDebtPosition.
+  /// @dev Sized on the config ceiling maxYieldBps, the largest yield cap any operation may
+  ///      carry, so this view is a safe floor for every permissible operation; the operation
+  ///      gates size on the effective per-operation cap instead (zero for a SYNC window,
+  ///      whose flash repayment carries no yield) and can admit up to that looser bound.
+  ///      See {_maxPrincipal} for the formula.
   function maxPrincipal(address positionManager) public view returns (uint256) {
-    uint256 collateralQuoted = IPositionManager(positionManager).collateralAmountQuoted();
-    uint256 debt = IPositionManager(positionManager).debtAmount();
-    if (collateralQuoted == 0) {
-      if (debt == 0) revert LibRetargetterErrors.EmptyPosition();
-      revert LibRetargetterErrors.BadDebtPosition(positionManager);
-    }
-    (uint256 target,) = IPositionManager(positionManager).config();
-    RetargetterConfig storage config_ = LibStorage.configStorage();
-    // The estimates pack into a single slot, so one copy into memory beats a storage
-    // pointer re-reading the slot for every field passed to the quoter
-    YieldEstimates memory estimates = config_.estimates;
-    uint256 principal = IRetargetterQuoter(_QUOTER)
-      .retargetPrincipal(
-        collateralQuoted,
-        debt,
-        target,
-        estimates.requestYieldRate,
-        estimates.borrowRate,
-        estimates.collateralYieldRate,
-        estimates.subscriptionDuration,
-        estimates.redemptionDuration
-      );
-    return principal * (BPS + config_.principalBufferBps) / BPS;
+    return _maxPrincipal(positionManager, LibStorage.configStorage().maxYieldBps);
   }
 
   /// @inheritdoc IRetargetter
@@ -791,6 +842,11 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
+  function isPositionManager(address positionManager) external view returns (bool) {
+    return LibStorage.whitelistsStorage().positionManagers[positionManager];
+  }
+
+  /// @inheritdoc IRetargetter
   function quoter() external view returns (address) {
     return _QUOTER;
   }
@@ -827,18 +883,26 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @dev Shared start gate of both entry points. One operation at a time: the position
   ///      manager doubles as the active flag, and a SYNC window keeps it populated, so this
-  ///      also locks out starts smuggled into a window payload. No leftover order, matching
-  ///      asset pair, whitelisted fund, and the requested amount within the live principal
-  ///      cap (fail-fast for ASYNC, where the binding check re-runs at every consume).
-  function _checkStart(RetargetterOperation storage operation_, address positionManager, address fund, uint256 amount)
-    internal
-    view
-  {
+  ///      also locks out starts smuggled into a window payload. No leftover order,
+  ///      whitelisted position manager (its pair was checked at setPositionManager),
+  ///      whitelisted fund, and the requested amount within the live principal cap sized on
+  ///      the operation's yield cap (fail-fast for ASYNC, where the binding check re-runs at
+  ///      every consume; zero for SYNC, whose flash repayment carries no yield).
+  function _checkStart(
+    RetargetterOperation storage operation_,
+    address positionManager,
+    address fund,
+    uint256 amount,
+    uint16 yieldCapBps
+  ) internal view {
     if (operation_.positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
-    _checkPair(positionManager);
-    if (!LibStorage.whitelistsStorage().funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
-    if (amount > maxPrincipal(positionManager)) revert LibRetargetterErrors.PrincipalCapExceeded();
+    RetargetterWhitelists storage whitelists_ = LibStorage.whitelistsStorage();
+    if (!whitelists_.positionManagers[positionManager]) {
+      revert LibRetargetterErrors.PositionManagerNotWhitelisted();
+    }
+    if (!whitelists_.funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
+    if (amount > _maxPrincipal(positionManager, yieldCapBps)) revert LibRetargetterErrors.PrincipalCapExceeded();
   }
 
   /// @dev Shared preamble of the wrappers acting on the live order: requires an active
@@ -856,9 +920,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     order_ = operation_.order();
   }
 
-  /// @dev Reverts unless the position manager's assets equal the bound pair. The fund's
-  ///      tokens were validated against the pair at setFund and the Request is created with
-  ///      the debt asset, so a matching position manager makes the whole operation match.
+  /// @dev Reverts unless the position manager's assets equal the bound pair; run once at
+  ///      setPositionManager. The fund's tokens were validated against the pair at setFund
+  ///      and the Request is created with the debt asset, so a matching position manager
+  ///      makes the whole operation match.
   function _checkPair(address positionManager) internal view {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
@@ -867,21 +932,68 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
   }
 
-  /// @dev Current owed amount on the operation's Request. The supplies only grow through
-  ///      consume and authorized mints, both reachable only once the loan clock has started,
-  ///      so with startedAt still zero both supplies are zero and the owed amount is zero
-  ///      regardless of the elapsed time.
+  /// @dev The live principal cap for an operation carrying the given yield cap. Recomputed
+  ///      from live position manager state, so the cap self-corrects: once a rebalance moves
+  ///      the position to target the cap collapses toward zero and further consumption is
+  ///      blocked. An empty position reverts EmptyPosition; debt against zero collateral
+  ///      reverts BadDebtPosition. Below target the buffered cap is further bounded by the
+  ///      quoter's one-trip repayment bound: repayment prices actual YT supply, which the
+  ///      flat yield cap bounds rather than the yield estimate, so the buffer alone would
+  ///      let a cap-sized operation owe more than the post-supply target-LTV borrow
+  ///      capacity can fund in one settlement trip.
+  function _maxPrincipal(address positionManager, uint16 yieldCapBps) internal view returns (uint256) {
+    uint256 collateralQuoted = IPositionManager(positionManager).collateralAmountQuoted();
+    uint256 debt = IPositionManager(positionManager).debtAmount();
+    if (collateralQuoted == 0) {
+      if (debt == 0) revert LibRetargetterErrors.EmptyPosition();
+      revert LibRetargetterErrors.BadDebtPosition(positionManager);
+    }
+    (uint256 target,) = IPositionManager(positionManager).config();
+    RetargetterConfig storage config_ = LibStorage.configStorage();
+    // The estimates pack into a single slot, so one copy into memory beats a storage
+    // pointer re-reading the slot for every field passed to the quoter
+    YieldEstimates memory estimates = config_.estimates;
+    uint256 principal = IRetargetterQuoter(_QUOTER)
+      .retargetPrincipal(
+        collateralQuoted,
+        debt,
+        target,
+        estimates.requestYieldRate,
+        estimates.borrowRate,
+        estimates.collateralYieldRate,
+        estimates.subscriptionDuration,
+        estimates.redemptionDuration
+      );
+    uint256 buffered = principal * (BPS + config_.principalBufferBps) / BPS;
+    if (debt.divWad(collateralQuoted) >= target) return buffered;
+    uint256 oneTrip = IRetargetterQuoter(_QUOTER)
+      .ltvUpOneTripPrincipal(
+        collateralQuoted,
+        debt,
+        target,
+        yieldCapBps,
+        estimates.borrowRate,
+        estimates.collateralYieldRate,
+        estimates.subscriptionDuration
+      );
+    return buffered.min(oneTrip);
+  }
+
+  /// @dev Current owed amount on the operation's Request, priced on the repayment terms
+  ///      snapshotted at operation start (live config no longer moves them). The supplies
+  ///      only grow through consume and authorized mints, both reachable only once the loan
+  ///      clock has started, so with startedAt still zero both supplies are zero and the
+  ///      owed amount is zero regardless of the elapsed time.
   function _owed(RetargetterOperation storage operation_) internal view returns (uint256) {
     (uint128 ptSupply, uint128 ytSupply) = ITokenController(operation_.request).totalSupplies();
-    RetargetterConfig storage config_ = LibStorage.configStorage();
     return IRetargetterQuoter(_QUOTER)
       .repaymentOwed(
         ptSupply,
         ytSupply,
         block.timestamp - operation_.startedAt,
-        config_.tickDuration,
-        config_.tickThreshold,
-        config_.horizon
+        operation_.tickDuration,
+        operation_.tickThreshold,
+        operation_.horizon
       );
   }
 

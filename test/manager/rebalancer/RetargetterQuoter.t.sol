@@ -108,6 +108,58 @@ contract RetargetterQuoterTest is Test {
     assertEq(principal, uint256(5_000e18) * WAD / 0.1e18, "denominator is Yr alone");
   }
 
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                   LTV-UP ONE-TRIP BOUND                    */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_ltvUpOneTripPrincipal_zeroRateFixture() public view {
+    // Same numerator as the ideal formula with the flat yield cap in the divisor:
+    // x = (tau * K - D) / (1 + y - tau); K = 10_000, D = 5_000, tau = 0.7, y = 10%:
+    // x = 2_000 / 0.4 = 5_000
+    uint256 principal = quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, 0.7e18, 1000, 0, 0, 0);
+    assertEq(principal, 5_000e18, "one-trip bound");
+    // The worst permitted repayment x * (1 + y) equals the post-supply borrow capacity at
+    // target, tau * (K + x) - D: the bound is exact, not merely sufficient
+    assertEq(
+      principal * 11 / 10, uint256(0.7e18).fullMulDiv(10_000e18 + principal, WAD) - 5_000e18, "one-trip exactness"
+    );
+    // A zero yield cap collapses the bound to the zero-rate ideal principal
+    assertEq(
+      quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, 0.7e18, 0, 0, 0, 0),
+      quoter.ltvUpPrincipal(10_000e18, 5_000e18, 0.7e18, 0, 0, 0, 0),
+      "zero cap equals the ideal"
+    );
+  }
+
+  function test_ltvUpOneTripPrincipal_extendedRatesFixture() public view {
+    // Debt drift and collateral yield over a 30-day window, 10% flat cap
+    uint256 k = 10_000e18;
+    uint256 d = 5_000e18;
+    uint256 tau = 0.7e18;
+    uint256 rb = 0.05e18;
+    uint256 yc = 0.03e18;
+    uint256 dt = 30 days;
+
+    uint256 principal = quoter.ltvUpOneTripPrincipal(k, d, tau, 1000, rb, yc, dt);
+
+    // Exact recomputation: the accrual terms match ltvUpPrincipal, only the divisor differs
+    uint256 numerator = _grownTarget(k, tau, yc, dt) - _driftedDebt(d, rb, dt);
+    assertEq(principal, numerator.fullMulDiv(WAD, WAD + 0.1e18 - tau), "extended formula");
+    // The flat cap always undercuts the same-numerator ideal whose scaled Yr is below it
+    assertLt(principal, quoter.ltvUpPrincipal(k, d, tau, 0.04e18, rb, yc, dt), "below the estimated ideal");
+  }
+
+  function test_ltvUpOneTripPrincipal_returnsZeroAtOrAboveTarget() public view {
+    assertEq(quoter.ltvUpOneTripPrincipal(10_000e18, 7_000e18, 0.7e18, 1000, 0, 0, 0), 0, "at target");
+    assertEq(quoter.ltvUpOneTripPrincipal(10_000e18, 8_000e18, 0.7e18, 1000, 0, 0, 0), 0, "above target");
+  }
+
+  function test_ltvUpOneTripPrincipal_revertsOnFullTargetWithZeroCap() public {
+    // targetLtv == WAD with a zero yield cap: denominator 1 + y - tau == 0
+    vm.expectRevert(LibRetargetterErrors.InvalidParameters.selector);
+    quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, WAD, 0, 0, 0, 0);
+  }
+
   function testFuzz_ltvUpPrincipal_monotoneInDebt(
     uint256 collateral,
     uint256 targetLtv,

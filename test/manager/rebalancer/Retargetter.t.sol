@@ -252,6 +252,75 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(stored.estimates.redemptionDuration, 3 days, "redemption duration");
   }
 
+  /// @notice A started operation settles on the repayment terms snapshotted at start: a
+  ///         later setConfig moves neither the owed pricing nor the consumption window.
+  function test_setConfig_doesNotRepriceStartedOperation() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(4_000e18, 100);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+
+    // One tick on the snapshotted terms: 1 day over a 365-day horizon (yield rounds up)
+    uint256 owedBefore = retargetter.owed();
+    assertEq(owedBefore, 1_000e18 + (uint256(10e18) * 1 days + 365 days - 1) / 365 days, "one snapshot tick owed");
+
+    // Read live, the new terms would owe a 30-day tick over a 90-day horizon
+    RetargetterConfig memory config_ = retargetter.config();
+    config_.horizon = 90 days;
+    config_.tickDuration = 30 days;
+    config_.tickThreshold = 1 days;
+    vm.prank(owner);
+    retargetter.setConfig(config_);
+
+    assertEq(retargetter.owed(), owedBefore, "started operation keeps its snapshotted terms");
+    (,,,,,, uint32 horizon, uint24 tickDuration, uint24 tickThreshold,,) = retargetter.operation();
+    assertEq(horizon, DEFAULT_HORIZON, "snapshot horizon untouched");
+    assertEq(tickDuration, DEFAULT_TICK_DURATION, "snapshot tick duration untouched");
+    assertEq(tickThreshold, DEFAULT_TICK_THRESHOLD, "snapshot tick threshold untouched");
+  }
+
+  /// @notice The consumption window length is part of the operation snapshot: shrinking the
+  ///         live tick threshold neither shortens a running window, nor does the snapshot
+  ///         hold past its own boundary.
+  function test_setConfig_windowLengthFixedAtStart() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(4_000e18, 100);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    uint256 origin = block.timestamp;
+
+    RetargetterConfig memory config_ = retargetter.config();
+    config_.tickThreshold = 1 hours;
+    vm.prank(owner);
+    retargetter.setConfig(config_);
+
+    // Five hours in: shut under the live 1-hour threshold, open under the 10-hour snapshot
+    vm.warp(origin + 5 hours);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+
+    // Past the snapshot threshold the window closes (checked before the Request call)
+    vm.warp(origin + uint256(DEFAULT_TICK_THRESHOLD) + 1);
+    Offer memory offer = _createOffer(1_000e18, 10e18);
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
+    retargetter.consume(offer, "", 1_000e18);
+  }
+
+  /// @notice Config changes bind the next operation: the snapshot is taken at start.
+  function test_setConfig_appliesToNextOperation() public {
+    RetargetterConfig memory config_ = retargetter.config();
+    config_.horizon = 180 days;
+    config_.tickDuration = 2 days;
+    config_.tickThreshold = 12 hours;
+    vm.prank(owner);
+    retargetter.setConfig(config_);
+
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(4_000e18, 100);
+    (,,,,,, uint32 horizon, uint24 tickDuration, uint24 tickThreshold,,) = retargetter.operation();
+    assertEq(horizon, 180 days, "new horizon snapshotted");
+    assertEq(tickDuration, 2 days, "new tick duration snapshotted");
+    assertEq(tickThreshold, 12 hours, "new tick threshold snapshotted");
+  }
+
   function test_setEstimates_revertNonOwner() public {
     YieldEstimates memory estimates = _zeroEstimates();
 
@@ -268,16 +337,19 @@ contract RetargetterTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
+    uint256 yieldCapDenominator = WAD + uint256(DEFAULT_MAX_YIELD_BPS) * WAD / BPS - POSITION_MANAGER_LTV;
 
-    // Zero-estimate cap: x = (target * K - D) / (1 - target), plus the 1% buffer
+    // Zero-estimate cap: the one-trip bound (target * K - D) / (1 + yieldCap - target)
+    // undercuts the buffered ideal (see test_maxPrincipal_upBranchZeroEstimates)
     uint256 capBefore = retargetter.maxPrincipal(address(positionManager));
-    uint256 idealPrincipal = (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / (WAD - POSITION_MANAGER_LTV);
-    assertEq(capBefore, idealPrincipal * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS, "zero-estimate cap");
+    assertEq(
+      capBefore, (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / yieldCapDenominator, "zero-estimate cap"
+    );
 
-    // A 10% per-year request yield over a full-year subscription makes Yr = 0.1
+    // A 10% per-year borrow rate over a full-year subscription makes Rb = 0.1
     YieldEstimates memory estimates = YieldEstimates({
-      requestYieldRate: 0.1e18,
-      borrowRate: 0,
+      requestYieldRate: 0,
+      borrowRate: 0.1e18,
       collateralYieldRate: 0,
       subscriptionDuration: 365 days,
       redemptionDuration: 0
@@ -288,12 +360,15 @@ contract RetargetterTest is RetargetterBaseTest {
     emit IRetargetter.EstimatesSet(estimates);
     retargetter.setEstimates(estimates);
 
-    // Estimated cap: x = (target * K - D) / (1 - target + Yr), plus the 1% buffer
+    // The drifted debt D * 1.1 tightens both formulas; the one-trip bound still binds
     uint256 capAfter = retargetter.maxPrincipal(address(positionManager));
-    uint256 estimatedPrincipal =
-      (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / (WAD - POSITION_MANAGER_LTV + 0.1e18);
-    assertEq(capAfter, estimatedPrincipal * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS, "estimated cap");
-    assertLt(capAfter, capBefore, "yield estimate tightens the cap");
+    uint256 driftedDebt = debt * (WAD + 0.1e18) / WAD;
+    assertEq(
+      capAfter,
+      (POSITION_MANAGER_LTV * collateralQuoted / WAD - driftedDebt) * WAD / yieldCapDenominator,
+      "estimated cap"
+    );
+    assertLt(capAfter, capBefore, "borrow estimate tightens the cap");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -410,6 +485,91 @@ contract RetargetterTest is RetargetterBaseTest {
     assertFalse(retargetter.isFlashLoanModule(address(flashLoanAdapter)), "removed");
   }
 
+  function test_setPositionManager_revertNonOwnerAndNonContract() public {
+    address stranger = makeAddr("strangerPositionManager");
+
+    vm.prank(rebalancer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.setPositionManager(address(positionManager), false);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, stranger));
+    retargetter.setPositionManager(stranger, true);
+  }
+
+  function test_setPositionManager_revertAssetMismatch() public {
+    // A position manager on a different asset pair never gets whitelisted
+    MockERC20 otherCollateral = new MockERC20("Other Collateral", "OCOLL", 18);
+    MockERC20 otherDebt = new MockERC20("Other Debt", "ODEBT", 18);
+    PositionManager otherPositionManager = PositionManager(LibClone.clone(address(new PositionManager())));
+    otherPositionManager.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "Other Position Manager",
+        symbol: "OPMS",
+        collateralAsset: address(otherCollateral),
+        debtAsset: address(otherDebt)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+
+    vm.prank(owner);
+    vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
+    retargetter.setPositionManager(address(otherPositionManager), true);
+  }
+
+  function test_setPositionManager_emitsAndWhitelists() public {
+    assertTrue(retargetter.isPositionManager(address(positionManager)), "fixture manager whitelisted");
+
+    // A fresh manager on the bound pair whitelists cleanly
+    PositionManager second = PositionManager(LibClone.clone(address(new PositionManager())));
+    second.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "Second Position Manager",
+        symbol: "PMS2",
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+    assertFalse(retargetter.isPositionManager(address(second)), "not whitelisted before");
+
+    vm.prank(owner);
+    vm.expectEmit(address(retargetter));
+    emit IRetargetter.PositionManagerSet(address(second), true);
+    retargetter.setPositionManager(address(second), true);
+    assertTrue(retargetter.isPositionManager(address(second)), "whitelisted after");
+
+    // Removal skips the pair check and emits the same event, flag down
+    vm.prank(owner);
+    vm.expectEmit(address(retargetter));
+    emit IRetargetter.PositionManagerSet(address(second), false);
+    retargetter.setPositionManager(address(second), false);
+    assertFalse(retargetter.isPositionManager(address(second)), "removed after");
+  }
+
+  function test_setPositionManager_revertOperationActiveForBoundManager() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(4_000e18, 100);
+
+    // The operation's manager cannot be removed while the operation is active
+    vm.prank(owner);
+    vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
+    retargetter.setPositionManager(address(positionManager), false);
+
+    // Re-whitelisting the bound manager is a harmless no-op
+    vm.prank(owner);
+    retargetter.setPositionManager(address(positionManager), true);
+    assertTrue(retargetter.isPositionManager(address(positionManager)), "still whitelisted");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                     NO ESCAPE HATCH                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -448,37 +608,46 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 startTime = block.timestamp;
     address request = _startAsync(6_000e18, 100);
 
-    (
-      address positionManager_,
-      address request_,
-      address fund_,
-      uint40 startedAt,
-      uint40 repaymentDeadline,
-      uint16 operationMaxYieldBps,
-      Order memory order,
-      bool orderLive
-    ) = retargetter.operation();
-    assertEq(positionManager_, address(positionManager), "position manager");
-    assertEq(request_, request, "request");
-    assertEq(fund_, address(fund), "fund");
-    assertEq(startedAt, 0, "loan clock not started");
-    assertEq(uint256(repaymentDeadline), startTime + 90 days, "mirrored Request deadline");
-    assertEq(operationMaxYieldBps, 100, "effective yield cap");
-    assertFalse(orderLive, "no stored order");
-    assertEq(order.owner, address(retargetter), "rebuilt order owner");
-    assertEq(order.receiver, address(retargetter), "rebuilt order receiver");
-    assertEq(order.input, 0, "empty order input");
+    // Block-scoped so the wide destructuring does not deepen the stack for the rest
+    {
+      (
+        address positionManager_,
+        address request_,
+        address fund_,
+        uint40 startedAt_,
+        uint40 repaymentDeadline,
+        uint16 operationMaxYieldBps,
+        uint32 horizon,
+        uint24 tickDuration,
+        uint24 tickThreshold,
+        Order memory order,
+        bool orderLive
+      ) = retargetter.operation();
+      assertEq(positionManager_, address(positionManager), "position manager");
+      assertEq(request_, request, "request");
+      assertEq(fund_, address(fund), "fund");
+      assertEq(startedAt_, 0, "loan clock not started");
+      assertEq(uint256(repaymentDeadline), startTime + 90 days, "mirrored Request deadline");
+      assertEq(operationMaxYieldBps, 100, "effective yield cap");
+      assertEq(horizon, DEFAULT_HORIZON, "snapshotted horizon");
+      assertEq(tickDuration, DEFAULT_TICK_DURATION, "snapshotted tick duration");
+      assertEq(tickThreshold, DEFAULT_TICK_THRESHOLD, "snapshotted tick threshold");
+      assertFalse(orderLive, "no stored order");
+      assertEq(order.owner, address(retargetter), "rebuilt order owner");
+      assertEq(order.receiver, address(retargetter), "rebuilt order receiver");
+      assertEq(order.input, 0, "empty order input");
+    }
 
     // The first consume sets the loan clock origin, not the operation start
     vm.warp(startTime + 3 days);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, startedAt,,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(startedAt, startTime + 3 days, "startedAt is the first consume time");
 
     // Later consumes inside the consumption window leave the origin untouched
     vm.warp(startTime + 3 days + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, startedAt,,,,) = retargetter.operation();
+    (,,, startedAt,,,,,,,) = retargetter.operation();
     assertEq(startedAt, startTime + 3 days, "startedAt unchanged by later consumes");
   }
 
@@ -527,11 +696,15 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
 
-    // x = (target * K - D) / (1 - target); cap = x * 1.01 (100 bps buffer)
-    uint256 idealPrincipal = (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / (WAD - POSITION_MANAGER_LTV);
-    uint256 expectedCap = idealPrincipal * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS;
+    // Buffered ideal x = (target * K - D) / (1 - target) times 1.01 (100 bps buffer), capped
+    // by the one-trip repayment bound (target * K - D) / (1 + yieldCap - target) sized on
+    // the config ceiling (10%); the bound is the smaller of the two here
+    uint256 numerator = POSITION_MANAGER_LTV * collateralQuoted / WAD - debt;
+    uint256 buffered = numerator * WAD / (WAD - POSITION_MANAGER_LTV) * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS;
+    uint256 oneTrip = numerator * WAD / (WAD + uint256(DEFAULT_MAX_YIELD_BPS) * WAD / BPS - POSITION_MANAGER_LTV);
+    assertLt(oneTrip, buffered, "the one-trip bound binds");
 
-    assertEq(retargetter.maxPrincipal(address(positionManager)), expectedCap, "up cap");
+    assertEq(retargetter.maxPrincipal(address(positionManager)), oneTrip, "up cap");
   }
 
   function test_maxPrincipal_downBranchZeroEstimates() public {
@@ -572,18 +745,16 @@ contract RetargetterTest is RetargetterBaseTest {
     );
   }
 
-  function test_startRetargetting_revertAssetMismatch() public {
-    // A position manager on a different asset pair
-    MockERC20 otherCollateral = new MockERC20("Other Collateral", "OCOLL", 18);
-    MockERC20 otherDebt = new MockERC20("Other Debt", "ODEBT", 18);
-    PositionManager otherPositionManager = PositionManager(LibClone.clone(address(new PositionManager())));
-    otherPositionManager.initialize(
+  function test_startRetargetting_revertPositionManagerNotWhitelisted() public {
+    // A position manager on the right pair that the owner never whitelisted
+    PositionManager strangerPositionManager = PositionManager(LibClone.clone(address(new PositionManager())));
+    strangerPositionManager.initialize(
       owner,
       PositionManagerMetadata({
-        name: "Other Position Manager",
-        symbol: "OPMS",
-        collateralAsset: address(otherCollateral),
-        debtAsset: address(otherDebt)
+        name: "Stranger Position Manager",
+        symbol: "SPMS",
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
       }),
       POSITION_MANAGER_LTV,
       address(0),
@@ -592,17 +763,23 @@ contract RetargetterTest is RetargetterBaseTest {
     );
 
     vm.prank(rebalancer);
-    vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
-    retargetter.startRetargetting(address(otherPositionManager), 1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    vm.expectRevert(LibRetargetterErrors.PositionManagerNotWhitelisted.selector);
+    retargetter.startRetargetting(
+      address(strangerPositionManager), 1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL
+    );
   }
 
   function test_startRetargetting_revertPrincipalCapExceeded() public {
     _seedPosition(10_000e18, 5_000e18);
+    // The view sizes the cap on the config yield-cap ceiling; a start at that same ceiling
+    // is gated by exactly this value
     uint256 cap = retargetter.maxPrincipal(address(positionManager));
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.startRetargetting(address(positionManager), cap + 1, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(
+      address(positionManager), cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL
+    );
   }
 
   function test_startRetargetting_revertUnauthorized() public {
@@ -622,24 +799,25 @@ contract RetargetterTest is RetargetterBaseTest {
     emit IRetargetter.RetargettingStarted(address(positionManager), address(0), address(fund), 6_000e18, 100);
     retargetter.startRetargetting(address(positionManager), 6_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
-    (,,,,, uint16 operationMaxYieldBps,,) = retargetter.operation();
+    (,,,,, uint16 operationMaxYieldBps,,,,,) = retargetter.operation();
     assertEq(operationMaxYieldBps, 100, "caller cap recorded");
   }
 
   function test_startRetargetting_effectiveYieldCapConfigLower() public {
     _seedPosition(10_000e18, 5_000e18);
 
-    // Caller cap 2000 above the config's 1000: the config cap binds
+    // Caller cap 2000 above the config's 1000: the config cap binds (and sizes the one-trip
+    // principal bound, so the announced principal sits under that tighter cap)
     vm.prank(rebalancer);
     vm.expectEmit(true, false, true, true, address(retargetter));
     emit IRetargetter.RetargettingStarted(
-      address(positionManager), address(0), address(fund), 6_000e18, DEFAULT_MAX_YIELD_BPS
+      address(positionManager), address(0), address(fund), 4_000e18, DEFAULT_MAX_YIELD_BPS
     );
     retargetter.startRetargetting(
-      address(positionManager), 6_000e18, 2_000, address(fund), REQUEST_NAME, REQUEST_SYMBOL
+      address(positionManager), 4_000e18, 2_000, address(fund), REQUEST_NAME, REQUEST_SYMBOL
     );
 
-    (,,,,, uint16 operationMaxYieldBps,,) = retargetter.operation();
+    (,,,,, uint16 operationMaxYieldBps,,,,,) = retargetter.operation();
     assertEq(operationMaxYieldBps, DEFAULT_MAX_YIELD_BPS, "config cap recorded");
   }
 
@@ -697,9 +875,13 @@ contract RetargetterTest is RetargetterBaseTest {
 
     _consume(request, 6_000e18, 60e18, 6_000e18);
 
-    // PT supply 6000 plus another 1000 crosses the cap
+    // PT supply 6000 plus another 1000 crosses the cap. The maker approves the transfer:
+    // the gate now runs after the Request call, so the revert must come from the cap
+    // re-check, not from a failed pull
     Offer memory offer = _createOffer(1_000e18, 10e18);
     bytes memory signature = _signOffer(offer, request);
+    vm.prank(maker.addr);
+    debtToken.approve(request, 1_000e18);
     vm.prank(consumer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
     retargetter.consume(offer, signature, 1_000e18);
@@ -810,7 +992,7 @@ contract RetargetterTest is RetargetterBaseTest {
     retargetter.multicall(calls);
 
     assertEq(debtToken.balanceOf(address(fund)), 6_000e18, "commit pulled the order input");
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "order stored by the batched create");
   }
 
@@ -889,18 +1071,23 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(accounts.length, 1, "one registered account");
     assertEq(accounts[0], broker, "broker registered");
 
-    // Slot A: positionManager (bits 0..159) | startedAt (160..199) | operationMaxYieldBps (200..215)
+    // Slot A: positionManager (bits 0..159) | startedAt (160..199) | operationMaxYieldBps
+    // (200..215) | consumptionClosed (216..223) | horizon (224..255): full, no wasted bits
     uint256 slotA = uint256(vm.load(address(retargetter), OPERATION_STORAGE_SLOT));
     assertEq(address(uint160(slotA)), address(positionManager), "position manager bits");
     assertEq(uint40(slotA >> 160), uint40(startTime + 1 days), "startedAt bits");
     assertEq(uint16(slotA >> 200), 100, "operation max yield bits");
-    assertEq(slotA >> 216, 0, "slot A upper bits clean");
+    assertEq(uint8(slotA >> 216), 0, "consumption closed bit clear");
+    assertEq(slotA >> 224, DEFAULT_HORIZON, "horizon bits");
 
-    // Slot B: request (bits 0..159) | repaymentDeadline (160..199)
+    // Slot B: request (bits 0..159) | repaymentDeadline (160..199) | tickDuration (200..223)
+    // | tickThreshold (224..247)
     uint256 slotB = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 1)));
     assertEq(address(uint160(slotB)), request, "request bits");
     assertEq(uint40(slotB >> 160), uint40(startTime + 90 days), "repayment deadline bits");
-    assertEq(slotB >> 200, 0, "slot B upper bits clean");
+    assertEq(uint24(slotB >> 200), DEFAULT_TICK_DURATION, "tick duration bits");
+    assertEq(uint24(slotB >> 224), DEFAULT_TICK_THRESHOLD, "tick threshold bits");
+    assertEq(slotB >> 248, 0, "slot B upper bits clean");
 
     // Slot C: fund (bits 0..159) | orderMode (160..167) | orderLive (168..175)
     uint256 slotC = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 2)));
@@ -928,7 +1115,7 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(uint40(slotA >> 160), uint40(startTime + 1 days), "startedAt bits unchanged");
     assertEq(uint16(slotA >> 200), 100, "operation max yield bits unchanged");
     assertEq(uint8(slotA >> 216), 1, "consumption closed bit set");
-    assertEq(slotA >> 224, 0, "slot A upper bits clean after the pull");
+    assertEq(slotA >> 224, DEFAULT_HORIZON, "horizon bits unchanged by the pull");
   }
 
   function test_storageLayout_assetsPacking() public view {

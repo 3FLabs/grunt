@@ -94,6 +94,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     retargetter.grantRoles(consumer, RETARGETTER_CONSUMER_ROLE);
     retargetter.setFund(address(fund), true);
     retargetter.setFlashLoanModule(address(flashLoanAdapter), true);
+    retargetter.setPositionManager(address(positionManager), true);
     positionManager.grantRoles(address(retargetter), _ROLE_REBALANCER);
     // One basis point absorbs the Morpho rounding dust, no cooldown between steps
     positionManager.setRebalanceConfig(1, 0);
@@ -267,6 +268,19 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
       RebalancingOperation({position: address(borrowPosition1), operationType: firstType, amount: firstAmount});
     data.operations[1] =
       RebalancingOperation({position: address(borrowPosition1), operationType: secondType, amount: secondAmount});
+  }
+
+  /// @dev The gate-side principal cap for an operation carrying `yieldCapBps`, on the
+  ///      fixture's zero estimates: the buffered ideal capped by the quoter's one-trip
+  ///      repayment bound, the same min Retargetter._maxPrincipal computes.
+  function _gateCap(uint16 yieldCapBps) internal view returns (uint256) {
+    uint256 collateralQuoted = positionManager.collateralAmountQuoted();
+    uint256 debt = positionManager.debtAmount();
+    (uint256 target,) = positionManager.config();
+    uint256 buffered = retargetterQuoter.retargetPrincipal(collateralQuoted, debt, target, 0, 0, 0, 0, 0)
+      * (10_000 + DEFAULT_PRINCIPAL_BUFFER_BPS) / 10_000;
+    uint256 oneTrip = retargetterQuoter.ltvUpOneTripPrincipal(collateralQuoted, debt, target, yieldCapBps, 0, 0, 0);
+    return buffered < oneTrip ? buffered : oneTrip;
   }
 
   /// @dev Current aggregate LTV of the position manager (WAD; 0 when debt is 0).

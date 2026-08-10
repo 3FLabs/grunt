@@ -30,8 +30,11 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 ///      3. Deploy the MorphoFlashLoanAdapter once per chain (its constructor takes Morpho
 ///         Blue's address).
 ///      4. The instance owner grants the Retargetter's own REBALANCER_ROLE (Solady _ROLE_0,
-///         bit value 1) and CONSUMER_ROLE (Solady _ROLE_1, bit value 2), whitelists funds
-///         and the adapter, and sets the yield estimates.
+///         bit value 1) and CONSUMER_ROLE (Solady _ROLE_1, bit value 2), whitelists funds,
+///         the adapter and the served PositionManagers, and sets the yield estimates. Grant
+///         a PositionManager's REBALANCER_ROLE to at most one Retargetter: the
+///         one-operation-at-a-time guard is per instance, so a second grantee could admit
+///         the full principal cap on its own.
 contract RetargetterFactory {
   using LibClone for address;
 

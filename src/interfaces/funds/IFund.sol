@@ -45,6 +45,12 @@ import {Order, State} from "../../libs/funds/Order.sol";
 ///      - create() and commit() NEVER reach ENDED - they advance the order forward (or revert)
 ///      - Only unlock() and recover() finalize orders by reaching ENDED
 ///      - Callers can batch state transitions when possible (e.g., create + commit if ACCEPTED)
+///
+///      Supported assets (binding on every adapter, current and future): asset and share
+///      tokens must deliver exactly the requested amount on transfer. Adapters pull
+///      `order.input` and then approve and forward that same amount to the venue, so any
+///      shortfall breaks the venue request; fee-on-transfer, rebasing and callback tokens
+///      are out of scope and must not be admitted.
 interface IFund {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         OPERATIONS                         */

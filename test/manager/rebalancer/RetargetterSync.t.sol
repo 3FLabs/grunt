@@ -139,7 +139,7 @@ contract WindowProbeFund is MockRetargetterFund {
   function cancel(Order calldata order) public override returns (State) {
     probed = true;
     sawActive = IRetargetter(msg.sender).isActive();
-    (, sawRequest,,,,,,) = IRetargetter(msg.sender).operation();
+    (, sawRequest,,,,,,,,,) = IRetargetter(msg.sender).operation();
     return super.cancel(order);
   }
 }
@@ -198,6 +198,9 @@ contract RetargetterSyncTest is RetargetterBaseTest {
       uint40 startedAt,
       uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
+      uint32 horizon,
+      uint24 tickDuration,
+      uint24 tickThreshold,
       Order memory storedOrder,
       bool orderLive
     ) = retargetter.operation();
@@ -207,6 +210,9 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     assertEq(startedAt, 0, "startedAt zeroed");
     assertEq(repaymentDeadline, 0, "repayment deadline zeroed");
     assertEq(operationMaxYieldBps, 0, "yield cap zeroed");
+    assertEq(horizon, 0, "horizon zeroed");
+    assertEq(tickDuration, 0, "tick duration zeroed");
+    assertEq(tickThreshold, 0, "tick threshold zeroed");
     assertEq(storedOrder.input, 0, "order input zeroed");
     assertEq(storedOrder.output, 0, "order output zeroed");
     assertEq(storedOrder.salt, bytes32(0), "order salt zeroed");
@@ -245,6 +251,25 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     // 11_000 debt over 16_000 collateral, at or below the 0.7 target
     assertApproxEqAbs(_currentLtv(), 0.6875e18, 1e14, "final LTV");
     assertLe(_currentLtv(), POSITION_MANAGER_LTV, "at or below target");
+  }
+
+  /// @notice A flash loan sized exactly at the SYNC principal cap (the zero-yield one-trip
+  ///         bound) deploys, borrows its own repayment back and lands the position exactly
+  ///         at target: the cap is the largest one-trip-settleable size, not just a limit.
+  function test_startSyncRetargetting_capSizedFlashLoanSettles() public {
+    _seedPosition(10_000e18, 5_000e18);
+    fund.setSyncSettlement(true);
+
+    // (0.7 * 10,000 - 5,000) / (1 - 0.7): the flash repayment carries no yield
+    uint256 cap = _gateCap(0);
+    bytes[] memory calls = _syncUpPayload(cap, bytes32(uint256(2)));
+
+    _startSync(cap, calls);
+
+    _assertNoTrace();
+    _assertZeroResidual();
+    assertApproxEqAbs(_currentLtv(), POSITION_MANAGER_LTV, 1e6, "landed exactly at target");
+    assertLe(_currentLtv(), POSITION_MANAGER_LTV, "never above target");
   }
 
   function test_startSyncRetargetting_downHappyPathExactProceeds() public {
@@ -426,12 +451,17 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
   function test_startSyncRetargetting_assetMismatchReverts() public {
     _seedPosition(10_000e18, 5_000e18);
-    // Reversed pair: the position manager's assets do not match the bound pair
+    // Reversed pair: whitelisting checks the pair, so the mismatched manager never gets in
+    // and the start gate rejects it as not whitelisted
     MismatchedPairPositionManager mismatchedPm =
       new MismatchedPairPositionManager(address(debtToken), address(collateralToken));
 
-    vm.prank(rebalancer);
+    vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
+    retargetter.setPositionManager(address(mismatchedPm), true);
+
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.PositionManagerNotWhitelisted.selector);
     retargetter.startSyncRetargetting(
       address(mismatchedPm), address(flashLoanAdapter), 1_000e18, address(fund), new bytes[](0)
     );
@@ -439,7 +469,8 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
   function test_startSyncRetargetting_principalCapExceededReverts() public {
     _seedPosition(10_000e18, 5_000e18);
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    // The SYNC gate sizes the cap on a zero yield cap: the flash repayment carries no yield
+    uint256 cap = _gateCap(0);
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);

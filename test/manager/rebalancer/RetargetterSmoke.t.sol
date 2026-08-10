@@ -13,7 +13,8 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
   function test_smoke_asyncUpHappyPath() public {
     // LTV 0.5 with target 0.7: below target, LTV-up operation
     _seedPosition(10_000e18, 5_000e18);
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    // The gate sizes the cap on the operation's own 1% yield cap
+    uint256 cap = _gateCap(100);
     assertGt(cap, 6_000e18, "cap sanity");
 
     address request = _startAsync(6_000e18, 100);
