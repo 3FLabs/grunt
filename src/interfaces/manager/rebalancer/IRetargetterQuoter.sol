@@ -126,17 +126,23 @@ interface IRetargetterQuoter {
 
   /// @notice Computes the settlement-time cash mismatch of an LTV-down operation under price drift.
   /// @dev The bridge repayment is fixed when the operation is sized while the redemption
-  ///      settles at the realized price; the delta is that cash mismatch. Positive means
-  ///      surplus (fold into position debt), negative means shortfall (owner-only borrow
-  ///      top-up). Shortfalls round up so a remediation sized from this value always covers
-  ///      the gap.
+  ///      settles at the realized price; the delta is that cash mismatch. The freed collateral
+  ///      was sized net of its own expected yield, so the drift is measured against the
+  ///      expected growth `1 + Yc` rather than unity: a price that moves exactly as forecast
+  ///      yields a zero delta. Positive means surplus (fold into position debt), negative
+  ///      means shortfall (owner-only borrow top-up). Shortfalls round up so a remediation
+  ///      sized from this value always covers the gap.
   /// @param principal The bridge-loan principal in debt-asset units
   /// @param requestYieldRate The bridge-loan yield rate (WAD per 365 days)
+  /// @param collateralYieldRate The collateral yield rate used when sizing (WAD per 365 days)
   /// @param duration The realized settlement duration in seconds
   /// @param priceDriftWad The settlement price ratio `rho = p1 / p0` (WAD)
   /// @return delta The signed cash mismatch in debt-asset units
-  function remediationDelta(uint256 principal, uint256 requestYieldRate, uint256 duration, uint256 priceDriftWad)
-    external
-    pure
-    returns (int256 delta);
+  function remediationDelta(
+    uint256 principal,
+    uint256 requestYieldRate,
+    uint256 collateralYieldRate,
+    uint256 duration,
+    uint256 priceDriftWad
+  ) external pure returns (int256 delta);
 }
