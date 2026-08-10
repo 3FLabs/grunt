@@ -574,7 +574,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function setBondConfig(BondConfig calldata bondConfig_) external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
+  function setBondConfig(BondConfig calldata bondConfig_) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     if (bondConfig_.amount == 0 || bondConfig_.amount > MAX_BOND_AMOUNT || bondConfig_.recipient == address(0)) {
       revert LibFundsErrors.InvalidBondConfig();
     }
@@ -588,7 +588,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function removeBondConfig() external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
+  function removeBondConfig() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     MidasFundStorage storage $ = _midasFundStorage();
     _checkNoLiveOrder($);
 
