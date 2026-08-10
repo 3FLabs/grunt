@@ -120,14 +120,23 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getHeldManagementFeeAssets(), 100e18, "hold path leaves the deduction in place");
   }
 
-  /// @notice Carry larger than the post-flow debt floors the reference debt at the bootstrap
-  ///         sentinel (excess carry is forgiven).
-  function test_rebaseSnapshot_carryClampedAtNewDebt() public {
+  /// @notice Carry at or above the post-flow debt re-anchors the mark at NAV + carry with the
+  ///         reference debt at the pre-flow reference LTV, instead of flooring it at the
+  ///         bootstrap sentinel (which would let the next accrual reseed the high-water mark at
+  ///         the trough and charge the recovery).
+  function test_rebaseSnapshot_oversizedCarryKeepsMarkAtReferenceLtv() public {
     harness.setReference(5_000e18, 5_000e18);
-    // Pre-flow carry = 100; flow repays almost all debt (newDebt = 60 < carry).
+    // Pre-flow carry = 100; flow repays almost all debt (newDebt = 60 < carry). The reference
+    // LTV is 50%, so the re-anchored reference debt equals the mark.
     harness.rebaseSnapshot(10_000e18, 5_100e18, 100e18, 5_060e18, 60e18, 100e18);
-    assertEq(harness.getLastDebt(), 0, "reference debt floors at the sentinel");
-    assertEq(harness.getLastTotalAssets(), 5_060e18, "lastTotalAssets = newCollat");
+    assertEq(harness.getLastTotalAssets(), 5_100e18, "mark re-anchored at NAV + carry");
+    assertEq(harness.getLastDebt(), 5_100e18, "reference debt at the pre-flow reference LTV");
+
+    // Same but the flow unwinds the debt entirely: the mark still survives.
+    harness.setReference(5_000e18, 5_000e18);
+    harness.rebaseSnapshot(10_000e18, 5_100e18, 100e18, 5_000e18, 0, 100e18);
+    assertEq(harness.getLastTotalAssets(), 5_100e18, "mark survives a full debt unwind");
+    assertEq(harness.getLastDebt(), 5_100e18, "reference debt stays out of the sentinel");
   }
 
   /// @notice The held management fee accumulator scales with the share-supply change (an exit
@@ -172,6 +181,24 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getHeldManagementFeeAssets(), 77e18, "sentinel fallback does not touch the accumulator");
   }
 
+  /// @dev Replicates the write-out branches of `rebaseSnapshot` for the fuzz expectations.
+  function _expectedReference(
+    uint256 expectedCarry,
+    uint256 refNav,
+    uint256 refDebt,
+    uint256 newCollat,
+    uint256 newDebt
+  ) internal pure returns (uint256 expectedRefNav, uint256 expectedRefDebt) {
+    if (expectedCarry >= newDebt && expectedCarry > 0 && refNav > 0) {
+      // Oversized carry: the mark re-anchors at NAV + carry at the pre-flow reference LTV.
+      expectedRefNav = newCollat - newDebt + expectedCarry;
+      expectedRefDebt = FixedPointMathLib.mulDivUp(expectedRefNav, refDebt, refNav);
+    } else {
+      expectedRefDebt = FixedPointMathLib.zeroFloorSub(newDebt, expectedCarry);
+      expectedRefNav = newCollat - expectedRefDebt;
+    }
+  }
+
   /// @notice The per-share pending basis is preserved across the rebase (up to rounding dust in
   ///         favor of the protocol).
   function testFuzz_rebaseSnapshot_preservesPerShareBasis(
@@ -200,15 +227,12 @@ contract LibManagerStorageTest is Test {
     harness.setHeldManagementFeeAssets(heldMgmtSeed);
     harness.rebaseSnapshot(prevCollat, prevDebt, prevSupply, newCollat, newDebt, newSupply);
 
-    uint256 expectedCarry = FixedPointMathLib.mulDiv(carry, newSupply, prevSupply);
-    if (expectedCarry > newDebt) expectedCarry = newDebt;
-
-    assertEq(harness.getLastDebt(), uint256(newDebt) - expectedCarry, "reference debt carries the scaled basis");
-    assertEq(
-      harness.getLastTotalAssets(),
-      uint256(newCollat) - (uint256(newDebt) - expectedCarry),
-      "reference NAV re-anchored on post-flow collateral"
+    (uint256 expectedRefNav, uint256 expectedRefDebt) = _expectedReference(
+      FixedPointMathLib.mulDiv(carry, newSupply, prevSupply), refTotalAssets, refDebt, newCollat, newDebt
     );
+
+    assertEq(harness.getLastDebt(), expectedRefDebt, "reference debt carries the scaled basis");
+    assertEq(harness.getLastTotalAssets(), expectedRefNav, "reference NAV re-anchored on post-flow collateral");
     assertEq(
       harness.getHeldManagementFeeAssets(),
       FixedPointMathLib.mulDiv(heldMgmtSeed, newSupply, prevSupply),

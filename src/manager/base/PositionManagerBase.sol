@@ -59,14 +59,29 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      The management fee assets are then deducted from this basis before applying the
   ///      performance fee rate.
   ///
+  ///      The levered basis is capped at the NAV gain since the reference, zero-floored
+  ///      (`totalAssets_ - lastTotalAssets`): an external deleveraging event (a liquidation, a
+  ///      direct repay on the market) can leave the levered read positive while NAV fell, and
+  ///      the cap keeps such events from minting a fee on a loss. A flow rebase converts such a
+  ///      seizure drawdown into the reference carry (see `LibStorage.rebaseSnapshot`), so the
+  ///      suspension survives flows until NAV recovers past the carried mark, even when the
+  ///      deficit exceeds the remaining debt (the oversized-carry encoding in `rebaseSnapshot`
+  ///      keeps the mark out of the bootstrap sentinel).
+  ///
   ///      Reference-advance rule (high-water mark): the performance reference (`lastTotalAssets`,
-  ///      `lastDebt`) advances to the current state only when the basis is positive
+  ///      `lastDebt`) advances to the current state only when the capped basis is positive
   ///      (crystallization, at the configured rate which may be zero), when `lastDebt` is zero
   ///      (bootstrap sentinel), or when the vault has no shares. When the basis is non-positive
-  ///      the reference is held. Holding it keeps the debt interest accrued while the collateral
-  ///      quote is flat (the collateral oracle may only reprice periodically) inside the basis, so
-  ///      the next collateral repricing is charged net of the full inter-repricing debt carry
-  ///      rather than only the last accrual interval's. It also prevents re-charging a recovery
+  ///      the reference is held; it is also held when a positive basis carries a performance
+  ///      entitlement that rounds to zero at either stage (the BPS multiplication to fee
+  ///      assets, or the conversion to fee shares), so the gain accumulates instead of being
+  ///      consumed by the advance (see the two holds in this function). Flows preserve a held
+  ///      entitlement too (see `LibStorage.rebaseSnapshot`), so checkpoint splitting cannot
+  ///      erase it through either the accrual or the flow path. Holding it keeps
+  ///      the debt interest accrued while the collateral quote is flat (the collateral oracle
+  ///      may only reprice periodically) inside the basis, so the next collateral repricing is
+  ///      charged net of the full inter-repricing debt carry rather than only the last accrual
+  ///      interval's. It also prevents re-charging a recovery
   ///      after a drawdown: the reference stays at the old peak instead of resetting down.
   ///      Crystallizing on a positive basis even when the configured rate is zero (or no recipient
   ///      is set) mirrors the pre-existing behavior that gains realised before fees are enabled
@@ -130,9 +145,10 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   /// @return managementFeeShares The shares that would be minted for management fees
   /// @return performanceFeeShares The shares that would be minted for performance fees
   /// @return advanceReference True when `_accrueFees` must advance the performance reference to
-  ///         the current state (positive basis, bootstrap, or empty vault); false to hold it.
-  ///         Always false while any module is excluded as bad debt (see the partial bad-debt
-  ///         episode rule above)
+  ///         the current state (positive capped basis, bootstrap, or empty vault); false to hold
+  ///         it. Always false while any module is excluded as bad debt (see the partial bad-debt
+  ///         episode rule above) and while a performance entitlement would round to zero fee
+  ///         assets or shares (see the reference-advance rule above)
   /// @return heldManagementFees_ The value `_accrueFees` must persist as the held management fee
   ///         accumulator: zero when the reference advances (deduction consumed or forgiven),
   ///         otherwise the stored accumulator plus the management fee charged this interval
@@ -198,6 +214,16 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
         }
       }
 
+      // Cap the levered basis at the NAV gain since the reference (zero-floored): a seizure
+      // (liquidation) leaves the levered read positive while NAV fell, and an uncapped basis
+      // would mint a fee on the loss. Capped to zero the reference is held, so a recovery is
+      // only charged past the pre-loss mark (see the cap notes in the header). On internal
+      // paths the cap is slack. Outside the block above for stack depth.
+      if (basis > 0) {
+        basis = basis.min(FixedPointMathLib.zeroFloorSub(totalAssets_, _storage.lastTotalAssets));
+        advanceReference = basis > 0;
+      }
+
       // Loaded after the basis block to keep the peak stack depth flat (the block above is at
       // the non-via-ir stack limit).
       FeeData memory fd = _storage.feeData;
@@ -221,7 +247,15 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
       heldManagementFees_ = _storage.heldManagementFeeAssets;
       totalFeeAssets = managementFeeAssets;
       if (fd.performanceFee > 0 && basis > managementFeeAssets + heldManagementFees_) {
-        totalFeeAssets += (basis - managementFeeAssets - heldManagementFees_).mulDiv(fd.performanceFee, BPS);
+        uint256 performanceFeeAssets =
+          (basis - managementFeeAssets - heldManagementFees_).mulDiv(fd.performanceFee, BPS);
+        // Hold the reference when the BPS multiplication rounds a nonzero net entitlement to
+        // zero fee assets (the first of the two rounding stages of checkpoint splitting; the
+        // share-conversion stage is held at the end of this function): advancing here would
+        // consume the sub-BPS basis without paying it, so splitting one gain across many
+        // checkpoints could erase the fee.
+        if (performanceFeeAssets == 0) advanceReference = false;
+        totalFeeAssets += performanceFeeAssets;
       }
       // While the reference is held, the current interval's management fee joins the accumulator
       // so the next crystallization deducts it; on advance the pending deduction is consumed (or,
@@ -235,10 +269,10 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     //     zero, and `convertToShares` against a zero base would mint an inflated share count to the
     //     fee recipient, confiscating the pool.
     //   - `totalFeeAssets > totalAssets_`: should not occur under current invariants
-    //     (`managementFeeAssets` is capped at `totalAssets_`, and the perf basis is bounded by
-    //     `totalAssets_` because `scaledLastDebt <= currentCollat` whenever `lastDebt <= lastCollat`
-    //     and `performanceFee <= BPS`). Folding it in here makes the subsequent subtraction safe
-    //     without depending on that invariant chain.
+    //     (`managementFeeAssets` is capped at `totalAssets_`, and the perf basis is capped at
+    //     `totalAssets_ - lastTotalAssets` by the NAV-gain clamp, with `performanceFee <= BPS`).
+    //     Folding it in here makes the subsequent subtraction safe without depending on that
+    //     invariant chain.
     // `_accrueFees` still refreshes `lastFeeAccrualTimestamp` (and the reference, per
     // `advanceReference`) so normal accrual resumes next call. Nothing is minted, so this
     // interval's management fee does not join the held accumulator either.
@@ -264,6 +298,18 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
         totalSupply_, totalAssets_ - totalFeeAssets, _storage.virtualShareOffset, false
       );
       performanceFeeShares -= managementFeeShares;
+    }
+
+    // Hold the reference when a nonzero performance entitlement (`totalFeeAssets` above the
+    // management component) converts to zero fee shares: advancing would consume the gain
+    // without paying it, so checkpoint splitting could erase the fee. Held, the basis keeps
+    // accumulating until it mints at least one share, and this interval's management fee joins
+    // the held accumulator like any held accrual (see the reference-advance rule in the
+    // header; an entitlement that already rounds to zero fee assets is held at the BPS stage
+    // above).
+    if (advanceReference && performanceFeeShares == 0 && totalFeeAssets > managementFeeAssets) {
+      advanceReference = false;
+      heldManagementFees_ = _storage.heldManagementFeeAssets + managementFeeAssets;
     }
   }
 
