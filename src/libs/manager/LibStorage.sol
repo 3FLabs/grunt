@@ -20,9 +20,9 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 ///        `LTV_ref = lastDebt / lastCollat` is the LTV at the performance reference. The reference
 ///        is held while the basis is non-positive (high-water mark) and advances only when a fee
 ///        crystallizes, so debt interest accrued under a flat collateral quote and collateral
-///        drawdowns stay inside the basis. The basis is then reduced by the management fees
-///        charged since the reference last advanced (`heldManagementFeeAssets` plus the current
-///        interval's charge). Replaces the prior NAV-variation basis.
+///        drawdowns stay inside the basis. The basis is then reduced by the pending management
+///        fee deduction (`heldManagementFeeAssets` plus the current interval's charge).
+///        Replaces the prior NAV-variation basis.
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -97,11 +97,12 @@ struct RebalanceConfig {
 ///        the performance fee and seeds this slot with the current debt. Subsequent accruals
 ///        charge the new basis normally.
 /// @param heldManagementFeeAssets Management fee assets charged while the performance reference
-///        was held, accumulated since the reference last advanced. The performance fee must be
+///        was held and not yet netted against a crystallized basis. The performance fee must be
 ///        net of management fees, so at the next crystallization this amount (plus the current
-///        interval's management fee) is deducted from the basis, and the accumulator is cleared
-///        whenever the reference advances (crystallization, bootstrap, empty vault) or the owner
-///        calls `resetPerformanceReference`. Flows scale it with the share-supply change so the
+///        interval's management fee) is deducted from the basis. A crystallizing advance
+///        consumes the accumulator only up to the basis and carries the excess (a dust-positive
+///        basis must not write the whole deduction off, see `_pendingFees`); a reseed advance
+///        (bootstrap, empty vault) or `resetPerformanceReference` clears it. Flows scale it with the share-supply change so the
 ///        per-share deduction is preserved, except a rescue flow out of a full bad-debt episode,
 ///        which keeps it nominal (see `rebaseSnapshot`). Appended to the struct so the layout
 ///        stays append-only; reads zero on upgrade (a clean start).
@@ -229,7 +230,8 @@ library LibStorage {
   ///      re-anchors sooner).
   ///
   ///      The held management fee accumulator (`heldManagementFeeAssets`, the management fees
-  ///      charged since the reference last advanced, deducted from the next positive basis) is
+  ///      charged and not yet netted against a crystallized basis, deducted from the next
+  ///      positive basis) is
   ///      scaled by the same supply ratio: an exit takes its slice of the pending deduction along,
   ///      a deposit re-attaches it to the new shares. A rescue flow out of a full bad-debt
   ///      episode (`prevCollat == 0`) keeps it nominal instead: shares mint against a zero asset

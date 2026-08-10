@@ -118,8 +118,8 @@ interface IPositionManagerAdmin {
   ///      are charged from the current state onward.
   ///
   ///      The reset starts a fresh fee period: the held management fee accumulator (management
-  ///      fees charged since the reference last advanced, normally deducted from the next positive
-  ///      basis) is cleared as well.
+  ///      fees charged and not yet netted against a crystallized basis, normally deducted from
+  ///      the next positive basis) is cleared as well.
   ///
   ///      Timing: the reset writes off ALL carried basis, including the debt interest accrued
   ///      since the last crystallization (not just the loss being accepted), plus the pending

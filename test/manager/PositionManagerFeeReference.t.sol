@@ -1042,8 +1042,8 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
   }
 
   /// @notice A positive basis smaller than the pending management fee deduction advances the
-  ///         reference without a performance fee; the consumed deduction does not carry past the
-  ///         new mark.
+  ///         reference without a performance fee; the deduction is consumed only up to the basis
+  ///         and the excess carries past the new mark (Cantina #6).
   function test_managementFee_heldDeductionAbsorbsSmallGain() public {
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
@@ -1065,7 +1065,59 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     _accrue();
     assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference advances on the positive basis");
-    assertEq(_heldManagementFees(), 0, "consumed deduction does not carry past the new mark");
+    assertEq(_heldManagementFees(), held - uint256(basis), "excess deduction carries past the new mark");
+  }
+
+  /// @notice Cantina #6: a dust-sized positive basis (a permissionless repay through the market)
+  ///         advances the reference but consumes the held deduction only up to the basis; the
+  ///         excess is carried instead of being written off, so the next crystallization is
+  ///         still charged net of the fees already minted.
+  function test_managementFee_dustBasisCarriesHeldDeductionExcess() public {
+    // Route to the interest-free market so the basis stays exactly at the mark while held.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(200, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Anyone can repay dust on behalf of the module: the next basis flips dust-positive.
+    debtToken.setBalance(user, 1e6);
+    vm.startPrank(user);
+    debtToken.approve(address(morpho), type(uint256).max);
+    morpho.repay(marketParams2, 1e6, 0, address(borrowPosition2), "");
+    vm.stopPrank();
+
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "dust repay flips the basis positive");
+    assertLt(uint256(basis), held, "basis is dust next to the pending deduction");
+
+    // Zero-elapsed accrual: no perf fee mints, the reference advances, and only the dust slice
+    // of the deduction is consumed.
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "deduction absorbs the dust gain");
+    _accrue();
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference advances on the dust basis");
+    assertEq(_heldManagementFees(), held - uint256(basis), "only the basis slice of the deduction is consumed");
+
+    // The next real gain is still charged net of the carried deduction.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 102 / 100);
+    uint256 deduction = _heldManagementFees();
+    (,,, uint256 stepShares) = positionManager.pendingFees();
+    assertEq(
+      stepShares,
+      _expectedPerfShares(uint256(_pendingBasis()) - deduction),
+      "crystallization nets the carried deduction"
+    );
+    assertGt(stepShares, 0, "the real gain still charges");
   }
 
   /// @notice The pending deduction scales with the share supply across a flow: an exit takes its
@@ -1159,8 +1211,8 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
       perfShares, _expectedPerfShares(uint256(_pendingBasis()) - held), "crystallization nets the pre-holiday charges"
     );
 
-    // Variant: a positive basis during the holiday advances without a mint and clears the
-    // deduction with the fee period it belonged to.
+    // Variant: a positive basis during the holiday advances without a mint and consumes the
+    // deduction (the gain here exceeds it, so nothing carries).
     vm.revertToState(snap);
     vm.prank(owner);
     positionManager.setFeeData(address(0), 200, PERF_FEE);

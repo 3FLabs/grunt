@@ -94,9 +94,14 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      held (`heldManagementFeeAssets`, accumulated each held accrual) plus the current
   ///      interval's management fee. Without the accumulator, management fees minted on a
   ///      non-positive basis would be forgotten and the next crystallization would overcharge by
-  ///      exactly those amounts. The accumulator clears whenever the reference advances (any
-  ///      excess above the basis is forgiven, not carried past the new mark) and on
-  ///      `resetPerformanceReference`; flows scale it with the share supply so the per-share
+  ///      exactly those amounts. A crystallizing advance consumes the deduction only up to the
+  ///      basis; any excess carries past the new mark. A positive basis smaller than the pending
+  ///      deduction is producible permissionlessly (a dust repay through the underlying market
+  ///      flips the basis one atom positive), so clearing on any advance would let it write the
+  ///      whole deduction off and overcharge the next crystallization (Cantina #6). The
+  ///      accumulator clears on a reseed advance (bootstrap sentinel or empty vault, zero
+  ///      basis — the fallback branches of `LibStorage.rebaseSnapshot` rely on that clear) and
+  ///      on `resetPerformanceReference`; flows scale it with the share supply so the per-share
   ///      deduction is preserved (see `LibStorage.rebaseSnapshot`).
   ///
   ///      Capital flows (deposit/withdraw/burn/rebalance/module changes) do not advance the
@@ -150,8 +155,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///         episode rule above) and while a performance entitlement would round to zero fee
   ///         assets or shares (see the reference-advance rule above)
   /// @return heldManagementFees_ The value `_accrueFees` must persist as the held management fee
-  ///         accumulator: zero when the reference advances (deduction consumed or forgiven),
-  ///         otherwise the stored accumulator plus the management fee charged this interval
+  ///         accumulator: on a crystallizing advance the pending deduction net of the basis
+  ///         (consumed up to the basis, excess carried), zero on a reseed advance, otherwise
+  ///         the stored accumulator plus the management fee charged this interval
   function _pendingFees()
     internal
     view
@@ -229,8 +235,13 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
       FeeData memory fd = _storage.feeData;
       if (fd.feeRecipient == address(0) || totalSupply_ == 0) {
         // No fee is charged, so the accumulator carries over unchanged unless the reference
-        // advances (a positive basis still consumes the pending deduction, see the rule above).
-        heldManagementFees_ = advanceReference ? 0 : _storage.heldManagementFeeAssets;
+        // advances: a crystallizing advance consumes the pending deduction up to the basis and
+        // carries the excess, a reseed advance (bootstrap sentinel or empty vault, zero basis)
+        // clears it (see the consumption rule above).
+        heldManagementFees_ = _storage.heldManagementFeeAssets;
+        if (advanceReference) {
+          heldManagementFees_ = basis > 0 ? FixedPointMathLib.zeroFloorSub(heldManagementFees_, basis) : 0;
+        }
         return (totalAssets_, totalSupply_, currentDebt, 0, 0, advanceReference, heldManagementFees_);
       }
 
@@ -258,9 +269,16 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
         totalFeeAssets += performanceFeeAssets;
       }
       // While the reference is held, the current interval's management fee joins the accumulator
-      // so the next crystallization deducts it; on advance the pending deduction is consumed (or,
-      // for any excess above the basis, forgiven) and the accumulator restarts.
-      heldManagementFees_ = advanceReference ? 0 : heldManagementFees_ + managementFeeAssets;
+      // so the next crystallization deducts it. On a crystallizing advance the deduction is
+      // consumed only up to the basis and the excess carries past the new mark: a dust-positive
+      // basis (permissionlessly producible, e.g. a 1-atom repay through the market) must not
+      // write the whole deduction off (Cantina #6). A reseed advance (bootstrap sentinel, zero
+      // basis) still clears it — the fallback branches of `LibStorage.rebaseSnapshot` rely on
+      // that clear.
+      heldManagementFees_ = heldManagementFees_ + managementFeeAssets;
+      if (advanceReference) {
+        heldManagementFees_ = basis > 0 ? FixedPointMathLib.zeroFloorSub(heldManagementFees_, basis) : 0;
+      }
     }
 
     // Combined no-mint guard. Folds together three cases that all imply a zero share mint:
@@ -275,7 +293,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     //     invariant chain.
     // `_accrueFees` still refreshes `lastFeeAccrualTimestamp` (and the reference, per
     // `advanceReference`) so normal accrual resumes next call. Nothing is minted, so this
-    // interval's management fee does not join the held accumulator either.
+    // interval's management fee does not join the held accumulator either: backing it out of
+    // the value computed above restores the stored accumulator on a hold, and its
+    // basis-consumed remainder (`max(0, stored - basis)`) on an advance.
     if (totalFeeAssets >= totalAssets_) {
       return (
         totalAssets_,
@@ -284,7 +304,7 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
         0,
         0,
         advanceReference,
-        advanceReference ? 0 : _storage.heldManagementFeeAssets
+        FixedPointMathLib.zeroFloorSub(heldManagementFees_, managementFeeAssets)
       );
     }
 
@@ -349,8 +369,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
       _storage.lastTotalAssets = currentTotalAssets;
       _storage.lastDebt = currentDebt;
     }
-    // Persist the held management fee accumulator computed by _pendingFees: cleared on advance,
-    // grown by this interval's management fee while the reference is held.
+    // Persist the held management fee accumulator computed by _pendingFees: consumed up to the
+    // basis on a crystallizing advance (excess carried), cleared on a reseed advance, grown by
+    // this interval's management fee while the reference is held.
     _storage.heldManagementFeeAssets = heldManagementFees_;
     // The management fee is time-based and independent of the performance reference, so the
     // timestamp advances on every accrual even when the reference is held.
