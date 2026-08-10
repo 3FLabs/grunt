@@ -171,8 +171,8 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   }
 
   /// @inheritdoc IBorrowOffersRegistry
-  function checkCanRevokeOffer(address account) external view override {
-    _checkHasRolesOrOwner(account, GUARDIAN_ROLE);
+  function canRevokeOffer(address account) external view override returns (bool) {
+    return hasAnyRole(account, GUARDIAN_ROLE) || account == owner();
   }
 
   /// @dev Reverts with Solady's `Unauthorized` unless `account` holds any of `roles` or is the

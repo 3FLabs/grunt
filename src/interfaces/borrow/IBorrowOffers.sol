@@ -24,7 +24,8 @@ pragma solidity ^0.8.22;
 ///      set <=> the slab slot holds a live offer), not by any field of this struct; a freed slot is
 ///      fully zeroed. A live offer always has a non-zero proposer and both remaining amounts > 0.
 struct Offer {
-  /// @dev The account that posted the offer (accountability; also used by views).
+  /// @dev The account that posted the offer. May revoke its own offer at any time (also used by
+  ///      views and for accountability).
   address proposer;
   /// @dev Absolute timestamp at which the offer becomes consumable. Fixed at proposal time as
   ///      `proposalTime + effectiveTimelockAtProposal`, so a later timelock change cannot re-time
@@ -63,7 +64,8 @@ interface IBorrowOffers {
     uint40 expiresAt
   );
 
-  /// @notice Emitted when an offer is revoked (guardian veto / admin / owner kill switch).
+  /// @notice Emitted when an offer is revoked (proposer self-revoke, guardian veto, or the
+  ///         registry owner's kill switch).
   /// @param id The slab id of the revoked offer.
   /// @param by The caller that revoked it.
   event OfferRevoked(uint8 indexed id, address indexed by);
@@ -74,7 +76,8 @@ interface IBorrowOffers {
   /// @param id The slab id of the consumed offer.
   /// @param collateralFilled The collateral tokens seized from this offer in this chunk.
   /// @param debtSharesFilled The borrow shares repaid against this offer in this chunk.
-  /// @param exhausted True if the offer was fully consumed (and removed) by this chunk.
+  /// @param exhausted True if this chunk removed the offer: a side was fully consumed, or the
+  ///        dust remainder was no longer strictly profitable (unusable at any bonus floor).
   event OfferConsumed(uint8 indexed id, uint128 collateralFilled, uint128 debtSharesFilled, bool exhausted);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -92,9 +95,13 @@ interface IBorrowOffers {
   /// @return id The slab id assigned to the new offer.
   function proposeOffer(uint128 collateral, uint128 debtShares, uint40 expiresAt) external returns (uint8 id);
 
-  /// @notice Revokes one or more offers (batch). Gated by
-  ///         {IBorrowOffersRegistry.checkCanRevokeOffer} (a guardian, or the registry owner).
-  /// @dev Reverts {LibBorrowErrors.OfferNotFound} if any id is not a currently-live offer.
+  /// @notice Revokes one or more offers (batch). Authorization is per offer: the recorded
+  ///         proposer may revoke its own offer at any time; any other caller needs the registry's
+  ///         revoke power ({IBorrowOffersRegistry.canRevokeOffer}: a guardian, or the registry
+  ///         owner).
+  /// @dev Reverts {LibBorrowErrors.OfferNotFound} if any id is not a currently-live offer, and
+  ///      {LibBorrowErrors.Unauthorized} if any offer in the batch belongs to another proposer
+  ///      while the caller lacks the registry's revoke power.
   /// @param ids The slab ids to revoke.
   function revokeOffers(uint8[] calldata ids) external;
 
@@ -116,11 +123,14 @@ interface IBorrowOffers {
   ///         profitable and within the max price at the current position LTV).
   /// @dev Approximate helper: it evaluates the offer against the current position state in
   ///      isolation and does not account for ordering or the cumulative LTV change of consuming
-  ///      earlier offers. The binding checks are the per-fill checks inside the consume walk.
+  ///      earlier offers. The binding checks run inside the consume walk (profitability and the
+  ///      bonus floor per offer, strict de-risking per fill).
   function isConsumable(uint8 id) external view returns (bool);
 
   /// @notice Off-chain helper that simulates a band consume for the given target without mutating
   ///         state.
+  /// @dev Simulates the walk only: the post-settlement LTV guard runs solely on the real
+  ///      `preLiquidate` call, so a dust-sized quote from this view can still revert there.
   /// @param seizedAssets The collateral-seize target (pass 0 to use `repaidShares`).
   /// @param repaidShares The debt-share-repay target (pass 0 to use `seizedAssets`).
   /// @return seized The total collateral that would be seized.
