@@ -83,12 +83,8 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     requestFactory = new RequestFactory(owner);
     retargetterQuoter = new RetargetterQuoter();
     retargetterFactory = new RetargetterFactory(owner, address(retargetterQuoter), address(requestFactory));
-    // The instance is bound to its position manager at creation (the init bind path)
-    retargetter = Retargetter(
-      retargetterFactory.createRetargetter(
-        owner, address(collateralToken), address(debtToken), address(positionManager), _defaultConfig()
-      )
-    );
+    // The instance is bound to its position manager at creation; the pair is derived from it
+    retargetter = Retargetter(retargetterFactory.createRetargetter(owner, address(positionManager), _defaultConfig()));
     fund = new MockRetargetterFund(address(debtToken), address(collateralToken));
     flashLoanAdapter = new MorphoFlashLoanAdapter(address(morpho));
 

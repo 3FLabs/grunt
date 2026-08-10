@@ -161,34 +161,31 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Initializes the proxy instance, binds it to its asset pair, and optionally binds
-  ///         its position manager.
-  /// @dev The pair is never mutable afterwards. A nonzero positionManager_ is bound here (its
-  ///      assets are checked against the pair); a zero value leaves the instance unbound until
-  ///      the owner calls {setPositionManager}. Whitelists start empty; zero estimates are
-  ///      valid and degrade the principal cap to the zero-rate ideal formula.
+  /// @notice Initializes the proxy instance and binds it to a position manager, deriving the
+  ///         asset pair from that manager.
+  /// @dev The pair is read from the position manager once and never mutated; every later
+  ///      rebind through {setPositionManager} must report the same pair. Whitelists start
+  ///      empty; zero estimates are valid and degrade the principal cap to the zero-rate
+  ///      ideal formula.
   /// @param owner_ The address that will own the instance
-  /// @param collateralAsset_ The collateral asset of the bound pair
-  /// @param debtAsset_ The debt asset of the bound pair
-  /// @param positionManager_ The position manager to bind, or the zero address to bind later
+  /// @param positionManager_ The position manager to bind (the pair is derived from its assets)
   /// @param config_ The initial configuration, validated against the documented bounds
-  function initialize(
-    address owner_,
-    address collateralAsset_,
-    address debtAsset_,
-    address positionManager_,
-    RetargetterConfig calldata config_
-  ) external initializer {
+  function initialize(address owner_, address positionManager_, RetargetterConfig calldata config_)
+    external
+    initializer
+  {
     owner_.checkNotZero();
-    collateralAsset_.checkContract();
-    debtAsset_.checkContract();
-    if (collateralAsset_ == debtAsset_) revert LibRetargetterErrors.AssetMismatch();
+    positionManager_.checkContract();
     _setConfig(config_);
+    // Derive the bound pair from the position manager, the single source of truth. The pair
+    // is immutable afterwards, so setFund can validate a fund once and every rebind stays on
+    // the same pair (see {_checkPair})
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
-    assets_.collateralAsset = collateralAsset_;
-    assets_.debtAsset = debtAsset_;
-    // Optional bind at init; the owner can (re)bind later while no operation is active
-    if (positionManager_ != address(0)) _setPositionManager(positionManager_);
+    (address collateralAsset, address debtAsset) = IPositionManager(positionManager_).assets();
+    assets_.collateralAsset = collateralAsset;
+    assets_.debtAsset = debtAsset;
+    assets_.positionManager = positionManager_;
+    emit PositionManagerBound(positionManager_);
     _initializeOwner(owner_);
   }
 
@@ -734,13 +731,20 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev Binds the single position manager every operation runs against. Rebindable only
-  ///      while no operation is active, so a live operation's binding never moves under it.
-  ///      Every start-gate and principal-cap read trusts what the bound address reports about
-  ///      itself, which is why the binding is owner-curated rather than caller-supplied.
+  /// @dev Rotates the bound position manager, only while no operation is active so a live
+  ///      operation's binding never moves under it. A nonzero manager is checked to be a
+  ///      contract on the immutable bound pair; the zero address unbinds the instance,
+  ///      abandoning it until a same-pair manager is bound again (operations revert
+  ///      PositionManagerNotBound meanwhile). Every start-gate and principal-cap read trusts
+  ///      the bound address, which is why the binding is owner-curated, not caller-supplied.
   function setPositionManager(address positionManager) external onlyOwner nonReentrant {
     if (LibStorage.operationStorage().positionManager != address(0)) revert LibRetargetterErrors.OperationActive();
-    _setPositionManager(positionManager);
+    if (positionManager != address(0)) {
+      positionManager.checkContract();
+      _checkPair(positionManager);
+    }
+    LibStorage.assetsStorage().positionManager = positionManager;
+    emit PositionManagerBound(positionManager);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -879,24 +883,13 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     emit ConfigSet(config_);
   }
 
-  /// @dev Validates and stores the bound position manager, emitting {PositionManagerBound}.
-  ///      Checks it is a contract and its assets match the bound pair, so every later
-  ///      start-gate and cap read can trust the binding. Shared by {initialize} and
-  ///      {setPositionManager}; the active-operation guard lives in the external setter.
-  function _setPositionManager(address positionManager) internal {
-    positionManager.checkContract();
-    _checkPair(positionManager);
-    LibStorage.assetsStorage().positionManager = positionManager;
-    emit PositionManagerBound(positionManager);
-  }
-
   /// @dev Shared start gate of both entry points, returning the bound position manager. One
   ///      operation at a time: the operation's position manager doubles as the active flag,
   ///      and a SYNC window keeps it populated, so this also locks out starts smuggled into a
-  ///      window payload. Requires a bound position manager (its pair was checked at bind), a
-  ///      whitelisted fund, and the requested amount within the live principal cap sized on
-  ///      the operation's yield cap (fail-fast for ASYNC, where the cap re-runs at every
-  ///      consume; zero for SYNC, whose flash repayment carries no yield).
+  ///      window payload. Requires a bound position manager (unbound means the instance was
+  ///      abandoned), a whitelisted fund, and the requested amount within the live principal
+  ///      cap sized on the operation's yield cap (fail-fast for ASYNC, where the cap re-runs
+  ///      at every consume; zero for SYNC, whose flash repayment carries no yield).
   function _checkStart(RetargetterOperation storage operation_, address fund, uint256 amount, uint16 yieldCapBps)
     internal
     view

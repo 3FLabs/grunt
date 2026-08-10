@@ -18,12 +18,13 @@ import {
 } from "./LibRetargetterConstants.sol";
 
 /// @notice The Retargetter's instance bindings (namespace "retargetter.assets").
-/// @dev The pair is written once at initialize and never mutated; the position manager is
-///      owner-bound and rebindable while no operation is active.
+/// @dev The pair is derived from the position manager at initialize and never mutated; the
+///      position manager is owner-bound and rebindable to another same-pair manager while no
+///      operation is active.
 /// @param collateralAsset The collateral asset every position manager and fund must match
 /// @param debtAsset The debt asset every position manager, fund and Request must match
-/// @param positionManager The single position manager every operation runs against, bound by
-///        the owner (its assets are checked against the pair at bind time)
+/// @param positionManager The single position manager every operation runs against; its assets
+///        define the pair at the first bind, and every rebind must match that pair
 struct RetargetterAssets {
   address collateralAsset;
   address debtAsset;
