@@ -2114,9 +2114,12 @@ contract MidasFundTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_SetBondConfig_Success() public {
-    vm.prank(vaultManager);
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+
+    vm.prank(operator);
     vm.expectEmit(true, true, true, true);
-    emit BondConfigUpdated(BOND_BPS, bondRecipient, vaultManager);
+    emit BondConfigUpdated(BOND_BPS, bondRecipient, operator);
     fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
 
     BondConfig memory config = fund.bondConfig();
@@ -2130,7 +2133,7 @@ contract MidasFundTest is Test {
     assertEq(fund.bondConfig().amount, BOND_BPS, "amount");
   }
 
-  function test_SetBondConfig_OnlyOwnerOrVaultManager() public {
+  function test_SetBondConfig_OnlyOwnerOrOperator() public {
     BondConfig memory config = BondConfig({amount: BOND_BPS, recipient: bondRecipient});
 
     vm.prank(outsider);
@@ -2141,10 +2144,9 @@ contract MidasFundTest is Test {
     vm.expectRevert(Unauthorized.selector);
     fund.setBondConfig(config);
 
-    // The operator role does not include bond management
-    vm.prank(owner);
-    fund.grantRoles(operator, OPERATOR_ROLE);
-    vm.prank(operator);
+    // The vault manager role does not include bond management: the recipient is the only
+    // guardrail on bond payments, so it is defined by the most-trusted role.
+    vm.prank(vaultManager);
     vm.expectRevert(Unauthorized.selector);
     fund.setBondConfig(config);
 
@@ -2152,16 +2154,23 @@ contract MidasFundTest is Test {
     vm.prank(paymentOperator);
     vm.expectRevert(Unauthorized.selector);
     fund.setBondConfig(config);
+
+    // The operator can set
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    vm.prank(operator);
+    fund.setBondConfig(config);
+    assertEq(fund.bondConfig().amount, BOND_BPS, "set by operator");
   }
 
   function test_SetBondConfig_RevertsInvalidAmount() public {
     uint256 overCap = fund.MAX_BOND_AMOUNT() + 1;
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
     fund.setBondConfig(BondConfig({amount: overCap, recipient: bondRecipient}));
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
     fund.setBondConfig(BondConfig({amount: BPS, recipient: bondRecipient}));
   }
@@ -2169,24 +2178,24 @@ contract MidasFundTest is Test {
   function test_SetBondConfig_MaxAmountSucceeds() public {
     uint256 maxBond = fund.MAX_BOND_AMOUNT();
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     fund.setBondConfig(BondConfig({amount: maxBond, recipient: bondRecipient}));
     assertEq(fund.bondConfig().amount, maxBond, "amount");
   }
 
   function test_SetBondConfig_RevertsZeroRecipient() public {
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
     fund.setBondConfig(BondConfig({amount: 1, recipient: address(0)}));
   }
 
   function test_SetBondConfig_RevertsZeroAmount() public {
     // Disabling the bond flow goes through removeBondConfig, not a zero-amount set.
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
     fund.setBondConfig(BondConfig({amount: 0, recipient: bondRecipient}));
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(LibFundsErrors.InvalidBondConfig.selector);
     fund.setBondConfig(BondConfig({amount: 0, recipient: address(0)}));
   }
@@ -2194,9 +2203,9 @@ contract MidasFundTest is Test {
   function test_RemoveBondConfig_Success() public {
     _setBondConfig(BOND_BPS);
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectEmit(true, true, true, true);
-    emit BondConfigUpdated(0, address(0), vaultManager);
+    emit BondConfigUpdated(0, address(0), owner);
     fund.removeBondConfig();
 
     BondConfig memory config = fund.bondConfig();
@@ -2215,12 +2224,12 @@ contract MidasFundTest is Test {
 
   function test_RemoveBondConfig_Idempotent() public {
     // Removing an already-zero config succeeds.
-    vm.prank(vaultManager);
+    vm.prank(owner);
     fund.removeBondConfig();
     assertEq(fund.bondConfig().amount, 0, "still disabled");
   }
 
-  function test_RemoveBondConfig_OnlyOwnerOrVaultManager() public {
+  function test_RemoveBondConfig_OnlyOwnerOrOperator() public {
     _setBondConfig(BOND_BPS);
 
     vm.prank(outsider);
@@ -2231,10 +2240,8 @@ contract MidasFundTest is Test {
     vm.expectRevert(Unauthorized.selector);
     fund.removeBondConfig();
 
-    // The operator role does not include bond management
-    vm.prank(owner);
-    fund.grantRoles(operator, OPERATOR_ROLE);
-    vm.prank(operator);
+    // The vault manager role does not include bond management
+    vm.prank(vaultManager);
     vm.expectRevert(Unauthorized.selector);
     fund.removeBondConfig();
 
@@ -2243,7 +2250,14 @@ contract MidasFundTest is Test {
     vm.expectRevert(Unauthorized.selector);
     fund.removeBondConfig();
 
-    // The owner can always remove
+    // The operator can remove
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+    vm.prank(operator);
+    fund.removeBondConfig();
+    assertEq(fund.bondConfig().amount, 0, "removed by operator");
+
+    // The owner can always remove (idempotent)
     vm.prank(owner);
     fund.removeBondConfig();
     assertEq(fund.bondConfig().amount, 0, "removed by owner");
@@ -2254,12 +2268,12 @@ contract MidasFundTest is Test {
     Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
     fund.create(order);
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
     fund.removeBondConfig();
 
     _commitDeposit(order);
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.removeBondConfig();
   }
@@ -2268,12 +2282,12 @@ contract MidasFundTest is Test {
     Order memory order = _depositOrder(ONE_USDC, ONE_MTOKEN);
     fund.create(order);
 
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.ACCEPTED));
     fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
 
     _commitDeposit(order);
-    vm.prank(vaultManager);
+    vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.setBondConfig(BondConfig({amount: BOND_BPS, recipient: bondRecipient}));
   }
@@ -2782,7 +2796,7 @@ contract MidasFundTest is Test {
 
     // ...then reissue the remaining shares as a fresh redeem (bond payment removed) through
     // the usual two-phase flow.
-    vm.prank(vaultManager);
+    vm.prank(owner);
     fund.removeBondConfig();
 
     uint256 remainder = ONE_MTOKEN - ONE_MTOKEN * BOND_BPS / BPS;
@@ -2990,9 +3004,9 @@ contract MidasFundTest is Test {
     newVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
   }
 
-  /// @dev Sets the bond config as the vault manager (bondRecipient as recipient).
+  /// @dev Sets the bond config as the owner (bondRecipient as recipient).
   function _setBondConfig(uint256 amountBps) internal {
-    vm.prank(vaultManager);
+    vm.prank(owner);
     fund.setBondConfig(BondConfig({amount: amountBps, recipient: bondRecipient}));
   }
 

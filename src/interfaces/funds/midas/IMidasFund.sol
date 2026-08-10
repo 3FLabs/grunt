@@ -254,7 +254,7 @@ interface IMidasFund is IFund {
   function setRedemptionVault(address redemptionVault_) external;
 
   /// @notice Sets the bond configuration for the Repay-and-Redeem flow.
-  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED), so the bond terms are stable
   ///      for an order's life.
   ///      Reverts with InvalidBondConfig if the amount is zero or greater than MAX_BOND_AMOUNT
@@ -266,7 +266,7 @@ interface IMidasFund is IFund {
   function setBondConfig(BondConfig calldata bondConfig_) external;
 
   /// @notice Removes the bond configuration (no bond payment required).
-  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED). Subsequent redeem orders
   ///      still follow the two-leg bond flow, but their bond leg moves nothing; the
   ///      unlockInstantRedeem() confirmation is required regardless.
