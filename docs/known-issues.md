@@ -12,3 +12,4 @@ This registry records intentional constraints that require deployment or integra
 ## Offer pre-liquidation
 
 - **The offer walk may return less than the requested target (Cantina #19).** Offers that fail profitability or the bonus floor, or whose fill rounds to zero raw units, are skipped because a later offer may fill. A fill that cannot strictly lower LTV stops the price-ordered walk because later offers cannot qualify at the unchanged LTV. Fill shares round up; collateral caps, position-clamp rescaling, and collateral values round down; debt values round up. `previewConsume` uses this walk, while `preLiquidate` also applies a final post-settlement LTV guard.
+- **Timelock changes apply only to future offers (Cantina #43).** Each offer snapshots `activeAt` from the effective timelock when proposed. Later increases or decreases do not retime existing offers, which remain valid under their original activation and expiry timestamps.

@@ -88,6 +88,7 @@ interface IBorrowOffers {
   /// @dev Gated by {IBorrowOffersRegistry.checkCanCreateOffer} (a proposer, or the registry
   ///      owner). The offer becomes consumable at `now + timelock` (fixed here from the registry's
   ///      current effective timelock for this market's collateral) and expires at `expiresAt`.
+  ///      Later registry timelock changes affect new proposals only; they never alter `activeAt`.
   /// @param collateral The collateral tokens offered (> 0).
   /// @param debtShares The Morpho borrow shares requested (> 0).
   /// @param expiresAt The absolute expiry timestamp (must be strictly after the computed `activeAt`

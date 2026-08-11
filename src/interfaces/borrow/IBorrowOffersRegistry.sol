@@ -65,7 +65,8 @@ interface IBorrowOffersRegistry {
   /// @dev The change is itself timelocked: it becomes effective only after the collateral's
   ///      *current* effective timelock elapses (at least `MIN_OFFER_TIMELOCK`, since effective
   ///      timelocks are floored to it). `timelock` must be within
-  ///      `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
+  ///      `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`. It affects future proposals only; existing
+  ///      offers keep the `activeAt` timestamp fixed when they were proposed.
   function setOfferTimelock(address collateral, uint40 timelock) external;
 
   /// @notice Sets the minimum offer bonus for `collateral`, in basis points. Gated to the
