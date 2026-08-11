@@ -7,6 +7,7 @@ This registry records intentional constraints that require deployment or integra
 - **The Facility must not receive PositionManager fees (Cantina #9).** `depositManager`, `withdrawManager`, and `burnManager` snapshot the Facility's PositionManager-share balance around an operation. Because the PositionManager accrues fees inside that window, setting its `feeRecipient` to the Facility includes the fee mint in the balance delta and credits it to the resolving intent. Use an external fee recipient.
 - **Zero pending fee shares do not imply zero fee state (Cantina #10).** A fee-asset amount can be blocked by the total-assets cap or floor to zero during share conversion. An accrual still advances its timestamp; the performance reference follows its documented advance/hold rule, and `feeData().heldManagementFees` can remain non-zero.
 - **`heldManagementFees` tracks charged assets, not minted shares (Cantina #11).** It is an asset-denominated deduction from the next positive performance basis and can grow when the corresponding share conversion floors to zero.
+- **Held deductions stay nominal across capital flows (Cantina #34, superseded).** The accumulator is no longer rescaled on deposits or partial exits, so the reported repeated per-exit flooring does not occur. A partial exit can instead concentrate the fixed deduction among remaining shares; this is bounded by fees already charged and can be cleared with `resetPerformanceReference`. Burning the last share clears it automatically.
 
 ## Offer pre-liquidation
 
