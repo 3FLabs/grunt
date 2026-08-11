@@ -76,7 +76,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @return heldManagementFees The management fee assets charged and not yet netted against a
   ///         crystallized performance basis, deducted from the next positive basis (a
   ///         crystallizing advance consumes it up to the basis and carries the excess; a
-  ///         bootstrap/empty-vault reseed and `resetPerformanceReference` clear it)
+  ///         bootstrap/empty-vault reseed, a flow that burns the last share, and
+  ///         `resetPerformanceReference` clear it)
   function feeData()
     external
     view

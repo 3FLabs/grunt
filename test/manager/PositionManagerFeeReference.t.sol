@@ -65,11 +65,22 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     return int256(scaledRefDebt) - int256(currentDebt);
   }
 
-  /// @dev The held management fee accumulator (management fees charged since the reference last
-  ///      advanced, deducted from the next positive basis).
+  /// @dev The held management fee accumulator (management fees charged and not yet netted
+  ///      against a crystallized basis, deducted from the next positive basis).
   function _heldManagementFees() internal view returns (uint256) {
     (,,,,, uint256 held) = positionManager.feeData();
     return held;
+  }
+
+  /// @dev Permissionless dust repay on the interest-free module: anyone can repay on the
+  ///      module's behalf through the underlying market, nudging its debt down (and NAV up)
+  ///      by 1e6 — enough to flip a flat basis dust-positive.
+  function _dustRepayMarket2() internal {
+    debtToken.setBalance(user, 1e6);
+    vm.startPrank(user);
+    debtToken.approve(address(morpho), type(uint256).max);
+    morpho.repay(marketParams2, 1e6, 0, address(borrowPosition2), "");
+    vm.stopPrank();
   }
 
   /// @dev Expected management fee assets for one accrual interval, replicating `_pendingFees`.
@@ -900,7 +911,8 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
   }
 
   /// @notice The fee-cap early return (management fee capped at totalAssets) mints nothing but
-  ///         still advances the reference on a positive basis.
+  ///         still advances the reference on a positive basis, and its back-out persists the
+  ///         basis-consumed remainder of the held deduction, not a cleared one.
   function test_advance_feeCapEarlyReturnStillAdvances() public {
     // Route to the interest-free market so the position survives a long dormancy.
     SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
@@ -911,17 +923,31 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(200, 2000);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    // Large gain + very long dormancy: the mgmt fee cap binds and the no-mint guard fires.
-    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    // A flat held stretch seeds the deduction before the cap binds.
+    for (uint256 i = 0; i < 5; ++i) {
+      vm.warp(block.timestamp + 6 days);
+      _accrue();
+    }
+    uint256 held = _heldManagementFees();
+    assertGt(held, 0, "management fees accumulated while held");
+
+    // Dust-positive basis, then dormancy long enough for the mgmt fee cap to bind: the accrual
+    // must advance on the basis, mint nothing, and consume only the basis slice of the deduction.
+    _dustRepayMarket2();
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "dust repay flips the basis positive");
+    assertLt(uint256(basis), held, "basis is dust next to the pending deduction");
     vm.warp(block.timestamp + 100 * 365 days);
 
     (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
     assertEq(mgmtPending + perfPending, 0, "cap binds: no shares pending");
 
+    uint256 feeSharesBefore = positionManager.balanceOf(feeRecipient);
     _accrue();
-    assertEq(positionManager.balanceOf(feeRecipient), 0, "no shares minted when the cap binds");
+    assertEq(positionManager.balanceOf(feeRecipient), feeSharesBefore, "no shares minted when the cap binds");
     assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference NAV advanced despite zero mint");
     assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt advanced");
+    assertEq(_heldManagementFees(), held - uint256(basis), "back-out persists the basis-consumed remainder");
   }
 
   /// @notice The management fee is time-based and independent of the performance reference: it
@@ -1090,11 +1116,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertGt(held, 0, "management fees accumulated while held");
 
     // Anyone can repay dust on behalf of the module: the next basis flips dust-positive.
-    debtToken.setBalance(user, 1e6);
-    vm.startPrank(user);
-    debtToken.approve(address(morpho), type(uint256).max);
-    morpho.repay(marketParams2, 1e6, 0, address(borrowPosition2), "");
-    vm.stopPrank();
+    _dustRepayMarket2();
 
     int256 basis = _pendingBasis();
     assertGt(basis, 0, "dust repay flips the basis positive");
@@ -1238,11 +1260,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // Pin NAV to zero, then dust-repay on the module: NAV is now dust-positive.
     oracle.setPrice(DEFAULT_ORACLE_PRICE / 2);
-    debtToken.setBalance(user, 1e6);
-    vm.startPrank(user);
-    debtToken.approve(address(morpho), type(uint256).max);
-    morpho.repay(marketParams2, 1e6, 0, address(borrowPosition2), "");
-    vm.stopPrank();
+    _dustRepayMarket2();
     uint256 nav = positionManager.totalAssets();
     assertGt(nav, 0, "dust repay lifts NAV off zero");
     assertLt(nav, held, "NAV is dust next to the credit");
@@ -1297,8 +1315,16 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
   /// @notice A fee holiday (no recipient) neither wipes nor grows the deduction: it survives
   ///         held holiday accruals and still nets the crystallization once fees are re-enabled,
-  ///         while a positive-basis advance during the holiday clears it like any other advance.
+  ///         while a positive-basis advance during the holiday consumes it only up to the basis
+  ///         (the no-recipient path honors the Cantina #6 carry too).
   function test_managementFee_holidayPreservesHeldDeduction() public {
+    // Route to the interest-free market so the reference sits exactly at the mark while held
+    // and a dust repay can flip the basis positive.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
@@ -1328,15 +1354,21 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
       perfShares, _expectedPerfShares(uint256(_pendingBasis()) - held), "crystallization nets the pre-holiday charges"
     );
 
-    // Variant: a positive basis during the holiday advances without a mint and consumes the
-    // deduction (the gain here exceeds it, so nothing carries).
+    // Variant: a dust-positive basis during the holiday advances without a mint and consumes
+    // the deduction only up to the basis; the excess survives the holiday advance.
     vm.revertToState(snap);
     vm.prank(owner);
     positionManager.setFeeData(address(0), 200, PERF_FEE);
-    oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
+    _dustRepayMarket2();
+    int256 basis = _pendingBasis();
+    assertGt(basis, 0, "dust repay flips the basis positive");
+    assertLt(uint256(basis), held, "basis is dust next to the pending deduction");
+    uint256 supplyBefore = positionManager.totalSupply();
     vm.prank(owner);
     positionManager.setFeeData(address(0), 200, PERF_FEE);
-    assertEq(_heldManagementFees(), 0, "advance during the holiday clears the deduction");
+    assertEq(positionManager.totalSupply(), supplyBefore, "holiday advance mints nothing");
+    assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference advances on the dust basis");
+    assertEq(_heldManagementFees(), held - uint256(basis), "holiday advance consumes only the basis slice");
   }
 
   /// @notice Accruals during a full bad-debt dip charge nothing (empty aggregates) and preserve
@@ -1436,7 +1468,8 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
   }
 
   /// @notice The reset starts a fresh fee period: the pending management fee deduction
-  ///         (management fees charged since the reference last advanced) is forgiven with it.
+  ///         (management fees charged and not yet netted against a crystallized basis) is
+  ///         forgiven with it.
   function test_reset_clearsHeldManagementFees() public {
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);

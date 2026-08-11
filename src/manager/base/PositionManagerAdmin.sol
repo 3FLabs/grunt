@@ -189,8 +189,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
     _storage.lastTotalAssets = currentTotalAssets;
     _storage.lastDebt = currentDebt;
     // The reset starts a fresh fee period, so the pending management fee deduction (management
-    // fees charged since the reference last advanced, including the interval settled by the
-    // accrual above) is forgiven along with the carried basis.
+    // fees charged and not yet netted against a crystallized basis, including the interval
+    // settled by the accrual above) is forgiven along with the carried basis.
     _storage.heldManagementFeeAssets = 0;
     emit IPositionManagerAdmin.PerformanceReferenceReset(currentTotalAssets, currentDebt);
   }

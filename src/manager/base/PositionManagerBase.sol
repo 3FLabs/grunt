@@ -254,8 +254,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
         managementFeeAssets = managementFeeAssets.min(totalAssets_);
       }
 
-      // Performance fee on the levered-slice basis, net of the management fees charged since the
-      // reference last advanced: the held accumulator plus the current interval's charge.
+      // Performance fee on the levered-slice basis, net of the pending management fee deduction:
+      // the held accumulator (charged and not yet netted against a crystallized basis) plus the
+      // current interval's charge.
       heldManagementFees_ = _storage.heldManagementFeeAssets;
       totalFeeAssets = managementFeeAssets;
       if (fd.performanceFee > 0 && basis > managementFeeAssets + heldManagementFees_) {
@@ -295,8 +296,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
     // `_accrueFees` still refreshes `lastFeeAccrualTimestamp` (and the reference, per
     // `advanceReference`) so normal accrual resumes next call. Nothing is minted, so this
     // interval's management fee does not join the held accumulator either: backing it out of
-    // the value computed above restores the stored accumulator on a hold, and its
-    // basis-consumed remainder (`max(0, stored - basis)`) on an advance.
+    // the value computed above restores the stored accumulator on a hold, its basis-consumed
+    // remainder (`max(0, stored - basis)`) on a crystallizing advance, and zero on a reseed
+    // advance (already cleared above, so the back-out is a no-op).
     if (totalFeeAssets >= totalAssets_) {
       return (
         totalAssets_,
