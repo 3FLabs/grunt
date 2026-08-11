@@ -88,6 +88,7 @@ interface IBorrowOffers {
   /// @dev Gated by {IBorrowOffersRegistry.checkCanCreateOffer} (a proposer, or the registry
   ///      owner). The offer becomes consumable at `now + timelock` (fixed here from the registry's
   ///      current effective timelock for this market's collateral) and expires at `expiresAt`.
+  ///      Later registry timelock changes affect new proposals only; they never alter `activeAt`.
   /// @param collateral The collateral tokens offered (> 0).
   /// @param debtShares The Morpho borrow shares requested (> 0).
   /// @param expiresAt The absolute expiry timestamp (must be strictly after the computed `activeAt`
@@ -129,7 +130,13 @@ interface IBorrowOffers {
 
   /// @notice Off-chain helper that simulates a band consume for the given target without mutating
   ///         state.
-  /// @dev Simulates the walk only: the post-settlement LTV guard runs solely on the real
+  /// @dev Offers that fail the profit/bonus gates or round to a zero-unit fill are skipped; a fill
+  ///      that cannot strictly lower LTV stops the price-ordered walk because later offers cannot
+  ///      qualify at the unchanged LTV. The walk also stops when the target is met, the position's
+  ///      collateral or borrow shares are exhausted, or all offers have been visited. Fill shares
+  ///      round up, while collateral caps and a position-clamp rescale round down; collateral
+  ///      values round down and debt values round up. The result can therefore underfill the
+  ///      target. This simulates the walk only: the post-settlement LTV guard runs solely on the real
   ///      `preLiquidate` call, so a dust-sized quote from this view can still revert there.
   /// @param seizedAssets The collateral-seize target (pass 0 to use `repaidShares`).
   /// @param repaidShares The debt-share-repay target (pass 0 to use `seizedAssets`).
