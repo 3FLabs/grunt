@@ -58,7 +58,11 @@ library LibView {
   ///
   ///      Inclusion cliff: the `collateral >= debt` filter is binary. At exactly 100% LTV a module
   ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
-  ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
+  ///      higher and the module is excluded entirely, contributing zero collateral. Fee accrual
+  ///      reads this at checkpoint end over the whole elapsed interval, so a module that
+  ///      re-enters mid-interval (anyone can flip the filter by repaying one base unit on the
+  ///      underlying market) is charged management fee for the full interval (see
+  ///      `_pendingFees`). This is an edge
   ///      case in practice (liquidation is expected long before LTV reaches 100%), but worth noting.
   ///
   ///      Debt rounding: each module's `totalBorrowed()` returns `toAssetsDown(borrowShares)`,

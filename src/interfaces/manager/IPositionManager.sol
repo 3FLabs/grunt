@@ -80,6 +80,9 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days, charged on the
   ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
+  ///         Eligibility is checkpoint-end: a module inside the `collateral >= debt` filter at
+  ///         accrual time is charged on its full collateral for the whole elapsed interval,
+  ///         regardless of when it (re-)entered (a one-wei cliff — see {hasBadDebt}).
   /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
   ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
   /// @return lastTotalAssets The NAV component of the performance reference used for fee accounting

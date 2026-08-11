@@ -45,7 +45,12 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      Management fees are charged on the aggregate collateral of non-bad-debt positions
   ///      (`currentCollat`), not on the NAV. For a leveraged vault this is materially larger
   ///      than the NAV. The fee assets are still capped at `totalAssets_` so the fee-adjusted
-  ///      base used for share conversion remains non-negative.
+  ///      base used for share conversion remains non-negative. Eligibility is checkpoint-end:
+  ///      a module inside the `collateral >= debt` filter at accrual time is charged on its full
+  ///      collateral over the whole `elapsed` interval, no matter when it (re-)entered — storage
+  ///      keeps no per-module inclusion time, and the filter is a one-wei cliff anyone can flip
+  ///      with a dust repay on the underlying market (see the inclusion cliff note in
+  ///      `LibView.totalAssets`).
   ///
   ///      The performance fee basis is the levered-slice performance only:
   ///      `LTV_ref * Δcollat - Δdebt`, where `LTV_ref = lastDebt / lastCollat` is the LTV at the
