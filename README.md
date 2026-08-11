@@ -1118,6 +1118,8 @@ flowchart TB
 
 ## Security Considerations
 
+Accepted deployment constraints and documented edge cases are tracked in [Known Issues & Assumptions](docs/known-issues.md).
+
 | Mechanism | Purpose |
 |-----------|---------|
 | **Virtual Share Offset** | Prevents first-depositor inflation attacks in PositionManager |

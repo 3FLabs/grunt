@@ -101,7 +101,9 @@ interface IPositionManagerAdmin {
   /// @dev Before updating the fee configuration, this function must accrue and allocate any pending
   ///      fee shares to the current fee recipient. This ensures that the previous fee recipient receives
   ///      all fees that have accrued up to the point of the update. Only callable by the owner.
-  /// @param feeRecipient The address that will receive fee payments going forward
+  /// @param feeRecipient The address that will receive fee payments going forward. When this
+  ///        manager is operated through a Facility, this must not be that Facility: its balance
+  ///        snapshots would attribute fee shares minted during the operation to the active intent.
   /// @param managementFee The management fee rate in basis points per 365 days (e.g., 200 = 2% per year),
   ///        charged on the aggregate collateral of non-bad-debt positions (not on NAV).
   /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
