@@ -230,3 +230,16 @@ contract ReenteringMockFund is MockRetargetterFund {
     return super.cancel(order);
   }
 }
+
+/// @title StickyCancelMockFund
+/// @notice MockRetargetterFund whose cancel acknowledges the call but reports the order
+///         still PROCESSING instead of EMPTY, mirroring a future fund that keeps processing
+///         a canceled order; used to pin the Retargetter's cancel state check.
+contract StickyCancelMockFund is MockRetargetterFund {
+  constructor(address asset_, address share_) MockRetargetterFund(asset_, share_) {}
+
+  function cancel(Order calldata order) public view override returns (State) {
+    _checkOrder(order);
+    return State.PROCESSING;
+  }
+}

@@ -151,6 +151,10 @@ interface IRetargetter {
   /// @param whitelisted Whether the module is now whitelisted
   event FlashLoanModuleSet(address indexed module, bool whitelisted);
 
+  /// @notice Emitted when the owner binds the instance to a position manager.
+  /// @param positionManager The position manager the instance is now bound to
+  event PositionManagerBound(address indexed positionManager);
+
   /// @notice Emitted when the yield estimates are updated.
   /// @param estimates The new estimates
   event EstimatesSet(YieldEstimates estimates);
@@ -163,8 +167,11 @@ interface IRetargetter {
   /*                        ASYNC FLOW                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Starts an asynchronous retargetting operation by deploying a fresh Request.
-  /// @param positionManager The position manager to retarget (must match the bound pair)
+  /// @notice Starts an asynchronous retargetting operation against the bound position manager
+  ///         by deploying a fresh Request.
+  /// @dev The repayment terms (horizon, tick duration, tick threshold) and the effective
+  ///      yield cap are snapshotted into the operation here; a later setConfig does not
+  ///      reprice a started operation. Reverts if no position manager is bound.
   /// @param principal The intended principal, fail-fast checked against the cap
   /// @param maxYieldBps_ The caller's yield cap; the effective cap is min(config, caller)
   /// @param fund The whitelisted fund to bind to the operation
@@ -172,7 +179,6 @@ interface IRetargetter {
   /// @param requestSymbol The base symbol for the Request's PT/YT tokens
   /// @return request The deployed Request
   function startRetargetting(
-    address positionManager,
     uint256 principal,
     uint16 maxYieldBps_,
     address fund,
@@ -189,7 +195,11 @@ interface IRetargetter {
   ///      including the owner:
   ///      repayment prices every yield token from the origin, so capital arriving later would
   ///      be overpaid for time it never covered and, on a default, would dilute the earlier
-  ///      lenders' recovery.
+  ///      lenders' recovery. The principal cap is checked after the Request call, once the
+  ///      minted amount sits in the PT supply, so a maker callback moving the cap mid-call
+  ///      cannot leave the operation committed above it. The read trusts the position
+  ///      manager's minters, whose role must therefore never overlap makers or consumers
+  ///      (see the implementation notes).
   /// @param offer The signed offer
   /// @param signature The maker's EIP-712 signature
   /// @param ptAmount The principal amount to consume
@@ -207,7 +217,11 @@ interface IRetargetter {
   ///      directly, so the operator revokes leftovers once the funding round is over. A mint
   ///      front-running that revocation or the settlement itself is bounded by the yield gate
   ///      and the prorated accrual, and requires the consumer to have authorized the account
-  ///      in the first place.
+  ///      in the first place. A stored authorization is a firm commitment: the Request honors
+  ///      it against the amounts fixed here even if the principal cap has fallen since, and
+  ///      the caller (a CONSUMER_ROLE holder) picks the recipient freely, itself included. A
+  ///      revocation that leaves the operation with no PT, no YT and no pending authorization
+  ///      rewinds the loan clock to unstarted, reopening the consumption window.
   /// @param to The account allowed to call the Request's mint
   /// @param ptAmount The principal tokens to authorize; the account transfers this much asset
   ///        when it mints
@@ -217,9 +231,13 @@ interface IRetargetter {
   /// @notice Pulls consumed funds from the operation's Request to the Retargetter.
   /// @dev Pulling ends the funding round: every pending mint authorization is revoked and
   ///      capital entry (consume or new authorizations) stays closed for the rest of the
-  ///      operation, so funds being deployed can no longer be diluted by late lenders.
+  ///      operation, so funds being deployed can no longer be diluted by late lenders. A
+  ///      zero amount is the named close transition: it moves no capital, still ends the
+  ///      funding round the same way, and leaves the Request's balance pullable by later
+  ///      calls.
   /// @param amount The amount to pull; the full-balance sentinel `type(uint256).max` resolves
-  ///        to the Request's whole balance
+  ///        to the Request's whole balance, and zero closes the funding round without moving
+  ///        capital
   function pullRequestFunds(uint256 amount) external;
 
   /// @notice Creates a fund order owned by and payable to the Retargetter.
@@ -234,6 +252,9 @@ interface IRetargetter {
   function unlock() external returns (uint256 amountOut);
 
   /// @notice Cancels the stored fund order and clears it.
+  /// @dev The fund must report the canceled order EMPTY; any other returned state keeps the
+  ///      local order stored and reverts, so the Retargetter never forgets an order the
+  ///      fund still processes.
   function cancelOrder() external;
 
   /// @notice Recovers the stored fund order's input; clears the order once ENDED.
@@ -260,6 +281,9 @@ interface IRetargetter {
   function rebalance(RebalancingData calldata data) external;
 
   /// @notice Trustlessly repays the operation's Request with the formula-computed amount.
+  /// @dev Transfers only the shortfall between the owed amount and the Request's balance, and
+  ///      the owed yield floors at one full tick, so an operation whose consumed principal
+  ///      was never pulled still tops up that tick from position-derived funds.
   /// @return owedAmount The amount owed and settled
   function repay() external returns (uint256 owedAmount);
 
@@ -278,30 +302,32 @@ interface IRetargetter {
   /*                         SYNC FLOW                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Runs a whole retargetting operation atomically inside a flash loan.
+  /// @notice Runs a whole retargetting operation against the bound position manager atomically
+  ///         inside a flash loan.
   /// @dev The steps are supplied as a multicall payload executed inside the flash-loan
   ///      callback. The callback is bound to this exact payload (digest match) and requires
   ///      the loan delivered in full before any step runs. At window close no order may be
   ///      stored and the Retargetter's balances of both bound assets must be within the
-  ///      configured residual tolerance.
-  /// @param positionManager The position manager to retarget (must match the bound pair)
+  ///      configured residual tolerance. Reverts if no position manager is bound. The position
+  ///      manager's rebalance cooldown is enforced per rebalance call, so with a nonzero
+  ///      cooldown compatible legs must be packed into a single rebalance step, and a route
+  ///      needing an intervening fund action between two rebalances runs as separate
+  ///      transactions.
   /// @param flashLoanModule The whitelisted flash-loan module to borrow through
   /// @param flashLoanAmount The flash-loan size, checked against the principal cap
   /// @param fund The whitelisted fund the payload may create orders against
   /// @param data The step calls executed inside the flash-loan window
-  function startSyncRetargetting(
-    address positionManager,
-    address flashLoanModule,
-    uint256 flashLoanAmount,
-    address fund,
-    bytes[] calldata data
-  ) external;
+  function startSyncRetargetting(address flashLoanModule, uint256 flashLoanAmount, address fund, bytes[] calldata data)
+    external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       CONFIGURATION                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets the full configuration (scalars and estimates).
+  /// @dev Changes take effect immediately, except for an in-flight operation's repayment
+  ///      terms: the horizon, tick duration and tick threshold, like the yield cap, are
+  ///      snapshotted at operation start and a running operation settles on those.
   /// @param config_ The new configuration, validated against the documented bounds
   function setConfig(RetargetterConfig calldata config_) external;
 
@@ -324,11 +350,23 @@ interface IRetargetter {
   /// @param whitelisted Whether the module should be whitelisted
   function setFlashLoanModule(address module, bool whitelisted) external;
 
+  /// @notice Rotates (or clears) the single position manager every operation runs against.
+  /// @dev The instance's asset pair is derived from the first position manager ever bound (at
+  ///      initialize or here) and is immutable after; this rotates the binding to another
+  ///      position manager on that pair, or unbinds it with the zero address to abandon the
+  ///      instance (operations then revert until a same-pair manager is bound again).
+  ///      Operations never take a position manager as an argument, so every start-gate and
+  ///      principal-cap read trusts an owner-curated address rather than a caller-supplied
+  ///      one. A nonzero manager is checked to be a contract on the bound pair; both paths
+  ///      revert while an operation is active (the binding can only change while idle).
+  /// @param positionManager The position manager to bind, or the zero address to unbind
+  function setPositionManager(address positionManager) external;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the bound asset pair, set once at initialization.
+  /// @notice Returns the bound asset pair, derived from the position manager at initialization.
   /// @return collateralAsset The collateral asset of the pair
   /// @return debtAsset The debt asset of the pair
   function assets() external view returns (address collateralAsset, address debtAsset);
@@ -345,6 +383,10 @@ interface IRetargetter {
   ///         (zero inside a SYNC window); the loan clock can only start while at least the
   ///         minimum deadline buffer remains before it
   /// @return operationMaxYieldBps The effective per-operation yield cap
+  /// @return horizon The operation's snapshotted yield annualization basis
+  /// @return tickDuration The operation's snapshotted repayment granularity
+  /// @return tickThreshold The operation's snapshotted tick grace and consumption window
+  ///         length
   /// @return order The stored fund order rebuilt in memory
   /// @return orderLive Whether a fund order is stored
   function operation()
@@ -357,6 +399,9 @@ interface IRetargetter {
       uint40 startedAt,
       uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
+      uint32 horizon,
+      uint24 tickDuration,
+      uint24 tickThreshold,
       Order memory order,
       bool orderLive
     );
@@ -365,12 +410,18 @@ interface IRetargetter {
   ///         flash-loan window for the duration of its transaction).
   function isActive() external view returns (bool);
 
-  /// @notice Computes the current principal cap for a position manager.
+  /// @notice Computes the current principal cap for the bound position manager.
   /// @dev Quoter formula on live state with the owner estimates, auto-detected direction,
-  ///      times one plus the principal buffer.
-  /// @param positionManager The position manager to size against
+  ///      times one plus the principal buffer. Below target the cap is further bounded by
+  ///      the one-trip repayment bound, so a cap-sized, fully deployed operation can always
+  ///      borrow its worst permitted repayment back at target in a single settlement trip.
+  ///      This view sizes that bound on the config yield-cap ceiling, a safe floor for
+  ///      every permissible operation; the operation gates size it on the effective
+  ///      per-operation cap (zero for a SYNC window, whose flash repayment carries no
+  ///      yield) and can admit up to that looser bound. Reverts if no position manager is
+  ///      bound.
   /// @return The principal cap in debt-asset units
-  function maxPrincipal(address positionManager) external view returns (uint256);
+  function maxPrincipal() external view returns (uint256);
 
   /// @notice Returns the current amount owed on the active operation's Request.
   function owed() external view returns (uint256);
@@ -393,6 +444,9 @@ interface IRetargetter {
   /// @notice Returns whether a flash-loan module is whitelisted.
   /// @param module The module to check
   function isFlashLoanModule(address module) external view returns (bool);
+
+  /// @notice Returns the bound position manager (zero when none is bound).
+  function boundPositionManager() external view returns (address);
 
   /// @notice Returns the quoter holding the sizing math.
   function quoter() external view returns (address);

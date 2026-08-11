@@ -19,7 +19,7 @@ import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 
 /// @dev Position manager stub returning a pair that does not match the Retargetter's bound
-///      assets; startSyncRetargetting reads only assets() before reverting AssetMismatch.
+///      assets; setPositionManager reads assets() and reverts AssetMismatch at bind time.
 contract MismatchedPairPositionManager {
   address internal immutable COLLATERAL_ASSET;
   address internal immutable DEBT_ASSET;
@@ -139,7 +139,7 @@ contract WindowProbeFund is MockRetargetterFund {
   function cancel(Order calldata order) public override returns (State) {
     probed = true;
     sawActive = IRetargetter(msg.sender).isActive();
-    (, sawRequest,,,,,,) = IRetargetter(msg.sender).operation();
+    (, sawRequest,,,,,,,,,) = IRetargetter(msg.sender).operation();
     return super.cancel(order);
   }
 }
@@ -156,7 +156,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
   /// @dev Starts a SYNC operation as the rebalancer with the default stack.
   function _startSync(uint256 amount, bytes[] memory calls) internal {
     vm.prank(rebalancer);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
   }
 
   /// @dev LTV-up payload: subscribe the loan into the fund, supply the settled shares with
@@ -198,6 +198,9 @@ contract RetargetterSyncTest is RetargetterBaseTest {
       uint40 startedAt,
       uint40 repaymentDeadline,
       uint16 operationMaxYieldBps,
+      uint32 horizon,
+      uint24 tickDuration,
+      uint24 tickThreshold,
       Order memory storedOrder,
       bool orderLive
     ) = retargetter.operation();
@@ -207,6 +210,9 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     assertEq(startedAt, 0, "startedAt zeroed");
     assertEq(repaymentDeadline, 0, "repayment deadline zeroed");
     assertEq(operationMaxYieldBps, 0, "yield cap zeroed");
+    assertEq(horizon, 0, "horizon zeroed");
+    assertEq(tickDuration, 0, "tick duration zeroed");
+    assertEq(tickThreshold, 0, "tick threshold zeroed");
     assertEq(storedOrder.input, 0, "order input zeroed");
     assertEq(storedOrder.output, 0, "order output zeroed");
     assertEq(storedOrder.salt, bytes32(0), "order salt zeroed");
@@ -247,6 +253,25 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     assertLe(_currentLtv(), POSITION_MANAGER_LTV, "at or below target");
   }
 
+  /// @notice A flash loan sized exactly at the SYNC principal cap (the zero-yield one-trip
+  ///         bound) deploys, borrows its own repayment back and lands the position exactly
+  ///         at target: the cap is the largest one-trip-settleable size, not just a limit.
+  function test_startSyncRetargetting_capSizedFlashLoanSettles() public {
+    _seedPosition(10_000e18, 5_000e18);
+    fund.setSyncSettlement(true);
+
+    // (0.7 * 10,000 - 5,000) / (1 - 0.7): the flash repayment carries no yield
+    uint256 cap = _gateCap(0);
+    bytes[] memory calls = _syncUpPayload(cap, bytes32(uint256(2)));
+
+    _startSync(cap, calls);
+
+    _assertNoTrace();
+    _assertZeroResidual();
+    assertApproxEqAbs(_currentLtv(), POSITION_MANAGER_LTV, 1e6, "landed exactly at target");
+    assertLe(_currentLtv(), POSITION_MANAGER_LTV, "never above target");
+  }
+
   function test_startSyncRetargetting_downHappyPathExactProceeds() public {
     // LTV 0.5 with target 0.3: above target, LTV-down direction
     _seedPosition(10_000e18, 5_000e18);
@@ -256,7 +281,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     // Exact-proceeds sizing: at share price 1e18 and a zero-fee flash loan, redeeming
     // exactly flashLoanAmount shares mints exactly the loan repayment
     uint256 amount = 2_857e18;
-    assertLe(amount, retargetter.maxPrincipal(address(positionManager)), "sized at or under the cap");
+    assertLe(amount, retargetter.maxPrincipal(), "sized at or under the cap");
     bytes[] memory calls = _syncDownPayload(amount, bytes32(uint256(1)));
 
     uint256 morphoDebtBefore = debtToken.balanceOf(address(morpho));
@@ -296,7 +321,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(SafeTransferLib.TransferFromFailed.selector);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     // The whole transaction reverted: no trace on the Retargetter, position untouched
     _assertNoTrace();
@@ -320,7 +345,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     _assertNoTrace();
     _assertZeroResidual();
@@ -341,7 +366,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OrderPending.selector);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     _assertNoTrace();
     assertEq(debtToken.balanceOf(address(retargetter)), amount, "donation restored by the revert");
@@ -362,7 +387,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(SafeTransferLib.TransferFromFailed.selector);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     _assertNoTrace();
     _assertZeroResidual();
@@ -379,7 +404,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.ResidualBalance.selector, address(collateralToken), 5));
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     _assertNoTrace();
   }
@@ -408,9 +433,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.ModuleNotWhitelisted.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(freshAdapter), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(freshAdapter), 1_000e18, address(fund), new bytes[](0));
   }
 
   function test_startSyncRetargetting_nonWhitelistedFundReverts() public {
@@ -419,33 +442,27 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.FundNotWhitelisted.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1_000e18, address(freshFund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1_000e18, address(freshFund), new bytes[](0));
   }
 
-  function test_startSyncRetargetting_assetMismatchReverts() public {
-    _seedPosition(10_000e18, 5_000e18);
-    // Reversed pair: the position manager's assets do not match the bound pair
+  function test_setPositionManager_assetMismatchReverts() public {
+    // Reversed pair: binding checks the pair, so a mismatched manager can never be bound
     MismatchedPairPositionManager mismatchedPm =
       new MismatchedPairPositionManager(address(debtToken), address(collateralToken));
 
-    vm.prank(rebalancer);
+    vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.AssetMismatch.selector);
-    retargetter.startSyncRetargetting(
-      address(mismatchedPm), address(flashLoanAdapter), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.setPositionManager(address(mismatchedPm));
   }
 
   function test_startSyncRetargetting_principalCapExceededReverts() public {
     _seedPosition(10_000e18, 5_000e18);
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    // The SYNC gate sizes the cap on a zero yield cap: the flash repayment carries no yield
+    uint256 cap = _gateCap(0);
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), cap + 1, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), cap + 1, address(fund), new bytes[](0));
   }
 
   function test_startSyncRetargetting_activeAsyncOperationReverts() public {
@@ -454,9 +471,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1_000e18, address(fund), new bytes[](0));
 
     assertTrue(retargetter.isActive(), "async operation still active");
   }
@@ -466,9 +481,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(user);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1_000e18, address(fund), new bytes[](0));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -480,15 +493,11 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     bytes[] memory inner = new bytes[](0);
     bytes[] memory calls = new bytes[](1);
-    calls[0] = abi.encodeCall(
-      retargetter.startSyncRetargetting, (address(positionManager), address(flashLoanAdapter), 0, address(fund), inner)
-    );
+    calls[0] = abi.encodeCall(retargetter.startSyncRetargetting, (address(flashLoanAdapter), 0, address(fund), inner));
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1_000e18, address(fund), calls
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1_000e18, address(fund), calls);
 
     _assertNoTrace();
   }
@@ -497,15 +506,11 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
 
     bytes[] memory calls = new bytes[](1);
-    calls[0] = abi.encodeCall(
-      retargetter.startRetargetting, (address(positionManager), 0, 0, address(fund), REQUEST_NAME, REQUEST_SYMBOL)
-    );
+    calls[0] = abi.encodeCall(retargetter.startRetargetting, (0, 0, address(fund), REQUEST_NAME, REQUEST_SYMBOL));
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1_000e18, address(fund), calls
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1_000e18, address(fund), calls);
 
     _assertNoTrace();
   }
@@ -520,9 +525,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.NoActiveOperation.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1_000e18, address(fund), calls
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1_000e18, address(fund), calls);
 
     _assertNoTrace();
   }
@@ -543,9 +546,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     calls[1] = abi.encodeCall(retargetter.cancelOrder, ());
 
     vm.prank(rebalancer);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), amount, address(probeFund), calls
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(probeFund), calls);
 
     assertTrue(probeFund.probed(), "probe executed inside the window");
     assertTrue(probeFund.sawActive(), "window runs with an active operation");
@@ -583,7 +584,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     _assertNoTrace();
   }
@@ -596,9 +597,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(wrongAmountModule), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(wrongAmountModule), 1_000e18, address(fund), new bytes[](0));
 
     _assertNoTrace();
   }
@@ -614,9 +613,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(replayingModule), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(replayingModule), 1_000e18, address(fund), new bytes[](0));
 
     _assertNoTrace();
   }
@@ -636,9 +633,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.UnauthorizedFlashLoanCallback.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(substitutingModule), amount, address(fund), calls
-    );
+    retargetter.startSyncRetargetting(address(substitutingModule), amount, address(fund), calls);
 
     _assertNoTrace();
   }
@@ -652,9 +647,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalNotDelivered.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(zeroDeliveryModule), amount, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(zeroDeliveryModule), amount, address(fund), new bytes[](0));
 
     _assertNoTrace();
   }
@@ -669,9 +662,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalNotDelivered.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(partialDeliveryModule), amount, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(partialDeliveryModule), amount, address(fund), new bytes[](0));
 
     _assertNoTrace();
   }
@@ -694,9 +685,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(selfFundingModule), 500e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(selfFundingModule), 500e18, address(fund), new bytes[](0));
 
     _assertNoTrace();
     _assertZeroResidual();
@@ -716,9 +705,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.PrincipalNotDelivered.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(partialDeliveryModule), amount, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(partialDeliveryModule), amount, address(fund), new bytes[](0));
 
     _assertNoTrace();
   }
@@ -747,9 +734,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(hostileModule), 1_000e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(hostileModule), 1_000e18, address(fund), new bytes[](0));
 
     _assertNoTrace();
   }
@@ -780,7 +765,7 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     // owner bypass never applies through a window
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.AboveTargetLtv.selector, ltvAfter, ltvBefore, 0.3e18));
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     _assertNoTrace();
     assertEq(positionManager.debtAmount(), debtBefore, "worsening borrow rolled back");

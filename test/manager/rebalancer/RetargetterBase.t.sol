@@ -83,9 +83,8 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
     requestFactory = new RequestFactory(owner);
     retargetterQuoter = new RetargetterQuoter();
     retargetterFactory = new RetargetterFactory(owner, address(retargetterQuoter), address(requestFactory));
-    retargetter = Retargetter(
-      retargetterFactory.createRetargetter(owner, address(collateralToken), address(debtToken), _defaultConfig())
-    );
+    // The instance is bound to its position manager at creation; the pair is derived from it
+    retargetter = Retargetter(retargetterFactory.createRetargetter(owner, address(positionManager), _defaultConfig()));
     fund = new MockRetargetterFund(address(debtToken), address(collateralToken));
     flashLoanAdapter = new MorphoFlashLoanAdapter(address(morpho));
 
@@ -155,9 +154,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
   /// @dev Starts a default ASYNC operation as the rebalancer.
   function _startAsync(uint256 principal, uint16 maxYieldBps) internal returns (address request) {
     vm.prank(rebalancer);
-    request = retargetter.startRetargetting(
-      address(positionManager), principal, maxYieldBps, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    );
+    request = retargetter.startRetargetting(principal, maxYieldBps, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   /// @dev Builds a fresh offer from the maker wallet with a one-shot nonce.
@@ -267,6 +264,19 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
       RebalancingOperation({position: address(borrowPosition1), operationType: firstType, amount: firstAmount});
     data.operations[1] =
       RebalancingOperation({position: address(borrowPosition1), operationType: secondType, amount: secondAmount});
+  }
+
+  /// @dev The gate-side principal cap for an operation carrying `yieldCapBps`, on the
+  ///      fixture's zero estimates: the buffered ideal capped by the quoter's one-trip
+  ///      repayment bound, the same min Retargetter._maxPrincipal computes.
+  function _gateCap(uint16 yieldCapBps) internal view returns (uint256) {
+    uint256 collateralQuoted = positionManager.collateralAmountQuoted();
+    uint256 debt = positionManager.debtAmount();
+    (uint256 target,) = positionManager.config();
+    uint256 buffered = retargetterQuoter.retargetPrincipal(collateralQuoted, debt, target, 0, 0, 0, 0, 0)
+      * (10_000 + DEFAULT_PRINCIPAL_BUFFER_BPS) / 10_000;
+    uint256 oneTrip = retargetterQuoter.ltvUpOneTripPrincipal(collateralQuoted, debt, target, yieldCapBps, 0, 0, 0);
+    return buffered < oneTrip ? buffered : oneTrip;
   }
 
   /// @dev Current aggregate LTV of the position manager (WAD; 0 when debt is 0).

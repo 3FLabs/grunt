@@ -12,9 +12,49 @@ import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {IRequest} from "src/interfaces/request/IRequest.sol";
 import {ITokenController} from "src/interfaces/request/ITokenController.sol";
 import {IVaultController} from "src/interfaces/request/IVaultController.sol";
+import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
+import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
+import {StickyCancelMockFund} from "test/mock/manager/rebalancer/MockRetargetterFund.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
+
+/// @dev Offer maker whose consume callback burns its whole LP position, shrinking the live
+///      principal cap between the Retargetter's pre-call gates and the post-call re-check;
+///      ERC-1271 validation accepts any signature so the Request accepts its offers.
+contract CapShrinkingMaker {
+  using SafeTransferLib for address;
+
+  IPositionManager internal immutable _POSITION_MANAGER;
+  address internal immutable _DEBT_ASSET;
+  uint256 internal _shares;
+
+  constructor(IPositionManager positionManager_, address debtAsset_) {
+    _POSITION_MANAGER = positionManager_;
+    _DEBT_ASSET = debtAsset_;
+  }
+
+  /// @dev Opens the leveraged LP stake the callback later dumps.
+  function openPosition(address collateralAsset, uint256 collateral, uint256 debt) external {
+    collateralAsset.safeApprove(address(_POSITION_MANAGER), collateral);
+    _shares = uint256(_POSITION_MANAGER.deposit(collateral, debt));
+  }
+
+  /// @dev Approves the Request pull that follows the callback.
+  function approvePull(address request, uint256 amount) external {
+    _DEBT_ASSET.safeApprove(request, amount);
+  }
+
+  function onRequestConsumed(Offer calldata, bytes calldata, uint256, uint256) external {
+    // The burn pulls the proportional debt repayment from this contract
+    _DEBT_ASSET.safeApprove(address(_POSITION_MANAGER), type(uint256).max);
+    _POSITION_MANAGER.burn(_shares, WithdrawalStrategy.PROPORTIONAL);
+  }
+
+  function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
+    return 0x1626ba7e;
+  }
+}
 
 /// @title RetargetterAsyncTest
 /// @notice Full ASYNC integration tests for the Retargetter: happy paths in both directions
@@ -132,7 +172,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
 
     // Zero estimates: cap = (debt - target * collateral) / (1 - target), plus the 1% buffer
     uint256 expectedCap = (uint256(2_000e18) * WAD / 0.7e18) * 10_100 / 10_000;
-    assertEq(retargetter.maxPrincipal(address(positionManager)), expectedCap, "down principal cap");
+    assertEq(retargetter.maxPrincipal(), expectedCap, "down principal cap");
 
     address request = _startAsync(2_857e18, 100);
     _consume(request, 2_857e18, 28e18, 2_857e18);
@@ -199,12 +239,12 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_async_loanClock_startsAtFirstConsumeAndNeverResets() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    (,,, uint40 startedAt,,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), 0, "clock unset before the first consume");
 
     vm.warp(block.timestamp + 5 days);
     _consume(request, 3_000e18, 30e18, 3_000e18);
-    (,,, startedAt,,,,) = retargetter.operation();
+    (,,, startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), block.timestamp, "first consume starts the clock");
     uint256 clockOrigin = uint256(startedAt);
 
@@ -212,7 +252,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // the clock
     vm.warp(block.timestamp + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, startedAt,,,,) = retargetter.operation();
+    (,,, startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), clockOrigin, "second consume keeps the origin");
 
     // Two days elapsed: paidTicks = floor((2 days + 1 day - 10 hours) / 1 day) = 2
@@ -289,7 +329,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // Exactly 80 days remain before the deadline: the clock may still start
     vm.warp(operationStart + 10 days);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    (,,, uint40 startedAt,,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), operationStart + 10 days, "clock started at the boundary");
   }
 
@@ -326,7 +366,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_authorizeMinting_startsClockAndCountsTowardCap() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    (,,, uint40 startedAt,,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), 0, "clock unset before the authorization");
 
     vm.prank(consumer);
@@ -334,19 +374,24 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     emit IRetargetter.MintingAuthorized(request, broker, 2_000e18, 20e18);
     retargetter.authorizeMinting(broker, 2_000e18, 20e18);
 
-    (,,, startedAt,,,,) = retargetter.operation();
+    (,,, startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), block.timestamp, "authorization starts the loan clock");
     assertEq(_outstandingAuthorizedPt(request), 2_000e18, "outstanding authorized principal");
     (uint128 ptAuth, uint128 ytAuth) = IRequest(request).mintAuthorization(broker);
     assertEq(uint256(ptAuth), 2_000e18, "request-side principal authorization");
     assertEq(uint256(ytAuth), 20e18, "request-side yield authorization");
 
-    // The commitment occupies the principal cap: consume can fill up to it, not past it
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    // The commitment occupies the principal cap (the gate sizes it on the operation's own
+    // 1% yield cap): consume can fill up to it, not past it. The offer is signed and
+    // approved so the revert comes from the post-call cap re-check, not the pull
+    uint256 cap = _gateCap(100);
     Offer memory offer = _createOffer(cap, cap / 200);
+    bytes memory signature = _signOffer(offer, request);
+    vm.prank(maker.addr);
+    debtToken.approve(request, cap);
     vm.prank(consumer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.consume(offer, "", cap - 2_000e18 + 1);
+    retargetter.consume(offer, signature, cap - 2_000e18 + 1);
     _consume(request, cap, cap / 200, cap - 2_000e18);
   }
 
@@ -406,7 +451,8 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_authorizeMinting_capAccountingAcrossAccounts() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    // The gate sizes the cap on the operation's own 1% yield cap
+    uint256 cap = _gateCap(100);
 
     _authorize(broker, 3_000e18, 0);
     assertEq(_outstandingAuthorizedPt(request), 3_000e18, "first authorization outstanding");
@@ -446,6 +492,66 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _authorize(makeAddr(string(abi.encodePacked("capBroker", uint256(0)))), 0, 0);
     _authorize(broker, 1e18, 0);
     assertEq(retargetter.authorizedAccounts().length, 16, "set back at capacity");
+  }
+
+  /// @notice A revocation that leaves the operation with no supply and no pending
+  ///         authorization rewinds the loan clock to unstarted, so an economically empty
+  ///         operation is not forced through a resolve-and-restart cycle by an expired
+  ///         consumption window.
+  function test_authorizeMinting_fullRevocationRewindsClock() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(4_000e18, 100);
+
+    _authorize(broker, 1_000e18, 10e18);
+    uint256 firstOrigin = block.timestamp;
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), firstOrigin, "clock started");
+
+    // Past the tick threshold the window is shut; the revocation still passes and rewinds
+    vm.warp(firstOrigin + DEFAULT_TICK_THRESHOLD + 1);
+    _authorize(broker, 0, 0);
+    (,,, startedAt,,,,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), 0, "clock rewound to unstarted");
+    (uint128 ptAuth,) = IRequest(request).mintAuthorization(broker);
+    assertEq(uint256(ptAuth), 0, "request-side authorization revoked");
+
+    // The window reopened: a fresh commitment starts a fresh clock
+    _authorize(broker, 500e18, 5e18);
+    (,,, startedAt,,,,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), block.timestamp, "fresh origin");
+  }
+
+  /// @notice The clock survives a revocation while the operation still carries PT supply:
+  ///         it only rewinds once economically empty.
+  function test_authorizeMinting_revocationKeepsClockWithSupply() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(4_000e18, 100);
+    uint256 origin = block.timestamp;
+
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    _authorize(broker, 500e18, 5e18);
+    _authorize(broker, 0, 0);
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), origin, "clock kept while PT supply lives");
+  }
+
+  /// @notice The clock survives a revocation while another authorization is still pending,
+  ///         and rewinds once the last one is revoked.
+  function test_authorizeMinting_revocationKeepsClockWithPendingAuthorization() public {
+    _seedPosition(10_000e18, 5_000e18);
+    _startAsync(4_000e18, 100);
+    uint256 origin = block.timestamp;
+    address secondBroker = makeAddr("secondBroker");
+
+    _authorize(broker, 500e18, 5e18);
+    _authorize(secondBroker, 400e18, 4e18);
+    _authorize(broker, 0, 0);
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), origin, "clock kept while an authorization is pending");
+
+    _authorize(secondBroker, 0, 0);
+    (,,, startedAt,,,,,,,) = retargetter.operation();
+    assertEq(uint256(startedAt), 0, "clock rewound once the last authorization is gone");
   }
 
   /// @notice Pulling funds ends the funding round: every pending authorization is revoked and
@@ -512,7 +618,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // The next operation starts with the window open
     address secondRequest = _startAsync(1_000e18, 100);
     _consume(secondRequest, 100e18, 1e18, 100e18);
-    (,,, uint40 startedAt,,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), block.timestamp, "fresh loan clock on the next operation");
   }
 
@@ -602,7 +708,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     retargetter.create(order);
 
-    (,,,,,, Order memory stored, bool orderLive) = retargetter.operation();
+    (,,,,,,,,, Order memory stored, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "order live");
     assertEq(uint8(stored.mode), uint8(Mode.DEPOSIT), "mode stored");
     assertEq(stored.owner, address(retargetter), "owner rebuilt");
@@ -676,14 +782,34 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     emit IRetargetter.OrderCanceled(address(fund), order);
     retargetter.cancelOrder();
 
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "order cleared");
 
     // The slot is free again for a fresh order
     retargetter.create(_order(Mode.DEPOSIT, 100e18, 100e18, bytes32(uint256(12))));
-    (,,,,,,, orderLive) = retargetter.operation();
+    (,,,,,,,,,, orderLive) = retargetter.operation();
     assertTrue(orderLive, "new order live");
     vm.stopPrank();
+  }
+
+  /// @notice A fund whose cancel does not report the order EMPTY keeps the local order
+  ///         stored: the Retargetter never forgets an order the fund still processes.
+  function test_cancelOrder_fundNotReportingEmpty_reverts() public {
+    StickyCancelMockFund stickyFund = new StickyCancelMockFund(address(debtToken), address(collateralToken));
+    vm.prank(owner);
+    retargetter.setFund(address(stickyFund), true);
+    _seedPosition(10_000e18, 5_000e18);
+    vm.prank(rebalancer);
+    retargetter.startRetargetting(4_000e18, 100, address(stickyFund), REQUEST_NAME, REQUEST_SYMBOL);
+
+    vm.startPrank(rebalancer);
+    retargetter.create(_order(Mode.DEPOSIT, 100e18, 100e18, bytes32(uint256(14))));
+    vm.expectRevert(LibRetargetterErrors.OrderPending.selector);
+    retargetter.cancelOrder();
+    vm.stopPrank();
+
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
+    assertTrue(orderLive, "order stays stored while the fund still processes it");
   }
 
   function test_unlock_partialFill_keepsOrderLiveUntilFullyPaid() public {
@@ -699,13 +825,13 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     fund.setPartialUnlockBps(5000);
     vm.prank(rebalancer);
     assertEq(retargetter.unlock(), 50e18, "first partial payout");
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "order still live after a partial fill");
 
     // The second unlock pays the rest and clears the order
     vm.prank(rebalancer);
     assertEq(retargetter.unlock(), 50e18, "second payout");
-    (,,,,,,, orderLive) = retargetter.operation();
+    (,,,,,,,,,, orderLive) = retargetter.operation();
     assertFalse(orderLive, "order cleared once fully paid");
     assertEq(collateralToken.balanceOf(address(retargetter)), 100e18, "full output received");
   }
@@ -726,7 +852,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     assertEq(retargetter.recoverOrder(), 100e18, "input recovered");
     assertEq(debtToken.balanceOf(address(retargetter)), 100e18, "input back on the retargetter");
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "order cleared after recovery");
   }
 
@@ -793,7 +919,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     retargetter.resolve();
     assertFalse(retargetter.isActive(), "resolved");
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "force-ended order cleared by resolve");
   }
 
@@ -878,7 +1004,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     address request = _startAsync(1_000e18, 100);
     // A one-wei-yield offer keeps the owed amount at the unpulled principal plus one wei
     _consume(request, 100e18, 1, 100e18);
-    (,,, uint40 startedAt,,,,) = retargetter.operation();
+    (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertGt(uint256(startedAt), 0, "clock running");
     // An unminted leftover authorization dies with the repaid Request and must not survive
     // into the next operation
@@ -899,6 +1025,9 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
       uint40 clearedStartedAt,
       uint40 clearedRepaymentDeadline,
       uint16 operationMaxYieldBps,
+      uint32 clearedHorizon,
+      uint24 clearedTickDuration,
+      uint24 clearedTickThreshold,
       Order memory order,
       bool orderLive
     ) = retargetter.operation();
@@ -908,6 +1037,9 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     assertEq(uint256(clearedStartedAt), 0, "clock cleared");
     assertEq(uint256(clearedRepaymentDeadline), 0, "repayment deadline cleared");
     assertEq(uint256(operationMaxYieldBps), 0, "yield cap cleared");
+    assertEq(uint256(clearedHorizon), 0, "horizon cleared");
+    assertEq(uint256(clearedTickDuration), 0, "tick duration cleared");
+    assertEq(uint256(clearedTickThreshold), 0, "tick threshold cleared");
     assertFalse(orderLive, "no order");
     assertEq(order.input, 0, "order input cleared");
     assertEq(order.output, 0, "order output cleared");
@@ -1092,15 +1224,109 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     );
     vm.stopPrank();
 
-    // The live cap now sits below the consumed principal: the cumulative gate blocks any size
+    // The live cap now sits below the consumed principal: the cumulative gate blocks any
+    // size. Consume is already shut by the pulled funding round (its window check runs
+    // before the Request call), so the collapsed cap surfaces through the authorization gate
     (uint128 ptSupply,) = ITokenController(request).totalSupplies();
-    assertLt(retargetter.maxPrincipal(address(positionManager)), uint256(ptSupply), "cap collapsed");
+    assertLt(retargetter.maxPrincipal(), uint256(ptSupply), "cap collapsed");
 
     Offer memory offer = _createOffer(100e18, 1e18);
     bytes memory signature = _signOffer(offer, request);
     vm.prank(consumer);
-    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
     retargetter.consume(offer, signature, 100e18);
+
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    retargetter.authorizeMinting(broker, 100e18, 1e18);
+  }
+
+  /// @notice A maker callback that shrinks the position mid-consume (here by dumping a large
+  ///         LP stake) cannot leave the operation committed above the live principal cap:
+  ///         the post-call re-check unwinds the whole consume, callback included.
+  function test_consume_makerCallbackShrinksCap_reverts() public {
+    _seedPosition(10_000e18, 5_000e18);
+
+    // The maker holds two thirds of the position it will dump inside its callback (an LP
+    // exit is the simplest stand-in for anything that shrinks the cap mid-call, such as a
+    // public liquidation)
+    CapShrinkingMaker capMaker = new CapShrinkingMaker(IPositionManager(address(positionManager)), address(debtToken));
+    vm.prank(owner);
+    positionManager.grantRoles(address(capMaker), _ROLE_MINTER);
+    _mintCollateral(address(capMaker), 20_000e18);
+    capMaker.openPosition(address(collateralToken), 20_000e18, 10_000e18);
+
+    // Position 30,000 / 15,000 at the 0.7 target: the cap comfortably admits the principal.
+    // The maker keeps enough debt to both repay its callback burn and fund the Request pull
+    address request = _startAsync(12_000e18, 100);
+    _mintDebt(address(capMaker), 24_000e18);
+    capMaker.approvePull(request, 12_000e18);
+
+    Offer memory offer = Offer({
+      maker: address(capMaker),
+      amount: 12_000e18,
+      expectedReturn: 120e18,
+      nonce: 1,
+      expiration: block.timestamp + 1 days,
+      useCallback: true
+    });
+
+    // The callback burn drops the position back to 10,000 / 5,000, far below the committed
+    // principal: the cap re-check after the Request call reverts
+    vm.prank(consumer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    retargetter.consume(offer, "", 12_000e18);
+  }
+
+  /// @notice A cap-sized operation keeps one-trip settlement headroom: after full deployment
+  ///         the owed repayment is borrowable back through the rebalancer direction checks
+  ///         (LTV lands at or below target, not above) and the operation settles. The cap is
+  ///         now the quoter's one-trip bound, so this holds by construction; the exact
+  ///         worst-case equality is pinned in the quoter unit test.
+  function test_async_capSizedOperation_oneTripSettlementHeadroom() public {
+    _seedPosition(10_000e18, 5_000e18);
+    fund.setSyncSettlement(true);
+    // The borrow leg funds the lenders' yield, a real NAV loss bounded by the yield; widen
+    // the position manager's loss tolerance so the loss knob is not the bottleneck
+    vm.prank(owner);
+    positionManager.setRebalanceConfig(1000, 0);
+
+    // At the config's 10% cap the one-trip bound is exactly (0.7 * 10,000 - 5,000) / 0.4
+    uint256 cap = _gateCap(DEFAULT_MAX_YIELD_BPS);
+    assertEq(cap, 5_000e18, "clean-number one-trip bound");
+
+    // The gate admits exactly the cap and rejects a single wei more
+    vm.prank(rebalancer);
+    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
+    retargetter.startRetargetting(cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+
+    address request = _startAsync(cap, DEFAULT_MAX_YIELD_BPS);
+    _consume(request, cap, cap / 10, cap);
+    vm.startPrank(rebalancer);
+    retargetter.pullRequestFunds(cap);
+    retargetter.create(_order(Mode.DEPOSIT, cap, cap, bytes32(uint256(31))));
+    retargetter.commit();
+    retargetter.unlock();
+    vm.stopPrank();
+
+    // A few ticks in, the owed amount is the deployed principal plus its prorated yield
+    vm.warp(block.timestamp + 2 days);
+    uint256 owedAmount = retargetter.owed();
+
+    // One trip: supply the settled shares, borrow the owed amount back. The rebalancer is a
+    // non-owner, so the direction guard applies; it passes only because the resulting LTV is
+    // at or below target, which is exactly the headroom the one-trip cap guarantees
+    vm.startPrank(rebalancer);
+    retargetter.rebalance(
+      _rebalancingData2(
+        MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL, RebalancingOperationType.BORROW, owedAmount
+      )
+    );
+    assertLe(_currentLtv(), POSITION_MANAGER_LTV, "settled at or below target");
+    retargetter.repay();
+    retargetter.resolve();
+    vm.stopPrank();
+    assertFalse(retargetter.isActive(), "settled in one trip");
   }
 
   /// @notice The bridge cannot be dissolved into the position: once Request principal has
@@ -1137,11 +1363,11 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
 
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
 
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1_000e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   /// @notice After resolve a fresh operation starts; the fund archives ended order ids, so
@@ -1181,7 +1407,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     reused.salt = bytes32(uint256(22));
     vm.prank(rebalancer);
     retargetter.create(reused);
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertTrue(orderLive, "fresh-salt order created");
   }
 

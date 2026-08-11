@@ -17,13 +17,18 @@ import {
   MIN_DEADLINE_BUFFER
 } from "./LibRetargetterConstants.sol";
 
-/// @notice The Retargetter's bound asset pair (namespace "retargetter.assets").
-/// @dev Written once at initialize, never mutated afterwards.
+/// @notice The Retargetter's instance bindings (namespace "retargetter.assets").
+/// @dev The pair is derived from the position manager at initialize and never mutated; the
+///      position manager is owner-bound and rebindable to another same-pair manager while no
+///      operation is active.
 /// @param collateralAsset The collateral asset every position manager and fund must match
 /// @param debtAsset The debt asset every position manager, fund and Request must match
+/// @param positionManager The single position manager every operation runs against; its assets
+///        define the pair at the first bind, and every rebind must match that pair
 struct RetargetterAssets {
   address collateralAsset;
   address debtAsset;
+  address positionManager;
 }
 
 /// @notice The Retargetter's whitelists (namespace "retargetter.whitelists").
@@ -36,22 +41,30 @@ struct RetargetterWhitelists {
 }
 
 /// @notice The one in-flight operation (namespace "retargetter.operation").
-/// @dev `positionManager != address(0)` is the operation-active flag. An ASYNC operation uses
-///      every field and is zeroed at resolve; a SYNC flash-loan window populates only the
-///      addresses the steps need (`positionManager`, `fund`) and zeroes them at window close,
-///      so `request == address(0)` inside a window is what gates the ASYNC-only steps. The
-///      stored order is partial: `owner` and `receiver` are always the Retargetter (enforced
-///      at create) so {LibStorage.order} rebuilds the full Order in memory.
-/// @param positionManager The operation's position manager
+/// @dev `fund != address(0)` is the operation-active flag: both start paths set it and only
+///      {clearOperation} clears it, and no fund can be the zero address (setFund contract-
+///      checks it). The position manager an operation runs against is the instance-bound one
+///      ({RetargetterAssets.positionManager}), which cannot change while active, so it is not
+///      duplicated here. An ASYNC operation uses every field and is zeroed at resolve; a SYNC
+///      flash-loan window populates only `fund` and zeroes it at window close, so
+///      `request == address(0)` inside a window is what gates the ASYNC-only steps. The stored
+///      order is partial: `owner` and `receiver` are always the Retargetter (enforced at
+///      create) so {LibStorage.order} rebuilds the full Order in memory.
 /// @param startedAt The loan clock origin, set at the first consume or nonzero mint
-///        authorization (0 until then)
+///        authorization (0 until then); rewound to 0 by a revocation that leaves the
+///        operation with no PT, no YT and no pending authorization
 /// @param operationMaxYieldBps The effective yield cap, fixed at start
 /// @param consumptionClosed Whether capital entry is shut for good; set by the first pull of
 ///        funds, which also revokes every pending mint authorization
+/// @param horizon The repayment yield annualization basis, snapshotted from the config at
+///        start so a later setConfig cannot reprice a funded operation
 /// @param request The Request deployed for the operation
 /// @param repaymentDeadline The Request's repayment deadline, mirrored at start because the
 ///        Request does not expose it; the loan clock cannot start once less than
 ///        MIN_DEADLINE_BUFFER remains before it (zero inside a SYNC window)
+/// @param tickDuration The repayment granularity, snapshotted from the config at start
+/// @param tickThreshold The tick promotion grace and consumption window length, snapshotted
+///        from the config at start
 /// @param fund The operation's venue, owner-whitelisted at start
 /// @param orderMode The stored order's mode
 /// @param orderLive Whether an order is stored
@@ -63,12 +76,14 @@ struct RetargetterWhitelists {
 ///        eagerly, a completed mint is pruned lazily by the next write-path computation, and
 ///        resolve empties the set
 struct RetargetterOperation {
-  address positionManager;
   uint40 startedAt;
   uint16 operationMaxYieldBps;
   bool consumptionClosed;
+  uint32 horizon;
   address request;
   uint40 repaymentDeadline;
+  uint24 tickDuration;
+  uint24 tickThreshold;
   address fund;
   Mode orderMode;
   bool orderLive;
@@ -121,12 +136,13 @@ library LibStorage {
   /*                      OPERATION GATES                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Reverts unless an operation is active (ASYNC or SYNC window); returns its position
-  ///      manager.
+  /// @dev Reverts unless an operation is active (ASYNC or SYNC window), keyed on the fund flag;
+  ///      returns the instance-bound position manager the operation runs against (always set
+  ///      while active, since it was required at start and cannot be unbound mid-operation).
   /// @param self The storage pointer to the operation
   function checkActive(RetargetterOperation storage self) internal view returns (address positionManager) {
-    positionManager = self.positionManager;
-    if (positionManager == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    if (self.fund == address(0)) revert LibRetargetterErrors.NoActiveOperation();
+    positionManager = assetsStorage().positionManager;
   }
 
   /// @dev Reverts unless an ASYNC operation is active (SYNC windows carry no Request);
@@ -148,11 +164,11 @@ library LibStorage {
     clearOrder(self);
   }
 
-  /// @dev Capital gates shared by consume and authorizeMinting. Reverts YieldTooHigh when the
-  ///      offered yield-to-principal ratio exceeds the operation's cap (division-free, so
-  ///      partial fills keep the offer's ratio) and PrincipalCapExceeded when the committed
-  ///      principal (the PT supply, the outstanding authorizations after pruning, and the new
-  ///      amount) exceeds the live cap, then runs {checkConsumptionWindow}.
+  /// @dev Capital gates of authorizeMinting: the yield-ratio gate, the principal-cap gate on
+  ///      the newly authorized amount, then {checkConsumptionWindow}. Consume runs the same
+  ///      three gates but re-derives the principal cap after the Request call instead (a
+  ///      maker callback inside Request.consume can move the cap), so it composes the pieces
+  ///      directly.
   /// @param self The storage pointer to the operation
   /// @param request The operation's Request
   /// @param amount The offered principal the yield ratio is quoted on
@@ -167,18 +183,42 @@ library LibStorage {
     uint256 ptAmount,
     uint256 principalCap
   ) internal {
+    checkYield(self, amount, expectedReturn);
+    checkPrincipalCap(self, request, ptAmount, principalCap);
+    checkConsumptionWindow(self);
+  }
+
+  /// @dev Reverts YieldTooHigh when the offered yield-to-principal ratio exceeds the
+  ///      operation's cap (division-free, so partial fills keep the offer's ratio).
+  /// @param self The storage pointer to the operation
+  /// @param amount The offered principal the yield ratio is quoted on
+  /// @param expectedReturn The offered yield on that principal
+  function checkYield(RetargetterOperation storage self, uint256 amount, uint256 expectedReturn) internal view {
     if (expectedReturn * BPS > amount * self.operationMaxYieldBps) {
       revert LibRetargetterErrors.YieldTooHigh();
     }
+  }
+
+  /// @dev Reverts PrincipalCapExceeded when the committed principal (the PT supply, the
+  ///      outstanding authorizations after pruning, and the new amount) exceeds the live cap.
+  ///      Consume passes a zero ptAmount after the Request call, when the minted amount
+  ///      already sits in the PT supply.
+  /// @param self The storage pointer to the operation
+  /// @param request The operation's Request
+  /// @param ptAmount The principal being committed on top of the supply (zero post-mint)
+  /// @param principalCap The live principal cap
+  function checkPrincipalCap(RetargetterOperation storage self, address request, uint256 ptAmount, uint256 principalCap)
+    internal
+  {
     (uint128 ptSupply,) = ITokenController(request).totalSupplies();
     if (ptSupply + pruneNullAuthorizations(self, request) + ptAmount > principalCap) {
       revert LibRetargetterErrors.PrincipalCapExceeded();
     }
-    checkConsumptionWindow(self);
   }
 
   /// @dev Consumption-window gate and loan clock: reverts once the window has closed (funds
-  ///      were pulled, or the tick threshold elapsed since the origin); otherwise the first
+  ///      were pulled, or the operation's snapshotted tick threshold elapsed since the
+  ///      origin); otherwise the first
   ///      capital commitment (consume or nonzero mint authorization) starts the clock,
   ///      provided at least MIN_DEADLINE_BUFFER remains before the Request's repayment
   ///      deadline (a later start would erode the settlement buffer the deadline is sized
@@ -197,7 +237,7 @@ library LibStorage {
       // Safe: block.timestamp fits in uint40 for ~35,000 years
       // forge-lint: disable-next-line(unsafe-typecast)
       self.startedAt = uint40(block.timestamp);
-    } else if (block.timestamp > startedAt + configStorage().tickThreshold) {
+    } else if (block.timestamp > startedAt + self.tickThreshold) {
       revert LibRetargetterErrors.ConsumptionWindowClosed();
     }
   }
@@ -262,17 +302,19 @@ library LibStorage {
     self.orderSalt = bytes32(0);
   }
 
-  /// @dev Clears the operation addresses, the loan clock, the yield cap and the
-  ///      mint-authorization account set (emptied back to front, each removal a plain pop);
-  ///      the order fields are cleared separately as orders end.
+  /// @dev Clears the operation addresses, the loan clock, the yield cap, the snapshotted
+  ///      repayment terms and the mint-authorization account set (emptied back to front,
+  ///      each removal a plain pop); the order fields are cleared separately as orders end.
   /// @param self The storage pointer to the operation
   function clearOperation(RetargetterOperation storage self) internal {
-    self.positionManager = address(0);
     self.startedAt = 0;
     self.operationMaxYieldBps = 0;
     self.consumptionClosed = false;
+    self.horizon = 0;
     self.request = address(0);
     self.repaymentDeadline = 0;
+    self.tickDuration = 0;
+    self.tickThreshold = 0;
     self.fund = address(0);
     EnumerableSetLib.AddressSet storage accounts = self.authorizedAccounts;
     for (uint256 remaining = accounts.length(); remaining > 0; --remaining) {

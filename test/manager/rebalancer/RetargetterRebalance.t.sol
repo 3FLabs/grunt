@@ -760,11 +760,12 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
   ///      collapses to zero and further consumption is blocked.
   function test_rebalance_principalCapSelfCorrects() public {
     _seedPosition(10_000e18, 5_000e18);
-    _startAsync(6_000e18, 100);
+    address request = _startAsync(6_000e18, 100);
     _setMaxRebalanceLoss(1000);
     _mintCollateral(address(retargetter), 6_000e18);
 
-    assertGt(retargetter.maxPrincipal(address(positionManager)), 6_000e18, "cap covers the announced principal");
+    // The gate sizes the cap on the operation's own 1% yield cap
+    assertGt(_gateCap(100), 6_000e18, "cap covers the announced principal");
 
     vm.prank(rebalancer);
     retargetter.rebalance(
@@ -773,13 +774,17 @@ contract RetargetterRebalanceTest is RetargetterBaseTest {
       )
     );
 
-    assertEq(retargetter.maxPrincipal(address(positionManager)), 0, "cap collapsed at target");
+    assertEq(retargetter.maxPrincipal(), 0, "cap collapsed at target");
 
-    // The principal gate rejects any further consume before the signature is even checked
-    Offer memory offer = _createOffer(1_000e18, 0);
+    // The principal gate rejects any further consume once the Request call returns; the
+    // offer is signed and approved so the revert comes from the cap re-check
+    Offer memory offer = _createOffer(1_000e18, 10e18);
+    bytes memory signature = _signOffer(offer, request);
+    vm.prank(maker.addr);
+    debtToken.approve(request, 1_000e18);
     vm.prank(consumer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.consume(offer, "", 1_000e18);
+    retargetter.consume(offer, signature, 1_000e18);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
