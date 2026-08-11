@@ -281,7 +281,9 @@ interface IMidasFund is IFund {
 
   /// @notice Sets the mToken/USD oracle.
   /// @dev Can be called by the owner or an account with OPERATOR_ROLE, including while an order
-  ///      is live. The oracle must be a contract exposing 8-decimal AggregatorV3 data.
+  ///      is live. The oracle must be a contract exposing 8-decimal AggregatorV3 data. Completed
+  ///      rounds have no maximum-age check; operators must monitor feed freshness and rotate a
+  ///      halted feed because its price drives deposit validation and `totalAssets()`.
   /// @param oracle_ The new oracle address.
   function setOracle(address oracle_) external;
 
