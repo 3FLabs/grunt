@@ -135,6 +135,61 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     assertFalse(positionManager.hasBadDebt(), "Flag clears once the module is solvent again");
   }
 
+  function test_hasBadDebt_boundary_collateralEqualsDebt() public {
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Quoted collateral exactly equals debt: 10,000 collateral at 50% price == 5,000 debt.
+    // The `collateral >= debt` filter still includes the module, contributing zero NAV.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 50 / 100);
+    assertFalse(positionManager.hasBadDebt(), "collateral == debt is still included");
+    assertEq(positionManager.totalAssets(), 0, "Boundary module contributes zero NAV");
+
+    // One wei of quoted collateral lower and the module is excluded.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 50 / 100 - 1);
+    assertTrue(positionManager.hasBadDebt(), "One wei below the boundary excludes the module");
+  }
+
+  function test_hasBadDebt_partialExclusion_flagTrueWithPositiveTotalAssets() public {
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    // Skew the debt across positions: pos1 ends at 5,000 collateral / 2,000 debt,
+    // pos2 at 5,000 collateral / 3,000 debt.
+    uint256 collateralToMove = COLLATERAL_AMOUNT / 2;
+    uint256 debtToMove = 3_000e18;
+
+    RebalancingOperation[] memory ops = new RebalancingOperation[](4);
+    ops[0] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.REPAY, amount: debtToMove
+    });
+    ops[1] = RebalancingOperation({
+      position: address(borrowPosition1), operationType: RebalancingOperationType.WITHDRAW, amount: collateralToMove
+    });
+    ops[2] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.SUPPLY, amount: collateralToMove
+    });
+    ops[3] = RebalancingOperation({
+      position: address(borrowPosition2), operationType: RebalancingOperationType.BORROW, amount: debtToMove
+    });
+
+    RebalancingData memory data = RebalancingData({collateral: 0, debt: debtToMove, operations: ops});
+
+    _mintDebt(rebalancer, debtToMove);
+    vm.startPrank(rebalancer);
+    debtToken.approve(address(positionManager), debtToMove);
+    positionManager.rebalance(data, rebalancer);
+    vm.stopPrank();
+
+    // At 55% price each position quotes 2,750: pos2 (3,000 debt) is underwater and excluded,
+    // pos1 (2,000 debt) stays in the aggregates with 750 of NAV.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 55 / 100);
+    assertTrue(positionManager.hasBadDebt(), "Underwater module sets the flag");
+    assertEq(positionManager.totalAssets(), 750e18, "Solvent module still contributes NAV");
+  }
+
   function test_liquidation_multiPosition_oneLiquidated() public {
     // Setup: deposit to first position
     _mintCollateral(minter, COLLATERAL_AMOUNT);

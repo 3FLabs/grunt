@@ -65,8 +65,11 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @dev True when at least one borrow module is underwater (debt exceeds quoted collateral)
   ///      and is therefore excluded from {totalAssets} and the fee bases. Sourced from the same
   ///      single-pass module iteration as {totalAssets} (see `LibView.totalAssets`). The
-  ///      `collateral >= debt` inclusion test is a one-wei cliff: repaying a single base unit of
-  ///      debt on the underlying market flips an excluded module back in.
+  ///      `collateral >= debt` inclusion test is a one-wei-wide cliff: an excluded module
+  ///      re-enters once its full `debt - collateral` shortfall is repaid on the underlying
+  ///      market, which anyone can do (a single base unit when the module is underwater by
+  ///      exactly one unit). Reverts when any module's quote reverts (e.g. an oracle outage),
+  ///      so monitors must treat a revert as "unknown", not as "no bad debt".
   /// @return True when the aggregates reported by {totalAssets} cover only the solvent modules
   function hasBadDebt() external view returns (bool);
 
@@ -82,7 +85,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
   ///         Eligibility is checkpoint-end: a module inside the `collateral >= debt` filter at
   ///         accrual time is charged on its full collateral for the whole elapsed interval,
-  ///         regardless of when it (re-)entered (a one-wei cliff — see {hasBadDebt}).
+  ///         regardless of when it (re-)entered (re-inclusion costs the module's full
+  ///         `debt - collateral` shortfall — see {hasBadDebt}).
   /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
   ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
   /// @return lastTotalAssets The NAV component of the performance reference used for fee accounting
