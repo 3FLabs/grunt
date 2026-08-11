@@ -106,7 +106,8 @@ interface IPositionManagerAdmin {
   ///        charged on the aggregate collateral of non-bad-debt positions (not on NAV).
   /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
   ///        levered-slice basis `LTV_prev * currentCollat - currentDebt`, less the management fees
-  ///        charged since the reference last advanced. See `FeeData` in `LibStorage` for the full derivation.
+  ///        charged and not yet netted against a crystallized basis. See `FeeData` in `LibStorage`
+  ///        for the full derivation.
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
   /// @notice Force-advances the performance reference (high-water mark) to the current state.
@@ -118,8 +119,8 @@ interface IPositionManagerAdmin {
   ///      are charged from the current state onward.
   ///
   ///      The reset starts a fresh fee period: the held management fee accumulator (management
-  ///      fees charged since the reference last advanced, normally deducted from the next positive
-  ///      basis) is cleared as well.
+  ///      fees charged and not yet netted against a crystallized basis, normally deducted from
+  ///      the next positive basis) is cleared as well.
   ///
   ///      Timing: the reset writes off ALL carried basis, including the debt interest accrued
   ///      since the last crystallization (not just the loss being accepted), plus the pending

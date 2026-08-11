@@ -73,9 +73,11 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
   /// @return lastTotalAssets The NAV component of the performance reference used for fee accounting
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
-  /// @return heldManagementFees The management fee assets charged since the reference last
-  ///         advanced, deducted from the next positive performance basis (cleared on advance and
-  ///         on `resetPerformanceReference`)
+  /// @return heldManagementFees The management fee assets charged and not yet netted against a
+  ///         crystallized performance basis, deducted from the next positive basis (a
+  ///         crystallizing advance consumes it up to the basis and carries the excess; a
+  ///         bootstrap/empty-vault reseed, a flow that burns the last share, and
+  ///         `resetPerformanceReference` clear it)
   function feeData()
     external
     view

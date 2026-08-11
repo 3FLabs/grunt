@@ -20,9 +20,9 @@ import {LibManagerErrors} from "./LibManagerErrors.sol";
 ///        `LTV_ref = lastDebt / lastCollat` is the LTV at the performance reference. The reference
 ///        is held while the basis is non-positive (high-water mark) and advances only when a fee
 ///        crystallizes, so debt interest accrued under a flat collateral quote and collateral
-///        drawdowns stay inside the basis. The basis is then reduced by the management fees
-///        charged since the reference last advanced (`heldManagementFeeAssets` plus the current
-///        interval's charge). Replaces the prior NAV-variation basis.
+///        drawdowns stay inside the basis. The basis is then reduced by the pending management
+///        fee deduction (`heldManagementFeeAssets` plus the current interval's charge).
+///        Replaces the prior NAV-variation basis.
 struct FeeData {
   address feeRecipient;
   uint24 managementFee;
@@ -97,13 +97,17 @@ struct RebalanceConfig {
 ///        the performance fee and seeds this slot with the current debt. Subsequent accruals
 ///        charge the new basis normally.
 /// @param heldManagementFeeAssets Management fee assets charged while the performance reference
-///        was held, accumulated since the reference last advanced. The performance fee must be
+///        was held and not yet netted against a crystallized basis. The performance fee must be
 ///        net of management fees, so at the next crystallization this amount (plus the current
-///        interval's management fee) is deducted from the basis, and the accumulator is cleared
-///        whenever the reference advances (crystallization, bootstrap, empty vault) or the owner
-///        calls `resetPerformanceReference`. Flows scale it with the share-supply change so the
-///        per-share deduction is preserved, except a rescue flow out of a full bad-debt episode,
-///        which keeps it nominal (see `rebaseSnapshot`). Appended to the struct so the layout
+///        interval's management fee) is deducted from the basis. A crystallizing advance
+///        consumes the accumulator only up to the basis and carries the excess (a dust-positive
+///        basis must not write the whole deduction off, see `_pendingFees`); a reseed advance
+///        (bootstrap, empty vault) or `resetPerformanceReference` clears it, as does a flow
+///        that burns the last share (no holders left, so no one is owed the deduction —
+///        Cantina #7). Capital flows
+///        never rescale it: the supply ratio is a permissionless value-detached lever — up
+///        would manufacture credit near zero NAV, down would let a deposit/exit round trip
+///        grind the deduction away (see `rebaseSnapshot`). Appended to the struct so the layout
 ///        stays append-only; reads zero on upgrade (a clean start).
 struct PositionManagerStorageData {
   FeeData feeData;
@@ -229,12 +233,27 @@ library LibStorage {
   ///      re-anchors sooner).
   ///
   ///      The held management fee accumulator (`heldManagementFeeAssets`, the management fees
-  ///      charged since the reference last advanced, deducted from the next positive basis) is
-  ///      scaled by the same supply ratio: an exit takes its slice of the pending deduction along,
-  ///      a deposit re-attaches it to the new shares. A rescue flow out of a full bad-debt
-  ///      episode (`prevCollat == 0`) keeps it nominal instead: shares mint against a zero asset
-  ///      base there, so the supply ratio is unmoored and scaling would inflate the deduction
-  ///      beyond the fees ever charged. In the fallback branches it is left in place: outside a
+  ///      charged and not yet netted against a crystallized basis, deducted from the next
+  ///      positive basis) is never rescaled by a flow: it counts fees actually charged, and
+  ///      the supply ratio is a permissionless value-detached lever in both directions.
+  ///      Scaling up would let a ratio minted near zero NAV — where the mint denominator is
+  ///      the virtual asset base, reachable with a dust repay that lifts NAV one atom off
+  ///      zero followed by a dust deposit that nearly doubles the supply — manufacture credit
+  ///      far beyond the fees ever charged (Cantina #30), and the rescue flow out of a full
+  ///      bad-debt episode has an equally unmoored ratio. Scaling down, even only on exits,
+  ///      would let a deposit/exit round trip that restores the vault state grind the
+  ///      deduction toward zero with reversible capital and overcharge the next
+  ///      crystallization. The accumulator therefore stays nominal and the per-share
+  ///      deduction dilutes or concentrates with the supply; the residual recipient-side
+  ///      cost — a large exit leaves a deduction accrued mostly by the departed shares — is
+  ///      bounded by fees the recipient already collected and remediable via
+  ///      `resetPerformanceReference`, which clears it. The one flow that does write it is a
+  ///      full exit (`newSupply == 0`): no holders, no one owed the deduction, and during a
+  ///      bad-debt window the empty-vault reseed clear is suppressed, so without the terminal
+  ///      clear a post-window depositor would inherit the departed cohort's credit
+  ///      (Cantina #7). An exit that merely empties the good-debt universe while shares
+  ///      remain (the reference-hold early return) leaves it nominal like any other exit.
+  ///      In the fallback branches too: outside a
   ///      bad-debt window every such state (sentinel, empty vault) forces `advanceReference` on
   ///      the next accrual, which clears the accumulator before any performance fee can consume
   ///      it; during a window the accrual holds instead (see `_pendingFees`) and the accumulator
@@ -277,6 +296,15 @@ library LibStorage {
     uint256 newDebt,
     uint256 newSupply
   ) internal {
+    // A flow that burns the last share clears the pending management fee deduction: with no
+    // holders left no one is owed it, and it must not survive as a shield for a later cohort
+    // that never paid the fees (Cantina #7). Outside a bad-debt window the next accrual's
+    // empty-vault reseed clears the accumulator anyway; during a window that accrual holds
+    // instead (see `_pendingFees`), so without this clear a post-window depositor would
+    // inherit the departed cohort's credit. Unlike a supply-ratio rescale, the terminal clear
+    // is not a permissionless lever: only the sole remaining holder can trigger it, and the
+    // only shield it destroys is their own.
+    if (newSupply == 0) self.heldManagementFeeAssets = 0;
     uint256 refDebt = self.lastDebt;
     // Hold the reference across any flow that leaves the good-debt universe empty: with no
     // good-debt state to re-anchor on, rebasing would write the bootstrap sentinel and the next
@@ -318,18 +346,10 @@ library LibStorage {
       }
       // Preserve the per-share carry across the supply change.
       carry = prevCarry.mulDiv(newSupply, prevSupply);
-      // Preserve the per-share pending management fee deduction the same way. Skipped when the
-      // pre-flow good-debt universe is empty (a rescue flow out of a full bad-debt episode):
-      // shares are then minted against a zero asset base, so the supply ratio is unmoored from
-      // any price and scaling would inflate the deduction far beyond the fees ever charged. The
-      // accumulator stays nominal instead, matching its definition (fees charged since the last
-      // advance).
-      if (newSupply != prevSupply && prevCollat > 0) {
-        uint256 heldManagementFeeAssets = self.heldManagementFeeAssets;
-        if (heldManagementFeeAssets > 0) {
-          self.heldManagementFeeAssets = heldManagementFeeAssets.mulDiv(newSupply, prevSupply);
-        }
-      }
+      // Unlike the carry and the gain, the held management fee accumulator is deliberately not
+      // rescaled: it counts fees actually charged, and the supply ratio is a permissionless
+      // value-detached lever in both directions (see the held-accumulator paragraph in the
+      // header).
     }
     uint256 newRefDebt;
     uint256 newRefTotalAssets;
