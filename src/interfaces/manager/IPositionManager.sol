@@ -103,6 +103,9 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @dev Mirrors the logic of the internal `_accrueFees()` function without mutating state.
   ///      Integrators can compute an accurate share price as:
   ///      `price = totalAssets / (totalSupply + managementFeeShares + performanceFeeShares)`.
+  ///      Zero returned shares do not prove that fee state is empty: the fee cap can suppress a
+  ///      mint or share conversion can round down. On accrual the timestamp still advances, the
+  ///      reference follows its advance/hold rule, and `feeData().heldManagementFees` may remain.
   /// @return totalAssets_ The current total assets (collateral value - debt) across all borrow modules
   /// @return totalSupply_ The current total supply of shares (excluding pending fee shares)
   /// @return managementFeeShares The shares that would be minted for management fees
