@@ -132,11 +132,12 @@ interface IBorrowOffers {
   ///         state.
   /// @dev Offers that fail the profit/bonus gates or round to a zero-unit fill are skipped; a fill
   ///      that cannot strictly lower LTV stops the price-ordered walk because later offers cannot
-  ///      qualify at the unchanged LTV. Fill shares round up, while collateral caps and a
-  ///      position-clamp rescale round down; collateral values round down and debt values round
-  ///      up. The result can therefore underfill the target. This simulates the walk only: the
-  ///      post-settlement LTV guard runs solely on the real `preLiquidate` call, so a dust-sized
-  ///      quote from this view can still revert there.
+  ///      qualify at the unchanged LTV. The walk also stops when the target is met, the position's
+  ///      collateral or borrow shares are exhausted, or all offers have been visited. Fill shares
+  ///      round up, while collateral caps and a position-clamp rescale round down; collateral
+  ///      values round down and debt values round up. The result can therefore underfill the
+  ///      target. This simulates the walk only: the post-settlement LTV guard runs solely on the real
+  ///      `preLiquidate` call, so a dust-sized quote from this view can still revert there.
   /// @param seizedAssets The collateral-seize target (pass 0 to use `repaidShares`).
   /// @param repaidShares The debt-share-repay target (pass 0 to use `seizedAssets`).
   /// @return seized The total collateral that would be seized.
