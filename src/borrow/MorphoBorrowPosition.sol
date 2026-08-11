@@ -325,6 +325,9 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///      - `LTV <= safeLtv`: healthy, revert `PositionHealthy()`.
   ///      The offer branch reads offer storage lazily (only when taken), so the proportional path
   ///      never touches the offer namespace.
+  ///      The offer walk can underfill the caller's target through its documented Stop/Skip and
+  ///      raw-unit rounding rules; see {IBorrowOffers.previewConsume}. This call additionally
+  ///      reverts unless the settled aggregate fill strictly lowers LTV.
   ///
   ///      The reentrancy analysis above also covers the offer roles (held on the shared
   ///      {BorrowOffersRegistry}): a reentrant `proposeOffer` creates a timelocked (not same-block
