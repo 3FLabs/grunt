@@ -245,6 +245,11 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     // _assetDecimals <= 18 was checked above, so the scale is at most 1e18 and fits uint64.
     $.assetScale = uint64(10 ** (_MTOKEN_DECIMALS - _assetDecimals));
 
+    // Mirrors the {OracleUpdated} that _setOracle emits below, so the vault binding is readable
+    // from the same event stream as every later {setDepositVault} rather than only from the
+    // factory's FundCreated.
+    emit DepositVaultUpdated(depositVault_, msg.sender);
+
     _setOracle(oracle_);
 
     _initializeOwner(owner_);
