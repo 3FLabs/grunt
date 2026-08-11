@@ -63,6 +63,13 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///
 ///        x = (t * K * (1 + Yc) - D * (1 + Rb)) / (1 + y - t)
 ///
+///      Unlike the sizing estimates, this bound must hold in integers and not just in the
+///      reals: settlement quotes the grown collateral before its LTV check divides by it,
+///      so the bound grows the collateral first and applies the target second (flooring
+///      each step), rounds the drifted debt up and floors the final division. Any other
+///      rounding order can size a principal whose worst repayment overshoots the settled
+///      borrow capacity by a unit and trips the settlement direction check.
+///
 ///      LTV-down sizing (`ltvDownPrincipal`), for over-leveraged positions (D / K > t): borrow
 ///      x, repay x of position debt, withdraw collateral of quoted value w and redeem it, and
 ///      at settlement repay the bridge `x * (1 + Yr)` from the redemption proceeds. The freed
@@ -111,8 +118,9 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///        owed = P + ceil(Y * min(paidDuration, H) / H) <= P + Y
 ///
 ///      Rounding: principals round down, while everything the protocol must pay or set aside
-///      rounds up (the owed yield, the collateral to free, the shortfall side of the mismatch),
-///      so lenders are never underpaid and remediations never undershoot.
+///      rounds up (the owed yield, the collateral to free, the shortfall side of the mismatch,
+///      the drifted debt inside the one-trip bound), so lenders are never underpaid,
+///      remediations never undershoot and the one-trip bound never oversizes.
 contract RetargetterQuoter is IRetargetterQuoter {
   using FixedPointMathLib for uint256;
 
@@ -179,7 +187,9 @@ contract RetargetterQuoter is IRetargetterQuoter {
     uint256 duration
   ) public pure returns (uint256 principal) {
     uint256 grownTarget = _grownTarget(collateralQuoted, targetLtv, collateralYieldRate, duration);
-    uint256 driftedDebt = _driftedDebt(debt, borrowRate, duration);
+    // The settled venue debt is a liability the borrow capacity must cover before the
+    // repayment, so the bound rounds it up where the sizing estimates round down
+    uint256 driftedDebt = debt.fullMulDivUp(WAD + _scaledRate(borrowRate, duration), WAD);
     if (grownTarget <= driftedDebt) return 0;
     // Denominator 1 + y - targetLtv; zero only at targetLtv == WAD with a zero yield cap
     uint256 denominator = WAD + maxYieldBps * WAD / BPS - targetLtv;
@@ -282,16 +292,20 @@ contract RetargetterQuoter is IRetargetterQuoter {
   }
 
   /// @dev Target collateral value grown by the collateral yield over settlement:
-  ///      `targetLtv * K * (1 + Yc)`.
+  ///      `targetLtv * K * (1 + Yc)`. Grows the collateral first and applies the target
+  ///      second, mirroring the settlement LTV check (which quotes the grown collateral
+  ///      before dividing by it), so a bound built on this term never exceeds the settled
+  ///      position's borrow capacity at target.
   function _grownTarget(uint256 collateralQuoted, uint256 targetLtv, uint256 collateralYieldRate, uint256 duration)
     internal
     pure
     returns (uint256)
   {
-    return collateralQuoted.fullMulDiv(targetLtv, WAD).fullMulDiv(WAD + _scaledRate(collateralYieldRate, duration), WAD);
+    return collateralQuoted.fullMulDiv(WAD + _scaledRate(collateralYieldRate, duration), WAD).fullMulDiv(targetLtv, WAD);
   }
 
-  /// @dev Existing debt drifted by the borrow rate over settlement: `D * (1 + Rb)`.
+  /// @dev Existing debt drifted by the borrow rate over settlement: `D * (1 + Rb)`, rounded
+  ///      down (the one-trip bound recomputes this term rounded up instead).
   function _driftedDebt(uint256 debt, uint256 borrowRate, uint256 duration) internal pure returns (uint256) {
     return debt.fullMulDiv(WAD + _scaledRate(borrowRate, duration), WAD);
   }

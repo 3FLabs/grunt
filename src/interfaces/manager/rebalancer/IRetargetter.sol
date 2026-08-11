@@ -197,7 +197,9 @@ interface IRetargetter {
   ///      be overpaid for time it never covered and, on a default, would dilute the earlier
   ///      lenders' recovery. The principal cap is checked after the Request call, once the
   ///      minted amount sits in the PT supply, so a maker callback moving the cap mid-call
-  ///      cannot leave the operation committed above it.
+  ///      cannot leave the operation committed above it. The read trusts the position
+  ///      manager's minters, whose role must therefore never overlap makers or consumers
+  ///      (see the implementation notes).
   /// @param offer The signed offer
   /// @param signature The maker's EIP-712 signature
   /// @param ptAmount The principal amount to consume

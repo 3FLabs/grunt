@@ -36,13 +36,14 @@ contract RetargetterQuoterTest is Test {
     return rate.fullMulDiv(duration, RATE_YEAR);
   }
 
-  /// @dev Mirrors the quoter's grown target term: `targetLtv * K * (1 + Yc)` (floor at each step).
+  /// @dev Mirrors the quoter's grown target term: `targetLtv * K * (1 + Yc)`, growing the
+  ///      collateral before applying the target (floor at each step).
   function _grownTarget(uint256 collateralQuoted, uint256 targetLtv, uint256 collateralYieldRate, uint256 duration)
     internal
     pure
     returns (uint256)
   {
-    return collateralQuoted.fullMulDiv(targetLtv, WAD).fullMulDiv(WAD + _scaled(collateralYieldRate, duration), WAD);
+    return collateralQuoted.fullMulDiv(WAD + _scaled(collateralYieldRate, duration), WAD).fullMulDiv(targetLtv, WAD);
   }
 
   /// @dev Mirrors the quoter's drifted debt term: `D * (1 + Rb)` (floor).
@@ -142,8 +143,9 @@ contract RetargetterQuoterTest is Test {
 
     uint256 principal = quoter.ltvUpOneTripPrincipal(k, d, tau, 1000, rb, yc, dt);
 
-    // Exact recomputation: the accrual terms match ltvUpPrincipal, only the divisor differs
-    uint256 numerator = _grownTarget(k, tau, yc, dt) - _driftedDebt(d, rb, dt);
+    // Exact recomputation: the collateral term matches ltvUpPrincipal, the debt drift
+    // rounds up instead of down and the divisor carries the flat cap
+    uint256 numerator = _grownTarget(k, tau, yc, dt) - d.fullMulDivUp(WAD + _scaled(rb, dt), WAD);
     assertEq(principal, numerator.fullMulDiv(WAD, WAD + 0.1e18 - tau), "extended formula");
     // The flat cap always undercuts the same-numerator ideal whose scaled Yr is below it
     assertLt(principal, quoter.ltvUpPrincipal(k, d, tau, 0.04e18, rb, yc, dt), "below the estimated ideal");
@@ -158,6 +160,57 @@ contract RetargetterQuoterTest is Test {
     // targetLtv == WAD with a zero yield cap: denominator 1 + y - tau == 0
     vm.expectRevert(LibRetargetterErrors.InvalidParameters.selector);
     quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, WAD, 0, 0, 0, 0);
+  }
+
+  function test_ltvUpOneTripPrincipal_settlementRoundingOrder() public view {
+    // Six-decimal fixture (target 0.7, flat cap 10%, collateral growth 0.001 over a
+    // rate-year window so the scaled rate is the literal) where applying the target before
+    // the collateral growth rounds the bound three units too high: the worst repayment of
+    // that reversed-order principal exceeds the settled borrow capacity at target by one
+    // unit, so the settlement direction check would revert. The shipped order (grow first,
+    // then target) stays borrowable exactly.
+    uint256 k = 1_000_002.412953e6;
+    uint256 d = 500_007.6209e6;
+
+    uint256 principal = quoter.ltvUpOneTripPrincipal(k, d, 0.7e18, 1000, 0, 0.001e18, RATE_YEAR);
+    assertEq(principal, 501_735.174637e6, "literal anchor");
+
+    // Settled state under the exact forecast: the collateral quote grows, the subscription
+    // lands at face value, and the worst repayment carries the full flat cap
+    uint256 grownCollateral = k.fullMulDiv(WAD + 0.001e18, WAD);
+    assertLe((d + principal + principal * 1000 / 10_000).divWad(grownCollateral + principal), 0.7e18, "borrowable");
+
+    // The reversed rounding order oversizes and its worst repayment trips the check
+    uint256 reversed =
+      (k.fullMulDiv(0.7e18, WAD).fullMulDiv(WAD + 0.001e18, WAD) - d).fullMulDiv(WAD, WAD + 0.1e18 - 0.7e18);
+    assertEq(reversed, principal + 3, "reversed order oversizes");
+    assertGt((d + reversed + reversed * 1000 / 10_000).divWad(grownCollateral + reversed), 0.7e18, "over target");
+  }
+
+  function testFuzz_ltvUpOneTripPrincipal_worstRepaymentBorrowableAtTarget(
+    uint256 collateral,
+    uint256 debt,
+    uint256 targetLtv,
+    uint256 yieldCapBps,
+    uint256 collateralYield,
+    uint256 borrowDrift
+  ) public view {
+    collateral = bound(collateral, 1e6, 1e30);
+    targetLtv = bound(targetLtv, 1e15, WAD - 1);
+    debt = bound(debt, 0, collateral.fullMulDiv(targetLtv, WAD) * 2);
+    yieldCapBps = bound(yieldCapBps, 0, 5000);
+    collateralYield = bound(collateralYield, 0, 0.25e18); // already scaled over the window
+    borrowDrift = bound(borrowDrift, 0, 0.25e18);
+
+    uint256 principal =
+      quoter.ltvUpOneTripPrincipal(collateral, debt, targetLtv, yieldCapBps, borrowDrift, collateralYield, RATE_YEAR);
+    if (principal == 0) return;
+
+    // Worst-case realized integers consistent with the forecast: the collateral quote
+    // floors its growth, the venue rounds its debt accrual up, repayment carries the cap
+    uint256 settledCollateral = collateral.fullMulDiv(WAD + collateralYield, WAD) + principal;
+    uint256 settledDebt = debt.fullMulDivUp(WAD + borrowDrift, WAD) + principal + principal * yieldCapBps / 10_000;
+    assertLe(settledDebt.divWad(settledCollateral), targetLtv, "worst repayment borrowable at target");
   }
 
   function testFuzz_ltvUpPrincipal_monotoneInDebt(

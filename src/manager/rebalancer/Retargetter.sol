@@ -262,9 +262,12 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      the Request call, when the minted amount already sits in the PT supply: the maker
   ///      callback inside Request.consume can move the live cap (a liquidation shrinks it),
   ///      and only a post-call read cannot be invalidated. The call is atomic, so failing
-  ///      late rolls back the callback, the transfer and the mint alike, and a maker cannot
-  ///      inflate capacity just for the check: once the call returns, only the position
-  ///      manager's owner or rebalancer can move collateral back out.
+  ///      late rolls back the callback, the transfer and the mint alike. The read still
+  ///      trusts the position manager's minters: they deposit and withdraw at will, so a
+  ///      maker or consumer that also held that role could inflate the position around the
+  ///      call and unwind afterwards, stranding the supply above the live cap. No read
+  ///      timing defends against that; the position manager's owner must keep its minter
+  ///      role off makers and consumers.
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)

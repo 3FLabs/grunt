@@ -94,8 +94,12 @@ interface IRetargetterQuoter {
   /// @dev The largest principal whose worst permitted repayment (the principal plus the full
   ///      flat yield cap) can still be borrowed at target once the subscription has landed as
   ///      collateral: `P * (1 + yieldCap) <= targetLtv * (K * (1 + Yc) + P) - D * (1 + Rb)`.
-  ///      Same accrual conventions as `ltvUpPrincipal`; the bridge yield estimate is replaced
+  ///      Same accrual terms as `ltvUpPrincipal`, with the bridge yield estimate replaced
   ///      by the flat cap because repayment prices actual YT supply, not the estimate.
+  ///      The bound is exact in integers: the collateral growth floors before the target
+  ///      applies (matching the settlement LTV check's own arithmetic) and the drifted debt
+  ///      rounds up, so the worst repayment of a bound-sized principal is always borrowable
+  ///      at target in one settlement trip.
   ///      Returns 0 when the position is at or above target once the accruals are applied.
   ///      Reverts with `InvalidParameters` only at a full target LTV combined with a zero
   ///      yield cap.
