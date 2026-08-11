@@ -77,7 +77,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   ///         crystallized performance basis, deducted from the next positive basis (a
   ///         crystallizing advance consumes it up to the basis and carries the excess; a
   ///         bootstrap/empty-vault reseed, a flow that burns the last share, and
-  ///         `resetPerformanceReference` clear it)
+  ///         `resetPerformanceReference` clear it). This value is asset-denominated and can be
+  ///         non-zero even when no fee shares are pending or minted.
   function feeData()
     external
     view
