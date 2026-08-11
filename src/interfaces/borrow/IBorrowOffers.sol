@@ -109,6 +109,13 @@ interface IBorrowOffers {
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
+  /// @dev Throughout these views "live" means an allocated (non-revoked, non-fully-consumed) slab
+  ///      slot, which is NOT the same as usable: expiry is not checked on read. Expired offers are
+  ///      pruned lazily — on the next proposal that needs a slot, or when a consume walk passes
+  ///      them — so until then they still count in {offerCount} and appear in {offers} and
+  ///      {offer}. Filter on `expiresAt`, or use {isConsumable}, to get offers that would actually
+  ///      fill.
+
   /// @notice Returns the number of currently-live offers.
   function offerCount() external view returns (uint256);
 
