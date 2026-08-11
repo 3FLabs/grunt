@@ -55,9 +55,20 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   function debtAmount() external view returns (uint256);
 
   /// @notice Returns the total assets (collateral value - debt) of the position manager.
-  /// @dev This is the net value that determines share pricing.
+  /// @dev This is the net value that determines share pricing. Borrow modules whose debt exceeds
+  ///      their quoted collateral are excluded entirely from the sum, so while {hasBadDebt}
+  ///      returns true this value covers only the solvent modules.
   /// @return The total assets value in debt asset terms
   function totalAssets() external view returns (uint256);
+
+  /// @notice Returns the bad-debt exclusion flag.
+  /// @dev True when at least one borrow module is underwater (debt exceeds quoted collateral)
+  ///      and is therefore excluded from {totalAssets} and the fee bases. Sourced from the same
+  ///      single-pass module iteration as {totalAssets} (see `LibView.totalAssets`). The
+  ///      `collateral >= debt` inclusion test is a one-wei cliff: repaying a single base unit of
+  ///      debt on the underlying market flips an excluded module back in.
+  /// @return True when the aggregates reported by {totalAssets} cover only the solvent modules
+  function hasBadDebt() external view returns (bool);
 
   /// @notice Returns the fee configuration and accounting state.
   /// @dev `lastTotalAssets` is the NAV component (`refCollat - refDebt`) of the performance

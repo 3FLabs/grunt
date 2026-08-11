@@ -116,6 +116,25 @@ contract PositionManagerLiquidationTest is PositionManagerBaseTest {
     assertGt(positionManager.balanceOf(minter), 0, "Shares still exist");
   }
 
+  function test_hasBadDebt_flagsUnderwaterModule() public {
+    _mintCollateral(minter, COLLATERAL_AMOUNT);
+    vm.prank(minter);
+    positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    assertFalse(positionManager.hasBadDebt(), "No bad debt while solvent");
+    uint256 totalAssetsBefore = positionManager.totalAssets();
+    assertGt(totalAssetsBefore, 0, "Solvent module contributes to totalAssets");
+
+    // Crash the price so debt exceeds quoted collateral: debt = 5000, collateral quoted = 4000
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
+
+    assertTrue(positionManager.hasBadDebt(), "Underwater module sets the flag");
+    assertEq(positionManager.totalAssets(), 0, "Excluded module contributes nothing");
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE);
+    assertFalse(positionManager.hasBadDebt(), "Flag clears once the module is solvent again");
+  }
+
   function test_liquidation_multiPosition_oneLiquidated() public {
     // Setup: deposit to first position
     _mintCollateral(minter, COLLATERAL_AMOUNT);
