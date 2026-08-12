@@ -107,9 +107,11 @@ interface IPositionManagerAdmin {
   /// @param managementFee The management fee rate in basis points per 365 days (e.g., 200 = 2% per year),
   ///        charged on the aggregate collateral of non-bad-debt positions (not on NAV).
   /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
-  ///        levered-slice basis `LTV_prev * currentCollat - currentDebt`, less the management fees
-  ///        charged and not yet netted against a crystallized basis. See `FeeData` in `LibStorage`
-  ///        for the full derivation.
+  ///        levered-slice basis `LTV_ref * currentCollat - currentDebt`, less the management fees
+  ///        charged and not yet netted against a crystallized basis. `LTV_ref` is the LTV implied by
+  ///        the performance reference (`lastDebt / lastCollat`) and is unrelated to the withdrawal
+  ///        buffer LTV set by {setLtv}: it is not configured, it advances only when a fee
+  ///        crystallizes. See `FeeData` in `LibStorage` for the full derivation.
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
   /// @notice Force-advances the performance reference (high-water mark) to the current state.
