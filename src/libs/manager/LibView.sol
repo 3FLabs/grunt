@@ -58,8 +58,12 @@ library LibView {
   ///
   ///      Inclusion cliff: the `collateral >= debt` filter is binary. At exactly 100% LTV a module
   ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
-  ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
-  ///      case in practice (liquidation is expected long before LTV reaches 100%), but worth noting.
+  ///      higher and the module is excluded entirely, contributing zero collateral. Re-inclusion
+  ///      costs the module's full `debt - collateral` shortfall, which anyone can repay on the
+  ///      underlying market (a single base unit only when the module is underwater by exactly one
+  ///      unit). Fee accrual reads the filter at checkpoint end over the whole elapsed interval,
+  ///      so a module that re-enters mid-interval is charged management fee for the full interval
+  ///      (see `_pendingFees`); liquidation is expected to intervene long before LTV reaches 100%.
   ///
   ///      Debt rounding: each module's `totalBorrowed()` returns `toAssetsDown(borrowShares)`,
   ///      which is the same rounding Morpho applies internally when converting borrow shares to
