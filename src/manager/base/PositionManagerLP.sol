@@ -232,8 +232,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     }
     // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
 
-    // Rebase the performance reference across the flow (preserves the pending per-share basis
-    // instead of resetting it, so accrued debt carry survives deposits and withdrawals).
+    // Rebase the performance reference across the flow (preserves the pending basis, so
+    // accrued debt carry and any held entitlement survive the flow).
     _storage.rebaseSnapshot(
       totalAssetsBefore + debtBefore, debtBefore, _totalSupply, collatAfter, debtAfter, ERC20.totalSupply()
     );

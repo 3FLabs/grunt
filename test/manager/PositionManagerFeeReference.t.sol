@@ -1907,9 +1907,9 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
   }
 
   /// @notice A flow during a zero-share hold preserves the sub-share pending entitlement: the
-  ///         rebase re-encodes it as reference debt above the live debt (scaled with the
-  ///         supply), so the capped basis reads back unchanged after the flow and checkpoint
-  ///         splitting cannot erase the fee through the flow path either.
+  ///         rebase re-encodes it nominally as reference debt above the live debt (never
+  ///         rescaled by the supply ratio), so the capped basis reads back unchanged after the
+  ///         flow and checkpoint splitting cannot erase the fee through the flow path either.
   function test_checkpointSplitting_flowPreservesSubShareEntitlement() public {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
@@ -1929,29 +1929,27 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(_lastTotalAssets(), refNav, "mark held on the zero-share hold");
 
     // The capped pending entitlement right before the flow.
-    uint256 supplyBefore = positionManager.totalSupply();
     uint256 gainBefore = uint256(_pendingBasis()).min(positionManager.totalAssets() - refNav);
     assertGt(gainBefore, 0, "held entitlement pending at the flow");
 
-    // The flow preserves the entitlement: the mark lands below the live NAV by exactly the
-    // supply-scaled gain and the reference debt re-encodes it above the live debt.
-    _mintCollateral(minter, 1_000e18);
-    vm.prank(minter);
-    positionManager.deposit(1_000e18, 0);
-    uint256 gainScaled = gainBefore.mulDiv(positionManager.totalSupply(), supplyBefore);
+    // The flow preserves the entitlement nominally: the mark lands below the live NAV by
+    // exactly the pre-flow gain and the reference debt re-encodes it above the live debt.
+    // The deposit roughly doubles the supply, so a supply-rescaled encoding would visibly
+    // double the 7-atom entitlement instead.
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
     assertEq(
       _lastTotalAssets(),
-      positionManager.totalAssets() - gainScaled,
+      positionManager.totalAssets() - gainBefore,
       "the mark sits below the live NAV by the preserved gain"
     );
     assertEq(
       positionManager.lastDebt(),
-      positionManager.debtAmount() + gainScaled,
+      positionManager.debtAmount() + gainBefore,
       "the entitlement is re-encoded as reference debt above the live debt"
     );
     assertEq(
       uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets()),
-      gainScaled,
+      gainBefore,
       "the capped entitlement reads back unchanged after the flow"
     );
   }
@@ -2039,6 +2037,163 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     (,,, uint256 perfShares) = positionManager.pendingFees();
     assertEq(perfShares, _expectedPerfShares(basisUsed), "the accumulated basis mints in full");
     assertGt(perfShares, 0, "the fee is not erased by the sub-BPS checkpoint");
+  }
+
+  /// @notice Reviewer follow-up on 3F-481: the flow rebase must not scale a held positive
+  ///         entitlement by the supply ratio. The gain is an asset-denominated basis and a mint
+  ///         is not profit; near zero NAV the ratio is an unmoored permissionless lever (shares
+  ///         mint against the virtual asset base), so scaling would let a deposit turn a
+  ///         one-atom held gain into a material fee charged against the incoming principal.
+  function test_checkpointSplitting_depositKeepsHeldEntitlementNominal() public {
+    // Route to the interest-free market so the atom-scale state is exact.
+    SupplyQueueEntry[] memory queue = new SupplyQueueEntry[](1);
+    queue[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue);
+
+    _setFees(0, PERF_FEE);
+
+    // Atom-scale bootstrap cohort (NAV 2, debt 1, supply 2): the flow rebase seeds the
+    // reference at this state.
+    _leveredDeposit(3, 1);
+    assertEq(positionManager.lastDebt(), 1, "reference debt seeded at the atom-scale state");
+    assertEq(_lastTotalAssets(), 2, "mark seeded at the atom-scale state");
+
+    // A third-party one-atom repay through the market lifts NAV one atom: a positive basis
+    // whose fee rounds to zero at the BPS stage, so the reference is held with a one-atom
+    // entitlement.
+    debtToken.setBalance(user, 1);
+    vm.startPrank(user);
+    debtToken.approve(address(morpho), type(uint256).max);
+    morpho.repay(marketParams2, 1, 0, address(borrowPosition2), "");
+    vm.stopPrank();
+    _accrue();
+    assertEq(positionManager.lastDebt(), 1, "reference held on the sub-BPS entitlement");
+    assertEq(uint256(_pendingBasis()), 1, "one-atom held entitlement");
+
+    // Fresh principal arrives: the mint runs against the atom-scale asset base, so the supply
+    // ratio explodes; the held entitlement must stay nominal instead of scaling with it.
+    _leveredDeposit(1e18, 0);
+    assertEq(
+      positionManager.lastDebt(),
+      positionManager.debtAmount() + 1,
+      "the entitlement re-encodes nominally above the live debt"
+    );
+    assertEq(_lastTotalAssets(), positionManager.totalAssets() - 1, "the mark sits one atom below the live NAV");
+
+    // The next accrual still holds the one-atom entitlement: nothing is minted against the
+    // fresh principal.
+    (,,, uint256 perfShares_) = positionManager.pendingFees();
+    assertEq(perfShares_, 0, "no fee minted against the fresh principal");
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no shares minted to the recipient");
+  }
+
+  /// @notice A deposit/exit round trip that restores the vault state must hand the held
+  ///         entitlement back whole: scaling on either leg would let reversible capital grind
+  ///         the sub-share entitlement toward zero (the flow-path twin of the held
+  ///         management-fee grind), re-opening the checkpoint-splitting erasure.
+  function test_checkpointSplitting_roundTripKeepsHeldEntitlementNominal() public {
+    _setFees(0, PERF_FEE);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 11);
+    _accrue();
+    uint256 refNav = _lastTotalAssets();
+
+    // Enter the zero-share hold with a tiny gain.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 11 + 1.5e16);
+    (,,, uint256 pending) = positionManager.pendingFees();
+    assertEq(pending, 0, "entitlement converts to zero shares");
+    _accrue();
+    uint256 gainHeld = uint256(_pendingBasis()).min(positionManager.totalAssets() - refNav);
+    assertGt(gainHeld, 0, "nonzero held entitlement");
+
+    // Deposit doubling the pool, then burn exactly the minted shares in the same block: the
+    // vault returns to its pre-flow state and the entitlement must come back whole.
+    uint256 supplyBefore = positionManager.totalSupply();
+    uint256 balanceBefore = positionManager.balanceOf(minter);
+    _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
+    uint256 minted = positionManager.balanceOf(minter) - balanceBefore;
+    assertEq(
+      uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets()),
+      gainHeld,
+      "the deposit leaves the entitlement nominal"
+    );
+
+    _mintDebt(minter, 2 * DEBT_AMOUNT);
+    vm.prank(minter);
+    positionManager.burn(minted, WithdrawalStrategy.PROPORTIONAL);
+    assertEq(positionManager.totalSupply(), supplyBefore, "round trip restored the share supply");
+    assertEq(
+      uint256(_pendingBasis()).min(positionManager.totalAssets() - _lastTotalAssets()),
+      gainHeld,
+      "round trip hands the entitlement back whole"
+    );
+  }
+
+  /// @notice A window flow that drains the visible NAV below a frozen held gain must not
+  ///         truncate the mark to zero: the encode falls back to the supply-scaled gain, so
+  ///         the reference survives the flow anchored to the residual NAV and the post-window
+  ///         re-entry does not read the entire NAV as basis (a fee minted on a catastrophic
+  ///         loss).
+  function test_badDebt_windowFlowGainAboveResidualNavKeepsMarkPositive() public {
+    _setFees(0, PERF_FEE);
+
+    // Module B (interest market) debt-heavy, module A (interest-free) lightly levered.
+    SupplyQueueEntry[] memory queue1 = new SupplyQueueEntry[](1);
+    queue1[0] = SupplyQueueEntry({position: address(borrowPosition1), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue1);
+    _leveredDeposit(10_000e18, 6_900e18);
+
+    SupplyQueueEntry[] memory queue2 = new SupplyQueueEntry[](1);
+    queue2[0] = SupplyQueueEntry({position: address(borrowPosition2), maxBorrow: uint96(type(uint96).max)});
+    vm.prank(curator);
+    positionManager.setSupplyQueue(queue2);
+    _leveredDeposit(30_000e18, 1_000e18);
+
+    assertEq(positionManager.lastDebt(), 7_900e18, "reference debt seeded on the full universe");
+    assertEq(_lastTotalAssets(), 32_100e18, "mark seeded on the full universe");
+
+    // B's debt compounds past its quoted collateral: the window opens. At 1.2x the survivor's
+    // NAV sits above the frozen mark, so the flow below reads a large frozen gain.
+    vm.warp(block.timestamp + 4_015 days);
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 12 / 10);
+    assertEq(positionManager.totalAssets(), 35_000e18, "visible NAV is the healthy module only");
+    uint256 gainBefore = positionManager.totalAssets() - _lastTotalAssets();
+    assertEq(gainBefore, 2_900e18, "frozen gain above the mark pending at the flow");
+
+    // The window withdrawal drains A to a residual NAV far below the frozen gain.
+    address[] memory wq = new address[](1);
+    wq[0] = address(borrowPosition2);
+    vm.prank(curator);
+    positionManager.setWithdrawalQueue(wq);
+    uint256 supplyBefore = positionManager.totalSupply();
+    _mintDebt(minter, 1_000e18);
+    vm.prank(minter);
+    positionManager.withdraw(29_500e18, 1_000e18, WithdrawalStrategy.PROPORTIONAL);
+
+    // The nominal gain no longer fits under the residual NAV: the encode falls back to the
+    // supply-scaled gain and the mark stays anchored to the surviving NAV.
+    assertEq(positionManager.totalAssets(), 600e18, "residual visible NAV");
+    uint256 scaledGain = gainBefore.mulDiv(positionManager.totalSupply(), supplyBefore);
+    assertLt(scaledGain, 600e18, "the scaled gain fits under the residual NAV");
+    assertGt(_lastTotalAssets(), 0, "the mark is not truncated to zero");
+    assertEq(_lastTotalAssets(), 600e18 - scaledGain, "the mark sits below the residual NAV by the scaled gain");
+    // The visible (good-debt) universe carries no debt after the flow, so the reference debt
+    // is exactly the scaled entitlement (`debtAmount()` would also count the excluded module).
+    assertEq(positionManager.lastDebt(), scaledGain, "the scaled entitlement re-encodes above the visible debt");
+
+    // The window closes (B re-enters at 2x): the basis against the surviving reference is
+    // non-positive, so nothing mints. A zero mark would have read the entire NAV as basis
+    // and minted the fee rate on the whole residual pool.
+    oracle.setPrice(DEFAULT_ORACLE_PRICE * 2);
+    assertGt(positionManager.totalAssets(), 1_000e18, "the excluded module re-entered the aggregates");
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "re-entry does not read the residual NAV as basis");
+    _accrue();
+    assertEq(positionManager.balanceOf(feeRecipient), 0, "no fee minted on the catastrophic loss");
   }
 
   /// @notice Reviewer follow-up on the NAV cap (3F-470): a near-full liquidation can leave a

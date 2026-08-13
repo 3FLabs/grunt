@@ -113,8 +113,8 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      `LibStorage.rebaseSnapshot`).
   ///
   ///      Capital flows (deposit/withdraw/burn/rebalance/module changes) do not advance the
-  ///      reference either; they rebase it so the pending per-share basis is preserved — see
-  ///      `LibStorage.rebaseSnapshot`.
+  ///      reference either; they rebase it so the pending basis is preserved (see
+  ///      `LibStorage.rebaseSnapshot`).
   ///
   ///      Debt rounding: `lastDebt` and `currentDebt` both originate from
   ///      `IBorrowPosition.totalBorrowed()`, which uses Morpho's `toAssetsDown` (see

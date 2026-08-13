@@ -67,8 +67,8 @@ struct RebalanceConfig {
 ///        Together with `lastDebt` it encodes the reference loan-to-value
 ///        `LTV_ref = lastDebt / (lastTotalAssets + lastDebt)` that anchors the performance-fee
 ///        basis. The reference advances to the current state only when a positive basis
-///        crystallizes (or on bootstrap); on capital flows it is rebased so the pending per-share
-///        basis is preserved (see `rebaseSnapshot`). It therefore only matches the live NAV right
+///        crystallizes (or on bootstrap); on capital flows it is rebased so the pending basis is
+///        preserved (see `rebaseSnapshot`). It therefore only matches the live NAV right
 ///        after a crystallizing accrual; while the reference is held it deviates from the live
 ///        NAV by the carried (negative) pending basis, or sits below it by a preserved positive
 ///        pending gain (see `rebaseSnapshot`); after a seizure loss, flows convert the
@@ -92,7 +92,8 @@ struct RebalanceConfig {
 ///        `lastTotalAssets` to reconstruct `lastCollat = lastTotalAssets + lastDebt` for the
 ///        levered-slice performance fee basis. Advanced on crystallization and rebased on flows
 ///        alongside `lastTotalAssets` (see `rebaseSnapshot`), so while the reference is held it is
-///        lower than the live debt by the carried debt cost. A value of zero acts as a bootstrap
+///        lower than the live debt by the carried debt cost (or higher by a preserved pending
+///        gain, see `rebaseSnapshot`). A value of zero acts as a bootstrap
 ///        sentinel: the first accrual after upgrade (or any other time `lastDebt` is zero) skips
 ///        the performance fee and seeds this slot with the current debt. Subsequent accruals
 ///        charge the new basis normally.
@@ -180,8 +181,9 @@ library LibStorage {
   }
 
   /// @dev Rebases the performance reference (`lastTotalAssets`, `lastDebt`) across a capital
-  ///      flow (deposit, withdraw, burn, rebalance, module add/remove) so the pending per-share
-  ///      performance basis is preserved instead of being reset to zero.
+  ///      flow (deposit, withdraw, burn, rebalance, module add/remove) so the pending
+  ///      performance basis is preserved instead of being reset to zero (the debt carry per
+  ///      share, a held positive gain nominally).
   ///
   ///      The reference encodes `LTV_ref = lastDebt / (lastTotalAssets + lastDebt)`; the pending
   ///      basis at any state is `LTV_ref * collat - debt`. Flows change collateral, debt, and
@@ -204,15 +206,23 @@ library LibStorage {
   ///      states: a NAV-capped basis (seizure loss, see the cap in `_pendingFees`) and a
   ///      performance entitlement that rounds to zero fee assets or shares. Both survive the
   ///      flow: the seizure as the carried deficit above, and the held entitlement as a
-  ///      preserved pending gain (capped at the NAV gain above the mark and scaled with the
-  ///      supply), encoded as reference debt above the live debt so the next accrual reads the
-  ///      same capped basis back. Without that preservation, repeated economically empty flows
-  ///      (zero-op rebalances at cooldown cadence) would forgive each interval's entitlement
-  ///      and erase the fee. The held management fee accumulator nets against the next
-  ///      crystallization as usual. Rounding matches `_pendingFees` (`mulDivUp` on the scaled
-  ///      reference debt), so the carry is the exact complement of the fee basis and each flow
-  ///      can only shrink it (or the preserved gain) by rounding dust, never create a spurious
-  ///      positive basis.
+  ///      preserved pending gain (capped at the NAV gain above the mark), encoded as reference
+  ///      debt above the live debt so the next accrual reads the same capped basis back.
+  ///      Without that preservation, repeated economically empty flows (zero-op rebalances at
+  ///      cooldown cadence) would forgive each interval's entitlement and erase the fee. The
+  ///      gain is kept nominal across the flow, like the held management fee accumulator and
+  ///      for the same reason (the supply ratio is a value-detached lever; see the gain
+  ///      comment in the body), falling back to the supply-scaled read once it outgrows half
+  ///      the post-flow NAV, so a supply-changing flow cannot leave a degenerate near-zero
+  ///      mark (a supply-neutral flow that drops the NAV below the gain still truncates, as
+  ///      before this fix: that path is rebalancer/owner-gated and owner-remediable). The
+  ///      residual is
+  ///      the mirror of the held-deduction one: an exit leaves its sub-share slice of the
+  ///      pending entitlement with the stayers, remediable via `resetPerformanceReference`.
+  ///      The held management fee accumulator nets against the next crystallization as
+  ///      usual. Rounding matches `_pendingFees` (`mulDivUp` on the scaled reference debt), so
+  ///      the carry is the exact complement of the fee basis and each flow can only shrink it
+  ///      (or the preserved gain) by rounding dust, never create a spurious positive basis.
   ///
   ///      Partial bad-debt episode: while some (not all) modules are excluded as bad debt, the
   ///      accrual freezes the reference instead of crystallizing (see `_pendingFees`), so a
@@ -339,15 +349,23 @@ library LibStorage {
       // entitlement and erase the performance fee. Capped at the NAV gain above the mark,
       // mirroring the cap in `_pendingFees`, so a seizure state (NAV at or below the mark)
       // never reads a preservable gain. Mutually exclusive with the carry by construction.
+      // Kept nominal like the held management fee accumulator, and for the same reason: the
+      // supply ratio is a value-detached lever, so scaling up would turn a dust entitlement
+      // into a fee on fresh deposit principal (Cantina #32 follow-up) and scaling down would
+      // let a deposit/exit round trip grind the entitlement away.
       if (prevCarry == 0) {
         gain = FixedPointMathLib.zeroFloorSub(scaledRefDebt, prevDebt)
           .min(FixedPointMathLib.zeroFloorSub(prevCollat - prevDebt, self.lastTotalAssets));
-        gain = gain.mulDiv(newSupply, prevSupply);
+        // A gain at or above the post-flow NAV would leave a degenerate mark (the clamp
+        // below zeroes it and the next accrual would read the entire NAV as basis): once the
+        // gain outgrows half the post-flow NAV, shed it proportionally like a pre-hold exit
+        // instead. The `min` never scales up, so deposits keep the nominal gain.
+        if (gain > (newCollat - newDebt) / 2) gain = gain.min(gain.mulDiv(newSupply, prevSupply));
       }
       // Preserve the per-share carry across the supply change.
       carry = prevCarry.mulDiv(newSupply, prevSupply);
-      // Unlike the carry and the gain, the held management fee accumulator is deliberately not
-      // rescaled: it counts fees actually charged, and the supply ratio is a permissionless
+      // Unlike the carry, the held management fee accumulator is deliberately not rescaled
+      // either: it counts fees actually charged, and the supply ratio is a permissionless
       // value-detached lever in both directions (see the held-accumulator paragraph in the
       // header).
     }
@@ -356,8 +374,9 @@ library LibStorage {
     if (gain > 0) {
       // Held positive basis: encode it as reference debt above the live debt, so the mark
       // (`lastTotalAssets`) lands at NAV minus the gain and the NAV-gain cap in `_pendingFees`
-      // reads back exactly the preserved entitlement. Clamped at `newCollat` so the reference
-      // NAV stays non-negative (the clamp truncates the gain to the post-flow NAV).
+      // reads back exactly the preserved entitlement. Clamped at `newCollat` as a final guard
+      // so the reference NAV stays non-negative (the supply-scaled fallback above normally
+      // keeps the clamp slack).
       newRefDebt = (newDebt + gain).min(newCollat);
       newRefTotalAssets = newCollat - newRefDebt;
     } else if (carry >= newDebt && carry > 0 && self.lastTotalAssets > 0) {
