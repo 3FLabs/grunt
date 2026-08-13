@@ -118,7 +118,8 @@ interface IPositionManagerAdmin {
   /// @dev Only callable by the owner. Escape hatch for a permanent drawdown or a realized
   ///      liquidation loss: the held reference would otherwise suppress performance fees until the
   ///      pool recovers past the old mark, which may never happen. Fees accrue first, so a positive
-  ///      pending basis crystallizes to the current recipient at the configured rate; the reset
+  ///      pending basis crystallizes to the current recipient at the configured rate (a held
+  ///      entitlement that rounds to zero fee shares is forgiven without minting); the reset
   ///      itself never charges past gains, it forgives the carried negative basis and future gains
   ///      are charged from the current state onward.
   ///

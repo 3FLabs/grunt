@@ -139,6 +139,46 @@ contract LibManagerStorageTest is Test {
     assertEq(harness.getLastDebt(), 5_100e18, "reference debt stays out of the sentinel");
   }
 
+  /// @notice A held positive entitlement (the zero-rounding holds in `_pendingFees`) is kept
+  ///         nominal across flows: it is an asset-denominated entitlement already earned, so a
+  ///         deposit must not scale it up into a fee on fresh principal (Cantina #32
+  ///         follow-up) and a deposit/exit round trip must hand it back whole.
+  function test_rebaseSnapshot_keepsHeldGainNominalAcrossFlows() public {
+    // Reference at collat 10_000 / debt 5_000; pre-flow collat 10_100 at flat debt: the
+    // levered read is 50 and the NAV gain above the mark is 100, so the preserved gain is 50.
+    // A deposit doubles the supply; the gain must stay 50, not become 100.
+    harness.setReference(5_000e18, 5_000e18);
+    harness.rebaseSnapshot(10_100e18, 5_000e18, 100e18, 15_200e18, 5_000e18, 200e18);
+    assertEq(harness.getLastDebt(), 5_050e18, "deposit keeps the entitlement nominal above the live debt");
+    assertEq(harness.getLastTotalAssets(), 10_150e18, "the mark sits below the post-flow NAV by the nominal gain");
+
+    // The deposit exits again, restoring the pre-flow state: the entitlement comes back whole
+    // (a down-only rule would let reversible capital grind it toward zero).
+    harness.rebaseSnapshot(15_200e18, 5_000e18, 200e18, 10_100e18, 5_000e18, 100e18);
+    assertEq(harness.getLastDebt(), 5_050e18, "round trip hands the entitlement back whole");
+    assertEq(harness.getLastTotalAssets(), 5_050e18, "the mark tracks the restored NAV minus the gain");
+  }
+
+  /// @notice A nominal entitlement above half the post-flow NAV would leave a degenerate
+  ///         (zero or atoms-thin) mark whose next accrual reads essentially the entire NAV as
+  ///         basis: the rebase falls back to the supply-scaled gain so the mark stays
+  ///         anchored to the surviving NAV, including at the exact gain == NAV knife-edge.
+  function test_rebaseSnapshot_gainAboveHalfNavFallsBackToSupplyScaling() public {
+    harness.setReference(5_000e18, 5_000e18);
+    // 99% exit: the post-flow NAV (30) sits below the nominal 50 gain, so the gain is scaled
+    // by the supply ratio instead: 50 * 1/100 = 0.5.
+    harness.rebaseSnapshot(10_100e18, 5_000e18, 100e18, 40e18, 10e18, 1e18);
+    assertEq(harness.getLastDebt(), 10.5e18, "the scaled entitlement re-encodes above the live debt");
+    assertEq(harness.getLastTotalAssets(), 29.5e18, "the mark stays strictly positive");
+
+    // Knife-edge: the post-flow NAV exactly equals the nominal gain. A nominal encode would
+    // write a zero mark (reference debt clamped at newCollat); the fallback scales instead.
+    harness.setReference(5_000e18, 5_000e18);
+    harness.rebaseSnapshot(10_100e18, 5_000e18, 100e18, 60e18, 10e18, 1e18);
+    assertEq(harness.getLastDebt(), 10.5e18, "the scaled entitlement re-encodes at the knife-edge");
+    assertEq(harness.getLastTotalAssets(), 49.5e18, "the mark does not truncate to zero at gain == NAV");
+  }
+
   /// @notice The held management fee accumulator is never rescaled by a flow: a deposit/exit
   ///         round trip that restores the vault state must hand the deduction back whole (a
   ///         down-only rule would let reversible capital grind it toward zero), and

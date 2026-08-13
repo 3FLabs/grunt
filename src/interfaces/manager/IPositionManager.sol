@@ -79,7 +79,7 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   ///      `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()` alongside this value. The
   ///      reference advances to the current state only when a positive basis crystallizes; while
   ///      it is held (non-positive basis) or after flow rebases it deviates from the live NAV by
-  ///      the carried pending basis.
+  ///      the carried pending basis (or sits below it by a preserved pending gain).
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days, charged on the
   ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
@@ -112,7 +112,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @notice Returns the debt component of the performance reference.
   /// @dev Combined with `feeData().lastTotalAssets`, callers can reconstruct
   ///      `lastCollat = lastTotalAssets + lastDebt`. While the reference is held (non-positive
-  ///      pending basis) this is lower than the live debt by the carried debt cost. A value of
+  ///      pending basis) this is lower than the live debt by the carried debt cost, or above
+  ///      it by a preserved pending gain (see `LibStorage.rebaseSnapshot`). A value of
   ///      zero is the bootstrap sentinel and means the next accrual will skip the performance fee
   ///      and seed this slot.
   /// @return The reference debt for the performance-fee basis

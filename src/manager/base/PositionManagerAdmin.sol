@@ -174,7 +174,8 @@ abstract contract PositionManagerAdmin is IPositionManagerAdmin, PositionManager
 
   /// @inheritdoc IPositionManagerAdmin
   /// @dev Accrues fees first: a positive pending basis crystallizes normally before the reference
-  ///      moves, so the reset never mints on past gains; it only forgives the carried negative
+  ///      moves (a held entitlement that rounds to zero fee shares is forgiven without minting),
+  ///      so the reset never mints on past gains; it only forgives the carried negative
   ///      basis going forward. The forgiven carry includes the debt interest accrued since the
   ///      last crystallization, which the next positive accrual will no longer net (see the
   ///      interface timing note: reset as soon as possible after a positive charge). While every
