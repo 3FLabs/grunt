@@ -55,11 +55,14 @@ contract PositionManagerDepositFairnessTest is PositionManagerBaseTest {
     return positionManager.totalAssets().divUp(positionManager.totalSupply() + positionManager.virtualShareOffset());
   }
 
-  /// @notice Case 1 (fresh quote): the deposited carry mints shares worth the carry, minus at
-  ///         most one share of mint rounding, and a same-state accrual afterwards mints
-  ///         nothing, so no slice of the fresh principal can be consumed as a fee.
-  function testFuzz_deposit_freshQuote_mintsCarryValue(uint256 c, uint256 d, uint256 p) public {
-    _setFees(0, PERF_FEE);
+  /// @notice Case 1 (fresh quote): under any fee configuration, the deposited carry mints
+  ///         shares worth the carry, minus at most one share of mint rounding, and no later
+  ///         accrual can charge a performance fee against the fresh principal: with the quote
+  ///         unchanged, the pending performance component stays zero no matter how much time
+  ///         passes (only the time-based management fee may accrue).
+  function testFuzz_deposit_freshQuote_mintsCarryValue(uint256 c, uint256 d, uint256 p, uint256 fees) public {
+    // Fuzz the fee configuration: management rate in [0, 200] bps, performance in [0, 5000].
+    _setFees(uint24(bound(fees, 0, 200)), uint24(bound(fees >> 128, 0, 5000)));
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     // The mock oracle is the sole truth, so any settled quote is "fresh". Move it and accrue
@@ -82,12 +85,15 @@ contract PositionManagerDepositFairnessTest is PositionManagerBaseTest {
     assertLe(value, carry, "the depositor never mints more value than the carry");
     assertApproxEqAbs(value, carry, _sharePriceCeil() + 2, "the carry mints its own value back (case 1)");
 
-    // No gain happened since the deposit settled, so an accrual must mint nothing: any mint
-    // here would be paid by the fresh principal (the Cantina #32 follow-up class).
-    uint256 recipientBefore = positionManager.balanceOf(feeRecipient);
-    _accrue();
-    assertEq(positionManager.balanceOf(feeRecipient), recipientBefore, "no fee minted without a gain");
-    assertEq(_shareValue(minted), value, "the depositor's claim survives the accrual");
+    // No gain happened since the deposit settled, so an accrual must mint no performance fee:
+    // any perf mint here would be paid by the fresh principal (the Cantina #32 follow-up
+    // class). The debt side routes to the interest-bearing market, whose accrued interest
+    // only pushes the basis further negative.
+    (,,, uint256 perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "no performance fee pending without a gain");
+    vm.warp(block.timestamp + bound(fees >> 64, 0, 90 days));
+    (,,, perfShares) = positionManager.pendingFees();
+    assertEq(perfShares, 0, "time alone never creates a performance fee on the principal");
   }
 
   /// @notice Case 2 (stale quote): a deposit whose debt-to-collateral ratio matches the
@@ -125,9 +131,10 @@ contract PositionManagerDepositFairnessTest is PositionManagerBaseTest {
   ///         and nothing more. The deposited principal is never charged; only its genuine
   ///         performance is (the reference is crystallized at `p1` so the closed form is
   ///         exact; a pending pre-deposit entitlement is covered by the checkpoint-splitting
-  ///         regression tests).
+  ///         regression tests). The performance rate itself is fuzzed.
   function testFuzz_deposit_matchedRatio_chargedOnlyOwnGain(uint256 c, uint256 p1, uint256 p2) public {
-    _setFees(0, PERF_FEE);
+    uint24 perfFee = uint24(bound(c >> 128, 1, 5000));
+    _setFees(0, perfFee);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     p1 = bound(p1, 1.05e36, 1.5e36); // above the seed quote so the accrual crystallizes at p1
@@ -159,7 +166,7 @@ contract PositionManagerDepositFairnessTest is PositionManagerBaseTest {
     uint256 ownGain = FixedPointMathLib.zeroFloorSub(d.mulDiv(p2, p1), d);
     assertApproxEqAbs(
       feeValueWith,
-      feeValueWithout + ownGain.mulDiv(PERF_FEE, 10_000),
+      feeValueWithout + ownGain.mulDiv(perfFee, 10_000),
       2 * _sharePriceCeil() + 1_000,
       "the deposit is charged exactly its own slice's gain"
     );
