@@ -1072,19 +1072,20 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(uint32(slotA >> 64), DEFAULT_HORIZON, "horizon bits");
     assertEq(address(uint160(slotA >> 96)), request, "request bits");
 
-    // Slot B: repaymentDeadline (bits 0..39) | tickDuration (40..63) | tickThreshold (64..87)
-    // | fund (88..247) | orderMode (248..255): full
+    // Slot B: requestRepaid (bits 0..7) | repaymentDeadline (8..47) | tickDuration (48..71)
+    // | tickThreshold (72..95) | fund (96..255): full
     uint256 slotB = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 1)));
-    assertEq(uint40(slotB), uint40(startTime + 90 days), "repayment deadline bits");
-    assertEq(uint24(slotB >> 40), DEFAULT_TICK_DURATION, "tick duration bits");
-    assertEq(uint24(slotB >> 64), DEFAULT_TICK_THRESHOLD, "tick threshold bits");
-    assertEq(address(uint160(slotB >> 88)), address(fund), "fund bits");
-    assertEq(uint8(slotB >> 248), uint8(Mode.REDEEM), "order mode bits");
+    assertEq(uint8(slotB), 0, "request repaid bit clear");
+    assertEq(uint40(slotB >> 8), uint40(startTime + 90 days), "repayment deadline bits");
+    assertEq(uint24(slotB >> 48), DEFAULT_TICK_DURATION, "tick duration bits");
+    assertEq(uint24(slotB >> 72), DEFAULT_TICK_THRESHOLD, "tick threshold bits");
+    assertEq(address(uint160(slotB >> 96)), address(fund), "fund bits");
 
-    // Slot C: orderLive (bits 0..7)
+    // Slot C: orderMode (bits 0..7) | orderLive (8..15)
     uint256 slotC = uint256(vm.load(address(retargetter), bytes32(uint256(OPERATION_STORAGE_SLOT) + 2)));
-    assertEq(uint8(slotC), 1, "order live bits");
-    assertEq(slotC >> 8, 0, "slot C upper bits clean");
+    assertEq(uint8(slotC), uint8(Mode.REDEEM), "order mode bits");
+    assertEq(uint8(slotC >> 8), 1, "order live bits");
+    assertEq(slotC >> 16, 0, "slot C upper bits clean");
 
     // Slots D to F: the stored order's input, output and salt
     assertEq(

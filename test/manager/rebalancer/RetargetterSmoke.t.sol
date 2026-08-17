@@ -85,13 +85,14 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     assertApproxEqAbs(_currentLtv(), 6875e14, 1e14, "post LTV (11000/16000)");
   }
 
-  /// @dev Plants a stray live order directly in storage. The orderLive flag sits alone at bit
-  ///      0 of the operation namespace's third slot (the fund address and the order mode moved
-  ///      into the second slot); no reachable flow leaves it set without an active operation,
-  ///      so the defensive OrderActive guards at both start entry points need this exercised.
+  /// @dev Plants a stray live order directly in storage. The orderLive flag sits at bits
+  ///      8..15 of the operation namespace's third slot, behind the order mode (the fund
+  ///      address moved into the second slot); no reachable flow leaves it set without an
+  ///      active operation, so the defensive OrderActive guards at both start entry points
+  ///      need this exercised.
   function _plantStrayOrder() internal {
     bytes32 slot = bytes32(uint256(OPERATION_STORAGE_SLOT) + 2);
-    vm.store(address(retargetter), slot, bytes32(uint256(1)));
+    vm.store(address(retargetter), slot, bytes32(uint256(1) << 8));
   }
 
   function test_startRetargetting_revertsOrderActiveOnStrayOrder() public {

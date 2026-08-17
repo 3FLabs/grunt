@@ -59,6 +59,9 @@ struct RetargetterWhitelists {
 /// @param horizon The repayment yield annualization basis, snapshotted from the config at
 ///        start so a later setConfig cannot reprice a funded operation
 /// @param request The Request deployed for the operation
+/// @param requestRepaid Whether this instance marked the operation's Request repaid through
+///        repay or forceRepay; deadline auto-expiry never sets it, so the rebalance
+///        value-conservation gate stays armed on a defaulted bridge until the owner settles
 /// @param repaymentDeadline The Request's repayment deadline, mirrored at start because the
 ///        Request does not expose it; the loan clock cannot start once less than
 ///        MIN_DEADLINE_BUFFER remains before it (zero inside a SYNC window)
@@ -81,6 +84,7 @@ struct RetargetterOperation {
   bool consumptionClosed;
   uint32 horizon;
   address request;
+  bool requestRepaid;
   uint40 repaymentDeadline;
   uint24 tickDuration;
   uint24 tickThreshold;
@@ -312,6 +316,7 @@ library LibStorage {
     self.consumptionClosed = false;
     self.horizon = 0;
     self.request = address(0);
+    self.requestRepaid = false;
     self.repaymentDeadline = 0;
     self.tickDuration = 0;
     self.tickThreshold = 0;
