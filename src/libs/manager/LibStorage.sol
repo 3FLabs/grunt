@@ -359,7 +359,10 @@ library LibStorage {
         // A gain at or above the post-flow NAV would leave a degenerate mark (the clamp
         // below zeroes it and the next accrual would read the entire NAV as basis): once the
         // gain outgrows half the post-flow NAV, shed it proportionally like a pre-hold exit
-        // instead. The `min` never scales up, so deposits keep the nominal gain.
+        // instead. The `min` never scales up, so deposits keep the nominal gain. A deposit and
+        // exit round trip can still shed a gain in this region by the deposit-inflated ratio;
+        // accepted: the loss lands on the fee recipient only, and the hold keeps a genuine
+        // entitlement below one raw share's worth of fees.
         if (gain > (newCollat - newDebt) / 2) gain = gain.min(gain.mulDiv(newSupply, prevSupply));
       }
       // Preserve the per-share carry across the supply change.
