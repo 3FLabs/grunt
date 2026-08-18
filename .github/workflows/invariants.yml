@@ -1,0 +1,38 @@
+name: Invariant Tests
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: full
+
+concurrency:
+  group: invariants-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  invariants:
+    name: Foundry invariant suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1.6.0
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run invariant tests
+        run: forge test --match-path "test/**/*.invariant.t.sol" -vvv
