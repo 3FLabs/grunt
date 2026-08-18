@@ -162,8 +162,9 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   }
 
   /// @notice RT-11: Bridge value conservation: no successful rebalance grew the position
-  ///         manager's totalAssets while the operation's Request was unrepaid and short of
-  ///         its deadline (recorded by the handler around every act_rebalance).
+  ///         manager's totalAssets while the operation's Request was unsettled (no repay or
+  ///         forceRepay yet; deadline expiry does not count as settlement; recorded by the
+  ///         handler around every act_rebalance).
   function invariant_bridgeValueConservation() public view {
     assertFalse(
       handler.valueConservationViolated(), "RT-11: rebalance grew totalAssets while the bridge was outstanding"

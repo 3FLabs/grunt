@@ -16,6 +16,7 @@ import {IBorrowPosition} from "../../interfaces/borrow/IBorrowPosition.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {Order, Mode, State} from "../../libs/funds/Order.sol";
 import {LibRetargetterErrors} from "../../libs/manager/rebalancer/LibRetargetterErrors.sol";
+import {LibRequestErrors} from "../../libs/request/LibRequestErrors.sol";
 import {LibStorage, RetargetterAssets, RetargetterOperation} from "../../libs/manager/rebalancer/LibStorage.sol";
 import {
   REBALANCER_ROLE,
@@ -188,7 +189,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
 
   /// @inheritdoc IRetargetter
   /// @dev The deployed Request gets the maximum 90-day repayment deadline (treated as
-  ///      effectively infinite; see REPAYMENT_DEADLINE_OFFSET for the acknowledgment) and a
+  ///      effectively infinite; see REPAYMENT_DEADLINE_OFFSET for the expiry posture) and a
   ///      zero mint-to-repaid delay. That delay exists to keep a Request consumer from minting
   ///      disproportionate yield tokens right before repayment; here the minting paths are
   ///      boxed in instead: the yield gates cap yield proportional to principal, the principal
@@ -350,12 +351,12 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      funds cannot overpay YT holders. The owed yield floors at one full tick, so consumed
   ///      principal left sitting in the Request (never pulled) still owes that tick out of
   ///      position-derived funds. The open upper bound at setRepaid keeps third-party
-  ///      donations to the Request from blocking repayment. Once the Request passes its
-  ///      90-day deadline it auto-expires and this function reverts AlreadyRepaid; proceeds
-  ///      settling after that point cannot be delivered to lenders locally. The expiry
-  ///      bypassing the local repayment flow is an acknowledged limitation and, like the
-  ///      expiry itself, delivery of late proceeds runs through the governed upgrade path;
-  ///      see REPAYMENT_DEADLINE_OFFSET for the remediation posture.
+  ///      donations to the Request from blocking repayment. Marks the operation repaid
+  ///      locally, which is what disarms the rebalance value-conservation gate; see
+  ///      {_bridgeOutstanding}. Once the Request passes its 90-day deadline it auto-expires
+  ///      and this function reverts AlreadyRepaid (the owed formula keeps accruing after
+  ///      the deadline, so a late trustless repay would overpay lenders from
+  ///      position-derived funds); late proceeds are delivered through {forceRepay} instead.
   function repay() external onlyOwnerOrRebalancer nonReentrant returns (uint256 owedAmount) {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
     address request = operation_.checkRequest();
@@ -369,16 +370,32 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       debtAsset.safeApprove(request, 0);
     }
     IRequest(request).setRepaid(owedAmount, type(uint256).max);
+    operation_.requestRepaid = true;
     emit RequestRepaid(request, owedAmount, shortfall);
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev Owner path for defaults and disputes. For a true default nothing needs calling:
-  ///      the Request auto-expires at its deadline and holders redeem what sits there.
+  /// @dev Owner path for defaults, disputes and late deliveries. An expired (or already
+  ///      repaid) Request rejects setRepaid, so on that branch the balance bounds are
+  ///      enforced locally instead while the transfer still lands for the remaining holders
+  ///      to redeem; deliver before holders exit, because redemptions price on the live
+  ///      balance and an early exit's shortfall is not made whole by a later top-up. Both
+  ///      branches mark the operation repaid locally: the governed write-off that disarms
+  ///      the value-conservation gate on a defaulted bridge and unlocks resolve; see
+  ///      {_bridgeOutstanding}.
   function forceRepay(uint256 amount, uint256 minBalance, uint256 maxBalance) external onlyOwner nonReentrant {
-    address request = LibStorage.operationStorage().checkRequest();
-    if (amount > 0) LibStorage.assetsStorage().debtAsset.safeTransfer(request, amount);
-    IRequest(request).setRepaid(minBalance, maxBalance);
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    address request = operation_.checkRequest();
+    address debtAsset = LibStorage.assetsStorage().debtAsset;
+    if (amount > 0) debtAsset.safeTransfer(request, amount);
+    if (IRequest(request).syncRepaidStatus()) {
+      uint256 balance = debtAsset.balanceOf(request);
+      if (balance < minBalance) revert LibRequestErrors.InsufficientBalance(balance, minBalance);
+      if (balance > maxBalance) revert LibRequestErrors.ExcessiveBalance(balance, maxBalance);
+    } else {
+      IRequest(request).setRepaid(minBalance, maxBalance);
+    }
+    operation_.requestRepaid = true;
     emit RequestForceRepaid(request, amount, minBalance, maxBalance);
   }
 
@@ -488,9 +505,10 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      one-atom improvement flooring flattens to an equal value, passes), and no module
   ///      may end with debt against zero collateral. LTV convention throughout: zero when
   ///      debt is zero (idle modules and an emptied position pass), the max sentinel for bad
-  ///      debt. While the operation's Request is unrepaid, the position's net value must not
-  ///      grow across the call, for every caller including the owner; see
-  ///      {_bridgeOutstanding} and {_checkValueConservation}. The position manager's own
+  ///      debt. Until the operation's Request has been marked repaid through {repay} or
+  ///      {forceRepay}, the position's net value must not grow across the call, for every
+  ///      caller including the owner; see {_bridgeOutstanding} and
+  ///      {_checkValueConservation}. The position manager's own
   ///      loss, cooldown and safe-LTV checks apply underneath. A sentinel resolving to zero (an
   ///      empty balance, or a REPAY leg on a debt-free module) produces a zero-amount leg,
   ///      which the borrow modules reject; the whole call reverts atomically.
@@ -792,6 +810,11 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
+  function bridgeOutstanding() external view returns (bool) {
+    return _bridgeOutstanding();
+  }
+
+  /// @inheritdoc IRetargetter
   /// @dev Sized on the config ceiling maxYieldBps, the largest yield cap any operation may
   ///      carry, so this view is a safe floor for every permissible operation; the operation
   ///      gates size on the effective per-operation cap instead (zero for a SYNC window,
@@ -1025,16 +1048,15 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @dev Whether the bridge is still outstanding, which is what arms the rebalance
-  ///      value-conservation gate. Once the Request is repaid, or auto-expired past its
-  ///      deadline with holders redeeming its remaining balance, folding residual value back
-  ///      into the position must reopen, which is why this keys on the effective repaid
-  ///      state rather than the operation being active. Read through the state-mutating sync
-  ///      (the same one resolve gates on) so a past-deadline Request reads repaid here
-  ///      instead of wedging the gate on a stale flag; that makes this the only non-view
-  ///      step of the rebalance guardrails.
-  function _bridgeOutstanding() internal returns (bool) {
-    address request = LibStorage.operationStorage().request;
-    return request != address(0) && !IRequest(request).syncRepaidStatus();
+  ///      value-conservation gate. Keys on the operation's local repaid flag, set only by
+  ///      {repay} and {forceRepay} (the only paths that can settle the Request, since this
+  ///      contract is its owner); once it is set, folding residual value back into the
+  ///      position reopens. Deadline auto-expiry never sets it, so a defaulted bridge stays
+  ///      gated: pulled principal can only leave through {forceRepay} delivering it to the
+  ///      Request, never by being folded into the position ahead of the lenders.
+  function _bridgeOutstanding() internal view returns (bool) {
+    RetargetterOperation storage operation_ = LibStorage.operationStorage();
+    return operation_.request != address(0) && !operation_.requestRepaid;
   }
 
   /// @dev Value-conservation gate, applied to every caller (unlike the direction checks,

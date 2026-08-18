@@ -1162,9 +1162,10 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   /*                      DEADLINE EXPIRY                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Past the 90-day deadline the Request auto-expires: the trustless repay reverts,
-  ///         resolve settles through syncRepaidStatus and holders redeem what sits there.
-  function test_async_deadlineExpiry_autoRepaidThenResolve() public {
+  /// @notice Past the 90-day deadline the Request auto-expires but the value gate stays
+  ///         armed: pulled principal cannot be folded into the position ahead of the
+  ///         lenders, and the owner delivers it back through forceRepay before resolving.
+  function test_async_deadlineExpiry_gateStaysArmedUntilForceRepay() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(3_000e18, 100);
     _consume(request, 3_000e18, 30e18, 3_000e18);
@@ -1177,26 +1178,111 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
     retargetter.repay();
 
-    // The fold grows the position's net value, so it only lands because the value gate reads
-    // the Request through the same state-mutating sync resolve uses: past the deadline the
-    // Request reads repaid (and its stale flag is synced here) and the gate disarms
-    assertFalse(IRequest(request).isRepaid(), "repaid flag still stale before the rebalance");
+    // Expiry never disarms the value gate: folding the pulled principal into the position
+    // would grow its net value ahead of the Request lenders and reverts
+    assertTrue(retargetter.bridgeOutstanding(), "bridge still outstanding past the deadline");
     vm.prank(rebalancer);
+    vm.expectPartialRevert(LibRetargetterErrors.PositionValueIncreased.selector);
     retargetter.rebalance(_rebalancingData(0, MAX_SENTINEL, RebalancingOperationType.REPAY, MAX_SENTINEL));
-    assertTrue(IRequest(request).isRepaid(), "rebalance synced the auto-expired Request");
+
+    // Resolve stays wedged on the residual while the principal sits on the Retargetter
+    vm.prank(rebalancer);
+    vm.expectRevert(abi.encodeWithSelector(LibRetargetterErrors.ResidualBalance.selector, address(debtToken), 2_000e18));
+    retargetter.resolve();
+
+    // The expired Request rejects setRepaid, so forceRepay enforces the bounds locally while
+    // the delivery still lands, and marks the operation repaid
+    vm.expectEmit(address(retargetter));
+    emit IRetargetter.RequestForceRepaid(request, 2_000e18, 3_000e18, type(uint256).max);
+    vm.prank(owner);
+    retargetter.forceRepay(2_000e18, 3_000e18, type(uint256).max);
+    assertTrue(IRequest(request).isRepaid(), "request synced to repaid");
+    assertFalse(retargetter.bridgeOutstanding(), "settled through forceRepay");
+    assertEq(debtToken.balanceOf(request), 3_000e18, "principal delivered back to the Request");
 
     vm.prank(rebalancer);
     retargetter.resolve();
     assertFalse(retargetter.isActive(), "resolved");
-    assertTrue(IRequest(request).isRepaid(), "auto-expired to repaid");
 
-    // Holders redeem whatever sits in the Request: principal first, no yield left
+    // Holders redeem the full principal: no yield in a default, nothing lost to a fold
     uint256 makerBalanceBefore = debtToken.balanceOf(maker.addr);
     vm.prank(maker.addr);
     (,, uint256 pAssets, uint256 yAssets) = IVaultController(request).burnAll(maker.addr, maker.addr);
-    assertEq(pAssets, 1_000e18, "principal holders take the remaining balance");
+    assertEq(pAssets, 3_000e18, "principal holders take the delivered balance");
     assertEq(yAssets, 0, "no yield assets in a default");
-    assertEq(debtToken.balanceOf(maker.addr), makerBalanceBefore + 1_000e18, "maker recovered the residual");
+    assertEq(debtToken.balanceOf(maker.addr), makerBalanceBefore + 3_000e18, "maker recovered the principal");
+  }
+
+  /// @notice On an expired Request the setRepaid balance bounds are enforced locally by
+  ///         forceRepay: the post-delivery balance must sit inside [minBalance, maxBalance].
+  function test_forceRepay_expired_balanceBoundsEnforcedLocally() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(3_000e18, 100);
+    _consume(request, 3_000e18, 30e18, 3_000e18);
+    vm.prank(rebalancer);
+    retargetter.pullRequestFunds(2_000e18);
+    vm.warp(block.timestamp + 91 days);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, 1_000e18, 3_000e18));
+    retargetter.forceRepay(0, 3_000e18, type(uint256).max);
+
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.ExcessiveBalance.selector, 1_000e18, 500e18));
+    retargetter.forceRepay(0, 0, 500e18);
+
+    // A failed bound keeps the bridge outstanding and the operation unresolved
+    assertTrue(retargetter.bridgeOutstanding(), "still outstanding after failed bounds");
+  }
+
+  /// @notice The local repaid flag clears with the operation: after a settled and resolved
+  ///         operation, the next one starts with the value gate armed again.
+  function test_requestRepaid_clearedAcrossOperations() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(1_000e18, 100);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    // Cover the owed yield out of band so the trustless repay settles in one call
+    debtToken.mint(address(retargetter), retargetter.owed() - 1_000e18);
+    vm.startPrank(rebalancer);
+    retargetter.pullRequestFunds(MAX_SENTINEL);
+    retargetter.repay();
+    assertFalse(retargetter.bridgeOutstanding(), "settled through repay");
+    retargetter.resolve();
+    vm.stopPrank();
+
+    // The next operation re-arms the gate from its first block
+    request = _startAsync(1_000e18, 100);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    vm.startPrank(rebalancer);
+    retargetter.pullRequestFunds(MAX_SENTINEL);
+    assertTrue(retargetter.bridgeOutstanding(), "fresh operation outstanding again");
+    vm.expectPartialRevert(LibRetargetterErrors.PositionValueIncreased.selector);
+    retargetter.rebalance(_rebalancingData(0, MAX_SENTINEL, RebalancingOperationType.REPAY, MAX_SENTINEL));
+    vm.stopPrank();
+  }
+
+  /// @notice forceRepay tolerates an already repaid Request: a post-settlement top-up lands
+  ///         with the bounds checked locally instead of reverting AlreadyRepaid.
+  function test_forceRepay_afterRepaid_topsUp() public {
+    _seedPosition(10_000e18, 5_000e18);
+    address request = _startAsync(1_000e18, 100);
+    _consume(request, 1_000e18, 10e18, 1_000e18);
+    uint256 owedAmount = retargetter.owed();
+    debtToken.mint(address(retargetter), owedAmount - 1_000e18);
+    vm.startPrank(rebalancer);
+    retargetter.pullRequestFunds(MAX_SENTINEL);
+    retargetter.repay();
+    vm.stopPrank();
+
+    // The owner tops the settled Request up out of band; the balance bounds run locally
+    debtToken.mint(address(retargetter), 5e18);
+    vm.prank(owner);
+    retargetter.forceRepay(5e18, owedAmount + 5e18, type(uint256).max);
+    assertEq(debtToken.balanceOf(request), owedAmount + 5e18, "top-up delivered");
+
+    vm.prank(rebalancer);
+    retargetter.resolve();
+    assertFalse(retargetter.isActive(), "resolved after the top-up");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

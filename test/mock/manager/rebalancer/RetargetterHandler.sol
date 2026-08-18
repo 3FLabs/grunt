@@ -114,8 +114,8 @@ contract RetargetterHandler is Test {
   bool public directionViolated;
 
   /// @notice Set if a successful rebalance grew the position manager's totalAssets while the
-  ///         operation's Request was unrepaid and short of its deadline (the shape that arms
-  ///         the value-conservation gate).
+  ///         operation's Request was unsettled (no repay or forceRepay yet, the shape that
+  ///         arms the value-conservation gate; deadline expiry never disarms it).
   bool public valueConservationViolated;
 
   /// @notice Set if any SYNC attempt (successful or reverted) left persistent state behind.
@@ -123,6 +123,10 @@ contract RetargetterHandler is Test {
 
   /// @dev The recorded startedAt of the current operation (0 while unset or inactive).
   uint40 internal ghostStartedAt;
+
+  /// @dev Whether the current operation's Request was settled through repay or forceRepay,
+  ///      the only two paths that disarm the value-conservation gate; reset at every start.
+  bool internal requestSettled;
 
   /// @dev Fresh-salt counter (funds archive ended order ids, so salts are never reused).
   uint256 internal saltCounter;
@@ -240,6 +244,7 @@ contract RetargetterHandler is Test {
     ) {
       lastRequest = request;
       operationCount++;
+      requestSettled = false;
     } catch {}
   }
 
@@ -379,7 +384,9 @@ contract RetargetterHandler is Test {
   function act_repay() external trackStartedAt {
     if (!retargetter.isActive()) return;
     vm.prank(rebalancer);
-    try retargetter.repay() {} catch {}
+    try retargetter.repay() {
+      requestSettled = true;
+    } catch {}
   }
 
   /// @notice Resolves the operation; on success records the settlement-gate ghosts.
@@ -403,7 +410,9 @@ contract RetargetterHandler is Test {
     if (!retargetter.isActive()) return;
     uint256 amount = _bound(amountSeed, 0, debtToken.balanceOf(address(retargetter)));
     vm.prank(owner);
-    try retargetter.forceRepay(amount, 0, type(uint256).max) {} catch {}
+    try retargetter.forceRepay(amount, 0, type(uint256).max) {
+      requestSettled = true;
+    } catch {}
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -517,11 +526,12 @@ contract RetargetterHandler is Test {
     } catch {}
   }
 
-  /// @dev Whether the operation's Request is unrepaid and short of its deadline, the shape
-  ///      that arms the rebalance value-conservation gate.
+  /// @dev Whether the operation's Request exists and was not settled through repay or
+  ///      forceRepay, the shape that arms the rebalance value-conservation gate; deadline
+  ///      expiry deliberately never disarms the model.
   function _bridgeOutstanding() internal view returns (bool) {
-    (, address request,,, uint40 repaymentDeadline,,,,,,) = retargetter.operation();
-    return request != address(0) && block.timestamp < repaymentDeadline && !IRequest(request).isRepaid();
+    (, address request,,,,,,,,,) = retargetter.operation();
+    return request != address(0) && !requestSettled;
   }
 
   /// @dev Net value of the whole position, underwater modules included (the position

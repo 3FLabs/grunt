@@ -56,13 +56,17 @@ uint256 constant MAX_AUTHORIZED_ACCOUNTS = 16;
 /// @dev Repayment deadline offset applied to every deployed Request (the maximum the
 ///      Request accepts). The deadline anchors at operation start while the loan clock
 ///      starts at the first capital commitment; MIN_DEADLINE_BUFFER floors what must remain
-///      of this offset when the clock starts. Acknowledged limitation: past the deadline the
-///      Request auto-expires and bypasses the local repayment checks, so the guaranteed
-///      buffer is sized as effectively infinite for every supported settlement flow. If an
-///      operation ever runs into it regardless, remediation is arranged offchain and
-///      delivered only through beacon upgrades governed by an extensive multisig behind its
-///      own timelock; if the durations become too short for some assets, the Request and
-///      the Retargetter get upgraded with longer ones.
+///      of this offset when the clock starts, and the buffer is sized as effectively
+///      infinite for every supported settlement flow. Past the deadline the Request
+///      auto-expires: the trustless repay closes and holders redeem what sits in the
+///      Request, but the rebalance value-conservation gate stays armed (expiry never
+///      disarms it; see Retargetter._bridgeOutstanding), so pulled principal cannot be
+///      folded into the position and the owner delivers it late through forceRepay instead.
+///      Acknowledged limitation of that late delivery: Request redemptions price on the
+///      live balance, so holders who burn their PT/YT before the delivery lands crystallize
+///      their shortfall and are not made whole by it; holders expecting a delivery should
+///      not redeem until it arrives. If the durations become too short for some assets, the
+///      Request and the Retargetter get upgraded with longer ones.
 /// @custom:value 7,776,000 (90 days)
 uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 

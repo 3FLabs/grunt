@@ -126,8 +126,8 @@ interface IRetargetter {
   /// @notice Emitted when the owner force-repays the operation's Request.
   /// @param request The operation's Request
   /// @param amount The amount transferred to the Request
-  /// @param minBalance The owner-chosen lower balance bound passed to setRepaid
-  /// @param maxBalance The owner-chosen upper balance bound passed to setRepaid
+  /// @param minBalance The owner-chosen lower bound the Request's balance had to meet
+  /// @param maxBalance The owner-chosen upper bound the Request's balance had to meet
   event RequestForceRepaid(address indexed request, uint256 amount, uint256 minBalance, uint256 maxBalance);
 
   /// @notice Emitted when an asynchronous operation settles and its state is cleared.
@@ -272,11 +272,11 @@ interface IRetargetter {
   ///      one balance snapshot taken before any leg executes and do not compose: every leg
   ///      resolves against the same pre-call balances, never the state left by earlier legs,
   ///      so REPAY sentinels across several modules can together commit more than the shared
-  ///      balance and revert. While the operation's Request is unrepaid, the position's net
-  ///      value (quoted collateral minus debt over every module, underwater ones included)
-  ///      must not grow across the call, for every caller including the owner: Request
-  ///      capital may enter the position only against equivalent value flowing back out in
-  ///      the same call.
+  ///      balance and revert. Until the operation's Request has been marked repaid through
+  ///      repay or forceRepay, the position's net value (quoted collateral minus debt over
+  ///      every module, underwater ones included) must not grow across the call, for every
+  ///      caller including the owner: Request capital may enter the position only against
+  ///      equivalent value flowing back out in the same call.
   /// @param data The rebalancing data forwarded to the position manager
   function rebalance(RebalancingData calldata data) external;
 
@@ -287,10 +287,13 @@ interface IRetargetter {
   /// @return owedAmount The amount owed and settled
   function repay() external returns (uint256 owedAmount);
 
-  /// @notice Owner override to settle the Request outside the trustless formula.
+  /// @notice Owner override to settle the Request outside the trustless formula, including
+  ///         late deliveries to an expired Request.
   /// @param amount The amount to transfer to the Request before marking it repaid
-  /// @param minBalance The lower balance bound passed to setRepaid
-  /// @param maxBalance The upper balance bound passed to setRepaid
+  /// @param minBalance The lower bound the Request's balance must meet (enforced by
+  ///        setRepaid, or locally once the Request no longer accepts it)
+  /// @param maxBalance The upper bound the Request's balance must meet (enforced by
+  ///        setRepaid, or locally once the Request no longer accepts it)
   function forceRepay(uint256 amount, uint256 minBalance, uint256 maxBalance) external;
 
   /// @notice Settles the asynchronous operation once the Request is repaid, no order is
@@ -409,6 +412,11 @@ interface IRetargetter {
   /// @notice Returns whether an operation is active (an ASYNC operation, or a SYNC
   ///         flash-loan window for the duration of its transaction).
   function isActive() external view returns (bool);
+
+  /// @notice Returns whether the operation's bridge is outstanding: its Request exists and
+  ///         has not been marked repaid through repay or forceRepay (deadline auto-expiry
+  ///         never counts), which is what arms the rebalance value-conservation gate.
+  function bridgeOutstanding() external view returns (bool);
 
   /// @notice Computes the current principal cap for the bound position manager.
   /// @dev Quoter formula on live state with the owner estimates, auto-detected direction,
