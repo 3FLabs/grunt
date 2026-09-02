@@ -81,11 +81,10 @@ library LibCaps {
   function encodeDynamic(address caps, uint32 id, int24 multiplier) internal pure returns (uint256 word) {
     uint256 _type = uint256(CapType.DYNAMIC);
     assembly ("memory-safe") {
-      word :=
-        or(
-          or(shl(TYPE_OFFSET, _type), shl(MULTIPLIER_OFFSET, and(multiplier, MULTIPLIER_MASK))),
-          or(shl(ID_OFFSET, and(id, ID_MASK)), and(caps, ADDRESS_MASK))
-        )
+      word := or(
+        or(shl(TYPE_OFFSET, _type), shl(MULTIPLIER_OFFSET, and(multiplier, MULTIPLIER_MASK))),
+        or(shl(ID_OFFSET, and(id, ID_MASK)), and(caps, ADDRESS_MASK))
+      )
     }
   }
 
@@ -140,11 +139,7 @@ library LibCaps {
   /// @param amount The amount being deposited.
   /// @return newCap The new cap word to store.
   function consume(uint256 self, uint256 intentId, uint256 amount) internal returns (uint256 newCap) {
-    if (capType(self) == CapType.DYNAMIC) {
-      (IFacilityCaps caps, uint32 id, int24 multiplier) = decodeDynamic(self);
-      caps.consume(id, amount, multiplier);
-      return self;
-    }
+    if (capType(self) == CapType.DYNAMIC) return _poolConsume(self, amount, false);
     if (amount > self) revert LibFacilityErrors.DepositCapExceeded(intentId, self, amount);
     unchecked {
       return self - amount;
@@ -160,14 +155,23 @@ library LibCaps {
   /// @param amount The deposited amount being undone.
   /// @return newCap The new cap word to store.
   function release(uint256 self, uint256 amount) internal returns (uint256 newCap) {
-    if (capType(self) == CapType.DYNAMIC) {
-      (IFacilityCaps caps, uint32 id, int24 multiplier) = decodeDynamic(self);
-      caps.consume(id, amount, -multiplier);
-      return self;
-    }
+    if (capType(self) == CapType.DYNAMIC) return _poolConsume(self, amount, true);
     unchecked {
       newCap = self + amount;
     }
     if (newCap < self || newCap > MAX_ABSOLUTE) newCap = MAX_ABSOLUTE;
+  }
+
+  /// @dev Consumes `amount` from a DYNAMIC word's shared pool with the word's multiplier
+  ///      (`negate = false`) or its opposite (`negate = true`, the release direction). One call
+  ///      site for both directions keeps the external-call encoding out of every consumer twice.
+  /// @param self The encoded DYNAMIC deposit cap word.
+  /// @param amount The amount being consumed or released.
+  /// @param negate Whether to flip the multiplier's direction.
+  /// @return The word, unchanged (pool state lives in the caps contract).
+  function _poolConsume(uint256 self, uint256 amount, bool negate) private returns (uint256) {
+    (IFacilityCaps caps, uint32 id, int24 multiplier) = decodeDynamic(self);
+    caps.consume(id, amount, negate ? -multiplier : multiplier);
+    return self;
   }
 }
