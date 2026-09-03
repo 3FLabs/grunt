@@ -55,9 +55,23 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   function debtAmount() external view returns (uint256);
 
   /// @notice Returns the total assets (collateral value - debt) of the position manager.
-  /// @dev This is the net value that determines share pricing.
+  /// @dev This is the net value that determines share pricing. Borrow modules whose debt exceeds
+  ///      their quoted collateral are excluded entirely from the sum, so while {hasBadDebt}
+  ///      returns true this value covers only the solvent modules.
   /// @return The total assets value in debt asset terms
   function totalAssets() external view returns (uint256);
+
+  /// @notice Returns the bad-debt exclusion flag.
+  /// @dev True when at least one borrow module is underwater (debt exceeds quoted collateral)
+  ///      and is therefore excluded from {totalAssets} and the fee bases. Sourced from the same
+  ///      single-pass module iteration as {totalAssets} (see `LibView.totalAssets`). The
+  ///      `collateral >= debt` inclusion test is a one-wei-wide cliff: an excluded module
+  ///      re-enters once its full `debt - collateral` shortfall is repaid on the underlying
+  ///      market, which anyone can do (a single base unit when the module is underwater by
+  ///      exactly one unit). Reverts when any module's quote reverts (e.g. an oracle outage),
+  ///      so monitors must treat a revert as "unknown", not as "no bad debt".
+  /// @return True when the aggregates reported by {totalAssets} cover only the solvent modules
+  function hasBadDebt() external view returns (bool);
 
   /// @notice Returns the fee configuration and accounting state.
   /// @dev `lastTotalAssets` is the NAV component (`refCollat - refDebt`) of the performance
@@ -65,17 +79,24 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   ///      `lastCollat = lastTotalAssets + lastDebt`, read `lastDebt()` alongside this value. The
   ///      reference advances to the current state only when a positive basis crystallizes; while
   ///      it is held (non-positive basis) or after flow rebases it deviates from the live NAV by
-  ///      the carried pending basis.
+  ///      the carried pending basis (or sits below it by a preserved pending gain).
   /// @return feeRecipient The address that receives fee payments
   /// @return managementFee The management fee rate in basis points per 365 days, charged on the
   ///         aggregate collateral of non-bad-debt positions (not NAV) and capped at `totalAssets`.
+  ///         Eligibility is checkpoint-end: a module inside the `collateral >= debt` filter at
+  ///         accrual time is charged on its full collateral for the whole elapsed interval,
+  ///         regardless of when it (re-)entered (re-inclusion costs the module's full
+  ///         `debt - collateral` shortfall — see {hasBadDebt}).
   /// @return performanceFee The performance fee rate in basis points (charged on net levered-slice
   ///         gains after mgmt fee — see {pendingFees} / NatSpec on `_pendingFees`).
   /// @return lastTotalAssets The NAV component of the performance reference used for fee accounting
   /// @return lastFeeAccrualTimestamp The timestamp of the last fee accrual
-  /// @return heldManagementFees The management fee assets charged since the reference last
-  ///         advanced, deducted from the next positive performance basis (cleared on advance and
-  ///         on `resetPerformanceReference`)
+  /// @return heldManagementFees The management fee assets charged and not yet netted against a
+  ///         crystallized performance basis, deducted from the next positive basis (a
+  ///         crystallizing advance consumes it up to the basis and carries the excess; a
+  ///         bootstrap/empty-vault reseed, a flow that burns the last share, and
+  ///         `resetPerformanceReference` clear it). This value is asset-denominated and can be
+  ///         non-zero even when no fee shares are pending or minted.
   function feeData()
     external
     view
@@ -91,7 +112,8 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @notice Returns the debt component of the performance reference.
   /// @dev Combined with `feeData().lastTotalAssets`, callers can reconstruct
   ///      `lastCollat = lastTotalAssets + lastDebt`. While the reference is held (non-positive
-  ///      pending basis) this is lower than the live debt by the carried debt cost. A value of
+  ///      pending basis) this is lower than the live debt by the carried debt cost, or above
+  ///      it by a preserved pending gain (see `LibStorage.rebaseSnapshot`). A value of
   ///      zero is the bootstrap sentinel and means the next accrual will skip the performance fee
   ///      and seed this slot.
   /// @return The reference debt for the performance-fee basis
@@ -101,6 +123,9 @@ interface IPositionManager is IPositionManagerAdmin, IPositionManagerRebalancing
   /// @dev Mirrors the logic of the internal `_accrueFees()` function without mutating state.
   ///      Integrators can compute an accurate share price as:
   ///      `price = totalAssets / (totalSupply + managementFeeShares + performanceFeeShares)`.
+  ///      Zero returned shares do not prove that fee state is empty: the fee cap can suppress a
+  ///      mint or share conversion can round down. On accrual the timestamp still advances, the
+  ///      reference follows its advance/hold rule, and `feeData().heldManagementFees` may remain.
   /// @return totalAssets_ The current total assets (collateral value - debt) across all borrow modules
   /// @return totalSupply_ The current total supply of shares (excluding pending fee shares)
   /// @return managementFeeShares The shares that would be minted for management fees

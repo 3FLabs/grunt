@@ -56,13 +56,17 @@ uint256 constant MAX_AUTHORIZED_ACCOUNTS = 16;
 /// @dev Repayment deadline offset applied to every deployed Request (the maximum the
 ///      Request accepts). The deadline anchors at operation start while the loan clock
 ///      starts at the first capital commitment; MIN_DEADLINE_BUFFER floors what must remain
-///      of this offset when the clock starts. Acknowledged limitation: past the deadline the
-///      Request auto-expires and bypasses the local repayment checks, so the guaranteed
-///      buffer is sized as effectively infinite for every supported settlement flow. If an
-///      operation ever runs into it regardless, remediation is arranged offchain and
-///      delivered only through beacon upgrades governed by an extensive multisig behind its
-///      own timelock; if the durations become too short for some assets, the Request and
-///      the Retargetter get upgraded with longer ones.
+///      of this offset when the clock starts, and the buffer is sized as effectively
+///      infinite for every supported settlement flow. Past the deadline the Request
+///      auto-expires: the trustless repay closes and holders redeem what sits in the
+///      Request, but the rebalance value-conservation gate stays armed (expiry never
+///      disarms it; see Retargetter._bridgeOutstanding), so pulled principal cannot be
+///      folded into the position and the owner delivers it late through forceRepay instead.
+///      Acknowledged limitation of that late delivery: Request redemptions price on the
+///      live balance, so holders who burn their PT/YT before the delivery lands crystallize
+///      their shortfall and are not made whole by it; holders expecting a delivery should
+///      not redeem until it arrives. If the durations become too short for some assets, the
+///      Request and the Retargetter get upgraded with longer ones.
 /// @custom:value 7,776,000 (90 days)
 uint256 constant REPAYMENT_DEADLINE_OFFSET = 90 days;
 
@@ -116,11 +120,13 @@ bytes32 constant OPERATION_STORAGE_SLOT = 0x79211724a6a2d25fad538c732b7f9fee62ff
 /*                     TRANSIENT STORAGE                      */
 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-/// @dev Transient slot for the flash-loan window: holds the module driving the open window,
-///      the only address besides the owner and rebalancer role holders that passes the step
-///      authorization (zero when no window is open). Distinct from MODULE_TSLOT, which
-///      authenticates the callback and is zeroed on callback entry to make it single-shot,
-///      while this slot keeps the window's authority until the window closes.
+/// @dev Transient slot for the executing payload: holds the module whose committed step
+///      calls are running, the only address besides the owner and rebalancer role holders
+///      that passes the step authorization (zero otherwise). Set and cleared around the
+///      payload inside the callback, so the module holds no authority in its own frame and
+///      cannot act on the Retargetter before the delivery check or after the steps end.
+///      Distinct from MODULE_TSLOT, which authenticates the callback and is zeroed on
+///      callback entry to make it single-shot.
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.window")) - 1)
 bytes32 constant WINDOW_TSLOT = 0xd6afb5b9c2dc000141f8a98b95795a2e10b482782ed7428b0e955204ff9c2c83;
 
@@ -131,6 +137,20 @@ bytes32 constant MODULE_TSLOT = 0x3766ddc68b0c7bb3c206ee7037a0b3dd14384ba84828df
 /// @dev Transient slot for the expected flash-loan amount.
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.amount")) - 1)
 bytes32 constant AMOUNT_TSLOT = 0xc37562d71acab34fa73520c0ed6a5ead38685eb8f5e228c3c887ece9e742319b;
+
+/// @dev Transient slot for the keccak256 digest of the flash-loan payload built by
+///      startSyncRetargetting (zeroed on callback entry alongside the module slot). The
+///      callback requires its incoming data to hash to this digest, so a module can only
+///      forward the payload verbatim, never substitute its own step calls.
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.payload")) - 1)
+bytes32 constant PAYLOAD_TSLOT = 0x82d191e7de0d5f5912d24aa67206a4049e4b39e437d0e09fea37efbbc2449b0f;
+
+/// @dev Transient slot for the Retargetter's debt-asset balance snapshot taken just before
+///      the flash loan is requested. The callback requires the live balance to have grown by
+///      the nominal amount, so a module cannot collect the repayment approval for funds it
+///      never delivered.
+///      Computed as: bytes32(uint256(keccak256("retargetter.transient.balance")) - 1)
+bytes32 constant BALANCE_TSLOT = 0x0420a475633bdc4ca97e276f4192fd3de522d15a099866aba16352c41acd46eb;
 
 /// @dev Transient slot for the reentrancy guard flag (nonzero while a guarded call runs).
 ///      Computed as: bytes32(uint256(keccak256("retargetter.transient.reentrancy")) - 1)

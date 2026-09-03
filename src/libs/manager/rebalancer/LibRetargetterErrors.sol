@@ -36,6 +36,10 @@ library LibRetargetterErrors {
   /// @notice Thrown when binding a fund that is not owner-whitelisted.
   error FundNotWhitelisted();
 
+  /// @notice Thrown when starting an operation while the position manager is unbound (the
+  ///         instance was abandoned by binding the zero address).
+  error PositionManagerNotBound();
+
   /// @notice Thrown when using a flash-loan module that is not owner-whitelisted.
   error ModuleNotWhitelisted();
 
@@ -68,9 +72,18 @@ library LibRetargetterErrors {
   /// @param target The position manager's target LTV (WAD)
   error AboveTargetLtv(uint256 ltvAfter, uint256 ltvBefore, uint256 target);
 
-  /// @notice Thrown when a rebalance leaves a single position above target without improving it.
+  /// @notice Thrown when a rebalance leaves a single position above target while worsening it.
   /// @param position The offending borrow module
   error PositionAboveTarget(address position);
+
+  /// @notice Thrown when a rebalance grows the position manager's net value while the
+  ///         operation's Request is unrepaid and short of its deadline (the growth would be
+  ///         bridge capital left in the position manager with no shares backing it, exposed
+  ///         to capture by any LP exit before the Request is repaid).
+  /// @param valueBefore The net value snapshot before the rebalance (quoted collateral minus
+  ///        debt, summed over every module including underwater ones, so it may be negative)
+  /// @param valueAfter The net value after the rebalance, under the same convention
+  error PositionValueIncreased(int256 valueBefore, int256 valueAfter);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ORDERS                           */
@@ -99,8 +112,13 @@ library LibRetargetterErrors {
   /*                        FLASH LOANS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Thrown when onFlashLoan is not called by the expected module with the expected amount.
+  /// @notice Thrown when onFlashLoan is not called by the expected module with the expected
+  ///         amount and the exact payload committed at the window open.
   error UnauthorizedFlashLoanCallback();
+
+  /// @notice Thrown when the flash-loan module has not delivered the full nominal amount
+  ///         before the callback payload runs.
+  error PrincipalNotDelivered();
 
   /// @notice Thrown when the adapter's provider callback is not called by the provider,
   ///         or no flash loan is in flight.

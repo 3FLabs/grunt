@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {BorrowOffersHarness} from "test/mock/borrow/BorrowOffersHarness.sol";
 import {LibBorrowOffers} from "src/libs/borrow/LibBorrowOffers.sol";
+import {SharesMathLib} from "src/libs/borrow/SharesMathLib.sol";
 import {LibBorrowErrors} from "src/libs/borrow/LibBorrowErrors.sol";
 import {IBorrowOffers, Offer} from "src/interfaces/borrow/IBorrowOffers.sol";
 import {MAX_OFFERS} from "src/libs/borrow/LibBorrowOffersConstants.sol";
@@ -24,6 +25,8 @@ import {ORACLE_PRICE_SCALE} from "lib/morpho-blue/src/libraries/ConstantsLib.sol
 ///      scenarios that a bounded invariant run might not reliably hit (e.g. exactly filling the
 ///      slab, then revoking and recycling specific ids).
 contract LibBorrowOffersTest is Test {
+  using SharesMathLib for uint256;
+
   BorrowOffersHarness internal h;
 
   /// @dev Fixed veto window applied to every inserted offer (the timelock configuration itself
@@ -418,6 +421,66 @@ contract LibBorrowOffersTest is Test {
     _assertStructure();
   }
 
+  /// @notice An offer exactly at the bonus floor fills for a PARTIAL target: the floor is
+  ///         evaluated on the offer's whole remaining amounts, not on the rounded chunk (whose
+  ///         rounded-up share fill prices it a hair below the floor), so partitioning a target
+  ///         cannot skip the most owner-favorable admissible offer.
+  function test_consume_atFloorOffer_partialFillNotSkipped() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    // 101 collateral for 100 debt shares at unit price and exact share:asset conversion: exactly
+    // the 1% floor (excess 1 == ceil(100 * 100 / 10000)).
+    uint8 id = h.insert(address(0xA0), active, active + 30 days, 101, 100);
+    vm.warp(active + 1);
+
+    // An odd 51-atom chunk charges ceil(51 * 100 / 101) = 51 shares: evaluated per chunk it would
+    // be seizedValue 51 vs repaid 51 (not even strictly profitable) and the offer would be skipped.
+    LibBorrowOffers.ConsumeInput memory inp = _input(51, 0);
+    inp.minOfferBonusBps = 100;
+    (uint256 seized, uint256 repaid) = h.consume(inp);
+
+    assertEq(seized, 51, "at-floor offer fills the partial target");
+    assertEq(repaid, 51, "chunk shares round up");
+    assertTrue(h.isLive(id), "at-floor remainder stays live");
+    assertEq(h.slabAt(id).remainingCollateral, 50, "collateral decremented");
+    assertEq(h.slabAt(id).remainingDebtShares, 49, "debt shares decremented");
+    _assertStructure();
+  }
+
+  /// @notice A partial fill whose leftover cannot clear the profitability gate is released
+  ///         (exhausted write-back, slot freed) instead of staying in `liveBits` as a
+  ///         live-but-unfillable dust remainder until expiry or a revoke.
+  function test_consume_unusableDustRemainder_clearsSlot() public {
+    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint8 id = h.insert(address(0xA0), active, active + 30 days, 210, 100);
+    vm.warp(active + 1);
+
+    // At half the unit price the whole offer is profitable (value 105 > debt 100), but the 5-atom
+    // leftover of a 205-atom fill values to floor(5 / 2) = 2 against 2 debt atoms: no future fill
+    // from it can pass the profitability gate, so the write-back must release the slot.
+    LibBorrowOffers.ConsumeInput memory inp = _input(205, 0);
+    inp.price = ORACLE_PRICE_SCALE / 2;
+
+    vm.recordLogs();
+    (uint256 seized, uint256 repaid) = h.consume(inp);
+    assertEq(seized, 205, "target met");
+    assertEq(repaid, 98, "fill shares round up (ceil(205 * 100 / 210))");
+
+    assertFalse(h.isLive(id), "dust remainder released the slot");
+    assertEq(h.slabAt(id).proposer, address(0), "slot zeroed");
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    uint256 n;
+    for (uint256 i; i < logs.length; ++i) {
+      if (logs[i].topics[0] != IBorrowOffers.OfferConsumed.selector) continue;
+      (uint128 collFilled, uint128 sharesFilled, bool exhausted) = abi.decode(logs[i].data, (uint128, uint128, bool));
+      assertEq(collFilled, 205, "partial fill collateral reported");
+      assertEq(sharesFilled, 98, "partial fill shares reported");
+      assertTrue(exhausted, "dust release reported as exhausted");
+      ++n;
+    }
+    assertEq(n, 1, "one offer touched");
+    _assertStructure();
+  }
+
   /// @notice A slab full of EXPIRED offers self-heals: the allocator prunes expired slots before
   ///         allocating, so a new insert succeeds (recycling the lowest pruned id) instead of
   ///         reverting {TooManyOffers}, and every pruned slot is fully zeroed with `liveBits` in
@@ -614,9 +677,9 @@ contract LibBorrowOffersTest is Test {
 
     // The OfferConsumed events are the walk's own account of its fills: they must sum to the
     // returned totals, fire in ascending-price order (on the pre-consume amounts), and match the
-    // post-consume storage exactly (partial fills decrement BOTH sides; an exhausted offer had one
-    // side filled completely and its slot deleted).
-    _assertConsumedEventsMatchState(before, actSeized, actShares);
+    // post-consume storage exactly (partial fills decrement BOTH sides; an exhausted offer had a
+    // side filled completely, or its leftover failed the floor gate, and its slot deleted).
+    _assertConsumedEventsMatchState(before, inp, actSeized, actShares);
 
     // Post-consume storage consistency, offer by offer.
     uint256 seizedAccounted;
@@ -652,7 +715,14 @@ contract LibBorrowOffersTest is Test {
 
   /// @dev Decodes the recorded OfferConsumed events and asserts they agree with the pre-consume
   ///      snapshot, the post-consume storage and the returned totals (see the fuzz call site).
-  function _assertConsumedEventsMatchState(Offer[] memory before, uint256 actSeized, uint256 actShares) internal {
+  ///      `inp` supplies the walk's market snapshot, used to re-derive the floor gate for
+  ///      exhausted-by-dust-release offers.
+  function _assertConsumedEventsMatchState(
+    Offer[] memory before,
+    LibBorrowOffers.ConsumeInput memory inp,
+    uint256 actSeized,
+    uint256 actShares
+  ) internal {
     Vm.Log[] memory logs = vm.getRecordedLogs();
     uint256 sumColl;
     uint256 sumShares;
@@ -690,10 +760,11 @@ contract LibBorrowOffersTest is Test {
         assertFalse(h.isLive(uint8(id)), "exhausted offer still live");
         assertLe(collFilled, before[id].remainingCollateral, "fill exceeds offered collateral");
         assertLe(sharesFilled, before[id].remainingDebtShares, "fill exceeds offered debt shares");
-        assertTrue(
-          collFilled == before[id].remainingCollateral || sharesFilled == before[id].remainingDebtShares,
-          "exhausted offer had neither side filled completely"
-        );
+        // An offer is released when a side was filled completely, or (dust release) when its
+        // leftover is no longer strictly profitable at the walk's snapshot.
+        if (collFilled != before[id].remainingCollateral && sharesFilled != before[id].remainingDebtShares) {
+          _assertLeftoverUnprofitable(before[id], inp, collFilled, sharesFilled);
+        }
       } else {
         assertTrue(h.isLive(uint8(id)), "partially-filled offer not live");
         assertEq(
@@ -706,6 +777,25 @@ contract LibBorrowOffersTest is Test {
     }
     assertEq(sumColl, actSeized, "event fills do not sum to seized total");
     assertEq(sumShares, actShares, "event fills do not sum to repaid total");
+  }
+
+  /// @dev Asserts a dust-released offer's leftover fails strict profitability (a zero floor) at
+  ///      the walk's snapshot (the only way a partially-filled offer may be released). Separate
+  ///      frame to keep {_assertConsumedEventsMatchState} within the non-via-IR stack limits.
+  function _assertLeftoverUnprofitable(
+    Offer memory pre,
+    LibBorrowOffers.ConsumeInput memory inp,
+    uint128 collFilled,
+    uint128 sharesFilled
+  ) internal pure {
+    uint256 leftoverValue =
+      (uint256(pre.remainingCollateral) - collFilled) * inp.price / ORACLE_PRICE_SCALE;
+    uint256 leftoverDebtValue =
+      (uint256(pre.remainingDebtShares) - sharesFilled).toAssetsUp(inp.totalBorrowAssets, inp.totalBorrowShares);
+    assertFalse(
+      LibBorrowOffers.isProfitableAboveBonusFloor(leftoverValue, leftoverDebtValue, 0),
+      "released offer's leftover is still strictly profitable"
+    );
   }
 
   /// @dev Full structural integrity check (mirrors {LibBorrowOffersInvariantTest}'s invariants):

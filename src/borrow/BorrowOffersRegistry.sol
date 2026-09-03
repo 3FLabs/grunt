@@ -95,15 +95,17 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   /// @param pendingTimelock The scheduled next value (meaningful only when `pendingTimelockAt` is
   ///        non-zero).
   /// @param pendingTimelockAt When `pendingTimelock` becomes effective; 0 means no pending change.
-  /// @param minOfferBonusBpsPlusOne The collateral's minimum offer bonus, stored biased by one so
-  ///        the never-set state is distinguishable from an explicit disable: 0 means never set
-  ///        (reads `DEFAULT_MIN_OFFER_BONUS_BPS`); any other value reads `value - 1` (so an
-  ///        explicit 0, stored as 1, disables the floor).
+  /// @param minOfferBonusBps The collateral's minimum offer bonus; meaningful only when
+  ///        `minOfferBonusSet` is true.
+  /// @param minOfferBonusSet Whether the bonus was ever explicitly configured. False reads
+  ///        `DEFAULT_MIN_OFFER_BONUS_BPS`, which keeps the never-set state distinct from an
+  ///        explicit 0 (an intentional disable of the floor).
   struct OfferConfig {
     uint40 offerTimelock;
     uint40 pendingTimelock;
     uint40 pendingTimelockAt;
-    uint16 minOfferBonusBpsPlusOne;
+    uint16 minOfferBonusBps;
+    bool minOfferBonusSet;
   }
 
   /// @notice Storage struct for the registry: the per-collateral offer configurations.
@@ -171,8 +173,8 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   }
 
   /// @inheritdoc IBorrowOffersRegistry
-  function checkCanRevokeOffer(address account) external view override {
-    _checkHasRolesOrOwner(account, GUARDIAN_ROLE);
+  function canRevokeOffer(address account) external view override returns (bool) {
+    return hasAnyRole(account, GUARDIAN_ROLE) || account == owner();
   }
 
   /// @dev Reverts with Solady's `Unauthorized` unless `account` holds any of `roles` or is the
@@ -210,14 +212,15 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
   }
 
   /// @inheritdoc IBorrowOffersRegistry
-  /// @dev Stored biased by one (see {OfferConfig.minOfferBonusBpsPlusOne}), so an explicit set,
-  ///      including an explicit 0 (disable), is distinguishable from the never-set state that
-  ///      reads `DEFAULT_MIN_OFFER_BONUS_BPS`. The bias cannot overflow: the bound is checked
-  ///      first and `MAX_MIN_OFFER_BONUS_BPS + 1` fits `uint16`.
+  /// @dev Sets the `minOfferBonusSet` flag alongside the value (see {OfferConfig}), so an explicit
+  ///      set, including an explicit 0 (disable), is distinguishable from the never-set state that
+  ///      reads `DEFAULT_MIN_OFFER_BONUS_BPS`.
   function setMinOfferBonus(address collateral, uint16 minOfferBonusBps) external override onlyOwner {
     collateral.checkNotZero();
     if (minOfferBonusBps > MAX_MIN_OFFER_BONUS_BPS) revert LibBorrowErrors.MinOfferBonusOutOfRange();
-    _registryStorage().configs[collateral].minOfferBonusBpsPlusOne = minOfferBonusBps + 1;
+    OfferConfig storage config = _registryStorage().configs[collateral];
+    config.minOfferBonusBps = minOfferBonusBps;
+    config.minOfferBonusSet = true;
     emit MinOfferBonusSet(collateral, minOfferBonusBps);
   }
 
@@ -265,8 +268,7 @@ contract BorrowOffersRegistry is IBorrowOffersRegistry, Initializable, OwnableRo
         ? config.pendingTimelock
         : config.offerTimelock
     );
-    uint16 storedBonus = config.minOfferBonusBpsPlusOne;
-    minOfferBonusBps = storedBonus == 0 ? DEFAULT_MIN_OFFER_BONUS_BPS : storedBonus - 1;
+    minOfferBonusBps = config.minOfferBonusSet ? config.minOfferBonusBps : DEFAULT_MIN_OFFER_BONUS_BPS;
   }
 
   /// @inheritdoc IBorrowOffersRegistry

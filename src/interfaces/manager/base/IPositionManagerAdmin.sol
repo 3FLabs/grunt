@@ -101,25 +101,31 @@ interface IPositionManagerAdmin {
   /// @dev Before updating the fee configuration, this function must accrue and allocate any pending
   ///      fee shares to the current fee recipient. This ensures that the previous fee recipient receives
   ///      all fees that have accrued up to the point of the update. Only callable by the owner.
-  /// @param feeRecipient The address that will receive fee payments going forward
+  /// @param feeRecipient The address that will receive fee payments going forward. When this
+  ///        manager is operated through a Facility, this must not be that Facility: its balance
+  ///        snapshots would attribute fee shares minted during the operation to the active intent.
   /// @param managementFee The management fee rate in basis points per 365 days (e.g., 200 = 2% per year),
   ///        charged on the aggregate collateral of non-bad-debt positions (not on NAV).
   /// @param performanceFee The performance fee rate in basis points (e.g., 2000 = 20%), charged on the
-  ///        levered-slice basis `LTV_prev * currentCollat - currentDebt`, less the management fees
-  ///        charged since the reference last advanced. See `FeeData` in `LibStorage` for the full derivation.
+  ///        levered-slice basis `LTV_ref * currentCollat - currentDebt`, less the management fees
+  ///        charged and not yet netted against a crystallized basis. `LTV_ref` is the LTV implied by
+  ///        the performance reference (`lastDebt / lastCollat`) and is unrelated to the withdrawal
+  ///        buffer LTV set by {setLtv}: it is not configured, it advances only when a fee
+  ///        crystallizes. See `FeeData` in `LibStorage` for the full derivation.
   function setFeeData(address feeRecipient, uint24 managementFee, uint24 performanceFee) external;
 
   /// @notice Force-advances the performance reference (high-water mark) to the current state.
   /// @dev Only callable by the owner. Escape hatch for a permanent drawdown or a realized
   ///      liquidation loss: the held reference would otherwise suppress performance fees until the
   ///      pool recovers past the old mark, which may never happen. Fees accrue first, so a positive
-  ///      pending basis crystallizes to the current recipient at the configured rate; the reset
+  ///      pending basis crystallizes to the current recipient at the configured rate (a held
+  ///      entitlement that rounds to zero fee shares is forgiven without minting); the reset
   ///      itself never charges past gains, it forgives the carried negative basis and future gains
   ///      are charged from the current state onward.
   ///
   ///      The reset starts a fresh fee period: the held management fee accumulator (management
-  ///      fees charged since the reference last advanced, normally deducted from the next positive
-  ///      basis) is cleared as well.
+  ///      fees charged and not yet netted against a crystallized basis, normally deducted from
+  ///      the next positive basis) is cleared as well.
   ///
   ///      Timing: the reset writes off ALL carried basis, including the debt interest accrued
   ///      since the last crystallization (not just the loss being accepted), plus the pending

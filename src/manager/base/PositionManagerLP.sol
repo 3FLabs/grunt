@@ -166,14 +166,16 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     bool skipLtvCheck = _storage.withdrawalQueue.length == _storage.borrowModules.length();
     _storage.processWithdrawal(collateral, debt, strategy, !skipLtvCheck);
 
+    // Rebase the performance reference across the flow so the exiting shares take their
+    // proportional slice of any carried pending basis with them. Rebased before the outgoing
+    // transfer so a token callback cannot move module state into the new reference; the
+    // transfer itself changes nothing the rebase reads (module aggregates only).
+    _rebaseReference(totalAssetsBefore, debtBefore, _totalSupply);
+
     // Send collateral to caller
     if (collateral > 0) {
       _storage.metadata.collateralAsset.safeTransfer(msg.sender, collateral);
     }
-
-    // Rebase the performance reference across the flow so the exiting shares take their
-    // proportional slice of any carried pending basis with them.
-    _rebaseReference(totalAssetsBefore, debtBefore, _totalSupply);
 
     emit Burn(msg.sender, shares, collateral, debt);
   }
@@ -230,8 +232,8 @@ abstract contract PositionManagerLP is IPositionManagerLP, PositionManagerBase {
     }
     // If sharesToMint rounds to 0 or assets are equal, sharesDelta remains 0
 
-    // Rebase the performance reference across the flow (preserves the pending per-share basis
-    // instead of resetting it, so accrued debt carry survives deposits and withdrawals).
+    // Rebase the performance reference across the flow (preserves the pending basis, so
+    // accrued debt carry and any held entitlement survive the flow).
     _storage.rebaseSnapshot(
       totalAssetsBefore + debtBefore, debtBefore, _totalSupply, collatAfter, debtAfter, ERC20.totalSupply()
     );

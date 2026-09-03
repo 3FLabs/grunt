@@ -146,6 +146,11 @@ contract PositionManager is
     (amount,,,) = LibStorage.positionManagerStorage().totalAssets();
   }
 
+  /// @inheritdoc IPositionManager
+  function hasBadDebt() public view nonReadReentrant returns (bool flag) {
+    (,,, flag) = LibStorage.positionManagerStorage().totalAssets();
+  }
+
   /// @inheritdoc ERC20
   /// @dev Reverts via {nonReadReentrant} when read during a deposit/withdraw/burn so external
   ///      integrators cannot observe a stale supply against a freshly-mutated NAV.

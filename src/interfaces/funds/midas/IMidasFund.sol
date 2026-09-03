@@ -254,7 +254,7 @@ interface IMidasFund is IFund {
   function setRedemptionVault(address redemptionVault_) external;
 
   /// @notice Sets the bond configuration for the Repay-and-Redeem flow.
-  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED), so the bond terms are stable
   ///      for an order's life.
   ///      Reverts with InvalidBondConfig if the amount is zero or greater than MAX_BOND_AMOUNT
@@ -266,7 +266,7 @@ interface IMidasFund is IFund {
   function setBondConfig(BondConfig calldata bondConfig_) external;
 
   /// @notice Removes the bond configuration (no bond payment required).
-  /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner, and only
+  /// @dev Can only be called by an account with the OPERATOR_ROLE or the owner, and only
   ///      while no order is live (internal state EMPTY or ENDED). Subsequent redeem orders
   ///      still follow the two-leg bond flow, but their bond leg moves nothing; the
   ///      unlockInstantRedeem() confirmation is required regardless.
@@ -282,6 +282,10 @@ interface IMidasFund is IFund {
   /// @notice Sets the mToken/USD oracle.
   /// @dev Can be called by the owner or an account with OPERATOR_ROLE, including while an order
   ///      is live. The oracle must be a contract exposing 8-decimal AggregatorV3 data.
+  ///      `_getOraclePrice` rejects non-positive answers, incomplete rounds, and stale rounds
+  ///      (`answeredInRound < roundId`), but completed rounds have no maximum-age check. Operators
+  ///      must monitor feed freshness and rotate a halted feed because its price drives deposit
+  ///      validation and `totalAssets()`.
   /// @param oracle_ The new oracle address.
   function setOracle(address oracle_) external;
 

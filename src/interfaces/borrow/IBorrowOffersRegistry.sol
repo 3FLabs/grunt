@@ -49,11 +49,13 @@ interface IBorrowOffersRegistry {
   ///      a role, so an ownership handover never leaves the new owner without powers.
   function checkCanCreateOffer(address account) external view;
 
-  /// @notice Reverts unless `account` may revoke offers (a guardian, or the registry owner): the
-  ///         veto power inside the timelock window, and the kill switch for a bad standing offer.
-  /// @dev The authorization check used by {MorphoBorrowPosition.revokeOffers}; reverts with
-  ///      Solady's `Unauthorized()`.
-  function checkCanRevokeOffer(address account) external view;
+  /// @notice Returns whether `account` may revoke any offer regardless of its proposer (a
+  ///         guardian, or the registry owner): the veto power inside the timelock window, and the
+  ///         kill switch for a bad standing offer.
+  /// @dev Read once per batch by {MorphoBorrowPosition.revokeOffers}, which enforces the
+  ///      per-offer proposer check itself for callers without this power. A boolean read rather
+  ///      than a reverting check: a proposer revoking its own offer is authorized without it.
+  function canRevokeOffer(address account) external view returns (bool);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       CONFIGURATION                        */
@@ -63,7 +65,8 @@ interface IBorrowOffersRegistry {
   /// @dev The change is itself timelocked: it becomes effective only after the collateral's
   ///      *current* effective timelock elapses (at least `MIN_OFFER_TIMELOCK`, since effective
   ///      timelocks are floored to it). `timelock` must be within
-  ///      `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
+  ///      `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`. It affects future proposals only; existing
+  ///      offers keep the `activeAt` timestamp fixed when they were proposed.
   function setOfferTimelock(address collateral, uint40 timelock) external;
 
   /// @notice Sets the minimum offer bonus for `collateral`, in basis points. Gated to the

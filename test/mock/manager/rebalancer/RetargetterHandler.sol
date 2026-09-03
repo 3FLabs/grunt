@@ -11,12 +11,14 @@ import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {Order, Mode} from "src/libs/funds/Order.sol";
 import {IRequest} from "src/interfaces/request/IRequest.sol";
 import {ITokenController} from "src/interfaces/request/ITokenController.sol";
-import {YieldEstimates} from "src/interfaces/manager/rebalancer/IRetargetter.sol";
+import {YieldEstimates, RetargetterConfig} from "src/interfaces/manager/rebalancer/IRetargetter.sol";
+import {IRetargetterQuoter} from "src/interfaces/manager/rebalancer/IRetargetterQuoter.sol";
 import {
   RebalancingData,
   RebalancingOperation,
   RebalancingOperationType
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /// @title RetargetterHandler
 /// @notice Foundry invariant-test handler driving the Retargetter through bounded, fuzz-driven
@@ -28,6 +30,8 @@ import {
 ///      target call in try/catch so the fuzzer explores freely (fail_on_revert = false).
 ///      Ghost variables record cross-call facts the invariant suite asserts afterwards.
 contract RetargetterHandler is Test {
+  using FixedPointMathLib for uint256;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -109,11 +113,20 @@ contract RetargetterHandler is Test {
   ///         strictly improving on its before snapshot.
   bool public directionViolated;
 
+  /// @notice Set if a successful rebalance grew the position manager's totalAssets while the
+  ///         operation's Request was unsettled (no repay or forceRepay yet, the shape that
+  ///         arms the value-conservation gate; deadline expiry never disarms it).
+  bool public valueConservationViolated;
+
   /// @notice Set if any SYNC attempt (successful or reverted) left persistent state behind.
   bool public syncStatePersisted;
 
   /// @dev The recorded startedAt of the current operation (0 while unset or inactive).
   uint40 internal ghostStartedAt;
+
+  /// @dev Whether the current operation's Request was settled through repay or forceRepay,
+  ///      the only two paths that disarm the value-conservation gate; reset at every start.
+  bool internal requestSettled;
 
   /// @dev Fresh-salt counter (funds archive ended order ids, so salts are never reused).
   uint256 internal saltCounter;
@@ -164,8 +177,10 @@ contract RetargetterHandler is Test {
   /*                      GHOST TRACKING                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @dev Checks before and after every action that the active operation's startedAt never
-  ///      changes once recorded nonzero; resets the recording when the operation resolves.
+  /// @dev Checks before and after every action that the active operation's startedAt only
+  ///      ever moves in the two permitted ways: it never changes while the operation carries
+  ///      an obligation, and it rewinds to zero only when the operation is economically empty
+  ///      (no PT, no YT, no pending authorization). It resets the recording on resolve.
   modifier trackStartedAt() {
     _checkStartedAt();
     _;
@@ -178,12 +193,33 @@ contract RetargetterHandler is Test {
       ghostStartedAt = 0;
       return;
     }
-    (,,, uint40 startedAt,,,,) = retargetter.operation();
-    if (ghostStartedAt == 0) {
+    (, address request,, uint40 startedAt,,,,,,,) = retargetter.operation();
+    if (startedAt == 0) {
+      // A zero origin is legitimate before the clock starts and after a rewind, but a rewind
+      // may only happen once the operation is empty; a zero origin against live obligation
+      // would mean the clock was reset while a loan was outstanding
+      if (ghostStartedAt != 0 && !_operationEmpty(request)) startedAtMutated = true;
+      ghostStartedAt = 0;
+    } else if (ghostStartedAt == 0) {
       ghostStartedAt = startedAt;
     } else if (startedAt != ghostStartedAt) {
+      // Moved from one nonzero origin straight to another without rewinding through zero: an
+      // outstanding loan clock was repriced
       startedAtMutated = true;
     }
+  }
+
+  /// @dev Whether the operation carries no obligation: no PT supply, no YT supply and no
+  ///      account holding a live mint authorization.
+  function _operationEmpty(address request) internal view returns (bool) {
+    (uint128 ptSupply, uint128 ytSupply) = ITokenController(request).totalSupplies();
+    if (ptSupply != 0 || ytSupply != 0) return false;
+    address[] memory accounts = retargetter.authorizedAccounts();
+    for (uint256 i; i < accounts.length; ++i) {
+      (uint128 ptAmount, uint128 ytAmount) = IRequest(request).mintAuthorization(accounts[i]);
+      if (ptAmount != 0 || ytAmount != 0) return false;
+    }
+    return true;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -194,7 +230,7 @@ contract RetargetterHandler is Test {
   function act_startAsync(uint256 principalSeed, uint256 yieldCapSeed) external trackStartedAt {
     if (retargetter.isActive()) return;
     uint256 cap;
-    try retargetter.maxPrincipal(address(positionManager)) returns (uint256 cap_) {
+    try retargetter.maxPrincipal() returns (uint256 cap_) {
       cap = cap_;
     } catch {
       return;
@@ -203,13 +239,12 @@ contract RetargetterHandler is Test {
     // Above the 1000 bps config ceiling half the time so the min() clamp gets exercised
     uint16 yieldCap = uint16(_bound(yieldCapSeed, 0, 2000));
     vm.prank(rebalancer);
-    try retargetter.startRetargetting(
-      address(positionManager), principal, yieldCap, address(fund), REQUEST_NAME, REQUEST_SYMBOL
-    ) returns (
+    try retargetter.startRetargetting(principal, yieldCap, address(fund), REQUEST_NAME, REQUEST_SYMBOL) returns (
       address request
     ) {
       lastRequest = request;
       operationCount++;
+      requestSettled = false;
     } catch {}
   }
 
@@ -217,7 +252,7 @@ contract RetargetterHandler is Test {
   ///         YieldTooHigh and success paths get exercised, and a partial or full fill.
   function act_consume(uint256 amountSeed, uint256 yieldSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,, uint16 operationCap,,) = retargetter.operation();
+    (, address request,,,, uint16 operationCap,,,,,) = retargetter.operation();
 
     uint256 offerAmount = _bound(amountSeed, 1e18, 10_000e18);
     uint256 ratioBps = _bound(yieldSeed, 0, uint256(operationCap) * 2 + 100);
@@ -241,12 +276,13 @@ contract RetargetterHandler is Test {
     vm.prank(consumer);
     try retargetter.consume(offer, signature, ptAmount) {
       consumeCount++;
-      // The position manager state did not move during consume, so the live cap must still
-      // cover the whole PT supply the gate just admitted
+      // The position manager state did not move during consume, so the live cap (sized on
+      // the operation's own yield cap, as the gate does) must still cover the whole PT
+      // supply the gate just admitted
       (uint128 ptSupply,) = ITokenController(request).totalSupplies();
-      try retargetter.maxPrincipal(address(positionManager)) returns (uint256 capNow) {
-        if (uint256(ptSupply) > capNow) capViolatedAtConsume = true;
-      } catch {}
+      if (positionManager.collateralAmountQuoted() > 0 && uint256(ptSupply) > _gateCap(operationCap)) {
+        capViolatedAtConsume = true;
+      }
     } catch {}
   }
 
@@ -254,7 +290,7 @@ contract RetargetterHandler is Test {
   ///         around both caps so every gate and the revocation path get exercised.
   function act_authorizeMinting(uint256 amountSeed, uint256 yieldSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,, uint16 operationCap,,) = retargetter.operation();
+    (, address request,,,, uint16 operationCap,,,,,) = retargetter.operation();
     if (request == address(0)) return;
 
     uint128 ptAmount = uint128(_bound(amountSeed, 0, 10_000e18));
@@ -265,18 +301,21 @@ contract RetargetterHandler is Test {
     try retargetter.authorizeMinting(brokerAddr, ptAmount, ytAmount) {
       if (ptAmount == 0 && ytAmount == 0) return;
       // The position did not move during the call, so the committed principal the gate just
-      // admitted must still fit under the live cap
+      // admitted must still fit under the live cap sized on the operation's own yield cap
       (uint128 ptSupply,) = ITokenController(request).totalSupplies();
-      try retargetter.maxPrincipal(address(positionManager)) returns (uint256 capNow) {
-        if (uint256(ptSupply) + _outstandingAuthorizedPt(request) > capNow) capViolatedAtAuthorize = true;
-      } catch {}
+      if (
+        positionManager.collateralAmountQuoted() > 0
+          && uint256(ptSupply) + _outstandingAuthorizedPt(request) > _gateCap(operationCap)
+      ) {
+        capViolatedAtAuthorize = true;
+      }
     } catch {}
   }
 
   /// @notice The broker funds and mints whatever authorization it currently holds.
   function act_mintAuthorized() external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,,) = retargetter.operation();
+    (, address request,,,,,,,,,) = retargetter.operation();
     if (request == address(0)) return;
     (uint128 ptAuth,) = IRequest(request).mintAuthorization(brokerAddr);
     if (ptAuth == 0) return;
@@ -286,6 +325,38 @@ contract RetargetterHandler is Test {
     debtToken.approve(request, ptAuth);
     try IRequest(request).mint(type(uint128).max, 0) {} catch {}
     vm.stopPrank();
+  }
+
+  /// @dev The gate-side principal cap for an operation carrying `yieldCapBps`, mirroring
+  ///      Retargetter._maxPrincipal: the buffered ideal principal capped, below target, by
+  ///      the quoter's one-trip repayment bound sized on that yield cap. The gates size on
+  ///      the operation's own cap, so the invariants must compare against this rather than
+  ///      the config-ceiling view maxPrincipal.
+  function _gateCap(uint16 yieldCapBps) internal view returns (uint256) {
+    uint256 collateralQuoted = positionManager.collateralAmountQuoted();
+    uint256 debt = positionManager.debtAmount();
+    (uint256 target,) = positionManager.config();
+    RetargetterConfig memory config_ = retargetter.config();
+    address quoter = retargetter.quoter();
+    YieldEstimates memory e = config_.estimates;
+    uint256 principal = IRetargetterQuoter(quoter)
+      .retargetPrincipal(
+        collateralQuoted,
+        debt,
+        target,
+        e.requestYieldRate,
+        e.borrowRate,
+        e.collateralYieldRate,
+        e.subscriptionDuration,
+        e.redemptionDuration
+      );
+    uint256 buffered = principal * (BPS + config_.principalBufferBps) / BPS;
+    if (debt.divWad(collateralQuoted) >= target) return buffered;
+    uint256 oneTrip = IRetargetterQuoter(quoter)
+      .ltvUpOneTripPrincipal(
+        collateralQuoted, debt, target, yieldCapBps, e.borrowRate, e.collateralYieldRate, e.subscriptionDuration
+      );
+    return buffered < oneTrip ? buffered : oneTrip;
   }
 
   /// @dev Sums the still-unminted authorized principal over the registered accounts, the same
@@ -301,7 +372,7 @@ contract RetargetterHandler is Test {
   /// @notice Pulls consumed funds from the Request, bounded by its balance.
   function act_pull(uint256 amountSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,,) = retargetter.operation();
+    (, address request,,,,,,,,,) = retargetter.operation();
     uint256 requestBalance = debtToken.balanceOf(request);
     if (requestBalance == 0) return;
     uint256 amount = _bound(amountSeed, 1, requestBalance);
@@ -313,13 +384,15 @@ contract RetargetterHandler is Test {
   function act_repay() external trackStartedAt {
     if (!retargetter.isActive()) return;
     vm.prank(rebalancer);
-    try retargetter.repay() {} catch {}
+    try retargetter.repay() {
+      requestSettled = true;
+    } catch {}
   }
 
   /// @notice Resolves the operation; on success records the settlement-gate ghosts.
   function act_resolve() external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,,) = retargetter.operation();
+    (, address request,,,,,,,,,) = retargetter.operation();
     vm.prank(rebalancer);
     try retargetter.resolve() {
       sawResolve = true;
@@ -337,7 +410,9 @@ contract RetargetterHandler is Test {
     if (!retargetter.isActive()) return;
     uint256 amount = _bound(amountSeed, 0, debtToken.balanceOf(address(retargetter)));
     vm.prank(owner);
-    try retargetter.forceRepay(amount, 0, type(uint256).max) {} catch {}
+    try retargetter.forceRepay(amount, 0, type(uint256).max) {
+      requestSettled = true;
+    } catch {}
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -348,7 +423,7 @@ contract RetargetterHandler is Test {
   ///         input token when it holds any (otherwise an arbitrary size that will fail commit).
   function act_createOrder(bool redeem, uint256 inputSeed) external trackStartedAt {
     if (!retargetter.isActive()) return;
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     if (orderLive) return;
     Mode mode = redeem ? Mode.REDEEM : Mode.DEPOSIT;
     uint256 available =
@@ -441,11 +516,29 @@ contract RetargetterHandler is Test {
 
     (uint256 target,) = positionManager.config();
     uint256 ltvBefore = _positionManagerLtv();
+    bool bridgeOutstanding = _bridgeOutstanding();
+    int256 valueBefore = _positionValue();
     vm.prank(rebalancer);
     try retargetter.rebalance(data) {
       uint256 ltvAfter = _positionManagerLtv();
       if (ltvAfter > target && ltvAfter >= ltvBefore) directionViolated = true;
+      if (bridgeOutstanding && _positionValue() > valueBefore) valueConservationViolated = true;
     } catch {}
+  }
+
+  /// @dev Whether the operation's Request exists and was not settled through repay or
+  ///      forceRepay, the shape that arms the rebalance value-conservation gate; deadline
+  ///      expiry deliberately never disarms the model.
+  function _bridgeOutstanding() internal view returns (bool) {
+    (, address request,,,,,,,,,) = retargetter.operation();
+    return request != address(0) && !requestSettled;
+  }
+
+  /// @dev Net value of the whole position, underwater modules included (the position
+  ///      manager's totalAssets drops those, and would read flat while value is poured into
+  ///      one).
+  function _positionValue() internal view returns (int256) {
+    return int256(positionManager.collateralAmountQuoted()) - int256(positionManager.debtAmount());
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -459,7 +552,7 @@ contract RetargetterHandler is Test {
     if (retargetter.isActive()) return;
     uint256 shape = _bound(uint256(shapeSeed), 0, 2);
     uint256 cap;
-    try retargetter.maxPrincipal(address(positionManager)) returns (uint256 cap_) {
+    try retargetter.maxPrincipal() returns (uint256 cap_) {
       cap = cap_;
     } catch {
       return;
@@ -490,7 +583,7 @@ contract RetargetterHandler is Test {
     }
 
     vm.prank(rebalancer);
-    try retargetter.startSyncRetargetting(address(positionManager), flashLoanAdapter, amount, address(fund), calls) {
+    try retargetter.startSyncRetargetting(flashLoanAdapter, amount, address(fund), calls) {
       syncSuccessCount++;
     } catch {}
 
@@ -545,7 +638,7 @@ contract RetargetterHandler is Test {
 
   /// @dev Whether the Retargetter currently stores a live order.
   function _orderLive() internal view returns (bool orderLive) {
-    (,,,,,,, orderLive) = retargetter.operation();
+    (,,,,,,,,,, orderLive) = retargetter.operation();
   }
 
   /// @dev Current owed amount of the active operation, zero when the view reverts.

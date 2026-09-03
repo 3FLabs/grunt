@@ -461,6 +461,19 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     assertEq(positionManager.totalAssets(), expected, "PM-10: totalAssets broken after liquidation");
   }
 
+  /// @notice PM-12: Fee conservation. The cumulative value of fee shares at mint never
+  ///         exceeds the maximum rates applied to what could legitimately be charged: the
+  ///         performance rate on NAV gains observed outside capital flows, plus the
+  ///         management rate on quoted collateral over the settled accrual intervals.
+  ///         Capital flows alone can therefore never fund a fee; a violation means principal
+  ///         was charged (the Cantina #32 follow-up class). The 2x factor covers the share
+  ///         conversion against the fee-adjusted base, which can value a mint at up to twice
+  ///         the underlying fee assets; the flat term absorbs per-action rounding dust.
+  function invariant_feeConservation() public view {
+    uint256 allowance = handler.ghostGainObserved() * MAX_PERFORMANCE_FEE / 10_000 + handler.ghostMgmtAllowance();
+    assertLe(handler.ghostFeeMintedValue(), 2 * allowance + 1e18, "PM-12: fee minted beyond observable gains");
+  }
+
   /// @notice PM-11: Unauthorized WrappedAsset operations never succeed.
   /// @dev Verifies that:
   ///      a) External actors without SENDER_ROLE cannot transfer WrappedAsset.

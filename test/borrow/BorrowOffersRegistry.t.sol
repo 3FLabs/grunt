@@ -162,37 +162,34 @@ contract BorrowOffersRegistryTest is Test {
     registry.checkCanCreateOffer(proposer);
   }
 
-  function test_CheckCanRevokeOffer_GuardianRoundTrip() public {
-    // Not a guardian yet: rejected
-    vm.expectRevert(Unauthorized.selector);
-    registry.checkCanRevokeOffer(guardian);
+  function test_CanRevokeOffer_GuardianRoundTrip() public {
+    // Not a guardian yet: no revoke power
+    assertFalse(registry.canRevokeOffer(guardian), "non-guardian should have no revoke power");
 
-    // Enabled: passes (no revert)
+    // Enabled: revoke power granted
     vm.prank(owner);
     registry.setGuardian(guardian, true);
-    registry.checkCanRevokeOffer(guardian);
+    assertTrue(registry.canRevokeOffer(guardian), "guardian should have revoke power");
     assertTrue(registry.hasAnyRole(guardian, registry.GUARDIAN_ROLE()), "guardian role bit should be set");
 
-    // Disabled again: rejected
+    // Disabled again: revoke power revoked
     vm.prank(owner);
     registry.setGuardian(guardian, false);
-    vm.expectRevert(Unauthorized.selector);
-    registry.checkCanRevokeOffer(guardian);
+    assertFalse(registry.canRevokeOffer(guardian), "removed guardian should lose revoke power");
   }
 
   function test_Checks_OwnerPassesWithoutRoles() public view {
     // The owner is authorized by derivation, without holding any role bit
     assertEq(registry.rolesOf(owner), 0, "owner should hold no explicit role");
     registry.checkCanCreateOffer(owner);
-    registry.checkCanRevokeOffer(owner);
+    assertTrue(registry.canRevokeOffer(owner), "owner should have revoke power by derivation");
   }
 
   function test_Checks_StrangerRejected() public {
     vm.expectRevert(Unauthorized.selector);
     registry.checkCanCreateOffer(stranger);
 
-    vm.expectRevert(Unauthorized.selector);
-    registry.checkCanRevokeOffer(stranger);
+    assertFalse(registry.canRevokeOffer(stranger), "stranger should have no revoke power");
   }
 
   function test_Checks_RoleSeparation() public {
@@ -201,9 +198,8 @@ contract BorrowOffersRegistryTest is Test {
     registry.setGuardian(guardian, true);
     vm.stopPrank();
 
-    // A proposer cannot revoke offers
-    vm.expectRevert(Unauthorized.selector);
-    registry.checkCanRevokeOffer(proposer);
+    // A proposer holds no batch-wide revoke power (it may still revoke its own offers)
+    assertFalse(registry.canRevokeOffer(proposer), "proposer should have no revoke power");
 
     // A guardian cannot create offers
     vm.expectRevert(Unauthorized.selector);
@@ -525,13 +521,12 @@ contract BorrowOffersRegistryTest is Test {
 
     // The new owner is authorized by derivation
     registry.checkCanCreateOffer(newOwner);
-    registry.checkCanRevokeOffer(newOwner);
+    assertTrue(registry.canRevokeOffer(newOwner), "new owner should have revoke power");
 
     // The old owner has no lingering powers
     vm.expectRevert(Unauthorized.selector);
     registry.checkCanCreateOffer(owner);
-    vm.expectRevert(Unauthorized.selector);
-    registry.checkCanRevokeOffer(owner);
+    assertFalse(registry.canRevokeOffer(owner), "old owner should lose revoke power");
 
     vm.prank(owner);
     vm.expectRevert(Unauthorized.selector);

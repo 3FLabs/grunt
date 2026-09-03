@@ -84,7 +84,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   ///         transaction scoping and a RetargetterSync unit test probes the in-window shape.
   function invariant_oneOperationAtATime() public view {
     if (!retargetter.isActive()) return;
-    (, address request, address operationFund,,,,,) = retargetter.operation();
+    (, address request, address operationFund,,,,,,,,) = retargetter.operation();
     assertTrue(request != address(0), "RT-1: active operation without a Request");
     assertTrue(operationFund != address(0), "RT-1: active operation without a fund");
     assertTrue(retargetter.isFund(operationFund), "RT-1: active operation's fund not whitelisted");
@@ -99,7 +99,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
     if (retargetter.isActive()) return;
     assertEq(collateralToken.balanceOf(address(retargetter)), 0, "RT-2: collateral at rest while inactive");
     assertEq(debtToken.balanceOf(address(retargetter)), 0, "RT-2: debt at rest while inactive");
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     assertFalse(orderLive, "RT-2: stored order survived while inactive");
   }
 
@@ -114,21 +114,23 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   ///         cap means a delayed repayment can never draw more than the approved yield.
   function invariant_owedNeverExceedsPtPlusYt() public view {
     if (!retargetter.isActive()) return;
-    (, address request,,,,,,) = retargetter.operation();
+    (, address request,,,,,,,,,) = retargetter.operation();
     (uint128 ptSupply, uint128 ytSupply) = ITokenController(request).totalSupplies();
     assertLe(retargetter.owed(), uint256(ptSupply) + uint256(ytSupply), "RT-4: owed exceeds pt + yt");
   }
 
-  /// @notice RT-5: The loan clock origin is monotone: once startedAt is nonzero for the
-  ///         current operation it never changes (later consumes accrue from the same origin).
-  function invariant_startedAtMonotone() public view {
-    assertFalse(handler.startedAtMutated(), "RT-5: startedAt changed after the first consume");
+  /// @notice RT-5: The loan clock origin is stable while a loan is outstanding: once nonzero
+  ///         it never moves to a different nonzero value (later consumes accrue from the same
+  ///         origin), and it rewinds to zero only when the operation is economically empty
+  ///         (no PT, no YT, no pending authorization), reopening the consumption window.
+  function invariant_startedAtStableOrRewound() public view {
+    assertFalse(handler.startedAtMutated(), "RT-5: startedAt moved while a loan was outstanding");
   }
 
   /// @notice RT-6: A live stored order implies an active ASYNC operation: flash-loan windows
   ///         are transaction-scoped and never leak a live order across transactions.
   function invariant_orderLiveImpliesActive_orWindow() public view {
-    (,,,,,,, bool orderLive) = retargetter.operation();
+    (,,,,,,,,,, bool orderLive) = retargetter.operation();
     if (orderLive) assertTrue(retargetter.isActive(), "RT-6: live order without an active operation");
   }
 
@@ -157,5 +159,15 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
   ///         never exceeds the live cap at the moment an authorization is granted.
   function invariant_authorizeRespectsLiveCap() public view {
     assertFalse(handler.capViolatedAtAuthorize(), "RT-10: authorize admitted committed principal above the live cap");
+  }
+
+  /// @notice RT-11: Bridge value conservation: no successful rebalance grew the position
+  ///         manager's totalAssets while the operation's Request was unsettled (no repay or
+  ///         forceRepay yet; deadline expiry does not count as settlement; recorded by the
+  ///         handler around every act_rebalance).
+  function invariant_bridgeValueConservation() public view {
+    assertFalse(
+      handler.valueConservationViolated(), "RT-11: rebalance grew totalAssets while the bridge was outstanding"
+    );
   }
 }

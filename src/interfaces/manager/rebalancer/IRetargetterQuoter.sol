@@ -90,6 +90,37 @@ interface IRetargetterQuoter {
     uint256 duration
   ) external pure returns (uint256 principal, uint256 collateralToFreeQuoted);
 
+  /// @notice Computes the one-trip repayment bound of an LTV-up operation.
+  /// @dev The largest principal whose worst permitted repayment (the principal plus the full
+  ///      flat yield cap) can still be borrowed at target once the subscription has landed as
+  ///      collateral: `P * (1 + yieldCap) <= targetLtv * (K * (1 + Yc) + P) - D * (1 + Rb)`.
+  ///      Same accrual terms as `ltvUpPrincipal`, with the bridge yield estimate replaced
+  ///      by the flat cap because repayment prices actual YT supply, not the estimate.
+  ///      The bound is exact in integers: the collateral growth floors before the target
+  ///      applies (matching the settlement LTV check's own arithmetic) and the drifted debt
+  ///      rounds up, so the worst repayment of a bound-sized principal is always borrowable
+  ///      at target in one settlement trip.
+  ///      Returns 0 when the position is at or above target once the accruals are applied.
+  ///      Reverts with `InvalidParameters` only at a full target LTV combined with a zero
+  ///      yield cap.
+  /// @param collateralQuoted The aggregate collateral value in debt-asset units
+  /// @param debt The aggregate debt in debt-asset units
+  /// @param targetLtv The target loan-to-value ratio (WAD)
+  /// @param maxYieldBps The flat yield cap bounding the operation's YT supply (basis points)
+  /// @param borrowRate The venue borrow rate on existing debt (WAD per 365 days)
+  /// @param collateralYieldRate The collateral yield rate (WAD per 365 days)
+  /// @param duration The expected subscription settlement duration in seconds
+  /// @return principal The one-trip repayment bound in debt-asset units (rounded down)
+  function ltvUpOneTripPrincipal(
+    uint256 collateralQuoted,
+    uint256 debt,
+    uint256 targetLtv,
+    uint256 maxYieldBps,
+    uint256 borrowRate,
+    uint256 collateralYieldRate,
+    uint256 duration
+  ) external pure returns (uint256 principal);
+
   /// @notice Quantizes an elapsed loan duration to whole repayment ticks.
   /// @dev From the first second the borrower owes one full tick; the count promotes to the
   ///      next tick each time the elapsed duration passes a whole number of ticks plus the
@@ -126,17 +157,23 @@ interface IRetargetterQuoter {
 
   /// @notice Computes the settlement-time cash mismatch of an LTV-down operation under price drift.
   /// @dev The bridge repayment is fixed when the operation is sized while the redemption
-  ///      settles at the realized price; the delta is that cash mismatch. Positive means
-  ///      surplus (fold into position debt), negative means shortfall (owner-only borrow
-  ///      top-up). Shortfalls round up so a remediation sized from this value always covers
-  ///      the gap.
+  ///      settles at the realized price; the delta is that cash mismatch. The freed collateral
+  ///      was sized net of its own expected yield, so the drift is measured against the
+  ///      expected growth `1 + Yc` rather than unity: a price that moves exactly as forecast
+  ///      yields a zero delta. Positive means surplus (fold into position debt), negative
+  ///      means shortfall (owner-only borrow top-up). Shortfalls round up so a remediation
+  ///      sized from this value always covers the gap.
   /// @param principal The bridge-loan principal in debt-asset units
   /// @param requestYieldRate The bridge-loan yield rate (WAD per 365 days)
+  /// @param collateralYieldRate The collateral yield rate used when sizing (WAD per 365 days)
   /// @param duration The realized settlement duration in seconds
   /// @param priceDriftWad The settlement price ratio `rho = p1 / p0` (WAD)
   /// @return delta The signed cash mismatch in debt-asset units
-  function remediationDelta(uint256 principal, uint256 requestYieldRate, uint256 duration, uint256 priceDriftWad)
-    external
-    pure
-    returns (int256 delta);
+  function remediationDelta(
+    uint256 principal,
+    uint256 requestYieldRate,
+    uint256 collateralYieldRate,
+    uint256 duration,
+    uint256 priceDriftWad
+  ) external pure returns (int256 delta);
 }

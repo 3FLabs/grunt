@@ -13,7 +13,8 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
   function test_smoke_asyncUpHappyPath() public {
     // LTV 0.5 with target 0.7: below target, LTV-up operation
     _seedPosition(10_000e18, 5_000e18);
-    uint256 cap = retargetter.maxPrincipal(address(positionManager));
+    // The gate sizes the cap on the operation's own 1% yield cap
+    uint256 cap = _gateCap(100);
     assertGt(cap, 6_000e18, "cap sanity");
 
     address request = _startAsync(6_000e18, 100);
@@ -76,7 +77,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     );
 
     vm.prank(rebalancer);
-    retargetter.startSyncRetargetting(address(positionManager), address(flashLoanAdapter), amount, address(fund), calls);
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), amount, address(fund), calls);
 
     assertFalse(retargetter.isActive(), "no persistent operation");
     assertEq(debtToken.balanceOf(address(retargetter)), 0, "zero debt residual");
@@ -84,13 +85,14 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     assertApproxEqAbs(_currentLtv(), 6875e14, 1e14, "post LTV (11000/16000)");
   }
 
-  /// @dev Plants a stray live order directly in storage. The orderLive flag packs into the
-  ///      operation namespace's third slot at bit 168 (after the fund address and the mode);
-  ///      no reachable flow leaves it set without an active operation, so the defensive
-  ///      OrderActive guards at both start entry points need this to be exercised.
+  /// @dev Plants a stray live order directly in storage. The orderLive flag sits at bits
+  ///      8..15 of the operation namespace's third slot, behind the order mode (the fund
+  ///      address moved into the second slot); no reachable flow leaves it set without an
+  ///      active operation, so the defensive OrderActive guards at both start entry points
+  ///      need this exercised.
   function _plantStrayOrder() internal {
     bytes32 slot = bytes32(uint256(OPERATION_STORAGE_SLOT) + 2);
-    vm.store(address(retargetter), slot, bytes32(uint256(1) << 168));
+    vm.store(address(retargetter), slot, bytes32(uint256(1) << 8));
   }
 
   function test_startRetargetting_revertsOrderActiveOnStrayOrder() public {
@@ -98,7 +100,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     _plantStrayOrder();
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OrderActive.selector);
-    retargetter.startRetargetting(address(positionManager), 1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
+    retargetter.startRetargetting(1e18, 100, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
   }
 
   function test_startSyncRetargetting_revertsOrderActiveOnStrayOrder() public {
@@ -106,9 +108,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     _plantStrayOrder();
     vm.prank(rebalancer);
     vm.expectRevert(LibRetargetterErrors.OrderActive.selector);
-    retargetter.startSyncRetargetting(
-      address(positionManager), address(flashLoanAdapter), 1e18, address(fund), new bytes[](0)
-    );
+    retargetter.startSyncRetargetting(address(flashLoanAdapter), 1e18, address(fund), new bytes[](0));
   }
 
   function test_repay_zeroShortfallWhenRequestBalanceCovers() public {

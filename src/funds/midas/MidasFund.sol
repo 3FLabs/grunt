@@ -128,6 +128,10 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @param asset The payment token used for deposits and redemptions (e.g. USDC).
   /// @param wrappedShare The WrappedAsset contract that wraps the mToken.
   /// @param assetScale The factor converting asset native decimals to base-18 (10 ** (18 - decimals)).
+  ///        `uint64` and packed with `asset`: `initialize` rejects assets with more than 18
+  ///        decimals, so the value is in `[1, 1e18]` and cannot exceed `type(uint64).max`
+  ///        (~1.8e19). The two are always read together on the deposit, redeem and quoting paths,
+  ///        so the pairing turns two cold SLOADs into one.
   /// @param internalState The stored internal state; may differ from the dynamic state returned by `state()`.
   /// @param hasResolvedAmounts Whether the operator has set resolved input/output amounts via resolve().
   /// @param currentOrderId The order ID of the current (or most recent) order.
@@ -143,26 +147,32 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///        commit. Snapshot taken at create(): true for deposits, false for redeems until
   ///        unlockInstantRedeem().
   /// @param bondPaid The bond amount (in mTokens) paid for the current order; reset on create().
-  /// @param oracle The AggregatorV3-compatible mToken/USD oracle.
+  /// @param oracle The AggregatorV3-compatible mToken/USD oracle. Packed with the three
+  ///        single-byte lifecycle fields (`internalState`, `hasResolvedAmounts`,
+  ///        `instantRedeemUnlocked`): commit() writes the flags and reads the oracle in the same
+  ///        call, so they share one warm slot.
+  /// @dev Field order is layout-significant, not cosmetic: `asset`/`assetScale` and
+  ///      `oracle`/flags are grouped to share slots (18 slots -> 15). Reordering or widening any
+  ///      of them shifts every later field and breaks an already-deployed proxy.
   struct MidasFundStorage {
     address depositVault;
     address redemptionVault;
     address mToken;
     address asset;
+    uint64 assetScale;
     address wrappedShare;
-    uint256 assetScale;
+    address oracle;
     State internalState;
     bool hasResolvedAmounts;
+    bool instantRedeemUnlocked;
     bytes32 currentOrderId;
     bytes32 referrerId;
     uint256 requestId;
     uint256 resolvedInput;
     uint256 resolvedOutput;
-    mapping(bytes32 => bool) endedOrders;
-    BondConfig bondConfig;
-    bool instantRedeemUnlocked;
     uint256 bondPaid;
-    address oracle;
+    BondConfig bondConfig;
+    mapping(bytes32 => bool) endedOrders;
   }
 
   /// @dev Storage slot for the MidasFund contract's main storage struct.
@@ -232,7 +242,13 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     $.mToken = _mToken;
     $.asset = asset_;
     $.wrappedShare = wrappedShare_;
-    $.assetScale = 10 ** (_MTOKEN_DECIMALS - _assetDecimals);
+    // _assetDecimals <= 18 was checked above, so the scale is at most 1e18 and fits uint64.
+    $.assetScale = uint64(10 ** (_MTOKEN_DECIMALS - _assetDecimals));
+
+    // Mirrors the {OracleUpdated} that _setOracle emits below, so the vault binding is readable
+    // from the same event stream as every later {setDepositVault} rather than only from the
+    // factory's FundCreated.
+    emit DepositVaultUpdated(depositVault_, msg.sender);
 
     _setOracle(oracle_);
 
@@ -574,7 +590,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function setBondConfig(BondConfig calldata bondConfig_) external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
+  function setBondConfig(BondConfig calldata bondConfig_) external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     if (bondConfig_.amount == 0 || bondConfig_.amount > MAX_BOND_AMOUNT || bondConfig_.recipient == address(0)) {
       revert LibFundsErrors.InvalidBondConfig();
     }
@@ -588,7 +604,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IMidasFund
-  function removeBondConfig() external override onlyOwnerOrRoles(VAULT_MANAGER_ROLE) {
+  function removeBondConfig() external override onlyOwnerOrRoles(OPERATOR_ROLE) {
     MidasFundStorage storage $ = _midasFundStorage();
     _checkNoLiveOrder($);
 
