@@ -21,9 +21,33 @@ contract LibManagerStorageHarness {
     LibStorage.positionManagerStorage().setLtv(ltv_);
   }
 
-  /// @dev Expose updateSnapshot
-  function updateSnapshot() external {
-    LibStorage.positionManagerStorage().updateSnapshot();
+  /// @dev Expose rebaseSnapshot
+  function rebaseSnapshot(
+    uint256 prevCollat,
+    uint256 prevDebt,
+    uint256 prevSupply,
+    uint256 newCollat,
+    uint256 newDebt,
+    uint256 newSupply
+  ) external {
+    LibStorage.positionManagerStorage().rebaseSnapshot(prevCollat, prevDebt, prevSupply, newCollat, newDebt, newSupply);
+  }
+
+  /// @dev Set the performance reference directly (lastTotalAssets, lastDebt)
+  function setReference(uint256 lastTotalAssets, uint256 lastDebt) external {
+    PositionManagerStorageData storage ps = LibStorage.positionManagerStorage();
+    ps.lastTotalAssets = lastTotalAssets;
+    ps.lastDebt = lastDebt;
+  }
+
+  /// @dev Set the held management fee accumulator directly
+  function setHeldManagementFeeAssets(uint256 value) external {
+    LibStorage.positionManagerStorage().heldManagementFeeAssets = value;
+  }
+
+  /// @dev Get heldManagementFeeAssets value
+  function getHeldManagementFeeAssets() external view returns (uint256) {
+    return LibStorage.positionManagerStorage().heldManagementFeeAssets;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -47,11 +71,16 @@ contract LibManagerStorageHarness {
 
   /// @dev Expose totalAssets (returns the NAV component only; aggregates are dropped)
   function totalAssets() external view returns (uint256 amount) {
-    (amount,,) = LibStorage.positionManagerStorage().totalAssets();
+    (amount,,,) = LibStorage.positionManagerStorage().totalAssets();
   }
 
-  /// @dev Expose the full triple-return totalAssets (NAV + non-bad-debt aggregate debt + aggregate collateral)
-  function totalAssetsAndDebt() external view returns (uint256 amount, uint256 totalDebt, uint256 totalCollateral) {
+  /// @dev Expose the full totalAssets return (NAV + non-bad-debt aggregate debt + aggregate
+  ///      collateral + bad-debt exclusion flag)
+  function totalAssetsAndDebt()
+    external
+    view
+    returns (uint256 amount, uint256 totalDebt, uint256 totalCollateral, bool hasBadDebt)
+  {
     return LibStorage.positionManagerStorage().totalAssets();
   }
 

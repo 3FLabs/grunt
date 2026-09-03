@@ -13,6 +13,7 @@ import {
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
+import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams, Position, Market} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -167,7 +168,10 @@ contract PositionManagerBaseTest is Test {
     positionManager.grantRoles(minter, _ROLE_MINTER);
 
     // Deploy MorphoBorrowPositionFactory and create positions
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    BorrowOffersRegistry offersRegistry =
+      BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    offersRegistry.initialize(owner);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho, offersRegistry);
 
     address bp1 =
       borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
@@ -259,12 +263,12 @@ contract PositionManagerBaseTest is Test {
   }
 
   function _lastTotalAssets() internal view returns (uint256) {
-    (,,, uint256 lastTotalAssets_,) = positionManager.feeData();
+    (,,, uint256 lastTotalAssets_,,) = positionManager.feeData();
     return lastTotalAssets_;
   }
 
   function _lastFeeAccrualTimestamp() internal view returns (uint256) {
-    (,,,, uint256 lastFeeAccrualTimestamp_) = positionManager.feeData();
+    (,,,, uint256 lastFeeAccrualTimestamp_,) = positionManager.feeData();
     return lastFeeAccrualTimestamp_;
   }
 

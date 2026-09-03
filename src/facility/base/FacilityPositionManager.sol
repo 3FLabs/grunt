@@ -196,7 +196,9 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
 
   /// @notice Commits all balance snapshots after a position manager operation.
   /// @dev Records balance changes for collateral, debt, and shares by comparing
-  ///      pre-operation snapshots with current balances.
+  ///      pre-operation snapshots with current balances. The share delta includes any fee shares
+  ///      minted to this Facility during the operation, so a managed PositionManager's
+  ///      `feeRecipient` must never be this Facility.
   /// @param _intent Storage pointer to the intent struct.
   /// @param id The intent id.
   /// @param collateralSnapshot Snapshot of the collateral asset balance before the operation.

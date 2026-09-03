@@ -40,6 +40,13 @@ library LibBorrowErrors {
   /// @notice Thrown when attempting to liquidate a healthy position.
   error PositionHealthy();
 
+  /// @notice Thrown when a band (offer) pre-liquidation settles without strictly lowering the
+  ///         position's LTV. The walk's pre-checks run on a snapshot of Morpho's totals; on a
+  ///         virtual-share boundary the settled totals can round a dust-sized fill into a flat or
+  ///         higher LTV, which repeated fills could walk past `liquidationLtv`, so the settled
+  ///         state is re-checked and such fills revert.
+  error LtvNotReduced();
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           LTV                              */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -70,4 +77,62 @@ library LibBorrowErrors {
 
   /// @notice Thrown when the callback is called by an address other than Morpho.
   error NotMorpho();
+
+  /// @notice Thrown when the caller of {IBorrowOffers.revokeOffers} is neither the offer's
+  ///         recorded proposer nor a registry guardian/owner. Deliberately the same selector as
+  ///         Solady's `Unauthorized()`, which the registry's own authorization checks revert
+  ///         with, so callers see one selector for every authorization failure.
+  error Unauthorized();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          OFFERS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Thrown when an offer is proposed with zero collateral or zero debt shares.
+  /// @dev Offer amounts are typed `uint128` (matching Morpho's `uint128` collateral and borrow
+  ///      totals), so the upper bound is enforced by the parameter type itself; only the
+  ///      lower-bound (> 0) needs an explicit check.
+  error OfferAmountZero();
+
+  /// @notice Thrown at proposal time when the offer is not profitable at the current price
+  ///         (`collateral value <= debt value`). This is a sanity filter only; the binding checks
+  ///         are re-evaluated at consume time (profitability per offer, de-risking per fill).
+  error OfferNotProfitable();
+
+  /// @notice Thrown at proposal time when the offer is profitable but its bonus (the excess of the
+  ///         collateral value over the debt value, as a fraction of the debt value) is below the
+  ///         admin-set minimum. Anti-griefing floor: keeps barely-profitable offers out of the
+  ///         book, where they would sort to the head and make band liquidations unattractive. The
+  ///         same floor is re-checked at consume time on the offer's whole remaining amounts,
+  ///         where a below-floor offer is skipped (not reverted with this error).
+  error OfferBonusTooLow();
+
+  /// @notice Thrown when an offer's `expiresAt` is not strictly after its computed `activeAt`,
+  ///         i.e. the offer would have no consumable window.
+  error OfferExpiryTooShort();
+
+  /// @notice Thrown when an offer's lifespan (`expiresAt - activeAt`, i.e. measured from when it
+  ///         becomes consumable) exceeds `MAX_OFFER_LIFESPAN`.
+  error OfferExpiryTooLong();
+
+  /// @notice Thrown when the offer slab is full (`MAX_OFFERS` live offers).
+  error TooManyOffers();
+
+  /// @notice Thrown when an offer id does not correspond to a currently-live offer (bad id or a
+  ///         freed/never-allocated slab slot).
+  error OfferNotFound();
+
+  /// @notice Thrown when {BorrowOffersRegistry.setOfferTimelock} is given a value outside
+  ///         `[MIN_OFFER_TIMELOCK, MAX_OFFER_TIMELOCK]`.
+  error OfferTimelockOutOfRange();
+
+  /// @notice Thrown when {BorrowOffersRegistry.setMinOfferBonus} is given a value above
+  ///         `MAX_MIN_OFFER_BONUS_BPS`.
+  error MinOfferBonusOutOfRange();
+
+  /// @notice Thrown when the offer (band) liquidation path is entered but nothing is fillable
+  ///         (empty / all-inactive / all-over-price / only-unprofitable list). A dedicated error
+  ///         so liquidators get a clear signal instead of Morpho's `INCONSISTENT_INPUT` from a
+  ///         zero-amount repay.
+  error NoConsumableOffer();
 }

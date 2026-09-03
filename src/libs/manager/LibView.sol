@@ -48,17 +48,22 @@ library LibView {
     }
   }
 
-  /// @dev Returns the total assets (sum of per-position NAVs), the aggregate debt, and the
-  ///      aggregate collateral of the non-bad-debt positions in a single iteration. Bad-debt
-  ///      positions — those where the debt value exceeds the collateral value — contribute zero
-  ///      to all three, so `totalCollateral == amount + totalDebt` and represents the collateral
-  ///      of the "good" positions only. `totalCollateral` is consumed directly by the management
-  ///      fee basis and feeds the performance-fee basis as `currentCollat`.
+  /// @dev Returns the total assets (sum of per-position NAVs), the aggregate debt, the
+  ///      aggregate collateral of the non-bad-debt positions, and the bad-debt exclusion flag in
+  ///      a single iteration. Bad-debt positions — those where the debt value exceeds the
+  ///      collateral value — contribute zero to the three aggregates and set `hasBadDebt`, so
+  ///      `totalCollateral == amount + totalDebt` and represents the collateral of the "good"
+  ///      positions only. `totalCollateral` is consumed directly by the management fee basis and
+  ///      feeds the performance-fee basis as `currentCollat`.
   ///
   ///      Inclusion cliff: the `collateral >= debt` filter is binary. At exactly 100% LTV a module
   ///      is still included and its full collateral feeds the management-fee basis; one wei of debt
-  ///      higher and the module is excluded entirely, contributing zero collateral. This is an edge
-  ///      case in practice (liquidation is expected long before LTV reaches 100%), but worth noting.
+  ///      higher and the module is excluded entirely, contributing zero collateral. Re-inclusion
+  ///      costs the module's full `debt - collateral` shortfall, which anyone can repay on the
+  ///      underlying market (a single base unit only when the module is underwater by exactly one
+  ///      unit). Fee accrual reads the filter at checkpoint end over the whole elapsed interval,
+  ///      so a module that re-enters mid-interval is charged management fee for the full interval
+  ///      (see `_pendingFees`); liquidation is expected to intervene long before LTV reaches 100%.
   ///
   ///      Debt rounding: each module's `totalBorrowed()` returns `toAssetsDown(borrowShares)`,
   ///      which is the same rounding Morpho applies internally when converting borrow shares to
@@ -70,10 +75,16 @@ library LibView {
   /// @return amount The total assets value (sum of `collateral - debt` for non-bad-debt positions)
   /// @return totalDebt The aggregate debt of non-bad-debt positions only
   /// @return totalCollateral The aggregate quoted collateral of non-bad-debt positions only
+  /// @return hasBadDebt True when at least one module was excluded as bad debt, i.e. the
+  ///         aggregates above cover a reduced universe. While this is set, accruals must not
+  ///         measure or advance the performance reference: the excluded module's debt is missing
+  ///         from `totalDebt`, which deleverages the visible aggregate and can make the
+  ///         performance basis read positive during a drawdown (see `_pendingFees`). Flows still
+  ///         rebase the reference (see `LibStorage.rebaseSnapshot` for the caveats).
   function totalAssets(PositionManagerStorageData storage ps)
     internal
     view
-    returns (uint256 amount, uint256 totalDebt, uint256 totalCollateral)
+    returns (uint256 amount, uint256 totalDebt, uint256 totalCollateral, bool hasBadDebt)
   {
     address[] memory modules = ps.borrowModules.values();
     uint256 modulesLength = modules.length;
@@ -84,6 +95,8 @@ library LibView {
         amount += collateral - debt;
         totalDebt += debt;
         totalCollateral += collateral;
+      } else {
+        hasBadDebt = true;
       }
     }
   }

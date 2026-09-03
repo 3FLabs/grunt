@@ -23,6 +23,7 @@ contract ReentrantMinter {
   bytes public lastRevertReason;
   bytes public lastTotalSupplyRevertReason;
   bytes public lastTotalAssetsRevertReason;
+  bytes public lastHasBadDebtRevertReason;
 
   constructor(PositionManager pm_) {
     pm = pm_;
@@ -34,6 +35,7 @@ contract ReentrantMinter {
     lastRevertReason = "";
     lastTotalSupplyRevertReason = "";
     lastTotalAssetsRevertReason = "";
+    lastHasBadDebtRevertReason = "";
   }
 
   function deposit(uint256 collateralAmt, uint256 debtAmt) external returns (int256) {
@@ -82,6 +84,10 @@ contract ReentrantMinter {
       catch (bytes memory reason) {
         lastTotalAssetsRevertReason = reason;
       }
+      try pm.hasBadDebt() returns (bool) {}
+      catch (bytes memory reason) {
+        lastHasBadDebtRevertReason = reason;
+      }
     }
   }
 
@@ -100,6 +106,10 @@ contract ReentrantMinter {
 
   function totalAssetsReadReverted() external view returns (bool) {
     return _isReentrancyRevert(lastTotalAssetsRevertReason);
+  }
+
+  function hasBadDebtReadReverted() external view returns (bool) {
+    return _isReentrancyRevert(lastHasBadDebtRevertReason);
   }
 
   /// @notice Helper to check if last revert was Reentrancy error
