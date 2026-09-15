@@ -3,7 +3,8 @@ pragma solidity ^0.8.22;
 
 /// @title IFacilityCaps
 /// @author 3F Protocol
-/// @notice Shared deposit-cap pool consumed by facilities with DYNAMIC deposit caps.
+/// @notice Deposit caps consumed by facilities with EXTERNAL deposit caps, implemented by
+///         FacilityAbsoluteCaps (shared pools) and FacilityDynamicCaps (time-weighted caps).
 ///         Multipliers are signed Q12.12 fixed-point values (value = raw / 2^12).
 interface IFacilityCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -14,7 +15,7 @@ interface IFacilityCaps {
   /// @param id The cap ID.
   /// @param amount The deposit amount the consumption was computed from.
   /// @param multiplier The signed Q12.12 multiplier applied to the amount.
-  /// @param newCap The remaining shared capacity after the call.
+  /// @param newCap The remaining capacity after the call.
   event CapConsumed(uint32 indexed id, uint256 amount, int24 multiplier, uint128 newCap);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -25,7 +26,7 @@ interface IFacilityCaps {
   /// @param id The cap ID.
   error InsufficientCap(uint32 id);
 
-  /// @notice Thrown when a release would bring a cap above its hard cap.
+  /// @notice Thrown when a release would bring a cap above its hard cap (FacilityAbsoluteCaps).
   /// @param id The cap ID.
   error HardCapExceeded(uint32 id);
 
@@ -35,10 +36,11 @@ interface IFacilityCaps {
 
   /// @notice Returns the maximum amount consumable right now: for a positive multiplier the
   ///         depositable amount cap / multiplier, for a negative multiplier the releasable amount
-  ///         (hardCap - cap) / |multiplier|.
+  ///         (hardCap - cap) / |multiplier| on FacilityAbsoluteCaps.
   /// @param id The cap ID.
   /// @param multiplier The signed Q12.12 multiplier.
-  /// @return amount The maximum consumable amount (type(uint256).max if multiplier == 0).
+  /// @return amount The maximum consumable amount, type(uint256).max when the direction is
+  ///         unbounded (multiplier == 0, or multiplier < 0 on FacilityDynamicCaps).
   function available(uint32 id, int24 multiplier) external view returns (uint256 amount);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -47,8 +49,9 @@ interface IFacilityCaps {
 
   /// @notice Consumes amount * multiplier from a cap.
   /// @dev A positive multiplier decreases the cap and reverts with InsufficientCap if it would go
-  ///      below zero. A negative multiplier increases the cap by amount * |multiplier| and reverts
-  ///      with HardCapExceeded if it would go above the hard cap. Gated by the consumer role.
+  ///      below zero. A negative multiplier is the release direction: FacilityAbsoluteCaps
+  ///      increases the cap by amount * |multiplier| and reverts with HardCapExceeded above the
+  ///      hard cap, FacilityDynamicCaps does nothing. Gated by the consumer role.
   /// @param id The cap ID.
   /// @param amount The deposit amount to consume capacity for.
   /// @param multiplier The signed Q12.12 multiplier applied to the amount.

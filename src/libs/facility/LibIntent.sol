@@ -30,7 +30,7 @@ struct Asset {
 /// @param depositAsset Asset deposited into the intent.
 /// @param targetAsset Target asset or position manager for the intent.
 /// @param depositCap Encoded deposit cap word: the remaining absolute deposit capacity, or a
-///                   reference to a shared IFacilityCaps pool (see LibCaps for the layout).
+///                   reference to a cap in an IFacilityCaps contract (see LibCaps for the layout).
 /// @param guardKey Address of the position manager whose transfer guard authorizes intent transfers.
 ///                  Must equal the deposit asset, the target asset, or both (when both are position managers).
 /// @param resolveStart Timestamp at which the deposit phase ends and the resolving phase begins.
@@ -129,9 +129,9 @@ library LibIntent {
 
   /// @notice Consumes the intent's deposit cap for a deposit.
   /// @dev Absolute caps decrement their remaining capacity in place and revert with
-  ///      DepositCapExceeded when the amount exceeds it. Dynamic caps consume
-  ///      amount x multiplier from their shared pool (state-changing external call,
-  ///      reverting when the pool cannot absorb it).
+  ///      DepositCapExceeded when the amount exceeds it. External caps consume
+  ///      amount x multiplier from their caps contract (state-changing external call,
+  ///      reverting when the cap cannot absorb it).
   /// @param _self The intent storage reference.
   /// @param id The intent ID (used for error reporting).
   /// @param amount The amount being deposited.
@@ -140,9 +140,9 @@ library LibIntent {
   }
 
   /// @notice Releases the cap consumption of a deposit being undone.
-  /// @dev Absolute caps restore their remaining capacity in place. Dynamic caps consume with
-  ///      the opposite multiplier, giving back to the shared pool what the deposit took
-  ///      (or vice versa).
+  /// @dev Absolute caps restore their remaining capacity in place. External caps consume with
+  ///      the opposite multiplier, reversing the direction the deposit took in the caps
+  ///      contract (FacilityDynamicCaps ignores the release direction).
   /// @param _self The intent storage reference.
   /// @param amount The deposited amount being undone.
   function releaseCap(Intent storage _self, uint256 amount) internal {

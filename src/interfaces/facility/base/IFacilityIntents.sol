@@ -88,8 +88,8 @@ interface IFacilityIntents {
   /// @notice Sets a new deposit cap for a given intent ID.
   /// @dev The cap is an encoded word: a zero top byte means the value is the remaining absolute
   ///      deposit capacity (decremented by deposits, restored by withdrawals), a top byte of 1
-  ///      references a shared IFacilityCaps pool consumed on deposit and released on withdrawal
-  ///      (see LibCaps for the exact layout).
+  ///      references a cap in an IFacilityCaps contract consumed on deposit and released on
+  ///      withdrawal (see LibCaps for the exact layout).
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.
   function setDepositCap(uint256 id, uint256 newDepositCap) external;

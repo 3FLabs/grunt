@@ -6,10 +6,12 @@ import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {LibCapsMath} from "../../libs/common/LibCapsMath.sol";
 import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
 
-/// @title FacilityCaps
+/// @title FacilityAbsoluteCaps
 /// @author 3F Protocol
-/// @notice Shared deposit-cap pool consumed by facilities with DYNAMIC deposit caps.
-contract FacilityCaps is Initializable, OwnableRoles, IFacilityCaps {
+/// @notice Shared deposit-cap pools consumed by facilities with EXTERNAL deposit caps.
+/// @dev Each pool is a remaining capacity bounded by a constant hard cap. Positive multipliers
+///      consume it, negative multipliers credit it back up to the hard cap.
+contract FacilityAbsoluteCaps is Initializable, OwnableRoles, IFacilityCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -36,7 +38,10 @@ contract FacilityCaps is Initializable, OwnableRoles, IFacilityCaps {
   /// @notice Role for addresses authorized to consume caps.
   uint256 internal constant CAPS_CONSUMER_ROLE = _ROLE_1;
 
-  bytes32 internal constant CAPS_STORAGE_SLOT = keccak256("facility.caps.storage");
+  /// @notice Storage slot of the caps mapping.
+  /// @dev Computed as: keccak256("facility.caps.storage")
+  /// @custom:value 0xbc861527d65386e519716771f2b70a2ef7a07eed6d546966b8ced602d168b00c
+  bytes32 internal constant CAPS_STORAGE_SLOT = 0xbc861527d65386e519716771f2b70a2ef7a07eed6d546966b8ced602d168b00c;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                           */

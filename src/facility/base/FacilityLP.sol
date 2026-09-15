@@ -40,7 +40,7 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
     // consume the deposit cap (decrements the remaining capacity for absolute caps,
-    // consumes the shared pool for dynamic caps)
+    // consumes the shared pool for external caps)
     _intent.consumeCap(id, amount);
 
     // receive the tokens from the sender

@@ -3,7 +3,8 @@ pragma solidity ^0.8.22;
 
 import {FacilityBaseTest} from "./FacilityBase.t.sol";
 
-import {FacilityCaps} from "src/facility/caps/FacilityCaps.sol";
+import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
+import {FacilityDynamicCaps} from "src/facility/caps/FacilityDynamicCaps.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {IntentProperties} from "src/libs/facility/LibIntent.sol";
@@ -11,12 +12,14 @@ import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
-/// @title FacilityDynamicCapsTest
-/// @notice Tests consumption of DYNAMIC shared deposit caps (FacilityCaps pools) by the facility
-contract FacilityDynamicCapsTest is FacilityBaseTest {
+/// @title FacilitySharedCapsTest
+/// @notice Tests consumption of EXTERNAL deposit caps by the facility, against both
+///         FacilityAbsoluteCaps pools and FacilityDynamicCaps time-weighted caps
+contract FacilitySharedCapsTest is FacilityBaseTest {
   using LibClone for address;
 
-  FacilityCaps public caps;
+  FacilityAbsoluteCaps public caps;
+  FacilityDynamicCaps public timeCaps;
 
   uint32 constant POOL_ID = 1;
   // Q12.12 multipliers
@@ -25,19 +28,29 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
   int24 constant MULT_9X = 36864;
 
   uint128 constant POOL_CAP = 10_000e18;
+  uint128 constant RECOVERY = 1_000_000e18;
+  uint64 constant RECOVERY_TIME = 24 hours;
 
   function setUp() public override {
     super.setUp();
 
-    caps = FacilityCaps(address(new FacilityCaps()).clone());
+    caps = FacilityAbsoluteCaps(address(new FacilityAbsoluteCaps()).clone());
     address[] memory managers = new address[](1);
     managers[0] = owner;
     address[] memory consumers = new address[](1);
     consumers[0] = address(facility);
     caps.initialize(owner, managers, consumers);
-    vm.label(address(caps), "FacilityCaps");
+    vm.label(address(caps), "FacilityAbsoluteCaps");
+
+    timeCaps = FacilityDynamicCaps(address(new FacilityDynamicCaps()).clone());
+    timeCaps.initialize(owner, managers, consumers);
+    vm.label(address(timeCaps), "FacilityDynamicCaps");
 
     _setPool(POOL_CAP, POOL_CAP);
+    // the fixture starts near timestamp zero, move past one recovery period so a zero origin is fully recovered
+    vm.warp(block.timestamp + RECOVERY_TIME);
+    vm.prank(owner);
+    timeCaps.setCap(POOL_ID, RECOVERY, RECOVERY_TIME, 0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -54,9 +67,18 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
   }
 
   /// @notice Creates a debtToken-deposit intent whose cap points at the shared pool
-  function _createDynamicIntent(int24 multiplier) internal returns (uint256 intentId) {
+  function _createPoolIntent(int24 multiplier) internal returns (uint256 intentId) {
+    return _createIntentWithCaps(address(caps), multiplier);
+  }
+
+  /// @notice Creates a debtToken-deposit intent whose cap points at the time-weighted cap
+  function _createTimeCapIntent(int24 multiplier) internal returns (uint256 intentId) {
+    return _createIntentWithCaps(address(timeCaps), multiplier);
+  }
+
+  function _createIntentWithCaps(address capsContract, int24 multiplier) internal returns (uint256 intentId) {
     IntentProperties memory props = _intentParamsWithTargetPM();
-    props.depositCap = LibCaps.encodeDynamic(address(caps), POOL_ID, multiplier);
+    props.depositCap = LibCaps.encodeExternal(capsContract, POOL_ID, multiplier);
     vm.prank(owner);
     intentId = facility.createIntent(props);
   }
@@ -85,8 +107,8 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     assertEq(props.depositCap, DEFAULT_DEPOSIT_CAP - 600e18, "Absolute cap should restore on withdrawal");
   }
 
-  function test_deposit_dynamicCap_consumesSharedPool() public {
-    uint256 intentId = _createDynamicIntent(MULT_1_5X);
+  function test_deposit_externalCap_consumesSharedPool() public {
+    uint256 intentId = _createPoolIntent(MULT_1_5X);
 
     _deposit(intentId, user, 1000e18);
     assertEq(_poolCap(), POOL_CAP - 1500e18, "Pool should shrink by amount x multiplier");
@@ -97,9 +119,9 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     assertEq(_poolCap(), POOL_CAP - 1500e18 - 2, "Consumption should round up");
   }
 
-  function test_deposit_dynamicCap_sharedAcrossIntents() public {
-    uint256 leveredIntent = _createDynamicIntent(MULT_9X);
-    uint256 plainIntent = _createDynamicIntent(MULT_1X);
+  function test_deposit_externalCap_sharedAcrossIntents() public {
+    uint256 leveredIntent = _createPoolIntent(MULT_9X);
+    uint256 plainIntent = _createPoolIntent(MULT_1X);
 
     // 1000 at 9x consumes 9000 of the shared pool
     _deposit(leveredIntent, user, 1000e18);
@@ -115,8 +137,8 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     assertEq(_poolCap(), 0, "Pool should be fully consumed");
   }
 
-  function test_withdraw_dynamicCap_releasesPool() public {
-    uint256 intentId = _createDynamicIntent(MULT_1_5X);
+  function test_withdraw_externalCap_releasesPool() public {
+    uint256 intentId = _createPoolIntent(MULT_1_5X);
 
     _deposit(intentId, user, 1000e18);
     assertEq(_poolCap(), POOL_CAP - 1500e18, "Deposit should consume the pool");
@@ -132,9 +154,9 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     assertEq(_poolCap(), POOL_CAP - 1500e18 + 750e18 + 1, "Release should round down");
   }
 
-  function test_deposit_dynamicCap_negativeMultiplier() public {
+  function test_deposit_externalCap_negativeMultiplier() public {
     // withdrawal-side intent: deposits release capacity into the pool instead of consuming it
-    uint256 intentId = _createDynamicIntent(-MULT_1X);
+    uint256 intentId = _createPoolIntent(-MULT_1X);
     _setPool(0, 5000e18);
 
     _deposit(intentId, user, 3000e18);
@@ -152,8 +174,8 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     assertEq(_poolCap(), 2000e18, "Withdrawal should re-consume the released capacity");
   }
 
-  function test_revertDeposit_dynamicCap_releasesPool() public {
-    uint256 intentId = _createDynamicIntent(MULT_1X);
+  function test_revertDeposit_externalCap_releasesPool() public {
+    uint256 intentId = _createPoolIntent(MULT_1X);
 
     _deposit(intentId, user, 4000e18);
     assertEq(_poolCap(), POOL_CAP - 4000e18, "Deposit should consume the pool");
@@ -164,6 +186,92 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     assertEq(_poolCap(), POOL_CAP, "Reverted deposit should release its consumption");
     assertEq(facility.balanceOf(user, intentId), 0, "Shares should be burned");
     assertEq(debtToken.balanceOf(user), 4000e18, "Deposit asset should be returned");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     TIME-WEIGHTED CAPS                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deposit_timeCap_consumesThroughput() public {
+    uint256 intentId = _createTimeCapIntent(MULT_1_5X);
+
+    // 400k at 1.5x consumes 600k of the 1m per day
+    _deposit(intentId, user, 400_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), 400_000e18, "Deposit should consume amount x multiplier");
+    assertEq(facility.balanceOf(user, intentId), 400_000e18, "LP tokens still minted 1:1");
+
+    // 300k at 1.5x needs 450k, more than what is left
+    _mintDebt(user2, 300_000e18);
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, POOL_ID));
+    facility.deposit(intentId, 300_000e18);
+
+    // half a day recovers 500k, capped at 1m
+    vm.warp(block.timestamp + 12 hours);
+    assertEq(timeCaps.remaining(POOL_ID), 900_000e18, "Capacity should recover over time");
+    _deposit(intentId, user2, 300_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), 450_000e18, "Recovered capacity should be consumable");
+  }
+
+  function test_deposit_timeCap_sharedAcrossIntentsAndFacilityRate() public {
+    uint256 leveredIntent = _createTimeCapIntent(MULT_9X);
+    uint256 plainIntent = _createTimeCapIntent(MULT_1X);
+
+    _deposit(leveredIntent, user, 100_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), 100_000e18, "Levered deposit should consume 9x");
+
+    _mintDebt(user2, 100_001e18);
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, POOL_ID));
+    facility.deposit(plainIntent, 100_001e18);
+
+    _deposit(plainIntent, user2, 100_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), 0, "Cap should be fully consumed");
+  }
+
+  function test_withdraw_timeCap_doesNotRelease() public {
+    uint256 intentId = _createTimeCapIntent(MULT_1X);
+
+    _deposit(intentId, user, 500_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), 500_000e18, "Deposit should consume the cap");
+
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, 500_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), 500_000e18, "Withdrawal should not give capacity back");
+    assertEq(debtToken.balanceOf(user), 500_000e18, "Deposit asset should be returned");
+  }
+
+  function test_revertDeposit_timeCap_doesNotRelease() public {
+    uint256 intentId = _createTimeCapIntent(MULT_1X);
+
+    _deposit(intentId, user, 500_000e18);
+    vm.prank(pauser);
+    facility.revertDeposit(intentId, user, user);
+
+    assertEq(timeCaps.remaining(POOL_ID), 500_000e18, "Reverted deposit should not give capacity back");
+    assertEq(facility.balanceOf(user, intentId), 0, "Shares should be burned");
+    assertEq(debtToken.balanceOf(user), 500_000e18, "Deposit asset should be returned");
+  }
+
+  function test_deposit_timeCap_negativeMultiplierLimitsWithdrawals() public {
+    // withdrawal-side intent: deposits are free, withdrawals consume the throughput
+    uint256 intentId = _createTimeCapIntent(-MULT_1X);
+
+    _deposit(intentId, user, 3_000_000e18);
+    assertEq(timeCaps.remaining(POOL_ID), RECOVERY, "Deposit should not touch the cap");
+
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, POOL_ID));
+    facility.withdraw(intentId, user, user, RECOVERY + 1);
+
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, RECOVERY);
+    assertEq(timeCaps.remaining(POOL_ID), 0, "Withdrawal should consume the cap");
+
+    vm.warp(block.timestamp + 6 hours);
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, RECOVERY / 4);
+    assertEq(timeCaps.remaining(POOL_ID), 0, "Recovered capacity should be withdrawable");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -179,20 +287,20 @@ contract FacilityDynamicCapsTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, unknownType));
     facility.setDepositCap(intentId, unknownType);
 
-    // dynamic cap pointing at a codeless address (consume() would silently succeed)
+    // external cap pointing at a codeless address (consume() would silently succeed)
     address eoa = makeAddr("eoa");
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, eoa));
-    facility.setDepositCap(intentId, LibCaps.encodeDynamic(eoa, POOL_ID, MULT_1X));
+    facility.setDepositCap(intentId, LibCaps.encodeExternal(eoa, POOL_ID, MULT_1X));
 
     // non-zero unused bits
-    uint256 dirtyWord = LibCaps.encodeDynamic(address(caps), POOL_ID, MULT_1X) | (uint256(1) << 216);
+    uint256 dirtyWord = LibCaps.encodeExternal(address(caps), POOL_ID, MULT_1X) | (uint256(1) << 216);
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, dirtyWord));
     facility.setDepositCap(intentId, dirtyWord);
 
     // type(int24).min multiplier has no int24 negation, so it could never be released
-    uint256 minMultiplier = LibCaps.encodeDynamic(address(caps), POOL_ID, type(int24).min);
+    uint256 minMultiplier = LibCaps.encodeExternal(address(caps), POOL_ID, type(int24).min);
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, minMultiplier));
     facility.setDepositCap(intentId, minMultiplier);
