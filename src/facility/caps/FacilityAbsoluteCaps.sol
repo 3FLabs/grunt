@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {LibCapsMath} from "../../libs/common/LibCapsMath.sol";
 import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
+import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 
 /// @title FacilityAbsoluteCaps
 /// @author 3F Protocol
 /// @notice Shared deposit-cap pools consumed by facilities with EXTERNAL deposit caps.
 /// @dev Each pool is a remaining capacity bounded by a constant hard cap. Positive multipliers
 ///      consume it, negative multipliers credit it back up to the hard cap.
-contract FacilityAbsoluteCaps is Initializable, OwnableRoles, IFacilityCaps {
+contract FacilityAbsoluteCaps is FacilityCapsBase {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -32,11 +31,6 @@ contract FacilityAbsoluteCaps is Initializable, OwnableRoles, IFacilityCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Role for addresses authorized to manage caps.
-  uint256 internal constant CAPS_MANAGER_ROLE = _ROLE_0;
-  /// @notice Role for addresses authorized to consume caps.
-  uint256 internal constant CAPS_CONSUMER_ROLE = _ROLE_1;
 
   /// @notice Storage slot of the caps mapping.
   /// @dev Computed as: keccak256("facility.caps.storage")
@@ -64,23 +58,6 @@ contract FacilityAbsoluteCaps is Initializable, OwnableRoles, IFacilityCaps {
     assembly ("memory-safe") {
       s.slot := slot
     }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       INITIALIZATION                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  constructor() {
-    _disableInitializers();
-  }
-
-  function initialize(address _owner, address[] calldata _initialCapsManagers, address[] calldata _initialCapsConsumers)
-    external
-    initializer
-  {
-    _initializeOwner(_owner);
-    _batchGrantRoles(CAPS_MANAGER_ROLE, _initialCapsManagers);
-    _batchGrantRoles(CAPS_CONSUMER_ROLE, _initialCapsConsumers);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -145,16 +122,5 @@ contract FacilityAbsoluteCaps is Initializable, OwnableRoles, IFacilityCaps {
     if (cap > hardCap) revert CapAboveHardCap();
     _storage().caps[id] = CapData(cap, hardCap);
     emit CapSet(id, cap, hardCap);
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         INTERNAL                           */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  function _batchGrantRoles(uint256 role, address[] calldata accounts) internal {
-    uint256 len = accounts.length;
-    for (uint256 i = 0; i < len; i++) {
-      _grantRoles(accounts[i], role);
-    }
   }
 }

@@ -22,6 +22,7 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
   FacilityDynamicCaps public timeCaps;
 
   uint32 constant POOL_ID = 1;
+  uint32 constant UNSET_ID = 99;
   // Q12.12 multipliers
   int24 constant MULT_1X = 4096;
   int24 constant MULT_1_5X = 6144;
@@ -45,6 +46,11 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     timeCaps = FacilityDynamicCaps(address(new FacilityDynamicCaps()).clone());
     timeCaps.initialize(owner, managers, consumers);
     vm.label(address(timeCaps), "FacilityDynamicCaps");
+
+    vm.startPrank(owner);
+    capsWhitelist.setAllowed(address(caps), true);
+    capsWhitelist.setAllowed(address(timeCaps), true);
+    vm.stopPrank();
 
     _setPool(POOL_CAP, POOL_CAP);
     // the fixture starts near timestamp zero, move past one recovery period so a zero origin is fully recovered
@@ -74,6 +80,12 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
   /// @notice Creates a debtToken-deposit intent whose cap points at the time-weighted cap
   function _createTimeCapIntent(int24 multiplier) internal returns (uint256 intentId) {
     return _createIntentWithCaps(address(timeCaps), multiplier);
+  }
+
+  /// @notice Creates a debtToken-deposit intent with the default absolute cap
+  function _createAbsoluteIntent() internal returns (uint256 intentId) {
+    vm.prank(owner);
+    intentId = facility.createIntent(_intentParamsWithTargetPM());
   }
 
   function _createIntentWithCaps(address capsContract, int24 multiplier) internal returns (uint256 intentId) {
@@ -275,8 +287,99 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       CAP MANAGEMENT                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_deposit_absoluteCap_partialFillErrorArgs() public {
+    uint256 intentId = _createAbsoluteIntent();
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 1000e18);
+
+    _deposit(intentId, user, 600e18);
+
+    // the error reports the remaining capacity and the attempted amount
+    _mintDebt(user, 500e18);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 400e18, 500e18));
+    facility.deposit(intentId, 500e18);
+  }
+
+  function test_setDepositCap_absoluteZeroRegrowsOnWithdraw() public {
+    uint256 intentId = _createAbsoluteIntent();
+    _deposit(intentId, user, 1000e18);
+
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 0);
+    _mintDebt(user2, 1e18);
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 0, 1e18));
+    facility.deposit(intentId, 1e18);
+
+    // a withdrawal regrows the zero word, reopening room for deposits
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, 600e18);
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, 600e18, "Zero absolute cap should regrow on withdrawal");
+    _deposit(intentId, user2, 600e18);
+  }
+
+  function test_setDepositCap_closeViaDynamicCaps() public {
+    uint256 intentId = _createAbsoluteIntent();
+    _deposit(intentId, user, 1000e18);
+
+    // an unset FacilityDynamicCaps ID has zero recovery: deposits revert, releases are no-ops
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, LibCaps.encodeExternal(address(timeCaps), UNSET_ID, MULT_1X));
+
+    _mintDebt(user2, 1e18);
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, UNSET_ID));
+    facility.deposit(intentId, 1e18);
+
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, 400e18);
+    assertEq(debtToken.balanceOf(user), 400e18, "Withdrawal should still work");
+
+    vm.prank(pauser);
+    facility.revertDeposit(intentId, user, user);
+    assertEq(debtToken.balanceOf(user), 1000e18, "Revert deposit should still work");
+    assertEq(timeCaps.remaining(UNSET_ID), 0, "Closed cap should stay closed");
+
+    // still closed after the exits, unlike a zero absolute word
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, UNSET_ID));
+    facility.deposit(intentId, 1e18);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         VALIDATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_capsWhitelist_disallowKeepsExistingIntents() public {
+    uint256 intentId = _createPoolIntent(MULT_1X);
+    _deposit(intentId, user, 1000e18);
+
+    vm.prank(owner);
+    capsWhitelist.setAllowed(address(caps), false);
+
+    // existing words keep consuming and releasing
+    _deposit(intentId, user, 1000e18);
+    assertEq(_poolCap(), POOL_CAP - 2000e18, "Existing intent should keep consuming the pool");
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, 500e18);
+    assertEq(_poolCap(), POOL_CAP - 1500e18, "Existing intent should keep releasing to the pool");
+
+    // new words pointing at the contract are rejected
+    IntentProperties memory props = _intentParamsWithTargetPM();
+    props.depositCap = LibCaps.encodeExternal(address(caps), POOL_ID, MULT_1X);
+    vm.prank(owner);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(caps)));
+    facility.createIntent(props);
+
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(caps)));
+    facility.setDepositCap(intentId, LibCaps.encodeExternal(address(caps), POOL_ID, MULT_1_5X));
+  }
 
   function test_setDepositCap_revertOnInvalidEncoding() public {
     uint256 intentId = _createDefaultIntent();
@@ -287,11 +390,17 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, unknownType));
     facility.setDepositCap(intentId, unknownType);
 
-    // external cap pointing at a codeless address (consume() would silently succeed)
+    // external cap pointing at an address the whitelist does not allow
     address eoa = makeAddr("eoa");
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, eoa));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, eoa));
     facility.setDepositCap(intentId, LibCaps.encodeExternal(eoa, POOL_ID, MULT_1X));
+
+    // a real caps contract that is not whitelisted is rejected the same way
+    address rogue = address(new FacilityAbsoluteCaps());
+    vm.prank(facilitator);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, rogue));
+    facility.setDepositCap(intentId, LibCaps.encodeExternal(rogue, POOL_ID, MULT_1X));
 
     // non-zero unused bits
     uint256 dirtyWord = LibCaps.encodeExternal(address(caps), POOL_ID, MULT_1X) | (uint256(1) << 216);

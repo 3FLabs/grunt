@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 // Core contracts
 import {Facility} from "src/facility/Facility.sol";
+import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
@@ -148,7 +149,7 @@ contract FacilityReentrancyTest is Test {
 
     // Deploy Facility
     IntentDescriptor descriptor = new IntentDescriptor();
-    facility = Facility(address(new Facility()).clone());
+    facility = Facility(address(new Facility(address(new FacilityCapsWhitelist(owner)))).clone());
     facility.initialize(owner, facilitator, address(descriptor));
 
     // Roles

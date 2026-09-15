@@ -9,6 +9,7 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
 import {LibCapsMath} from "src/libs/common/LibCapsMath.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
 /// @title FacilityAbsoluteCapsTest
 /// @notice Unit tests for the shared pool FacilityAbsoluteCaps contract
@@ -81,6 +82,13 @@ contract FacilityAbsoluteCapsTest is Test {
     address[] memory none = new address[](0);
     vm.expectRevert(Initializable.InvalidInitialization.selector);
     caps.initialize(owner, none, none);
+  }
+
+  function test_initialize_revertOnZeroOwner() public {
+    FacilityAbsoluteCaps fresh = FacilityAbsoluteCaps(address(implementation).clone());
+    address[] memory none = new address[](0);
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    fresh.initialize(address(0), none, none);
   }
 
   function test_initialize_revertOnImplementation() public {

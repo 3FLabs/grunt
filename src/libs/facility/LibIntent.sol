@@ -17,6 +17,7 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {LibCaps} from "./LibCaps.sol";
+import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhitelist.sol";
 
 /// @dev Asset configuration for intents and swaps.
 /// @param asset Address of the asset.
@@ -245,13 +246,21 @@ library LibIntent {
 
   /// @notice Updates the deposit cap for an intent.
   /// @dev Validates the cap encoding (see LibCaps.validate) and emits DepositCapUpdated on
-  ///      success. Switching encodings mid-flight does not retroactively release prior pool
-  ///      consumption.
+  ///      success. Outstanding shares are not tracked per word: a release always follows the
+  ///      current word, so changing the encoding, the caps contract, the cap ID or the
+  ///      multiplier while shares are outstanding credits or debits a cap for deposits it never
+  ///      saw. To switch, set the word to zero first, let outstanding shares exit, then set the
+  ///      new word. An ABSOLUTE zero only stops new deposits, since releases regrow it; to close
+  ///      an intent for good, point it at a FacilityDynamicCaps cap with zero recovery (any unset
+  ///      ID), where deposits revert and releases are no-ops.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.
-  function updateDepositCap(Intent storage _self, uint256 id, uint256 newDepositCap) internal {
-    newDepositCap.validate();
+  /// @param whitelist The registry of allowed caps contracts.
+  function updateDepositCap(Intent storage _self, uint256 id, uint256 newDepositCap, IFacilityCapsWhitelist whitelist)
+    internal
+  {
+    newDepositCap.validate(whitelist);
     _self.properties.depositCap = newDepositCap;
     emit IFacilityIntents.DepositCapUpdated(id, newDepositCap);
   }

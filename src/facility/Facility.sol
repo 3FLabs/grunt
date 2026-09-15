@@ -44,7 +44,8 @@ contract Facility is
   using EnumerableMapLib for EnumerableMapLib.AddressToUint256Map;
   using LibPause for uint40;
 
-  constructor() {
+  /// @param capsWhitelist The caps whitelist shared by every facility built from this implementation.
+  constructor(address capsWhitelist) FacilityIntents(capsWhitelist) {
     _disableInitializers();
   }
 

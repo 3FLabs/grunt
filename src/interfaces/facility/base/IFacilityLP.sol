@@ -15,7 +15,9 @@ interface IFacilityLP {
   function deposit(uint256 id, uint256 amount) external;
 
   /// @notice Withdraws assets from the intent as a liquidity provider.
-  /// @dev If `from` is not `msg.sender`, the caller must be an operator for `from`.
+  /// @dev If `from` is not `msg.sender`, the caller must be an operator for `from`. Releases the
+  ///      deposit cap, which for an EXTERNAL cap is a call into the caps contract that can revert
+  ///      (see LibCaps).
   /// @param id The intent ID.
   /// @param from The address to burn LP tokens from.
   /// @param receiver The address to receive the withdrawn assets.
@@ -29,7 +31,9 @@ interface IFacilityLP {
   ///      The user receives back all deposited assets in full but forfeits any proportional claim
   ///      to other assets that may have been added to the intent.
   ///      When `receiver` differs from `from`, only the owner can call this to prevent the
-  ///      compliance role from redirecting user funds to an arbitrary address.
+  ///      compliance role from redirecting user funds to an arbitrary address. Releases the
+  ///      deposit cap, which for an EXTERNAL cap is a call into the caps contract that can revert
+  ///      (see LibCaps).
   /// @param id The intent ID.
   /// @param from The address whose deposit is being reverted (must hold intent shares).
   /// @param receiver The address to receive the deposit asset.

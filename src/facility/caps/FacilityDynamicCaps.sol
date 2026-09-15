@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {Initializable} from "lib/solady/src/utils/Initializable.sol";
-import {OwnableRoles} from "lib/solady/src/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {LibCapsMath} from "../../libs/common/LibCapsMath.sol";
 import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
+import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 
 /// @title FacilityDynamicCaps
 /// @author 3F Protocol
@@ -20,8 +19,11 @@ import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
 ///      - `originTime` has one-second granularity and is rounded in favor of the cap, so each
 ///        consumption may forfeit up to one second of recovery (recovery / recoveryTime).
 ///      - Capacity never exceeds `recovery`; there is no separate hard cap.
-///      - Withdrawals and reverted deposits do not give capacity back.
-contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
+///      - Withdrawals and reverted deposits do not give capacity back. Anyone holding
+///        recovery / multiplier of the deposit asset can therefore keep a cap drained by
+///        depositing and withdrawing every block, at gas cost only, unless the intents using
+///        the cap restrict withdrawals.
+contract FacilityDynamicCaps is FacilityCapsBase {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -43,11 +45,6 @@ contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @notice Role for addresses authorized to manage caps.
-  uint256 internal constant CAPS_MANAGER_ROLE = _ROLE_0;
-  /// @notice Role for addresses authorized to consume caps.
-  uint256 internal constant CAPS_CONSUMER_ROLE = _ROLE_1;
 
   /// @notice Storage slot of the caps mapping.
   /// @dev Computed as: keccak256("facility.dynamic.caps.storage")
@@ -77,23 +74,6 @@ contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
     assembly ("memory-safe") {
       s.slot := slot
     }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                       INITIALIZATION                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  constructor() {
-    _disableInitializers();
-  }
-
-  function initialize(address _owner, address[] calldata _initialCapsManagers, address[] calldata _initialCapsConsumers)
-    external
-    initializer
-  {
-    _initializeOwner(_owner);
-    _batchGrantRoles(CAPS_MANAGER_ROLE, _initialCapsManagers);
-    _batchGrantRoles(CAPS_CONSUMER_ROLE, _initialCapsConsumers);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -127,14 +107,16 @@ contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacilityCaps
-  /// @dev Does nothing for a zero or negative multiplier. Otherwise moves the origin forward
-  ///      so the capacity now equals the previous capacity minus the consumption, rounding the
-  ///      origin so the new capacity never exceeds that difference.
+  /// @dev Does nothing for a zero or negative multiplier, or a zero consumption. Otherwise moves
+  ///      the origin forward so the capacity now equals the previous capacity minus the
+  ///      consumption, rounding the origin so the new capacity never exceeds that difference.
+  ///      The origin never moves backwards, so a future origin set by the manager holds.
   function consume(uint32 id, uint256 amount, int24 multiplier) external onlyRoles(CAPS_CONSUMER_ROLE) {
     if (multiplier <= 0) return;
+    uint256 consumption = LibCapsMath.consumption(amount, multiplier);
+    if (consumption == 0) return;
     CapData memory data = _storage().caps[id];
     uint256 current = _remaining(data);
-    uint256 consumption = LibCapsMath.consumption(amount, multiplier);
     if (consumption > current) revert InsufficientCap(id);
     uint256 left;
     unchecked {
@@ -142,7 +124,8 @@ contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
     }
     // left <= current <= recovery, so recovery is non-zero whenever left is
     uint256 shift = left == 0 ? 0 : FixedPointMathLib.mulDiv(left, data.recoveryTime, data.recovery);
-    // shift <= elapsed time since the origin <= block.timestamp, and block.timestamp fits in 64 bits
+    // consumption > 0 means current > 0, so the origin is in the past and
+    // shift <= elapsed time since the origin <= block.timestamp, which fits in 64 bits
     // forge-lint: disable-next-line(unsafe-typecast)
     uint64 originTime = uint64(block.timestamp - shift);
     _storage().caps[id].originTime = originTime;
@@ -157,7 +140,8 @@ contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
 
   /// @notice Sets the curve of a cap.
   /// @dev Gated by the manager role. Reverts with InvalidRecoveryTime if recoveryTime is zero.
-  ///      A zero recovery closes the cap. An origin in the future keeps the cap at zero until then.
+  ///      A zero recovery closes the cap, as does an unset ID. An origin in the future keeps the
+  ///      cap at zero until then.
   /// @param id The cap ID.
   /// @param recovery The capacity recovered over `recoveryTime`, also the maximum capacity.
   /// @param recoveryTime The seconds needed to recover from zero to `recovery`.
@@ -183,12 +167,5 @@ contract FacilityDynamicCaps is Initializable, OwnableRoles, IFacilityCaps {
     uint256 elapsed = block.timestamp - data.originTime;
     if (elapsed >= data.recoveryTime) return data.recovery;
     return FixedPointMathLib.mulDiv(data.recovery, elapsed, data.recoveryTime);
-  }
-
-  function _batchGrantRoles(uint256 role, address[] calldata accounts) internal {
-    uint256 len = accounts.length;
-    for (uint256 i = 0; i < len; i++) {
-      _grantRoles(accounts[i], role);
-    }
   }
 }

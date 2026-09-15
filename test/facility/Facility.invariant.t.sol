@@ -6,6 +6,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 // Core contracts
 import {Facility} from "src/facility/Facility.sol";
+import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
@@ -230,7 +231,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     vm.label(address(descriptor), "IntentDescriptor");
 
     // ----- 11. Deploy Facility, initialize(owner, facilitator, descriptor) -----
-    facility = Facility(address(new Facility()).clone());
+    facility = Facility(address(new Facility(address(new FacilityCapsWhitelist(owner)))).clone());
     facility.initialize(owner, facilitator, address(descriptor));
     vm.label(address(facility), "Facility");
 
@@ -319,12 +320,43 @@ contract FacilityInvariantTest is StdInvariant, Test {
     }
   }
 
-  /// @notice FAC-4: Deposit cap cannot be exceeded by a new deposit.
-  /// @dev The deposit cap is only enforced at deposit time. Reducing the cap below the current
-  ///      totalSupply is allowed, so totalSupply may temporarily exceed depositCap.
-  ///      Checked per-action in the handler. This invariant verifies the ghost flag.
+  /// @notice FAC-4: A deposit never consumes more than the available cap.
+  /// @dev Checked per-action in the handler: a deposit above the remaining cap must revert with
+  ///      DepositCapExceeded, and a successful deposit must decrement the cap by its amount.
   function invariant_depositCapNotExceeded() public view {
-    assertFalse(handler.depositExceededCap(), "FAC-4: deposit pushed totalSupply above depositCap");
+    assertFalse(handler.depositExceededCap(), "FAC-4: deposit consumed more than the available cap");
+  }
+
+  /// @notice FAC-4a: An absolute cap conserves totalSupply + remaining cap while depositing.
+  /// @dev The baseline is taken when the cap is set (creation or setDepositCap). Deposits move
+  ///      value from the cap to totalSupply, withdrawals and reverted deposits move it back, so
+  ///      the sum is constant until the cap is set again. Only holds in the DEPOSITING state:
+  ///      claims burn shares without releasing the cap. Handler caps stay far below the
+  ///      saturation bound of absolute words.
+  function invariant_absoluteCapConservation() public view {
+    uint256[] memory ids = handler.getIntentIds();
+    for (uint256 i = 0; i < ids.length; i++) {
+      uint256 id = ids[i];
+      if (handler.intentStates(id) != 0) continue;
+      (IntentProperties memory props,,,) = facility.getIntent(id);
+      assertEq(
+        facility.totalSupply(id) + props.depositCap,
+        handler.capBaseline(id),
+        "FAC-4a: totalSupply + remaining cap drifted from the baseline"
+      );
+    }
+  }
+
+  /// @notice FAC-4b: totalSupply never exceeds what was available when the cap was last set.
+  /// @dev Follows from FAC-4a and a non-negative cap, stated on its own so a conservation
+  ///      failure that still respects availability is told apart from one that does not.
+  function invariant_supplyWithinAvailableCap() public view {
+    uint256[] memory ids = handler.getIntentIds();
+    for (uint256 i = 0; i < ids.length; i++) {
+      uint256 id = ids[i];
+      if (handler.intentStates(id) != 0) continue;
+      assertLe(facility.totalSupply(id), handler.capBaseline(id), "FAC-4b: totalSupply above the available cap");
+    }
   }
 
   /// @notice FAC-5: The sum of tracked token amounts across all intents does not exceed the

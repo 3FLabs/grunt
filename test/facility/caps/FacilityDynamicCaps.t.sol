@@ -10,6 +10,7 @@ import {Initializable} from "lib/solady/src/utils/Initializable.sol";
 import {FacilityDynamicCaps} from "src/facility/caps/FacilityDynamicCaps.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
 import {LibCapsMath} from "src/libs/common/LibCapsMath.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 
 /// @title FacilityDynamicCapsTest
 /// @notice Unit tests for the time-weighted FacilityDynamicCaps contract
@@ -92,6 +93,13 @@ contract FacilityDynamicCapsTest is Test {
     caps.initialize(owner, none, none);
   }
 
+  function test_initialize_revertOnZeroOwner() public {
+    FacilityDynamicCaps fresh = FacilityDynamicCaps(address(implementation).clone());
+    address[] memory none = new address[](0);
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    fresh.initialize(address(0), none, none);
+  }
+
   function test_initialize_revertOnImplementation() public {
     address[] memory none = new address[](0);
     vm.expectRevert(Initializable.InvalidInitialization.selector);
@@ -163,9 +171,9 @@ contract FacilityDynamicCapsTest is Test {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
     caps.consume(ID, 1, MULT_1X);
 
-    // a zero consumption still goes through and pins the origin to now
+    // a zero consumption is a no-op
     _consume(0, MULT_1X);
-    assertEq(_origin(), START, "Zero consumption should pin the origin");
+    assertEq(_origin(), 0, "Zero consumption should not touch the origin");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -309,10 +317,27 @@ contract FacilityDynamicCapsTest is Test {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, OTHER_ID));
     caps.consume(OTHER_ID, 1, MULT_1X);
 
+    vm.recordLogs();
     vm.prank(consumer);
     caps.consume(OTHER_ID, 0, MULT_1X);
+    assertEq(vm.getRecordedLogs().length, 0, "Zero consumption should not emit");
     (,, uint64 originTime) = caps.getCap(OTHER_ID);
-    assertEq(originTime, START, "Zero consumption should pin the origin of an unset cap");
+    assertEq(originTime, 0, "Zero consumption should not touch an unset cap");
+  }
+
+  function test_consume_zeroConsumptionKeepsFutureOrigin() public {
+    _setCap(RECOVERY, RECOVERY_TIME, uint64(START + 7 days));
+
+    vm.recordLogs();
+    _consume(0, MULT_1X);
+    assertEq(vm.getRecordedLogs().length, 0, "Zero consumption should not emit");
+    assertEq(_origin(), START + 7 days, "Zero consumption should not cancel a future origin");
+    assertEq(caps.remaining(ID), 0, "Cap should stay locked");
+
+    // the origin never moves backwards once consumption starts either
+    vm.warp(START + 7 days + 12 hours);
+    _consume(1, MULT_1X);
+    assertGe(_origin(), START + 7 days, "Origin should never move backwards");
   }
 
   function test_consume_zeroOrNegativeMultiplierIsNoop() public {
@@ -442,6 +467,7 @@ contract FacilityDynamicCapsTest is Test {
     assertLe(after_, left, "Remaining should never exceed the exact difference");
     assertGe(after_ + _maxForfeit(recovery, recoveryTime), left, "Rounding should forfeit at most one second");
     assertLe(_origin(), START, "Origin should never be in the future after a consumption");
+    assertGe(_origin(), START - originShift, "Origin should never move backwards");
   }
 
   function testFuzz_consume_quoteIsConsumableAndTight(

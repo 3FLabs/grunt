@@ -68,6 +68,10 @@ library LibFacilityErrors {
   /// @param newDepositCap The rejected deposit cap word.
   error InvalidDepositCap(uint256 newDepositCap);
 
+  /// @notice Thrown when a deposit cap word references a caps contract the whitelist does not allow.
+  /// @param caps The caps contract.
+  error CapsNotAllowed(address caps);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ASSETS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 // Core contracts
 import {Facility} from "src/facility/Facility.sol";
+import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
@@ -59,6 +60,7 @@ contract FacilityBaseTest is Test {
   PositionManager public positionManager;
   PositionManager public positionManager2;
   TransferGuard public transferGuard;
+  FacilityCapsWhitelist public capsWhitelist;
 
   // Morpho infrastructure
   IMorpho public morpho;
@@ -259,8 +261,10 @@ contract FacilityBaseTest is Test {
     descriptor = new IntentDescriptor();
     vm.label(address(descriptor), "IntentDescriptor");
 
-    // Deploy Facility
-    facility = Facility(address(new Facility()).clone());
+    // Deploy caps whitelist and Facility
+    capsWhitelist = new FacilityCapsWhitelist(owner);
+    vm.label(address(capsWhitelist), "FacilityCapsWhitelist");
+    facility = Facility(address(new Facility(address(capsWhitelist))).clone());
     facility.initialize(owner, facilitator, address(descriptor));
     vm.label(address(facility), "Facility");
 

@@ -13,6 +13,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {MockRequest} from "test/mock/facility/MockRequest.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 /// @title FacilityHandler
 /// @notice Handler contract for Facility invariant tests.
@@ -66,6 +67,11 @@ contract FacilityHandler is Test {
   /// @notice Tracks whether an intent uses debtToken (true) or PM shares (false) as deposit asset.
   mapping(uint256 => bool) public intentIsDebtToken;
 
+  /// @notice FAC-4: totalSupply + remaining absolute cap when the cap was last set (creation or
+  ///         setDepositCap). Deposits and releases move value between the two, so the sum holds
+  ///         while the intent is depositing.
+  mapping(uint256 => uint256) public capBaseline;
+
   /// @notice Fixed users array used by the fuzzer.
   address[] public users;
 
@@ -88,7 +94,8 @@ contract FacilityHandler is Test {
   /// @notice FAC-8: Set to true if a swap digest replay succeeds.
   bool public swapReplaySucceeded;
 
-  /// @notice FAC-4: Set to true if a deposit results in totalSupply exceeding depositCap.
+  /// @notice FAC-4: Set to true if a deposit consumed more than the available cap, or a
+  ///         different amount than it minted.
   bool public depositExceededCap;
 
   /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
@@ -279,11 +286,14 @@ contract FacilityHandler is Test {
     intentIds.push(id);
     intentStates[id] = 0; // DEPOSITING
     intentIsDebtToken[id] = isDebt;
+    capBaseline[id] = depositCap;
   }
 
   /// @notice Deposits into a DEPOSITING intent on behalf of a fuzzed user.
-  /// @dev Handles both PM-share and debtToken intents. Verifies 1:1 LP minting (FAC-3).
-  ///      Early-returns if no depositing intents or deposit cap already reached.
+  /// @dev Handles both PM-share and debtToken intents. Verifies 1:1 LP minting (FAC-3) and
+  ///      that the cap decrements by the deposited amount (FAC-4). One deposit in eight is
+  ///      attempted above the remaining cap and must revert with DepositCapExceeded.
+  ///      Early-returns if no depositing intents.
   /// @param intentSeed Seed for selecting an intent.
   /// @param amountSeed Seed for fuzzing the deposit amount.
   /// @param userSeed Seed for selecting a user.
@@ -296,23 +306,32 @@ contract FacilityHandler is Test {
     (IntentProperties memory props,,,) = facility.getIntent(id);
     // the absolute cap is the remaining capacity: it decrements on deposits
     uint256 remaining = props.depositCap;
+    address depositor = users[userSeed % users.length];
+
+    // FAC-4: a deposit above the remaining cap must revert with the remaining cap and the amount
+    if (amountSeed % 8 == 0 && remaining < 1_000_000e18) {
+      uint256 over = remaining + 1;
+      _fundDepositor(id, depositor, over);
+      vm.prank(depositor);
+      try facility.deposit(id, over) {
+        depositExceededCap = true;
+      } catch (bytes memory reason) {
+        // other reverts (pause, intent past resolveStart) are not cap decisions
+        if (reason.length >= 4 && bytes4(reason) == LibFacilityErrors.DepositCapExceeded.selector) {
+          bytes memory expected =
+            abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, id, remaining, over);
+          if (keccak256(reason) != keccak256(expected)) depositExceededCap = true;
+        }
+      }
+      return;
+    }
+
     uint256 maxDeposit = remaining < 1_000_000e18 ? remaining : 1_000_000e18;
     if (maxDeposit < 1e18) return;
 
     uint256 amount = bound(amountSeed, 1e18, maxDeposit);
-    address depositor = users[userSeed % users.length];
 
-    if (intentIsDebtToken[id]) {
-      // Mint debtToken directly to depositor
-      debtToken.setBalance(depositor, debtToken.balanceOf(depositor) + amount);
-      vm.prank(depositor);
-      debtToken.approve(address(facility), type(uint256).max);
-    } else {
-      // Mint PM shares to user via minter
-      _mintPmSharesToUser(depositor, amount);
-      vm.prank(depositor);
-      positionManager.approve(address(facility), type(uint256).max);
-    }
+    _fundDepositor(id, depositor, amount);
 
     // FAC-3: Capture balance before deposit
     uint256 balBefore = facility.balanceOf(depositor, id);
@@ -593,8 +612,8 @@ contract FacilityHandler is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Updates the deposit cap of a DEPOSITING intent.
-  /// @dev Allows setting cap below current totalSupply (which is valid on-chain).
-  ///      This exercises the scenario where totalSupply > depositCap after a cap reduction.
+  /// @dev The new word is the remaining capacity, independent of totalSupply, so this rebases
+  ///      the FAC-4 baseline to totalSupply + newCap.
   /// @param intentSeed Seed for selecting an intent.
   /// @param capSeed Seed for fuzzing the new deposit cap.
   function act_updateDepositCap(uint256 intentSeed, uint256 capSeed) external {
@@ -605,8 +624,9 @@ contract FacilityHandler is Test {
     uint256 newCap = bound(capSeed, 0, 10_000_000e18);
 
     vm.prank(facilitator);
-    try facility.setDepositCap(id, newCap) {}
-    catch {
+    try facility.setDepositCap(id, newCap) {
+      capBaseline[id] = facility.totalSupply(id) + newCap;
+    } catch {
       return;
     }
   }
@@ -739,6 +759,19 @@ contract FacilityHandler is Test {
       swapReplaySucceeded = true;
     } catch {
       // Expected: replay should fail
+    }
+  }
+
+  /// @dev Mints `amount` of the intent's deposit asset to `depositor` and approves the facility.
+  function _fundDepositor(uint256 id, address depositor, uint256 amount) internal {
+    if (intentIsDebtToken[id]) {
+      debtToken.setBalance(depositor, debtToken.balanceOf(depositor) + amount);
+      vm.prank(depositor);
+      debtToken.approve(address(facility), type(uint256).max);
+    } else {
+      _mintPmSharesToUser(depositor, amount);
+      vm.prank(depositor);
+      positionManager.approve(address(facility), type(uint256).max);
     }
   }
 

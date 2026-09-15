@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {LibChecks} from "../common/LibChecks.sol";
 import {LibFacilityErrors} from "./LibFacilityErrors.sol";
 import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
+import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhitelist.sol";
 
 /// @dev Deposit cap types, encoded in the top byte of a cap word.
 /// @param ABSOLUTE The word is the remaining deposit capacity of the intent.
@@ -32,6 +32,12 @@ enum CapType {
 ///
 ///      consume() and release() return the new word for the caller to store, so the library
 ///      stays free of storage references.
+///
+///      Known limitation: with an EXTERNAL word, releases (withdraw, revertDeposit) are
+///      state-changing calls into the caps contract and revert when it does: pool at its hard
+///      cap, cap drained under a negative multiplier, or consumer role revoked. Once the intent
+///      is resolving the facilitator can no longer change the word, so only the caps manager
+///      can unblock them.
 library LibCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -107,13 +113,15 @@ library LibCaps {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Validates a deposit cap word before it is stored.
-  /// @dev Reverts with InvalidDepositCap if the type byte is unknown, if a EXTERNAL word has
+  /// @dev Reverts with InvalidDepositCap if the type byte is unknown, if an EXTERNAL word has
   ///      non-zero unused bits, or if its multiplier is type(int24).min (which has no int24
-  ///      negation, so release() could never flip its direction). Reverts with InvalidContract
-  ///      if a EXTERNAL word points at a codeless address: consume() returns no data, so a call
-  ///      to such an address would silently succeed and disable the cap entirely.
+  ///      negation, so release() could never flip its direction). Reverts with CapsNotAllowed
+  ///      if an EXTERNAL word points at a caps contract the whitelist does not allow: consume()
+  ///      returns no data, so a call to an arbitrary address would silently succeed and disable
+  ///      the cap.
   /// @param self The encoded deposit cap word.
-  function validate(uint256 self) internal view {
+  /// @param whitelist The registry of allowed caps contracts.
+  function validate(uint256 self, IFacilityCapsWhitelist whitelist) internal view {
     // compare the raw byte: an unknown type must be rejected before it can be read as a CapType
     uint256 rawType = self >> TYPE_OFFSET;
     if (rawType > uint256(CapType.EXTERNAL)) revert LibFacilityErrors.InvalidDepositCap(self);
@@ -121,7 +129,7 @@ library LibCaps {
       if (self & UNUSED_MASK != 0) revert LibFacilityErrors.InvalidDepositCap(self);
       (IFacilityCaps caps,, int24 multiplier) = decodeExternal(self);
       if (multiplier == type(int24).min) revert LibFacilityErrors.InvalidDepositCap(self);
-      LibChecks.checkContract(address(caps));
+      if (!whitelist.isAllowed(address(caps))) revert LibFacilityErrors.CapsNotAllowed(address(caps));
     }
   }
 
