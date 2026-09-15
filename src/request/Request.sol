@@ -403,6 +403,10 @@ contract Request is IRequest, OfferReceiver, VaultController, Initializable, Own
   ///      The YT amount is calculated as: `ytAmount = offer.expectedReturn * ptAmount / offer.amount`
   ///      This ensures proportional distribution when partially consuming an offer.
   ///
+  ///      An offer is single-use regardless of fill size: `_validateOffer` consumes the maker's
+  ///      nonce, invalidating this offer and every lower-nonce one. Filling `ptAmount < offer.amount`
+  ///      does NOT leave a fillable remainder; the maker must sign a fresh, higher-nonce offer.
+  ///
   ///      The callback allows the maker to prepare funds (e.g., withdraw from DeFi, set allowances)
   ///      before the asset transfer occurs. Set `offer.useCallback` to false for EOA makers or
   ///      contracts that don't need the callback (e.g., have pre-approved allowances).

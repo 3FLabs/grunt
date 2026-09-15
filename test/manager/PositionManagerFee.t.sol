@@ -20,7 +20,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, managementFee, performanceFee);
 
-    (address recipient, uint24 mgmtFee, uint24 perfFee,,) = positionManager.feeData();
+    (address recipient, uint24 mgmtFee, uint24 perfFee,,,) = positionManager.feeData();
     assertEq(recipient, feeRecipient);
     assertEq(mgmtFee, managementFee);
     assertEq(perfFee, performanceFee);
@@ -108,7 +108,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, maxManagementFee, maxPerformanceFee);
 
-    (address recipient, uint24 mgmtFee, uint24 perfFee,,) = positionManager.feeData();
+    (address recipient, uint24 mgmtFee, uint24 perfFee,,,) = positionManager.feeData();
     assertEq(recipient, feeRecipient);
     assertEq(mgmtFee, maxManagementFee);
     assertEq(perfFee, maxPerformanceFee);

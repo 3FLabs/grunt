@@ -38,7 +38,10 @@ src/
 │   │   ├── USCCFund.sol             # Superstate USCC integration
 │   │   ├── USCCFundFactory.sol      # Beacon proxy factory
 │   │   └── SuperstateRestrictedWrappedAsset.sol # WrappedAsset with Superstate allowlist
-│   └── WrappedAsset.sol         # Wrapper token (wUSCC, etc.) with virtual isAllowed hook
+│   ├── midas/
+│   │   ├── MidasFund.sol            # Midas mToken (mGLOBAL, etc.) integration
+│   │   └── MidasFundFactory.sol     # Beacon proxy factory
+│   └── WrappedAsset.sol         # Wrapper token (wUSCC, wmGLOBAL, etc.) with virtual isAllowed hook
 ├── borrow/                      # Lending protocol integrations
 │   ├── MorphoBorrowPosition.sol     # Morpho Blue position
 │   └── MorphoBorrowPositionFactory.sol  # Beacon proxy factory
@@ -112,6 +115,11 @@ This section provides a consolidated view of all roles across contracts and how 
 | **ParetoFund** | Owner | Protocol Admin | Resolve stuck orders |
 | | Operator | Operations Bot | Resolve stuck orders |
 | | Depositor | Facility | Create/cancel/commit/unlock orders |
+| **MidasFund** | Owner | Protocol Admin | Fallback for the operator/payment/vault-manager roles: resolve stuck orders, flag/cancel recovery, confirm bond receipts, set vaults/bond config/referrer |
+| | Operator | Operations Bot | Resolve stuck orders, flag/cancel recovery, set referrer and mToken/USD oracle |
+| | Payment | Operations EOA | Confirm bond receipts via `unlockInstantRedeem()` (required before every redeem can settle; also skips the bond leg when nothing is required for a redemption) |
+| | Vault Manager | Operations EOA | Set the deposit vault (between orders) and the per-redemption redemption vault (at any time; reset on every create), manage the bond config |
+| | Depositor | Facility | Create/cancel/commit/unlock/recover orders |
 | **PositionManager** | Owner | Protocol Admin | Add modules, set LLTV, set fees |
 | | Minter | Facility | Deposit, withdraw, burn shares |
 | | Curator | Operations Bot | Set supply/withdrawal queues |
@@ -504,6 +512,7 @@ stateDiagram-v2
     ACCEPTED --> EMPTY: cancel()
     PENDING --> EMPTY: cancel()
     ACCEPTED --> PROCESSING: commit()
+    PROCESSING --> ACCEPTED: unlockInstantRedeem() (Midas redeem bond leg)
     PROCESSING --> UNLOCKING: success
     PROCESSING --> RECOVERING: failure
     UNLOCKING --> PROCESSING: partial unlock
@@ -517,8 +526,8 @@ stateDiagram-v2
 
 | Mode | Input | Output |
 |------|-------|--------|
-| DEPOSIT | Asset (e.g., USDC) | Shares (e.g., wUSCC) |
-| REDEEM | Shares (e.g., wUSCC) | Asset (e.g., USDC) |
+| DEPOSIT | Asset (e.g., USDC) | Shares (e.g., wUSCC, wmGLOBAL) |
+| REDEEM | Shares (e.g., wUSCC, wmGLOBAL) | Asset (e.g., USDC) |
 
 ### USCC Integration (Superstate)
 
@@ -581,6 +590,41 @@ stateDiagram-v2
 2. `commit()` - Burn WrappedAsset (unwrap to AA tranche), call `requestWithdraw()` on CDO
 3. *Wait for CDO epoch to end*
 4. `unlock()` - Call `claimWithdrawRequest()`, send underlying assets to receiver
+
+### Midas mToken Integration
+
+`MidasFund` wraps Midas mTokens (for example, mGLOBAL) through a WrappedAsset token such as `wmGLOBAL`. It uses a Midas issuance vault plus a dedicated, per-redemption redemption vault.
+
+**Key Design Decisions:**
+- Uses an **internal state pattern**: the stored `internalState` may differ from what `state()` returns, because `state()` checks the Midas mint request status and fund token balances.
+- Deposit output validation and `totalAssets()` use a configurable **8-decimal AggregatorV3 mToken/USD oracle**. The payment asset is assumed to be worth exactly $1; Midas vault feeds are not used for fund-side pricing. The owner or operator can rotate the oracle via `setOracle()`.
+- Deposits are **asynchronous** via `depositRequest()`: `commit()` transfers the payment token to Midas, then the order stays PROCESSING until a Midas vault admin approves the mint request and mints mToken to the fund.
+- **Every redeem follows the Repay-and-Redeem bond flow** and commits in **two legs**. The first `commit()` burns the bond fraction of the shares (`bondConfig`, set via `setBondConfig()` / `removeBondConfig()` between orders only; an empty config zeroes the payment but not the flow) and forwards the unwrapped mTokens to the bond recipient; `unlockInstantRedeem()` (owner or payment role) confirms the bond receipt and re-arms the order — also callable before any commit to skip the bond leg when nothing is required for a specific redemption; the second `commit()` settles the remainder **instantly** via `redeemInstant()`, and a single terminal `unlock()` sweeps the full proceeds (possibly zero) and ends the order. Once the bond is paid, `cancel()` reverts (the bond is forfeited on abandonment): the order completes forward or is aborted via recovery.
+- The **redemption vault is per-redemption**: `create()` resets it to `address(0)` and Midas deploys the dedicated Repay-and-Redeem vault only once the bond is received, so `setRedemptionVault()` (allowed at any time — the vault carries no per-order state) must point the fund at the fresh vault before the redeem leg commits. Consequently redeem outputs are not oracle-validated at create: `redeemInstant()` enforces the order's minimum output on-chain at commit, and the fund re-checks the received amount against that minimum itself (the per-redemption vault is not blindly trusted). The **deposit vault can only change between orders** (the pending mint request is tracked on it).
+- Recovery covers **deposits** and **unsettled bonded redeems**. For deposits it returns the payment token and depends on an off-band Midas admin return of the committed input (rejected requests are not refunded on-chain): `state()` falls back to PROCESSING until the refund covers it. An unsettled bonded redeem (bond paid, redemption not executed) is **aborted** unconditionally: the remainder shares never left the depositor, and the only amount possibly owed back is the bond — returned by Midas off-band **in mTokens**, which `recover()` re-wraps 1:1 into shares minted to the receiver (so the refund lands inside the Facility's intent accounting, which snapshots the share token on a redeem recover). `recover()` may finalize with a zero amount when the bond stays forfeited. A **settled** redeem is never recoverable: it completes via the terminal `unlock()`.
+- When the Midas vault greenlist is enabled or the mToken is permissioned, both the fund and the WrappedAsset must be greenlisted before orders can be created or committed — and the bond recipient must be greenlisted for the bond leg to succeed.
+
+**Deposit Flow (Asset → WrappedShare):**
+1. `create(DEPOSIT)` - Initialize order and validate output against the external mToken/USD oracle
+2. `commit()` - Pull assets, approve the deposit vault, call `depositRequest()`, and store the mint request id
+3. *Wait for Midas admin approval*
+4. `unlock()` - Wrap the minted mToken into WrappedAsset and send it to the receiver
+
+**Redeem Flow (WrappedShare → Asset — Repay-and-Redeem):**
+1. `create(REDEEM)` - The order starts bond-locked; the stored redemption vault is reset to `address(0)`
+2. `commit()` - Bond leg: burns the bond fraction of the shares and forwards the unwrapped mTokens to the bond recipient (nothing moves with an empty bond config; no redemption vault interaction)
+3. *Midas deploys the dedicated redemption vault* — `setRedemptionVault()` points the fund at it (allowed mid-order)
+4. `unlockInstantRedeem()` - Owner or payment role confirms the bond receipt (callable before any commit to skip the bond leg when nothing is required for this redemption)
+5. `commit()` - Redeem leg: settles `input − bondPaid` instantly via `redeemInstant()` with the order's minimum output enforced on-chain and re-verified by the fund against the received balance
+6. `unlock()` - Terminal sweep: transfers the full payment-token balance (possibly zero, then no transfer) to the receiver and ends the order
+- `cancel()` reverts once the bond is paid; a stuck order is aborted via the recovery flow below (the bond stays forfeited)
+
+**Recovery Flow (off-band unwind / bonded-redeem abort):**
+1. `recovering()` - Owner/operator flags the order: a PROCESSING deposit, or an unsettled bonded redeem (bond phase, or re-ACCEPTED after `unlockInstantRedeem()`); settled redeems are rejected
+2. *Deposits: wait for Midas to return the committed input off-band in the payment token (the state falls back to PROCESSING until the refund covers it). An aborted bonded redeem is recoverable immediately; if Midas returns the bond, it arrives off-band in mTokens*
+3. `recover()` - Deposits: sweep the fund's payment-token balance to the receiver. Aborted redeems: re-wrap the fund's mToken balance 1:1 into shares minted to the receiver (possibly zero when the bond stays forfeited) — payment tokens are ignored. Ends the order either way
+
+`cancelRecovering()` restores PROCESSING — for a bonded redeem it lands back in the bond phase, so `unlockInstantRedeem()` must be re-called to resume completion. Only cancel a redeem recovery while no bond has been returned: mTokens already received are not swept by the resumed order's completion (they would surface later as a deposit balance sweep) — once the refund is in, finalize via `recover()`.
 
 ## Position Manager
 
@@ -1067,6 +1111,7 @@ flowchart TB
 - `USCCFundFactory` - Deploys USCC fund wrappers
 - `CentrifugeFundFactory` - Deploys Centrifuge ERC-7540 fund wrappers
 - `ParetoFundFactory` - Deploys Pareto CDO fund wrappers
+- `MidasFundFactory` - Deploys Midas mToken fund wrappers
 - `TransferGuardFactory` - Deploys transfer guards
 
 **Upgrading:** The beacon owner can upgrade all proxies by updating the beacon's implementation.

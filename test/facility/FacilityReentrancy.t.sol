@@ -12,6 +12,7 @@ import {TransferGuard} from "src/guard/TransferGuard.sol";
 import {TokenMode} from "src/interfaces/guard/ITransferGuard.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
+import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
 
 // Interfaces
 import {IFacility} from "src/interfaces/facility/IFacility.sol";
@@ -120,7 +121,10 @@ contract FacilityReentrancyTest is Test {
     );
 
     // Setup borrow position
-    bpFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    BorrowOffersRegistry offersRegistry =
+      BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    offersRegistry.initialize(owner);
+    bpFactory = new MorphoBorrowPositionFactory(owner, morpho, offersRegistry);
     address bp = bpFactory.createBorrowPosition(mp.id(), address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
 
     vm.prank(owner);

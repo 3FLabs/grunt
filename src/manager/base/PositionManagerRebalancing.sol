@@ -18,6 +18,7 @@ import {LibView} from "../../libs/manager/LibView.sol";
 import {BPS} from "../../libs/Constants.sol";
 import {LibExecutor} from "../../libs/manager/LibExecutor.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 
 /// @title PositionManagerRebalancing
 /// @author 3F Protocol
@@ -45,6 +46,12 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
   ///      check below would revert on this dust. Production deployments must therefore configure
   ///      `maxRebalanceLoss > 0` (a single basis point is enough); `maxRebalanceLoss == 0` will
   ///      revert otherwise-valid rebalances and must not be used.
+  ///
+  ///      An in-cap NAV loss during the rebalance (venue slippage, bridge fees, rounding)
+  ///      re-anchors the performance reference at the post-loss state, so the levered slice of a
+  ///      later recovery is charged as performance. Accepted policy: the loss is bounded by the
+  ///      owner-set `maxRebalanceLoss`, the fee only mints on genuine upward movement from the
+  ///      post-loss state, and rebalancing is role-gated.
   function rebalance(RebalancingData calldata data, address receiver)
     public
     virtual
@@ -56,16 +63,19 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
     PositionManagerStorageData storage _storage = LibStorage.positionManagerStorage();
 
     // Enforce cooldown between consecutive rebalance calls
-    uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
-    uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
-    if (cooldown > 0 && lastRebalance > 0) {
-      // Safe: block.timestamp fits in uint40 for ~35,000 years
-      // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
-      // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
-      // to avoid uint40 overflow when cooldown is large.
-      // forge-lint: disable-next-line(unsafe-typecast)
-      if (uint40(block.timestamp) - lastRebalance < cooldown) {
-        revert LibManagerErrors.RebalanceCooldownNotElapsed();
+    // (block-scoped so the temporaries do not deepen the stack for the rest of the function)
+    {
+      uint40 cooldown = _storage.rebalanceConfig.rebalanceCooldown;
+      uint40 lastRebalance = _storage.rebalanceConfig.lastRebalanceTimestamp;
+      if (cooldown > 0 && lastRebalance > 0) {
+        // Safe: block.timestamp fits in uint40 for ~35,000 years
+        // Subtraction is safe because block.timestamp >= lastRebalance (time is monotonic).
+        // Using `elapsed < cooldown` instead of `timestamp < lastRebalance + cooldown`
+        // to avoid uint40 overflow when cooldown is large.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (uint40(block.timestamp) - lastRebalance < cooldown) {
+          revert LibManagerErrors.RebalanceCooldownNotElapsed();
+        }
       }
     }
 
@@ -75,8 +85,8 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
       revert CommonErrors.Paused();
     }
 
-    // Accrue fees based on pre-rebalance state and capture totalAssets before operations
-    uint256 totalAssetsBefore = _accrueFees();
+    // Accrue fees based on pre-rebalance state and capture totalAssets/debt before operations
+    (uint256 totalAssetsBefore, uint256 debtBefore) = _accrueFees();
 
     address _collateralAsset = _storage.metadata.collateralAsset;
     address _debtAsset = _storage.metadata.debtAsset;
@@ -93,20 +103,14 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
       _dispatchRebalancingOperation(data.operations[i], _collateralAsset, _debtAsset);
     }
 
-    collateralExcess = _collateralAsset.safeTransferAll(receiver);
-    debtExcess = _debtAsset.safeTransferAll(receiver);
-
-    // Record rebalance timestamp for cooldown enforcement
-    // Safe: block.timestamp fits in uint40 for ~35,000 years
-    // forge-lint: disable-next-line(unsafe-typecast)
-    _storage.rebalanceConfig.lastRebalanceTimestamp = uint40(block.timestamp);
-
-    emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
-
-    // Update snapshot to post-rebalance state. Goes through updateSnapshot so lastDebt is kept
-    // in sync with lastTotalAssets in a single iteration over the borrow modules.
-    LibStorage.updateSnapshot(_storage);
-    uint256 totalAssetsAfter = _storage.lastTotalAssets;
+    // Rebase the performance reference to the post-rebalance state. A rebalance is a flow, not
+    // a gain: the share supply is unchanged, so any carried pending basis is preserved as-is and
+    // the rebalance neither crystallizes a performance fee nor writes off accrued debt carry.
+    // Rebased (and the loss below checked) before the outgoing transfers so a receiver callback
+    // cannot move module state into the new reference or donate to mask a loss; the transfers
+    // change nothing either reads (module aggregates only). A donation during the callback
+    // lands after the reference and is charged like any external repay.
+    uint256 totalAssetsAfter = _rebaseReference(totalAssetsBefore, debtBefore, ERC20.totalSupply());
 
     // Check that totalAssets didn't decrease by more than maxRebalanceLoss
     if (totalAssetsAfter < totalAssetsBefore) {
@@ -117,6 +121,16 @@ abstract contract PositionManagerRebalancing is IPositionManagerRebalancing, Pos
         revert LibManagerErrors.RebalanceLossExceedsMax();
       }
     }
+
+    collateralExcess = _collateralAsset.safeTransferAll(receiver);
+    debtExcess = _debtAsset.safeTransferAll(receiver);
+
+    // Record rebalance timestamp for cooldown enforcement
+    // Safe: block.timestamp fits in uint40 for ~35,000 years
+    // forge-lint: disable-next-line(unsafe-typecast)
+    _storage.rebalanceConfig.lastRebalanceTimestamp = uint40(block.timestamp);
+
+    emit Rebalanced(receiver, data.collateral, data.debt, collateralExcess, debtExcess);
   }
 
   /// @dev Dispatches a single rebalancing operation to the appropriate helper.

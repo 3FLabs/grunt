@@ -5,6 +5,7 @@ import {MorphoBorrowPosition} from "./MorphoBorrowPosition.sol";
 import {UpgradeableBeacon} from "lib/solady/src/utils/UpgradeableBeacon.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {IMorpho, Id} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {IBorrowOffersRegistry} from "../interfaces/borrow/IBorrowOffersRegistry.sol";
 
 /// @title MorphoBorrowPositionFactory
 /// @notice Factory contract for deploying MorphoBorrowPosition instances.
@@ -28,6 +29,16 @@ import {IMorpho, Id} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 ///      1. Beacon owner deploys new MorphoBorrowPosition implementation contract
 ///      2. Beacon owner calls `upgradeTo()` on the beacon
 ///      3. All existing proxies immediately use the new implementation
+///
+///      Versioning:
+///      This factory revision (with the offers-registry constructor argument) is only needed for
+///      FRESH deployments, from the registry-aware version of MorphoBorrowPosition onward. On
+///      chains where a factory is already deployed, the existing instance stays in use across
+///      beacon upgrades: proxy creation is unchanged (`createBorrowPosition` and the 4-argument
+///      `initialize` keep their exact signatures) and only the implementation constructor gained
+///      the registry parameter, which flows through the beacon upgrade, not through the factory.
+///      The main goal is to keep a single beacon: every position of a deployment stays behind the
+///      one beacon the original factory created, instead of fragmenting across factory versions.
 /// @author 3F Protocol
 contract MorphoBorrowPositionFactory {
   using LibClone for address;
@@ -63,6 +74,11 @@ contract MorphoBorrowPositionFactory {
   /// @notice The Morpho Blue protocol contract address shared by all borrow positions.
   IMorpho public immutable MORPHO;
 
+  /// @notice The shared {BorrowOffersRegistry} baked into the MorphoBorrowPosition implementation.
+  /// @dev Source of truth for the offer roles and per-collateral offer configuration; see
+  ///      {MorphoBorrowPosition.OFFERS_REGISTRY}.
+  IBorrowOffersRegistry public immutable OFFERS_REGISTRY;
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          STORAGE                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -77,13 +93,21 @@ contract MorphoBorrowPositionFactory {
 
   /// @notice Deploys the factory and creates the beacon contract with the MorphoBorrowPosition implementation.
   /// @dev Deploys one UpgradeableBeacon wrapping a freshly deployed MorphoBorrowPosition implementation.
-  ///      The beacon owner can later upgrade the implementation for all proxies.
+  ///      The beacon owner can later upgrade the implementation for all proxies. The offers
+  ///      registry must already be deployed and initialized: its address is baked into the
+  ///      implementation as an immutable and shared by every proxy, so the fresh-chain deploy
+  ///      order is offers registry (ERC1967 proxy), then this factory. On a live chain an
+  ///      implementation upgrade does not redeploy the factory: the beacon owner deploys the new
+  ///      implementation standalone (passing the same registry) and calls `upgradeTo` on the
+  ///      beacon.
   /// @param initialBeaconOwner The address that will own the beacon (can upgrade implementations)
   /// @param morpho The Morpho Blue protocol contract address
-  constructor(address initialBeaconOwner, IMorpho morpho) {
+  /// @param offersRegistry The shared {BorrowOffersRegistry} proxy address
+  constructor(address initialBeaconOwner, IMorpho morpho, IBorrowOffersRegistry offersRegistry) {
     MORPHO = morpho;
+    OFFERS_REGISTRY = offersRegistry;
     BORROW_POSITION_BEACON =
-      address(new UpgradeableBeacon(initialBeaconOwner, address(new MorphoBorrowPosition(morpho))));
+      address(new UpgradeableBeacon(initialBeaconOwner, address(new MorphoBorrowPosition(morpho, offersRegistry))));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

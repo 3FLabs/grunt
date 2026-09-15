@@ -76,6 +76,39 @@ library LibFundsErrors {
   /// @notice Thrown when the CDO routes a withdrawal to the instant path instead of the normal epoch-gated queue.
   error InstantWithdrawDetected();
 
+  /// @notice Thrown when the Midas vault targeted by the order is paused,
+  ///         so any order accepted now would be guaranteed to revert at commit time.
+  error MidasVaultPaused();
+
+  /// @notice Thrown when the Midas vault function targeted by the order is paused,
+  ///         so any order accepted now would be guaranteed to revert at commit time.
+  /// @param selector The paused Midas vault function selector.
+  error MidasVaultFunctionPaused(bytes4 selector);
+
+  /// @notice Thrown when the payment token is not registered on the Midas vault.
+  /// @param token The unsupported token address.
+  error TokenNotSupported(address token);
+
+  /// @notice Thrown when setting a bond config with a zero amount, an amount of 100% or more,
+  ///         or a zero recipient (removing the bond payment goes through removeBondConfig).
+  error InvalidBondConfig();
+
+  /// @notice Thrown when unlocking the instant redemption of an order that is not bond-locked
+  ///         (deposit order, already unlocked, or redemption already executed).
+  error InstantRedeemAlreadyUnlocked();
+
+  /// @notice Thrown when canceling a redeem order whose bond has already been paid; the order
+  ///         can only be completed forward (unlockInstantRedeem, then commit and unlock) or
+  ///         aborted via recovering() and recover() (the bond stays forfeited).
+  error BondAlreadyPaid();
+
+  /// @notice Thrown when a redemption pays out less than the order's minimum output: the
+  ///         redemption vault is not blindly trusted to enforce the min-out it was passed,
+  ///         so the received payment-token balance delta is verified fund-side.
+  /// @param received The payment token amount actually received.
+  /// @param minimum The minimum payment token amount expected.
+  error InsufficientRedeemOutput(uint256 received, uint256 minimum);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    CHAINLINK ORACLE                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

@@ -93,6 +93,7 @@ contract PositionManagerSharePriceWindowTest is Test {
 
     assertTrue(attacker.totalSupplyReadReverted(), "totalSupply() read should revert during deposit");
     assertTrue(attacker.totalAssetsReadReverted(), "totalAssets() read should revert during deposit");
+    assertTrue(attacker.hasBadDebtReadReverted(), "hasBadDebt() read should revert during deposit");
   }
 
   /// @notice During withdraw, the collateral-token transfer to the caller fires a callback that
@@ -156,6 +157,7 @@ contract PositionManagerSharePriceWindowTest is Test {
 
     assertTrue(attacker2.totalSupplyReadReverted(), "totalSupply() read should revert during withdraw");
     assertTrue(attacker2.totalAssetsReadReverted(), "totalAssets() read should revert during withdraw");
+    assertTrue(attacker2.hasBadDebtReadReverted(), "hasBadDebt() read should revert during withdraw");
   }
 
   /// @notice Outside any guarded operation, public views must work normally.
@@ -167,6 +169,7 @@ contract PositionManagerSharePriceWindowTest is Test {
     // These calls must succeed.
     pm.totalSupply();
     pm.totalAssets();
+    pm.hasBadDebt();
     pm.collateralAmount();
     pm.collateralAmountQuoted();
     pm.debtAmount();

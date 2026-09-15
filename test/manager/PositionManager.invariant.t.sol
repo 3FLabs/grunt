@@ -8,6 +8,7 @@ import {IPositionManager, SupplyQueueEntry} from "src/interfaces/manager/IPositi
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {MorphoBorrowPositionFactory} from "src/borrow/MorphoBorrowPositionFactory.sol";
+import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
 import {IBorrowPosition} from "src/interfaces/borrow/IBorrowPosition.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, Id, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -159,7 +160,10 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     );
 
     // ---- deploy MorphoBorrowPositionFactory and create 2 borrow positions ----
-    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho);
+    BorrowOffersRegistry offersRegistry =
+      BorrowOffersRegistry(LibClone.deployERC1967(address(new BorrowOffersRegistry())));
+    offersRegistry.initialize(owner);
+    borrowPositionFactory = new MorphoBorrowPositionFactory(owner, morpho, offersRegistry);
 
     address bp1 =
       borrowPositionFactory.createBorrowPosition(marketId1, address(positionManager), BP_SAFE_LTV, BP_LIQUIDATION_LTV);
@@ -309,7 +313,7 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
   ///      MAX_PERFORMANCE_FEE (5000 bps = 50%) during setFeeData(). This invariant
   ///      re-checks the stored values to ensure no path can bypass the validation.
   function invariant_feeBounds() public view {
-    (address feeRecipient, uint24 managementFee, uint24 performanceFee,,) = positionManager.feeData();
+    (address feeRecipient, uint24 managementFee, uint24 performanceFee,,,) = positionManager.feeData();
     assertTrue(managementFee <= MAX_MANAGEMENT_FEE, "PM-4: managementFee exceeds MAX_MANAGEMENT_FEE");
     assertTrue(performanceFee <= MAX_PERFORMANCE_FEE, "PM-4: performanceFee exceeds MAX_PERFORMANCE_FEE");
 
@@ -455,6 +459,19 @@ contract PositionManagerInvariantTest is StdInvariant, Test {
     if (!handler.preLiquidationOccurred() && !handler.morphoLiquidationOccurred()) return;
     uint256 expected = _computePerPositionTotalAssets();
     assertEq(positionManager.totalAssets(), expected, "PM-10: totalAssets broken after liquidation");
+  }
+
+  /// @notice PM-12: Fee conservation. The cumulative value of fee shares at mint never
+  ///         exceeds the maximum rates applied to what could legitimately be charged: the
+  ///         performance rate on NAV gains observed outside capital flows, plus the
+  ///         management rate on quoted collateral over the settled accrual intervals.
+  ///         Capital flows alone can therefore never fund a fee; a violation means principal
+  ///         was charged (the Cantina #32 follow-up class). The 2x factor covers the share
+  ///         conversion against the fee-adjusted base, which can value a mint at up to twice
+  ///         the underlying fee assets; the flat term absorbs per-action rounding dust.
+  function invariant_feeConservation() public view {
+    uint256 allowance = handler.ghostGainObserved() * MAX_PERFORMANCE_FEE / 10_000 + handler.ghostMgmtAllowance();
+    assertLe(handler.ghostFeeMintedValue(), 2 * allowance + 1e18, "PM-12: fee minted beyond observable gains");
   }
 
   /// @notice PM-11: Unauthorized WrappedAsset operations never succeed.

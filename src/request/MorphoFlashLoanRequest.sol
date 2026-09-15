@@ -256,7 +256,12 @@ contract MorphoFlashLoanRequest is
     // Approve Morpho to pull back the flash loaned amount
     $.asset.safeApproveWithRetry(address(MORPHO), assets);
 
-    // Clear raw debt so isRepaid() returns true within the same transaction
+    // Clear raw debt so isRepaid() returns true within the same transaction.
+    // Safe despite running before Morpho actually pulls the repayment: the pull happens in
+    // `flashLoan` immediately after this callback returns, and a short balance or a failed
+    // transfer reverts the whole transaction, unwinding this write with it. There is no state in
+    // which the debt reads as repaid while the flash loan is outstanding — the cleared debt is
+    // only ever observable in a transaction where the repayment succeeded.
     _setRawDebt(0);
   }
 
