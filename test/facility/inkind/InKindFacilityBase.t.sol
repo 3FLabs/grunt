@@ -2,8 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {Test} from "forge-std/Test.sol";
-import {AtomicFacility} from "src/facility/atomic/AtomicFacility.sol";
-import {IAtomicFacility, EntryOffer, ExitOffer, Auth} from "src/interfaces/facility/IAtomicFacility.sol";
+import {InKindFacility} from "src/facility/inkind/InKindFacility.sol";
+import {IInKindFacility, EntryOffer, ExitOffer, Auth} from "src/interfaces/facility/IInKindFacility.sol";
 import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
 import {FacilityDynamicCaps} from "src/facility/caps/FacilityDynamicCaps.sol";
 import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
@@ -25,12 +25,12 @@ import {IrmMock} from "lib/morpho-blue/src/mocks/IrmMock.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
-/// @title AtomicFacilityBaseTest
-/// @notice Base fixture for AtomicFacility tests: two PMs over one WrappedAsset collateral
+/// @title InKindFacilityBaseTest
+/// @notice Base fixture for InKindFacility tests: two PMs over one WrappedAsset collateral
 ///         (18 dec) and a USDC-like debt asset (6 dec, so the virtual share offset is 1e12), one
-///         Morpho market with interest, an atomic facility with MINTER_ROLE on both PMs, and the
+///         Morpho market with interest, an in-kind facility with MINTER_ROLE on both PMs, and the
 ///         shared caps contracts (absolute pools, dynamic caps, whitelist).
-contract AtomicFacilityBaseTest is Test {
+contract InKindFacilityBaseTest is Test {
   using MarketParamsLib for MarketParams;
   using LibClone for address;
 
@@ -38,8 +38,8 @@ contract AtomicFacilityBaseTest is Test {
   /*                        TEST CONTRACTS                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  AtomicFacility public facility;
-  AtomicFacility public implementation;
+  InKindFacility public facility;
+  InKindFacility public implementation;
   FacilityAbsoluteCaps public absoluteCaps;
   FacilityDynamicCaps public dynamicCaps;
   FacilityCapsWhitelist public whitelist;
@@ -165,8 +165,8 @@ contract AtomicFacilityBaseTest is Test {
 
     // Caps: whitelist, absolute pools and dynamic caps, facility as consumer.
     whitelist = new FacilityCapsWhitelist(owner);
-    implementation = new AtomicFacility(address(whitelist));
-    facility = AtomicFacility(address(implementation).clone());
+    implementation = new InKindFacility(address(whitelist));
+    facility = InKindFacility(address(implementation).clone());
     facility.initialize(owner, facilitator, feeRecipient);
     absoluteCaps = FacilityAbsoluteCaps(address(new FacilityAbsoluteCaps()).clone());
     dynamicCaps = FacilityDynamicCaps(address(new FacilityDynamicCaps()).clone());
@@ -201,7 +201,7 @@ contract AtomicFacilityBaseTest is Test {
     // Morpho lending liquidity to borrow against.
     _supplyLiquidity(MORPHO_LIQUIDITY);
 
-    vm.label(address(facility), "AtomicFacility");
+    vm.label(address(facility), "InKindFacility");
     vm.label(address(positionManager), "PositionManager");
     vm.label(address(positionManager2), "PositionManager2");
     vm.label(address(collateralToken), "wUND");
@@ -283,7 +283,7 @@ contract AtomicFacilityBaseTest is Test {
 
   /// @dev Sets the security cap word of the underlying as the facilitator.
   function _setSecurityCap(uint256 cap) internal {
-    vm.prank(facilitator);
+    vm.prank(operator);
     facility.setSecurityCap(address(underlyingToken), cap);
   }
 

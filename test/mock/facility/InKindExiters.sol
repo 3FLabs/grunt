@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {IAtomicFacility} from "src/interfaces/facility/IAtomicFacility.sol";
-import {IAtomicExitCallback} from "src/interfaces/facility/IAtomicExitCallback.sol";
+import {IInKindFacility} from "src/interfaces/facility/IInKindFacility.sol";
+import {IInKindExitCallback} from "src/interfaces/facility/IInKindExitCallback.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
@@ -11,13 +11,13 @@ import {IMorphoFlashLoanCallback} from "lib/morpho-blue/src/interfaces/IMorphoCa
 import {MockERC20} from "test/mock/MockERC20.sol";
 
 /// @title BaseExiter
-/// @notice Shared skeleton for atomic exit callback mocks: holds the facility/PM/token
+/// @notice Shared skeleton for in-kind exit callback mocks: holds the facility/PM/token
 ///         references, records every callback invocation and refuses callbacks not issued by the
 ///         facility. Subclasses implement `_onExit`.
-abstract contract BaseExiter is IAtomicExitCallback {
+abstract contract BaseExiter is IInKindExitCallback {
   error NotFacility(address caller);
 
-  IAtomicFacility public immutable facility;
+  IInKindFacility public immutable facility;
   PositionManager public immutable pm;
   MockERC20 public immutable debtToken;
 
@@ -27,14 +27,14 @@ abstract contract BaseExiter is IAtomicExitCallback {
   uint256 public lastDebtIn;
   bytes public lastData;
 
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_) {
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_) {
     facility = facility_;
     pm = pm_;
     debtToken = debtToken_;
   }
 
-  /// @inheritdoc IAtomicExitCallback
-  function onAtomicExit(address positionManager, uint256 shares, uint256 debtIn, bytes calldata data) external {
+  /// @inheritdoc IInKindExitCallback
+  function onInKindExit(address positionManager, uint256 shares, uint256 debtIn, bytes calldata data) external {
     if (msg.sender != address(facility)) revert NotFacility(msg.sender);
     callCount++;
     lastPm = positionManager;
@@ -65,7 +65,7 @@ abstract contract BaseExiter is IAtomicExitCallback {
 contract ApproveExactExiter is BaseExiter {
   error PreviewMismatch(uint256 preview, uint256 debtIn);
 
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_)
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_)
     BaseExiter(facility_, pm_, debtToken_)
   {}
 
@@ -97,7 +97,7 @@ contract ViewReaderExiter is BaseExiter {
 
   Snapshot internal snap;
 
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_)
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_)
     BaseExiter(facility_, pm_, debtToken_)
   {}
 
@@ -128,7 +128,7 @@ abstract contract MorphoExiter is BaseExiter {
   MarketParams internal _marketParams;
 
   constructor(
-    IAtomicFacility facility_,
+    IInKindFacility facility_,
     PositionManager pm_,
     MockERC20 debtToken_,
     IMorpho morpho_,
@@ -145,7 +145,7 @@ abstract contract MorphoExiter is BaseExiter {
 ///         inside the callback (moves the PM's debt below the mirror), then approves `debtIn`.
 contract RepayOnBehalfExiter is MorphoExiter {
   constructor(
-    IAtomicFacility facility_,
+    IInKindFacility facility_,
     PositionManager pm_,
     MockERC20 debtToken_,
     IMorpho morpho_,
@@ -169,7 +169,7 @@ contract SupplyCollateralExiter is MorphoExiter {
   WrappedAsset public immutable collateral;
 
   constructor(
-    IAtomicFacility facility_,
+    IInKindFacility facility_,
     PositionManager pm_,
     MockERC20 debtToken_,
     IMorpho morpho_,
@@ -196,7 +196,7 @@ contract SupplyCollateralExiter is MorphoExiter {
 ///         mirror already priced the accrual), then approves `debtIn`.
 contract AccrueInterestExiter is MorphoExiter {
   constructor(
-    IAtomicFacility facility_,
+    IInKindFacility facility_,
     PositionManager pm_,
     MockERC20 debtToken_,
     IMorpho morpho_,
@@ -221,7 +221,7 @@ contract FlashWrappedExiter is MorphoExiter, IMorphoFlashLoanCallback {
   uint256 public flashExitDebtIn;
 
   constructor(
-    IAtomicFacility facility_,
+    IInKindFacility facility_,
     PositionManager pm_,
     MockERC20 debtToken_,
     IMorpho morpho_,
@@ -251,7 +251,7 @@ contract FlashWrappedExiter is MorphoExiter, IMorphoFlashLoanCallback {
 /// @notice Takes a flash loan INSIDE the exit callback and repays it from its own pre-funded
 ///         balance, then approves `debtIn`.
 /// @dev The exit proceeds cannot fund the flash repayment: the facility delivers the underlying
-///      only after `onAtomicExit` returns (burn + unwrap run after the callback frame), while
+///      only after `onInKindExit` returns (burn + unwrap run after the callback frame), while
 ///      Morpho pulls the loan back before `flashLoan` returns, i.e. still inside the callback.
 ///      A proceeds-funded flash exit must wrap the whole `exit` call (see FlashWrappedExiter).
 contract FlashInCallbackExiter is MorphoExiter, IMorphoFlashLoanCallback {
@@ -261,7 +261,7 @@ contract FlashInCallbackExiter is MorphoExiter, IMorphoFlashLoanCallback {
   uint256 public balanceInsideFlash;
 
   constructor(
-    IAtomicFacility facility_,
+    IInKindFacility facility_,
     PositionManager pm_,
     MockERC20 debtToken_,
     IMorpho morpho_,
@@ -287,7 +287,7 @@ contract FlashInCallbackExiter is MorphoExiter, IMorphoFlashLoanCallback {
 contract ReenterExiter is BaseExiter {
   uint256 public previewDebtInFromCallback;
 
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_)
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_)
     BaseExiter(facility_, pm_, debtToken_)
   {}
 
@@ -307,7 +307,7 @@ contract ReenterExiter is BaseExiter {
 /// @notice Pushes `debtIn` directly to the facility instead of approving it (settlement is
 ///         pull-only, so the exit must fail on the allowance pull).
 contract DirectTransferExiter is BaseExiter {
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_)
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_)
     BaseExiter(facility_, pm_, debtToken_)
   {}
 
@@ -318,7 +318,7 @@ contract DirectTransferExiter is BaseExiter {
 
 /// @notice Does nothing in the callback.
 contract NoopExiter is BaseExiter {
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_)
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_)
     BaseExiter(facility_, pm_, debtToken_)
   {}
 
@@ -328,7 +328,7 @@ contract NoopExiter is BaseExiter {
 /// @notice Facilitator-role contract: raises the exit offer fee to `abi.decode(data, (uint24))`
 ///         from inside the callback, then approves `debtIn`.
 contract FacilitatorExiter is BaseExiter {
-  constructor(IAtomicFacility facility_, PositionManager pm_, MockERC20 debtToken_)
+  constructor(IInKindFacility facility_, PositionManager pm_, MockERC20 debtToken_)
     BaseExiter(facility_, pm_, debtToken_)
   {}
 

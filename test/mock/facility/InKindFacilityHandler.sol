@@ -3,8 +3,8 @@ pragma solidity ^0.8.22;
 
 import {Test} from "forge-std/Test.sol";
 
-import {AtomicFacility} from "src/facility/atomic/AtomicFacility.sol";
-import {IAtomicFacility, Auth} from "src/interfaces/facility/IAtomicFacility.sol";
+import {InKindFacility} from "src/facility/inkind/InKindFacility.sol";
+import {IInKindFacility, Auth} from "src/interfaces/facility/IInKindFacility.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
@@ -16,30 +16,30 @@ import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 
-/// @title AtomicFacilityHandler
-/// @notice Handler contract for AtomicFacility invariant tests.
-/// @dev Provides fuzzed action functions that exercise the atomic lifecycle: entries and exits
+/// @title InKindFacilityHandler
+/// @notice Handler contract for InKindFacility invariant tests.
+/// @dev Provides fuzzed action functions that exercise the in-kind lifecycle: entries and exits
 ///      by a fixed set of users, direct PM seeding by the ops seeder, time warps, oracle moves,
 ///      interest accrual, offer / security cap / auth re-arms with ABSOLUTE words and compliance
 ///      pauses. Every action ends with a ghost snapshot (`_afterOp`) so the invariant contract
 ///      can assert:
-///      - ATM-1: the facility is a pure pass-through: it holds no underlying, wrapper, debt
+///      - INK-1: the facility is a pure pass-through: it holds no underlying, wrapper, debt
 ///        asset or PM shares after an action.
-///      - ATM-2: the facility never keeps allowances it granted.
-///      - ATM-3: the ABSOLUTE capacity, security and exit words and every user auth match an
+///      - INK-2: the facility never keeps allowances it granted.
+///      - INK-3: the ABSOLUTE capacity, security and exit words and every user auth match an
 ///        exact ghost mirror of every consume the contract performs.
-///      - ATM-4: the ABSOLUTE words and the auth amounts only decrease between re-arms.
-///      - ATM-5: `previewEnter` / `previewExit` agree with what the flows do (debt exact on
+///      - INK-4: the ABSOLUTE words and the auth amounts only decrease between re-arms.
+///      - INK-5: `previewEnter` / `previewExit` agree with what the flows do (debt exact on
 ///        entry, debtIn / underlyingOut / feeShares exact on exit) and revert on the same gates.
-///      - ATM-6: `maxEnter` / `maxExit` never quote an amount the caps then refuse.
-///      - ATM-7: the share fee is exactly `ceil(minted * fee / BPS)` on entry and
+///      - INK-6: `maxEnter` / `maxExit` never quote an amount the caps then refuse.
+///      - INK-7: the share fee is exactly `ceil(minted * fee / BPS)` on entry and
 ///        `ceil(shares * fee / BPS)` on exit, paid to the fee recipient.
-///      - ATM-8: the token legs are exact: the receiver's debt delta is the returned debt on
+///      - INK-8: the token legs are exact: the receiver's debt delta is the returned debt on
 ///        entry, the caller's debt delta is minus `debtIn` on exit, and the underlying legs
 ///        match `amount` / `underlyingOut`.
 ///      No handler action ever reverts: every facility call whose revert is legitimate is
 ///      wrapped in try/catch and its outcome counted.
-contract AtomicFacilityHandler is Test {
+contract InKindFacilityHandler is Test {
   using FixedPointMathLib for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -82,7 +82,7 @@ contract AtomicFacilityHandler is Test {
   /*                         CONTRACTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  AtomicFacility public facility;
+  InKindFacility public facility;
   PositionManager public positionManager;
   WrappedAsset public collateralToken;
   MockERC20 public underlyingToken;
@@ -112,19 +112,19 @@ contract AtomicFacilityHandler is Test {
   /*                          CAP GHOSTS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice ATM-3: exact mirror of the entry offer's ABSOLUTE `capacityCap` word.
+  /// @notice INK-3: exact mirror of the entry offer's ABSOLUTE `capacityCap` word.
   uint256 public ghostCapacity;
 
-  /// @notice ATM-3: exact mirror of the underlying's ABSOLUTE security cap word.
+  /// @notice INK-3: exact mirror of the underlying's ABSOLUTE security cap word.
   uint256 public ghostSecurity;
 
-  /// @notice ATM-3: exact mirror of the exit offer's ABSOLUTE `cap` word.
+  /// @notice INK-3: exact mirror of the exit offer's ABSOLUTE `cap` word.
   uint256 public ghostExit;
 
-  /// @notice ATM-3: exact mirror of each user's auth on the underlying.
+  /// @notice INK-3: exact mirror of each user's auth on the underlying.
   mapping(address => Auth) internal ghostAuths;
 
-  /// @notice ATM-4: last observed ABSOLUTE words (reset by re-arms).
+  /// @notice INK-4: last observed ABSOLUTE words (reset by re-arms).
   uint256 public trackedCapacity;
   uint256 public trackedSecurity;
   uint256 public trackedExit;
@@ -134,36 +134,36 @@ contract AtomicFacilityHandler is Test {
   /*                  PER-ACTION INVARIANT FLAGS                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice ATM-1: the facility held underlying / wrapper / debt asset / PM shares after an action.
+  /// @notice INK-1: the facility held underlying / wrapper / debt asset / PM shares after an action.
   bool public facilityHeldTokens;
 
-  /// @notice ATM-2: the facility left a granted allowance after an action.
+  /// @notice INK-2: the facility left a granted allowance after an action.
   bool public facilityHeldAllowance;
 
-  /// @notice ATM-3: a cap word or an auth diverged from its exact ghost mirror, or a word was
+  /// @notice INK-3: a cap word or an auth diverged from its exact ghost mirror, or a word was
   ///         not ABSOLUTE.
   bool public capMirrorBroken;
 
-  /// @notice ATM-4: an ABSOLUTE word or an auth amount increased without a re-arm.
+  /// @notice INK-4: an ABSOLUTE word or an auth amount increased without a re-arm.
   bool public absoluteCapIncreased;
 
-  /// @notice ATM-5: a preview reverted or disagreed while the flow went through, or passed
+  /// @notice INK-5: a preview reverted or disagreed while the flow went through, or passed
   ///         while the flow hit a gate the preview claims to cover.
   bool public previewDesync;
 
-  /// @notice ATM-6: `maxEnter` quoted an amount whose entry reverted on a cap.
+  /// @notice INK-6: `maxEnter` quoted an amount whose entry reverted on a cap.
   bool public maxEnterLied;
 
-  /// @notice ATM-6: `maxExit` quoted an amount whose exit reverted on the cap.
+  /// @notice INK-6: `maxExit` quoted an amount whose exit reverted on the cap.
   bool public maxExitLied;
 
-  /// @notice ATM-7: the fee recipient's PM share delta was not the rounded-up fee.
+  /// @notice INK-7: the fee recipient's PM share delta was not the rounded-up fee.
   bool public feeMirrorBroken;
 
-  /// @notice ATM-8: a debt leg (receiver on entry, caller on exit) was not exact.
+  /// @notice INK-8: a debt leg (receiver on entry, caller on exit) was not exact.
   bool public debtLegBroken;
 
-  /// @notice ATM-8: an underlying leg (caller on entry, receiver on exit) was not exact.
+  /// @notice INK-8: an underlying leg (caller on entry, receiver on exit) was not exact.
   bool public underlyingLegBroken;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -225,7 +225,7 @@ contract AtomicFacilityHandler is Test {
   /// @notice Initializes the handler with all required contract references.
   /// @dev Must be called exactly once after deployment.
   function initialize(
-    AtomicFacility facility_,
+    InKindFacility facility_,
     PositionManager positionManager_,
     WrappedAsset collateralToken_,
     MockERC20 underlyingToken_,
@@ -235,7 +235,7 @@ contract AtomicFacilityHandler is Test {
     address compliance_,
     address seeder_
   ) external {
-    require(!initialized, "AtomicFacilityHandler: already initialized");
+    require(!initialized, "InKindFacilityHandler: already initialized");
     initialized = true;
 
     facility = facility_;
@@ -254,8 +254,8 @@ contract AtomicFacilityHandler is Test {
   ///         the cap and auth ghosts with the words currently stored on the facility.
   /// @dev Must be called after initialize() and after the setUp opened the offers.
   function initializeDependencies(OracleMock oracle_, IMorpho morpho_, MarketParams memory marketParams_) external {
-    require(initialized, "AtomicFacilityHandler: not initialized");
-    require(!dependenciesInitialized, "AtomicFacilityHandler: dependencies already initialized");
+    require(initialized, "InKindFacilityHandler: not initialized");
+    require(!dependenciesInitialized, "InKindFacilityHandler: dependencies already initialized");
     dependenciesInitialized = true;
 
     oracle = oracle_;
@@ -298,8 +298,8 @@ contract AtomicFacilityHandler is Test {
   /// @dev Funds and approves exactly `amount`; unconstrained bounds so every gate (unknown
   ///      offer, pause, bad debt, unlevered pool, caps, PM LTV) is reachable and caught. One
   ///      time in four the amount is `maxEnter`'s quote, which must then not fail on a cap
-  ///      (ATM-6). Mirrors the consumed debt on the capacity, auth and security ghosts (ATM-3)
-  ///      and cross-checks the preview (ATM-5), the fee (ATM-7) and the legs (ATM-8).
+  ///      (INK-6). Mirrors the consumed debt on the capacity, auth and security ghosts (INK-3)
+  ///      and cross-checks the preview (INK-5), the fee (INK-7) and the legs (INK-8).
   /// @param userSeed Seed for selecting the caller.
   /// @param amountSeed Seed for fuzzing the amount.
   /// @param receiverSeed Seed for selecting the receiver.
@@ -347,15 +347,15 @@ contract AtomicFacilityHandler is Test {
     _afterOp();
   }
 
-  /// @dev Post-processing of a successful entry: preview agreement (ATM-5), cap and auth
-  ///      mirrors (ATM-3), fee split (ATM-7) and token legs (ATM-8).
+  /// @dev Post-processing of a successful entry: preview agreement (INK-5), cap and auth
+  ///      mirrors (INK-3), fee split (INK-7) and token legs (INK-8).
   function _onEntered(EnterCtx memory ctx, uint256 shares, uint256 debt) internal {
     enterSuccesses++;
 
-    // ATM-5: the preview must have passed and quoted the exact debt.
+    // INK-5: the preview must have passed and quoted the exact debt.
     if (!ctx.previewOk || ctx.previewDebt != debt) previewDesync = true;
 
-    // ATM-3: capacity, then the caller's auth (when valid), then the security cap.
+    // INK-3: capacity, then the caller's auth (when valid), then the security cap.
     if (debt > ghostCapacity) capMirrorBroken = true;
     else ghostCapacity -= debt;
     uint256 fromAuth;
@@ -370,27 +370,27 @@ contract AtomicFacilityHandler is Test {
     if (fromSecurity > ghostSecurity) capMirrorBroken = true;
     else ghostSecurity -= fromSecurity;
 
-    // ATM-7: fee shares are the rounded-up fee on the gross mint, net shares go to the receiver.
+    // INK-7: fee shares are the rounded-up fee on the gross mint, net shares go to the receiver.
     uint256 feeDelta = positionManager.balanceOf(feeRecipient) - ctx.feeSharesBefore;
     uint256 receiverDelta = positionManager.balanceOf(ctx.receiver) - ctx.receiverSharesBefore;
     uint256 minted = receiverDelta + feeDelta;
     if (receiverDelta != shares || feeDelta != minted.mulDivUp(ctx.feeBps, BPS)) feeMirrorBroken = true;
 
-    // ATM-8: the receiver got exactly `debt`, the caller paid exactly `amount`.
+    // INK-8: the receiver got exactly `debt`, the caller paid exactly `amount`.
     if (debtToken.balanceOf(ctx.receiver) - ctx.receiverDebtBefore != debt) debtLegBroken = true;
     if (ctx.callerUnderlyingBefore - underlyingToken.balanceOf(ctx.who) != ctx.amount) underlyingLegBroken = true;
   }
 
   /// @dev Classification of a failed entry: cap shortfalls must not follow a `maxEnter` quote
-  ///      (ATM-6), gates must not follow a passing preview (ATM-5).
+  ///      (INK-6), gates must not follow a passing preview (INK-5).
   function _onEnterFailed(EnterCtx memory ctx, bytes4 selector) internal {
     if (selector == LibFacilityErrors.DepositCapExceeded.selector) {
       enterCapFailures++;
-      // ATM-6: the quote was computed against the same caps this call consumed.
+      // INK-6: the quote was computed against the same caps this call consumed.
       if (ctx.usesMax) maxEnterLied = true;
     } else if (_isEnterGate(selector)) {
       enterGateFailures++;
-      // ATM-5: the preview claims to revert on these gates too.
+      // INK-5: the preview claims to revert on these gates too.
       if (ctx.previewOk) previewDesync = true;
     } else {
       enterOtherFailures++;
@@ -401,9 +401,9 @@ contract AtomicFacilityHandler is Test {
   ///         receiver, with empty callback data.
   /// @dev Approves exactly the share amount and exactly the previewed `debtIn` (the mirror is
   ///      claimed exact within one transaction, so a bigger pull is a preview lie). One time
-  ///      in four the amount is `maxExit`'s quote when it fits the balance (ATM-6). Mirrors the
-  ///      consumed debt on the exit ghost (ATM-3) and cross-checks the preview (ATM-5), the fee
-  ///      (ATM-7) and the legs (ATM-8). Falls back to the next tracked holder when the picked
+  ///      in four the amount is `maxExit`'s quote when it fits the balance (INK-6). Mirrors the
+  ///      consumed debt on the exit ghost (INK-3) and cross-checks the preview (INK-5), the fee
+  ///      (INK-7) and the legs (INK-8). Falls back to the next tracked holder when the picked
   ///      user holds no shares; early-returns when nobody does.
   /// @param userSeed Seed for selecting the caller.
   /// @param sharesSeed Seed for fuzzing the share amount.
@@ -474,33 +474,33 @@ contract AtomicFacilityHandler is Test {
     return address(0);
   }
 
-  /// @dev Post-processing of a successful exit: preview agreement (ATM-5), exit cap mirror
-  ///      (ATM-3), fee split (ATM-7) and token legs (ATM-8).
+  /// @dev Post-processing of a successful exit: preview agreement (INK-5), exit cap mirror
+  ///      (INK-3), fee split (INK-7) and token legs (INK-8).
   function _onExited(ExitCtx memory ctx, uint256 out, uint256 debtIn) internal {
     exitSuccesses++;
 
     uint256 feeDelta = positionManager.balanceOf(feeRecipient) - ctx.feeSharesBefore;
 
-    // ATM-5: the preview must have passed and quoted the exact figures.
+    // INK-5: the preview must have passed and quoted the exact figures.
     if (!ctx.previewOk || ctx.previewDebtIn != debtIn || ctx.previewOut != out || ctx.previewFee != feeDelta) {
       previewDesync = true;
     }
 
-    // ATM-3: the exit cap absorbs the gross debt, skipped when zero.
+    // INK-3: the exit cap absorbs the gross debt, skipped when zero.
     if (debtIn > ghostExit) capMirrorBroken = true;
     else ghostExit -= debtIn;
 
-    // ATM-7: fee shares are the rounded-up fee on the pulled shares, the caller lost them all.
+    // INK-7: fee shares are the rounded-up fee on the pulled shares, the caller lost them all.
     if (feeDelta != ctx.shares.mulDivUp(ctx.feeBps, BPS)) feeMirrorBroken = true;
     if (ctx.balance - positionManager.balanceOf(ctx.who) != ctx.shares) feeMirrorBroken = true;
 
-    // ATM-8: the caller paid exactly `debtIn`, the receiver got exactly `out`.
+    // INK-8: the caller paid exactly `debtIn`, the receiver got exactly `out`.
     if (ctx.callerDebtBefore - debtToken.balanceOf(ctx.who) != debtIn) debtLegBroken = true;
     if (underlyingToken.balanceOf(ctx.receiver) - ctx.receiverUnderlyingBefore != out) underlyingLegBroken = true;
   }
 
   /// @dev Classification of a failed exit: cap shortfalls must not follow a `maxExit` quote
-  ///      (ATM-6), gates and over-pulls must not follow a passing preview (ATM-5).
+  ///      (INK-6), gates and over-pulls must not follow a passing preview (INK-5).
   function _onExitFailed(ExitCtx memory ctx, bytes4 selector) internal {
     if (selector == LibFacilityErrors.DepositCapExceeded.selector) {
       exitCapFailures++;
@@ -576,7 +576,7 @@ contract AtomicFacilityHandler is Test {
   /// @notice Re-arms the entry offer as the facilitator with an ABSOLUTE capacity word: either
   ///         effectively unlimited or tight (so cap shortfalls are reachable).
   /// @dev Keeps the offer mostly enabled with a long expiry; occasionally sets a short expiry
-  ///      so warps exercise the expired-offer path. Re-arms reset the ghost mirrors (ATM-3, ATM-4).
+  ///      so warps exercise the expired-offer path. Re-arms reset the ghost mirrors (INK-3, INK-4).
   /// @param capSeed Seed for fuzzing the ABSOLUTE cap.
   /// @param expirySeed Seed for choosing the expiry.
   /// @param feeSeed Seed for fuzzing the fee.
@@ -614,7 +614,7 @@ contract AtomicFacilityHandler is Test {
     _afterOp();
   }
 
-  /// @notice Re-arms the underlying's security cap as the facilitator with an ABSOLUTE word:
+  /// @notice Re-arms the underlying's security cap as the operator with an ABSOLUTE word:
   ///         unlimited (one time in eight), zero (one time in eight, closed to unauthed users so
   ///         auths are the only way in), otherwise tight.
   /// @param capSeed Seed for fuzzing the ABSOLUTE cap.
@@ -622,7 +622,7 @@ contract AtomicFacilityHandler is Test {
     uint256 mode = capSeed % 8;
     uint256 cap = mode == 0 ? LibCaps.MAX_ABSOLUTE : mode == 1 ? 0 : _bound(capSeed, 1_000e6, 50_000e6);
 
-    vm.prank(facilitator);
+    vm.prank(operator);
     facility.setSecurityCap(address(underlyingToken), cap);
     securityRearms++;
 
@@ -634,7 +634,7 @@ contract AtomicFacilityHandler is Test {
 
   /// @notice Sets a fuzzed user's auth on the underlying as the operator: a random amount with
   ///         an expiry near now (already expired one time in four, otherwise 1 hour to 3 days).
-  /// @dev Overwrites the remaining amount, as the contract does; resets the ghosts (ATM-3, ATM-4).
+  /// @dev Overwrites the remaining amount, as the contract does; resets the ghosts (INK-3, INK-4).
   /// @param userSeed Seed for selecting the user.
   /// @param amountSeed Seed for fuzzing the auth amount.
   /// @param expirySeed Seed for choosing the expiry.
@@ -673,16 +673,16 @@ contract AtomicFacilityHandler is Test {
 
   /// @dev Whether a revert is one of the entry gates `previewEnter` claims to share.
   function _isEnterGate(bytes4 selector) internal pure returns (bool) {
-    return selector == IAtomicFacility.UnknownEntry.selector || selector == LibCommonErrors.Paused.selector
-      || selector == IAtomicFacility.BadDebtState.selector || selector == IAtomicFacility.UnleveredPool.selector;
+    return selector == IInKindFacility.UnknownEntry.selector || selector == LibCommonErrors.Paused.selector
+      || selector == IInKindFacility.BadDebtState.selector || selector == IInKindFacility.UnleveredPool.selector;
   }
 
   /// @dev Whether a revert is one of the exit gates `previewExit` claims to share, or the
   ///      mirror check that a passing preview rules out.
   function _isExitGate(bytes4 selector) internal pure returns (bool) {
-    return selector == IAtomicFacility.UnknownExit.selector || selector == LibCommonErrors.Paused.selector
-      || selector == IAtomicFacility.BadDebtState.selector || selector == IAtomicFacility.NothingToBurn.selector
-      || selector == IAtomicFacility.DebtMirrorMismatch.selector;
+    return selector == IInKindFacility.UnknownExit.selector || selector == LibCommonErrors.Paused.selector
+      || selector == IInKindFacility.BadDebtState.selector || selector == IInKindFacility.NothingToBurn.selector
+      || selector == IInKindFacility.DebtMirrorMismatch.selector;
   }
 
   function _selectorOf(bytes memory reason) internal pure returns (bytes4 selector) {
@@ -695,7 +695,7 @@ contract AtomicFacilityHandler is Test {
   /// @dev Ghost snapshot taken after every action: clean balances, no granted allowances,
   ///      exact cap and auth mirrors, monotone words and auths, bad-debt coverage.
   function _afterOp() internal {
-    // ATM-1: the facility is a pure pass-through.
+    // INK-1: the facility is a pure pass-through.
     if (
       underlyingToken.balanceOf(address(facility)) != 0 || collateralToken.balanceOf(address(facility)) != 0
         || debtToken.balanceOf(address(facility)) != 0 || positionManager.balanceOf(address(facility)) != 0
@@ -703,7 +703,7 @@ contract AtomicFacilityHandler is Test {
       facilityHeldTokens = true;
     }
 
-    // ATM-2: the facility never keeps allowances it granted.
+    // INK-2: the facility never keeps allowances it granted.
     if (
       underlyingToken.allowance(address(facility), address(collateralToken)) != 0
         || collateralToken.allowance(address(facility), address(positionManager)) != 0
@@ -716,14 +716,14 @@ contract AtomicFacilityHandler is Test {
     uint256 exitCap = facility.getExit(address(positionManager)).cap;
     uint256 security = facility.getSecurityCap(address(underlyingToken));
 
-    // ATM-3: every word is ABSOLUTE here and matches its exact ghost mirror.
+    // INK-3: every word is ABSOLUTE here and matches its exact ghost mirror.
     if (
       capacity >> LibCaps.TYPE_OFFSET != 0 || exitCap >> LibCaps.TYPE_OFFSET != 0
         || security >> LibCaps.TYPE_OFFSET != 0
     ) capMirrorBroken = true;
     if (capacity != ghostCapacity || exitCap != ghostExit || security != ghostSecurity) capMirrorBroken = true;
 
-    // ATM-4: the words only decrease between re-arms.
+    // INK-4: the words only decrease between re-arms.
     if (capacity > trackedCapacity || exitCap > trackedExit || security > trackedSecurity) absoluteCapIncreased = true;
     trackedCapacity = capacity;
     trackedExit = exitCap;

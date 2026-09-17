@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {AtomicFacilityBaseTest} from "./AtomicFacilityBase.t.sol";
-import {IAtomicFacility} from "src/interfaces/facility/IAtomicFacility.sol";
+import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
+import {IInKindFacility} from "src/interfaces/facility/IInKindFacility.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {BPS} from "src/libs/Constants.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
@@ -21,14 +21,14 @@ import {
   DirectTransferExiter,
   NoopExiter,
   FacilitatorExiter
-} from "test/mock/facility/AtomicExiters.sol";
+} from "test/mock/facility/InKindExiters.sol";
 
-/// @title AtomicFacilityCallbackTest
-/// @notice Tests for the `exit` callback lane (`IAtomicExitCallback`): exact sourcing of
+/// @title InKindFacilityCallbackTest
+/// @notice Tests for the `exit` callback lane (`IInKindExitCallback`): exact sourcing of
 ///         `debtIn`, read-consistency inside the callback, the debt mirror check against
 ///         callback-driven module state changes, flash-loan patterns, reentrancy, settlement
 ///         being pull-only, and the share fee / exit cap being settled around the callback.
-contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
+contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
   using FixedPointMathLib for uint256;
 
   uint256 constant ENTER_AMOUNT = 1_000e18;
@@ -263,7 +263,7 @@ contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
     _fundDebt(address(r), previewDebtIn + repayAssets);
 
     // The repay lowers the PM's debt below the mirror figure: burn pulls less than expected.
-    vm.expectPartialRevert(IAtomicFacility.DebtMirrorMismatch.selector);
+    vm.expectPartialRevert(IInKindFacility.DebtMirrorMismatch.selector);
     r.exit(shares, type(uint256).max, 0, receiver, abi.encode(repayAssets));
   }
 
@@ -286,7 +286,7 @@ contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
     vm.revertToState(snap);
     assertLt(pulled, expected, "repay must move burn's figure below the mirror");
 
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.DebtMirrorMismatch.selector, expected, pulled));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.DebtMirrorMismatch.selector, expected, pulled));
     r.exit(shares, type(uint256).max, 0, receiver, abi.encode(repayAssets));
   }
 
@@ -318,7 +318,7 @@ contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
 
     // The donation lifts totalAssets above the performance reference: burn accrues extra fee
     // shares first, so its denominator (and debt slice) diverges from the mirror.
-    vm.expectPartialRevert(IAtomicFacility.DebtMirrorMismatch.selector);
+    vm.expectPartialRevert(IInKindFacility.DebtMirrorMismatch.selector);
     r.exit(shares, type(uint256).max, 0, receiver, abi.encode(donation));
   }
 
@@ -567,7 +567,7 @@ contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
     (uint256 previewDebtIn,,) = facility.previewExit(address(positionManager), shares);
     _fundDebt(address(r), previewDebtIn);
 
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.ExcessiveDebtIn.selector, previewDebtIn, previewDebtIn - 1));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.ExcessiveDebtIn.selector, previewDebtIn, previewDebtIn - 1));
     r.exit(shares, previewDebtIn - 1, 0, receiver, "x");
 
     assertEq(r.callCount(), 0, "callback must not run when the bound fails");
@@ -660,7 +660,7 @@ contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
     _fundDebt(address(r), previewDebtIn);
 
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.Exited(
+    emit IInKindFacility.Exited(
       address(positionManager), address(r), receiver, previewOut, previewDebtIn, shares - previewFee, previewFee
     );
     (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, "x");
@@ -676,7 +676,7 @@ contract AtomicFacilityCallbackTest is AtomicFacilityBaseTest {
   function test_callback_mockRejectsNonFacilityCaller() public {
     ApproveExactExiter r = _newApproveExact();
     vm.expectRevert(abi.encodeWithSelector(BaseExiter.NotFacility.selector, address(this)));
-    r.onAtomicExit(address(positionManager), 1, 1, "x");
+    r.onInKindExit(address(positionManager), 1, 1, "x");
     assertEq(r.callCount(), 0, "no callback recorded");
   }
 }

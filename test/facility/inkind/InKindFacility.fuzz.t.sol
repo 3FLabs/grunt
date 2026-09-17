@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {AtomicFacilityBaseTest} from "./AtomicFacilityBase.t.sol";
-import {Auth} from "src/interfaces/facility/IAtomicFacility.sol";
+import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
+import {Auth} from "src/interfaces/facility/IInKindFacility.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
-/// @title AtomicFacilityFuzzTest
-/// @notice Fuzzed economic properties of the atomic facility:
+/// @title InKindFacilityFuzzTest
+/// @notice Fuzzed economic properties of the in-kind facility:
 ///         - staleness neutrality: ratio-matched entries never cross a price, so a stale quote
 ///           cannot transfer value between the entrant and the holders in either direction, and
 ///           with fees on the only deviation is the share fee;
@@ -19,7 +19,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///           the user and never a loss for the stayers, fees on or off;
 ///         - the entry debt leg is `amount * D / C` rounded down and leaves the pool ratio intact;
 ///         - caps: auth spill-over into the security cap, and `maxEnter` / `maxExit` are tight.
-contract AtomicFacilityFuzzTest is AtomicFacilityBaseTest {
+contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
   using FixedPointMathLib for uint256;
 
   /// @dev Morpho oracle price scale: `price * collateral / 1e36 = debt-unit value`.

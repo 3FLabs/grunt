@@ -29,20 +29,20 @@ struct Auth {
   uint40 expiry;
 }
 
-/// @title IAtomicFacility
+/// @title IInKindFacility
 /// @author 3F Protocol
-/// @notice Permissionless atomic entry and exit over PositionManager (PM) vaults. An entry wraps
+/// @notice Permissionless in-kind entry and exit over PositionManager (PM) vaults. An entry wraps
 ///         the PM collateral's underlying 1:1, supplies it and borrows debt at the pool's live
 ///         debt-per-collateral ratio; an exit repays a proportional debt slice and removes
 ///         proportional collateral. No price enters the economics.
 /// @dev Every cap is denominated in the PM's debt asset (what an entry borrows or an exit repays):
 ///      - `entries[pm].capacityCap`: the borrowable-liquidity budget of the PM;
-///      - `securityCaps[asset]`: how much may be borrowed atomically against one underlying asset,
+///      - `securityCaps[asset]`: how much may be borrowed in kind against one underlying asset,
 ///        shared by every PM whose collateral wraps it;
 ///      - `auths[asset][user]`: a user allowance consumed before the security cap (spill-over).
 ///      An exit consumes `exits[pm].cap` only; a negative multiplier on a shared absolute pool
 ///      gives entry capacity back.
-interface IAtomicFacility {
+interface IInKindFacility {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -71,7 +71,7 @@ interface IAtomicFacility {
 
   /// @notice Emitted when the pause state is set.
   /// @param pausedUntil The pause-until timestamp (0 = not paused, type(uint40).max = permanent).
-  event AtomicFacilityPausedSet(uint40 pausedUntil);
+  event InKindFacilityPausedSet(uint40 pausedUntil);
 
   /// @notice Emitted on an entry.
   /// @param positionManager The position manager entered.
@@ -174,7 +174,7 @@ interface IAtomicFacility {
   ///      pool gives entry capacity back.
   function setExit(address positionManager, uint256 cap, uint40 expiry, uint24 feeBps) external;
 
-  /// @notice Sets the security cap word of an underlying asset (owner or FACILITATOR).
+  /// @notice Sets the security cap word of an underlying asset (owner or OPERATOR).
   /// @dev Keyed by `IWrappedAsset(collateral).underlying()` of the served PMs. Validated like
   ///      {setEntry}. An unset asset reads as a zero ABSOLUTE cap: closed to unauthed users.
   function setSecurityCap(address asset, uint256 cap) external;
@@ -239,9 +239,12 @@ interface IAtomicFacility {
   ///      type(uint256).max (an ABSOLUTE word near MAX_ABSOLUTE scaled by the pool ratio).
   function maxEnter(address positionManager, address user) external view returns (uint256 amount);
 
-  /// @notice Returns a PM share amount (fee included) that can exit right now under the exit cap.
-  /// @dev Reverts like {exit} on a disabled offer, pause or bad debt. Rounded down like
-  ///      {maxEnter}. type(uint256).max when the cap is unbounded or the pool has no debt.
+  /// @notice Returns an estimate of the PM shares (fee included) that can exit right now under
+  ///         the exit cap.
+  /// @dev An estimate: the pool debt it reads is what the borrow modules quote, which a module
+  ///      that does not simulate accrual reports stale until the market is touched, and the
+  ///      rounding is down like {maxEnter}. Reverts like {exit} on a disabled offer, pause or
+  ///      bad debt. type(uint256).max when the pool has no debt; saturates otherwise.
   function maxExit(address positionManager) external view returns (uint256 shares);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -283,7 +286,7 @@ interface IAtomicFacility {
   /// @param maxDebtIn The maximum debt to pull.
   /// @param minUnderlyingOut The minimum underlying the receiver must get.
   /// @param receiver The receiver of the underlying.
-  /// @param data Opaque callback data; empty skips the callback (see IAtomicExitCallback).
+  /// @param data Opaque callback data; empty skips the callback (see IInKindExitCallback).
   /// @return underlyingOut The underlying sent to `receiver`.
   /// @return debtIn The debt pulled from the caller.
   function exit(

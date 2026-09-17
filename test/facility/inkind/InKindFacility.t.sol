@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {AtomicFacilityBaseTest} from "./AtomicFacilityBase.t.sol";
-import {AtomicFacility} from "src/facility/atomic/AtomicFacility.sol";
-import {IAtomicFacility, EntryOffer, ExitOffer, Auth} from "src/interfaces/facility/IAtomicFacility.sol";
-import {IAtomicExitCallback} from "src/interfaces/facility/IAtomicExitCallback.sol";
+import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
+import {InKindFacility} from "src/facility/inkind/InKindFacility.sol";
+import {IInKindFacility, EntryOffer, ExitOffer, Auth} from "src/interfaces/facility/IInKindFacility.sol";
+import {IInKindExitCallback} from "src/interfaces/facility/IInKindExitCallback.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
 import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
@@ -18,15 +18,15 @@ import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 
-/// @title AtomicFacilityTest
-/// @notice Unit, view, slot-layout, e2e and fuzz tests for AtomicFacility entries, exits, caps,
+/// @title InKindFacilityTest
+/// @notice Unit, view, slot-layout, e2e and fuzz tests for InKindFacility entries, exits, caps,
 ///         auths and admin.
-contract AtomicFacilityTest is AtomicFacilityBaseTest {
+contract InKindFacilityTest is InKindFacilityBaseTest {
   using FixedPointMathLib for uint256;
   using LibClone for address;
 
-  /// @dev Storage slot of the facility state (keccak256("facility.atomic.storage")).
-  bytes32 constant ATOMIC_STORAGE_SLOT = 0x761cd1f441e845cdb6e880759e936b3b8a1b245f78953b3ff645e92c3d5c48fd;
+  /// @dev Storage slot of the facility state (keccak256("facility.inkind.storage")).
+  bytes32 constant IN_KIND_STORAGE_SLOT = 0xca588c75c16c13263b4eb28c18c53ab9e5eef731302e0192c05b7a1eaaf2f463;
 
   function setUp() public override {
     super.setUp();
@@ -245,7 +245,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     vm.prank(user);
     vm.expectRevert(
       abi.encodeWithSelector(
-        IAtomicFacility.DebtOutOfBounds.selector, expectedDebt, expectedDebt + 1, type(uint256).max
+        IInKindFacility.DebtOutOfBounds.selector, expectedDebt, expectedDebt + 1, type(uint256).max
       )
     );
     facility.enter(address(positionManager), amount, expectedDebt + 1, type(uint256).max, 0, receiver);
@@ -256,7 +256,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     uint256 expectedDebt = _expectedDebt(amount);
     _fundEntrant(user, amount);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.DebtOutOfBounds.selector, expectedDebt, 0, expectedDebt - 1));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.DebtOutOfBounds.selector, expectedDebt, 0, expectedDebt - 1));
     facility.enter(address(positionManager), amount, 0, expectedDebt - 1, 0, receiver);
   }
 
@@ -267,7 +267,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectRevert(
-      abi.encodeWithSelector(IAtomicFacility.InsufficientSharesOut.selector, actualShares, actualShares + 1)
+      abi.encodeWithSelector(IInKindFacility.InsufficientSharesOut.selector, actualShares, actualShares + 1)
     );
     facility.enter(address(positionManager), amount, 0, type(uint256).max, actualShares + 1, receiver);
   }
@@ -347,7 +347,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     vm.warp(expiry);
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownEntry.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager)));
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -355,7 +355,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _seedPool(positionManager2, SEED_COLLATERAL, SEED_DEBT);
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownEntry.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager2)));
     facility.enter(address(positionManager2), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -364,7 +364,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownEntry.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager)));
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
 
     // Disabling zeroes the whole offer; the exit side is untouched.
@@ -407,7 +407,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _triggerBadDebt();
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.BadDebtState.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.BadDebtState.selector, address(positionManager)));
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -417,7 +417,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
     facility.enter(address(positionManager2), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -425,7 +425,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
     facility.enter(address(positionManager2), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -435,7 +435,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     assertEq(_expectedDebt(amount), 0, "debt must round to zero");
     _fundEntrant(user, amount);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager)));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
   }
 
@@ -456,7 +456,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.Entered(
+    emit IInKindFacility.Entered(
       address(positionManager), user, receiver, amount, expectedDebt, expectedShares, expectedFee
     );
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
@@ -486,7 +486,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
   function test_security_unsetCapRevertsWithAssetId() public {
     // A fresh facility never had its security cap set: it reads as a zero ABSOLUTE cap.
-    AtomicFacility fresh = AtomicFacility(address(implementation).clone());
+    InKindFacility fresh = InKindFacility(address(implementation).clone());
     fresh.initialize(owner, facilitator, feeRecipient);
     vm.prank(facilitator);
     fresh.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
@@ -511,7 +511,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.AuthConsumed(address(underlyingToken), user, debt, uint128(600e6 - debt));
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, debt, uint128(600e6 - debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
 
     assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6, "security cap touched");
@@ -530,7 +530,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.AuthConsumed(address(underlyingToken), user, 200e6, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, 200e6, 0);
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
 
     assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth not drained");
@@ -730,10 +730,10 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   function test_exit_revertsNothingToBurnWhenFeeEatsEverything() public {
     // 1 share at 25 bps: fee = ceil(1 * 25 / 10_000) = 1, nothing left to burn.
     vm.prank(user);
-    vm.expectRevert(IAtomicFacility.NothingToBurn.selector);
+    vm.expectRevert(IInKindFacility.NothingToBurn.selector);
     facility.exit(address(positionManager), 1, type(uint256).max, 0, receiver, "");
 
-    vm.expectRevert(IAtomicFacility.NothingToBurn.selector);
+    vm.expectRevert(IInKindFacility.NothingToBurn.selector);
     facility.previewExit(address(positionManager), 1);
 
     // Two shares leave one to burn.
@@ -746,7 +746,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     (uint256 shares,) = _enter(user, 1_000e18, user);
     (uint256 previewDebtIn,,) = facility.previewExit(address(positionManager), shares);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.ExcessiveDebtIn.selector, previewDebtIn, previewDebtIn - 1));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.ExcessiveDebtIn.selector, previewDebtIn, previewDebtIn - 1));
     facility.exit(address(positionManager), shares, previewDebtIn - 1, 0, receiver, "");
   }
 
@@ -756,7 +756,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _approveExit(user, shares, previewDebtIn + 1);
     vm.prank(user);
     vm.expectRevert(
-      abi.encodeWithSelector(IAtomicFacility.InsufficientUnderlyingOut.selector, previewOut, previewOut + 1)
+      abi.encodeWithSelector(IInKindFacility.InsufficientUnderlyingOut.selector, previewOut, previewOut + 1)
     );
     facility.exit(address(positionManager), shares, type(uint256).max, previewOut + 1, receiver, "");
   }
@@ -956,11 +956,11 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _setExit(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
     vm.warp(expiry);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownExit.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager)));
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownExit.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager2)));
     facility.exit(address(positionManager2), shares, type(uint256).max, 0, receiver, "");
   }
 
@@ -968,7 +968,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     (uint256 shares,) = _enter(user, 1_000e18, user);
     _triggerBadDebt();
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.BadDebtState.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.BadDebtState.selector, address(positionManager)));
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
   }
 
@@ -990,7 +990,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.Exited(
+    emit IInKindFacility.Exited(
       address(positionManager), user, receiver, previewOut, previewDebtIn, shares - previewFee, previewFee
     );
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
@@ -1001,7 +1001,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_initialize_revertsOnZeroAddresses() public {
-    AtomicFacility fresh = AtomicFacility(address(implementation).clone());
+    InKindFacility fresh = InKindFacility(address(implementation).clone());
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
     fresh.initialize(address(0), facilitator, feeRecipient);
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
@@ -1009,7 +1009,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     // Zero facilitator is allowed (role skipped).
     vm.expectEmit(true, true, true, true, address(fresh));
-    emit IAtomicFacility.FeeRecipientSet(feeRecipient);
+    emit IInKindFacility.FeeRecipientSet(feeRecipient);
     fresh.initialize(owner, address(0), feeRecipient);
     (address recipient, bool isPaused, uint40 pausedUntil) = fresh.config();
     assertEq(recipient, feeRecipient, "fee recipient stored");
@@ -1037,7 +1037,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   function test_constructor_revertsOnCodelessWhitelist() public {
     address dead = makeAddr("deadWhitelist");
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, dead));
-    new AtomicFacility(dead);
+    new InKindFacility(dead);
   }
 
   function test_constructor_storesWhitelist() public view {
@@ -1076,18 +1076,18 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   function test_setSecurityCap_roleMatrix() public {
     vm.prank(owner);
     facility.setSecurityCap(address(underlyingToken), 1e6);
-    vm.prank(facilitator);
+    vm.prank(operator);
     facility.setSecurityCap(address(underlyingToken), 2e6);
     assertEq(facility.getSecurityCap(address(underlyingToken)), 2e6, "cap stored");
 
-    address[3] memory rejected = [operator, compliance, user];
+    address[3] memory rejected = [facilitator, compliance, user];
     for (uint256 i = 0; i < rejected.length; ++i) {
       vm.prank(rejected[i]);
       vm.expectRevert(Ownable.Unauthorized.selector);
       facility.setSecurityCap(address(underlyingToken), 3e6);
     }
 
-    vm.prank(facilitator);
+    vm.prank(operator);
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
     facility.setSecurityCap(address(0), 1e6);
   }
@@ -1118,7 +1118,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     // Compliance pauses.
     vm.prank(compliance);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.AtomicFacilityPausedSet(uint40(block.timestamp + 1 days));
+    emit IInKindFacility.InKindFacilityPausedSet(uint40(block.timestamp + 1 days));
     facility.pauseFor(1 days);
     (, bool isPaused, uint40 pausedUntil) = facility.config();
     assertTrue(isPaused, "paused by compliance");
@@ -1148,7 +1148,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     address newRecipient = makeAddr("newRecipient");
     vm.prank(owner);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.FeeRecipientSet(newRecipient);
+    emit IInKindFacility.FeeRecipientSet(newRecipient);
     facility.setFeeRecipient(newRecipient);
     (address recipient,,) = facility.config();
     assertEq(recipient, newRecipient, "fee recipient updated");
@@ -1173,10 +1173,10 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
   function test_setEntryAndExit_revertOnFeeAboveMax() public {
     vm.prank(facilitator);
-    vm.expectRevert(IAtomicFacility.FeeExceedsMax.selector);
+    vm.expectRevert(IInKindFacility.FeeExceedsMax.selector);
     facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, uint24(MAX_FEE + 1));
     vm.prank(facilitator);
-    vm.expectRevert(IAtomicFacility.FeeExceedsMax.selector);
+    vm.expectRevert(IInKindFacility.FeeExceedsMax.selector);
     facility.setExit(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, uint24(MAX_FEE + 1));
 
     // Exactly the max is accepted on both sides.
@@ -1199,17 +1199,17 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     for (uint256 i = 0; i < bad.length; ++i) {
       vm.prank(facilitator);
-      vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.InvalidPositionManager.selector, bad[i]));
+      vm.expectRevert(abi.encodeWithSelector(IInKindFacility.InvalidPositionManager.selector, bad[i]));
       facility.setEntry(bad[i], LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
       vm.prank(facilitator);
-      vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.InvalidPositionManager.selector, bad[i]));
+      vm.expectRevert(abi.encodeWithSelector(IInKindFacility.InvalidPositionManager.selector, bad[i]));
       facility.setExit(bad[i], LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
     }
 
     // underlying() resolving to the zero address.
     address zeroUnderlyingPm = address(new PmSurfaceStub(address(new ZeroUnderlyingWrapper())));
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.InvalidPositionManager.selector, zeroUnderlyingPm));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.InvalidPositionManager.selector, zeroUnderlyingPm));
     facility.setEntry(zeroUnderlyingPm, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
 
     // A stub whose collateral is the real wrapper passes the surface check.
@@ -1242,7 +1242,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
       vm.prank(facilitator);
       vm.expectRevert(errors[i]);
       facility.setExit(address(positionManager), words[i], FAR_EXPIRY, DEFAULT_FEE_BPS);
-      vm.prank(facilitator);
+      vm.prank(operator);
       vm.expectRevert(errors[i]);
       facility.setSecurityCap(address(underlyingToken), words[i]);
       // Validation is unconditional: a disabled offer (expiry 0) is rejected too.
@@ -1267,23 +1267,23 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     uint256 negAbsWord = _absWord(MULT_NEG_1X);
 
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.NonConsumingCap.selector, zeroWord));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
     facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.NonConsumingCap.selector, negWord));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
     facility.setEntry(address(positionManager), negWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.NonConsumingCap.selector, negAbsWord));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negAbsWord));
     facility.setEntry(address(positionManager), negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
 
-    vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.NonConsumingCap.selector, zeroWord));
+    vm.prank(operator);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
     facility.setSecurityCap(address(underlyingToken), zeroWord);
-    vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.NonConsumingCap.selector, negWord));
+    vm.prank(operator);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
     facility.setSecurityCap(address(underlyingToken), negWord);
-    vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.NonConsumingCap.selector, negAbsWord));
+    vm.prank(operator);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negAbsWord));
     facility.setSecurityCap(address(underlyingToken), negAbsWord);
 
     // The exit side accepts any multiplier: negative is the netting case.
@@ -1323,39 +1323,39 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.EntrySet(address(positionManager), 123e6, expiry, 42);
+    emit IInKindFacility.EntrySet(address(positionManager), 123e6, expiry, 42);
     facility.setEntry(address(positionManager), 123e6, expiry, 42);
 
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.ExitSet(address(positionManager), 456e6, expiry, 43);
+    emit IInKindFacility.ExitSet(address(positionManager), 456e6, expiry, 43);
     facility.setExit(address(positionManager), 456e6, expiry, 43);
 
-    vm.prank(facilitator);
+    vm.prank(operator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.SecurityCapSet(address(underlyingToken), 789e6);
+    emit IInKindFacility.SecurityCapSet(address(underlyingToken), 789e6);
     facility.setSecurityCap(address(underlyingToken), 789e6);
 
     vm.prank(operator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.AuthSet(address(underlyingToken), user, 11e6, expiry);
+    emit IInKindFacility.AuthSet(address(underlyingToken), user, 11e6, expiry);
     facility.setAuth(address(underlyingToken), user, 11e6, expiry);
 
     address newRecipient = makeAddr("newRecipient");
     vm.prank(owner);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.FeeRecipientSet(newRecipient);
+    emit IInKindFacility.FeeRecipientSet(newRecipient);
     facility.setFeeRecipient(newRecipient);
 
     vm.prank(compliance);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.AtomicFacilityPausedSet(uint40(block.timestamp + 3 days));
+    emit IInKindFacility.InKindFacilityPausedSet(uint40(block.timestamp + 3 days));
     facility.pauseFor(3 days);
 
     // A permanent pause saturates the timestamp.
     vm.prank(owner);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IAtomicFacility.AtomicFacilityPausedSet(type(uint40).max);
+    emit IInKindFacility.InKindFacilityPausedSet(type(uint40).max);
     facility.pauseFor(type(uint256).max);
   }
 
@@ -1379,7 +1379,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _setEntry(positionManager2, 123e6, expiry, 42);
     _setExit(positionManager2, 456e6, expiry + 1, 43);
     _setAuth(user, 11e6, expiry + 2);
-    vm.prank(facilitator);
+    vm.prank(operator);
     facility.setSecurityCap(address(debtToken), 789e6);
 
     EntryOffer memory entry = facility.getEntry(address(positionManager2));
@@ -1426,7 +1426,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
   function test_previewEnter_gateParity() public {
     // Unknown offer.
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownEntry.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager2)));
     facility.previewEnter(address(positionManager2), 1_000e18);
 
     // Zero amount.
@@ -1434,7 +1434,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     facility.previewEnter(address(positionManager), 0);
 
     // Zero-debt rounding.
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager)));
     facility.previewEnter(address(positionManager), 1e12);
 
     // Paused.
@@ -1447,7 +1447,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     // Bad debt.
     _triggerBadDebt();
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.BadDebtState.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.BadDebtState.selector, address(positionManager)));
     facility.previewEnter(address(positionManager), 1_000e18);
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
 
@@ -1455,15 +1455,15 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     uint40 expiry = uint40(block.timestamp + 1 hours);
     _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
     vm.warp(expiry);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownEntry.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager)));
     facility.previewEnter(address(positionManager), 1_000e18);
 
     // Unlevered and empty pools.
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
     facility.previewEnter(address(positionManager2), 1_000e18);
     _seedPool(positionManager2, SEED_COLLATERAL, 0);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
     facility.previewEnter(address(positionManager2), 1_000e18);
   }
 
@@ -1478,7 +1478,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
   function test_previewExit_gateParity() public {
     // Unknown offer.
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownExit.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager2)));
     facility.previewExit(address(positionManager2), 1e18);
 
     // Zero shares.
@@ -1495,7 +1495,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
 
     // Bad debt.
     _triggerBadDebt();
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.BadDebtState.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.BadDebtState.selector, address(positionManager)));
     facility.previewExit(address(positionManager), 1e18);
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
 
@@ -1503,7 +1503,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     uint40 expiry = uint40(block.timestamp + 1 hours);
     _setExit(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
     vm.warp(expiry);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownExit.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager)));
     facility.previewExit(address(positionManager), 1e18);
   }
 
@@ -1601,7 +1601,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   }
 
   function test_maxEnter_gateParity() public {
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownEntry.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager2)));
     facility.maxEnter(address(positionManager2), user);
 
     vm.prank(compliance);
@@ -1612,11 +1612,11 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     facility.pauseFor(0);
 
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
     facility.maxEnter(address(positionManager2), user);
 
     _triggerBadDebt();
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.BadDebtState.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.BadDebtState.selector, address(positionManager)));
     facility.maxEnter(address(positionManager), user);
   }
 
@@ -1664,7 +1664,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   }
 
   function test_maxExit_gateParity() public {
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.UnknownExit.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager2)));
     facility.maxExit(address(positionManager2));
 
     vm.prank(compliance);
@@ -1675,7 +1675,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     facility.pauseFor(0);
 
     _triggerBadDebt();
-    vm.expectRevert(abi.encodeWithSelector(IAtomicFacility.BadDebtState.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.BadDebtState.selector, address(positionManager)));
     facility.maxExit(address(positionManager));
   }
 
@@ -1684,7 +1684,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_slot_constantMatchesKeccak() public pure {
-    assertEq(keccak256("facility.atomic.storage"), ATOMIC_STORAGE_SLOT, "storage slot constant");
+    assertEq(keccak256("facility.inkind.storage"), IN_KIND_STORAGE_SLOT, "storage slot constant");
   }
 
   function test_slot_feeRecipientAndPausedUntilPacked() public {
@@ -1696,14 +1696,14 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     uint40 pausedUntil = uint40(block.timestamp + 1 days);
 
     // Slot +4: feeRecipient in the low 160 bits, pausedUntil in the next 40.
-    uint256 word = uint256(vm.load(address(facility), bytes32(uint256(ATOMIC_STORAGE_SLOT) + 4)));
+    uint256 word = uint256(vm.load(address(facility), bytes32(uint256(IN_KIND_STORAGE_SLOT) + 4)));
     assertEq(address(uint160(word)), newRecipient, "feeRecipient at bits 0..159");
     assertEq(uint40(word >> 160), pausedUntil, "pausedUntil at bits 160..199");
     assertEq(word >> 200, 0, "dirty high bits");
 
     // Slots +0..+3 hold mappings: their base slots stay empty.
     for (uint256 i = 0; i < 4; ++i) {
-      assertEq(vm.load(address(facility), bytes32(uint256(ATOMIC_STORAGE_SLOT) + i)), bytes32(0), "mapping base slot");
+      assertEq(vm.load(address(facility), bytes32(uint256(IN_KIND_STORAGE_SLOT) + i)), bytes32(0), "mapping base slot");
     }
   }
 
@@ -1713,7 +1713,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _setExit(positionManager, 456e6, expiry + 1, 43);
 
     // entries[pm] at keccak256(pm . slot+0): capacityCap (word 0), expiry | feeBps << 40 (word 1).
-    bytes32 entryBase = keccak256(abi.encode(address(positionManager), uint256(ATOMIC_STORAGE_SLOT)));
+    bytes32 entryBase = keccak256(abi.encode(address(positionManager), uint256(IN_KIND_STORAGE_SLOT)));
     assertEq(uint256(vm.load(address(facility), entryBase)), 123e6, "entry capacityCap");
     uint256 entryWord1 = uint256(vm.load(address(facility), bytes32(uint256(entryBase) + 1)));
     assertEq(uint40(entryWord1), expiry, "entry expiry at bits 0..39");
@@ -1721,7 +1721,7 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     assertEq(entryWord1 >> 64, 0, "entry dirty high bits");
 
     // exits[pm] at keccak256(pm . slot+1), same layout.
-    bytes32 exitBase = keccak256(abi.encode(address(positionManager), uint256(ATOMIC_STORAGE_SLOT) + 1));
+    bytes32 exitBase = keccak256(abi.encode(address(positionManager), uint256(IN_KIND_STORAGE_SLOT) + 1));
     assertEq(uint256(vm.load(address(facility), exitBase)), 456e6, "exit cap");
     uint256 exitWord1 = uint256(vm.load(address(facility), bytes32(uint256(exitBase) + 1)));
     assertEq(uint40(exitWord1), expiry + 1, "exit expiry at bits 0..39");
@@ -1734,11 +1734,11 @@ contract AtomicFacilityTest is AtomicFacilityBaseTest {
     _setAuth(user, 11e6, expiry);
 
     // securityCaps[asset] at keccak256(asset . slot+2).
-    bytes32 securitySlot = keccak256(abi.encode(address(underlyingToken), uint256(ATOMIC_STORAGE_SLOT) + 2));
+    bytes32 securitySlot = keccak256(abi.encode(address(underlyingToken), uint256(IN_KIND_STORAGE_SLOT) + 2));
     assertEq(uint256(vm.load(address(facility), securitySlot)), 789e6, "security cap word");
 
     // auths[asset][user] at keccak256(user . keccak256(asset . slot+3)): amount | expiry << 128.
-    bytes32 authInner = keccak256(abi.encode(address(underlyingToken), uint256(ATOMIC_STORAGE_SLOT) + 3));
+    bytes32 authInner = keccak256(abi.encode(address(underlyingToken), uint256(IN_KIND_STORAGE_SLOT) + 3));
     bytes32 authSlot = keccak256(abi.encode(user, authInner));
     uint256 authWord = uint256(vm.load(address(facility), authSlot));
     assertEq(uint128(authWord), 11e6, "auth amount at bits 0..127");
@@ -1895,7 +1895,7 @@ contract ZeroUnderlyingWrapper {
 
 /// @dev Exit caller implementing the callback: records the call and approves exactly the debt
 ///      it is told, so the facility's pull is sourced inside the callback frame.
-contract ExitCallbackStub is IAtomicExitCallback {
+contract ExitCallbackStub is IInKindExitCallback {
   address internal immutable FACILITY;
   address internal immutable DEBT;
 
@@ -1910,7 +1910,7 @@ contract ExitCallbackStub is IAtomicExitCallback {
     DEBT = debt_;
   }
 
-  function onAtomicExit(address positionManager, uint256 shares, uint256 debtIn, bytes calldata data) external {
+  function onInKindExit(address positionManager, uint256 shares, uint256 debtIn, bytes calldata data) external {
     require(msg.sender == FACILITY, "not facility");
     calls++;
     lastPositionManager = positionManager;
@@ -1929,6 +1929,6 @@ contract ExitCallbackStub is IAtomicExitCallback {
     returns (uint256 out, uint256 debtIn)
   {
     ERC20(positionManager).approve(FACILITY, shares);
-    return IAtomicFacility(FACILITY).exit(positionManager, shares, type(uint256).max, 0, address(this), data);
+    return IInKindFacility(FACILITY).exit(positionManager, shares, type(uint256).max, 0, address(this), data);
   }
 }
