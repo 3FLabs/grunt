@@ -142,14 +142,11 @@ interface IInKindFacility {
   /// @notice Thrown when the PM minted more than the ratio-matched fraction plus rounding.
   error NonNeutralMint(uint256 shares, uint256 expected);
 
-  /// @notice Thrown when the debt to repay exceeds the caller's bound.
-  error ExcessiveDebtIn(uint256 debtIn, uint256 maxDebtIn);
+  /// @notice Thrown when the debt pulled up front (mirror plus headroom) exceeds the caller's bound.
+  error ExcessiveDebtIn(uint256 debtRequired, uint256 maxDebtIn);
 
   /// @notice Thrown when the underlying received falls below the caller's bound.
   error InsufficientUnderlyingOut(uint256 underlyingOut, uint256 minUnderlyingOut);
-
-  /// @notice Thrown when `PM.burn` pulled a different debt than the mirror computed.
-  error DebtMirrorMismatch(uint256 expected, uint256 actual);
 
   /// @notice Thrown when the exit fee consumes every share passed.
   error NothingToBurn();
@@ -221,16 +218,18 @@ interface IInKindFacility {
     returns (uint256 debt, uint256 shares, uint256 feeShares);
 
   /// @notice Previews an exit of `shares` PM shares.
-  /// @dev Reverts like {exit} except for the cap and the caller's bounds. `debtIn` drifts up
-  ///      with interest accrual between preview and execution: approve headroom or source it
-  ///      exactly through the callback.
-  /// @return debtIn The debt the exit pulls.
+  /// @dev Reverts like {exit} except for the cap and the caller's bounds. Both debt figures
+  ///      drift up with interest accrual between preview and execution: approve headroom or
+  ///      source `debtRequired` through the callback.
+  /// @return debtIn The debt the exit is expected to repay (burn's exact mirror).
   /// @return underlyingOut The underlying the receiver gets.
   /// @return feeShares The PM shares the fee recipient gets.
+  /// @return debtRequired The debt the exit pulls up front (`debtIn` plus headroom); the part
+  ///         `PM.burn` does not use is refunded.
   function previewExit(address positionManager, uint256 shares)
     external
     view
-    returns (uint256 debtIn, uint256 underlyingOut, uint256 feeShares);
+    returns (uint256 debtIn, uint256 underlyingOut, uint256 feeShares, uint256 debtRequired);
 
   /// @notice Returns an underlying amount `user` can enter right now under the capacity cap, the
   ///         security cap and the user's auth.
@@ -274,21 +273,23 @@ interface IInKindFacility {
     address receiver
   ) external returns (uint256 shares, uint256 debt);
 
-  /// @notice Exits a position manager: pulls `shares` PM shares, sends the fee shares to the
-  ///         recipient, optionally calls back the caller with the exact debt owed (non-empty
-  ///         `data`), pulls that debt, repays and removes proportional collateral via `PM.burn`,
-  ///         unwraps and forwards the underlying to `receiver`.
-  /// @dev The debt slice mirrors burn's math exactly (post-accrual supply + virtual offset,
-  ///      rounded up) and is final before the callback. A pool that became unlevered stays
-  ///      exitable: `debtIn = 0` skips the cap (the callback still runs when `data` is non-empty).
+  /// @notice Exits a position manager: pulls `shares` PM shares, optionally calls back the
+  ///         caller with the debt to source (non-empty `data`), pulls that debt, repays and
+  ///         removes proportional collateral via `PM.burn`, refunds the debt burn did not use,
+  ///         sends the fee shares to the recipient, unwraps and forwards the underlying to
+  ///         `receiver`.
+  /// @dev The debt pulled up front is burn's mirrored slice (post-accrual supply + virtual
+  ///      offset, rounded up) plus a small headroom, final before the callback; the exit cap is
+  ///      consumed with the mirrored slice. A pool that became unlevered stays exitable: a zero
+  ///      slice skips the cap and the pull (the callback still runs when `data` is non-empty).
   /// @param positionManager The position manager to exit.
   /// @param shares The PM shares to pull (fee included).
-  /// @param maxDebtIn The maximum debt to pull.
+  /// @param maxDebtIn The maximum debt to pull up front (headroom included).
   /// @param minUnderlyingOut The minimum underlying the receiver must get.
   /// @param receiver The receiver of the underlying.
   /// @param data Opaque callback data; empty skips the callback (see IInKindExitCallback).
   /// @return underlyingOut The underlying sent to `receiver`.
-  /// @return debtIn The debt pulled from the caller.
+  /// @return debtIn The debt repaid, net of the refund.
   function exit(
     address positionManager,
     uint256 shares,

@@ -89,14 +89,14 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     return amount.mulDiv(price, ORACLE_PRICE_SCALE);
   }
 
-  /// @dev Exits `shares` as `user` with EXACT funding and EXACT approvals (no headroom, the
-  ///      opposite of the `_exit` helper): the caller's debt balance is set to exactly
-  ///      `previewDebtIn`, so a zero balance afterwards proves the pull was exact to the wei.
+  /// @dev Exits `shares` as `user` with EXACT funding and EXACT approvals (no extra headroom,
+  ///      the opposite of the `_exit` helper): the caller's debt balance is set to exactly the
+  ///      preview's `debtRequired`, so the balance afterwards is exactly the refund.
   function _exitExact(uint256 shares, uint256 maxDebtIn, uint256 minOut)
     internal
     returns (uint256 out, uint256 debtIn, uint256 funded)
   {
-    (funded,,) = facility.previewExit(address(positionManager), shares);
+    (,,, funded) = facility.previewExit(address(positionManager), shares);
     debtToken.setBalance(user, funded);
     vm.startPrank(user);
     debtToken.approve(address(facility), funded);
@@ -178,7 +178,7 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     assertLe(entrantEquity, expected + int256(VALUE_DUST), "the entrant never captures more than p'c - d");
     assertApproxEqAbs(entrantEquity, expected, VALUE_DUST, "entrant equity is p'c - d mod pool-favoring dust");
 
-    (uint256 debtIn, uint256 underlyingOut,) = facility.previewExit(address(positionManager), shares);
+    (uint256 debtIn, uint256 underlyingOut,,) = facility.previewExit(address(positionManager), shares);
     int256 exitValue = int256(_collateralValue(underlyingOut, newPrice)) - int256(debtIn);
     assertLe(exitValue, expected + int256(VALUE_DUST), "the exit never hands back more than p'c - d");
     assertApproxEqAbs(exitValue, expected, VALUE_DUST, "exit value is p'c - d mod pool-favoring dust");
@@ -236,10 +236,9 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
   /// @notice `previewExit` equals the executed exit to the wei across states with pending
   ///         management + performance PM fee shares and accrued Morpho interest, any share fee.
   ///         The real mirror proof is the EXACT-approval flow: the user is funded with exactly
-  ///         the preview's `debtIn` and the facility approves exactly it, so any divergence
-  ///         either reverts on allowance (facility under-computed) or trips
-  ///         `DebtMirrorMismatch` (over-computed). Zero balance + clean facility proves
-  ///         wei-exactness.
+  ///         the preview's `debtRequired`, the facility pulls exactly it and refunds what burn
+  ///         left, so the leftover balance is exactly `debtRequired - debtIn` and the paid
+  ///         `debtIn` equals the preview to the wei.
   function testFuzz_exactMirror(
     uint256 collateralSeed,
     uint256 ratioSeed,
@@ -265,18 +264,18 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
 
     // At least BPS shares so a nonzero fee cannot swallow the whole exit (NothingToBurn).
     uint256 sharesIn = bound(sharesSeed, BPS, userShares);
-    (uint256 debtInPreview, uint256 outPreview, uint256 feePreview) =
+    (uint256 debtInPreview, uint256 outPreview, uint256 feePreview, uint256 requiredPreview) =
       facility.previewExit(address(positionManager), sharesIn);
     assertEq(feePreview, sharesIn.mulDivUp(feeBps, BPS), "exit fee is ceil(shares * fee / BPS)");
     uint256 feeSharesBefore = positionManager.balanceOf(feeRecipient);
 
     // Exact-approval exit, also passing the previews as hard bounds.
-    (uint256 out, uint256 debtIn, uint256 funded) = _exitExact(sharesIn, debtInPreview, outPreview);
+    (uint256 out, uint256 debtIn, uint256 funded) = _exitExact(sharesIn, requiredPreview, outPreview);
 
     assertEq(debtIn, debtInPreview, "executed debtIn equals the preview to the wei");
     assertEq(out, outPreview, "executed underlyingOut equals the preview");
-    assertEq(funded, debtIn, "the user was funded exactly debtIn");
-    assertEq(debtToken.balanceOf(user), 0, "no wei of the exact funding is left over");
+    assertEq(funded, requiredPreview, "the user was funded exactly debtRequired");
+    assertEq(debtToken.balanceOf(user), funded - debtIn, "the headroom came back as the refund");
     assertEq(underlyingToken.balanceOf(user), out, "the underlying reached the receiver");
     assertEq(positionManager.balanceOf(user), userShares - sharesIn, "the exact shares were pulled");
     assertEq(positionManager.balanceOf(feeRecipient) - feeSharesBefore, feePreview, "the fee shares match the preview");
@@ -341,7 +340,7 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
 
     (uint256 shares, uint256 debtOut) = _enter(user, amount, user);
     uint256 entryFee = positionManager.balanceOf(feeRecipient);
-    (,, uint256 exitFee) = facility.previewExit(address(positionManager), shares);
+    (,, uint256 exitFee,) = facility.previewExit(address(positionManager), shares);
     (uint256 underlyingBack, uint256 debtIn,) = _exitExact(shares, type(uint256).max, 0);
 
     // The two fees are the two formulas and both land with the recipient.
@@ -498,14 +497,14 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
       exitCap.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS),
       "maxExit is the cap's burnable slice grossed up by the fee"
     );
-    (uint256 debtInMax,,) = facility.previewExit(address(positionManager), max);
+    (uint256 debtInMax,,,) = facility.previewExit(address(positionManager), max);
     assertLe(debtInMax, exitCap, "maxExit's debt slice fits the cap");
 
     if (max < userShares) {
       // Two debt units' worth of burnable shares, grossed up by the fee, plus one.
       uint256 chunk = (supplyAdj.mulDiv(2, totalDebt) + 2).mulDiv(BPS, BPS - DEFAULT_FEE_BPS) + 1;
       uint256 over = max + chunk;
-      (uint256 overDebt,,) = facility.previewExit(address(positionManager), over);
+      (uint256 overDebt,,,) = facility.previewExit(address(positionManager), over);
       assertGt(overDebt, exitCap, "the overshoot exceeds the cap");
       vm.startPrank(user);
       positionManager.approve(address(facility), over);

@@ -94,15 +94,20 @@ library LibInKindStorage {
     return uint256(uint160(key));
   }
 
+  /// @dev Debt still borrowable under `auth` right now (zero once expired).
+  function available(Auth memory auth) internal view returns (uint256 amount) {
+    if (block.timestamp >= auth.expiry) return 0;
+    return auth.amount;
+  }
+
   /// @dev Debt `user` can still borrow under its auth on `asset` right now (zero once expired).
+  ///      One word, loaded once.
   function authAvailable(InKindStorageData storage self, address asset, address user)
     internal
     view
     returns (uint256 amount)
   {
-    Auth storage auth = self.auths[asset][user];
-    if (block.timestamp >= auth.expiry) return 0;
-    return auth.amount;
+    return available(self.auths[asset][user]);
   }
 
   /// @dev Debt `user` can borrow against `asset` right now: its auth plus what the asset's
@@ -118,13 +123,13 @@ library LibInKindStorage {
   /// @dev Consumes `debt` for a borrow of `user` against `asset`: the auth first, the remainder
   ///      from the asset's security cap (reverting like LibCaps.consume when it cannot absorb it).
   function consumeSecurity(InKindStorageData storage self, address asset, address user, uint256 debt) internal {
-    uint256 fromAuth = authAvailable(self, asset, user).min(debt);
+    Auth memory auth = self.auths[asset][user];
+    uint256 fromAuth = available(auth).min(debt);
     if (fromAuth > 0) {
-      Auth storage auth = self.auths[asset][user];
       // casting to 'uint128' is safe because fromAuth <= auth.amount, which is a uint128
       // forge-lint: disable-next-line(unsafe-typecast)
       uint128 remaining = uint128(auth.amount - fromAuth);
-      auth.amount = remaining;
+      self.auths[asset][user].amount = remaining;
       emit IInKindFacility.AuthConsumed(asset, user, fromAuth, remaining);
     }
     uint256 fromSecurity = debt - fromAuth;

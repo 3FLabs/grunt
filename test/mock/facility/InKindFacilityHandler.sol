@@ -431,15 +431,19 @@ contract InKindFacilityHandler is Test {
       } catch {}
     }
 
-    try facility.previewExit(address(positionManager), ctx.shares) returns (uint256 d, uint256 o, uint256 f) {
+    uint256 required;
+    try facility.previewExit(address(positionManager), ctx.shares) returns (
+      uint256 d, uint256 o, uint256 f, uint256 req
+    ) {
       ctx.previewOk = true;
       ctx.previewDebtIn = d;
       ctx.previewOut = o;
       ctx.previewFee = f;
+      required = req;
     } catch {}
-    // Without a preview (gated), any pull is a lie: fund the theoretical maximum so the gate,
-    // not the allowance, is what reverts.
-    uint256 allowance = ctx.previewOk ? ctx.previewDebtIn : positionManager.debtAmount() + 1;
+    // Approve exactly the previewed pull (mirror plus headroom). Without a preview (gated), any
+    // pull is a lie: fund the theoretical maximum so the gate, not the allowance, is what reverts.
+    uint256 allowance = ctx.previewOk ? required : positionManager.debtAmount() * 2 + 1;
 
     ctx.feeBps = facility.getExit(address(positionManager)).feeBps;
     ctx.callerDebtBefore = debtToken.balanceOf(ctx.who) + allowance;
@@ -681,8 +685,7 @@ contract InKindFacilityHandler is Test {
   ///      mirror check that a passing preview rules out.
   function _isExitGate(bytes4 selector) internal pure returns (bool) {
     return selector == IInKindFacility.UnknownExit.selector || selector == LibCommonErrors.Paused.selector
-      || selector == IInKindFacility.BadDebtState.selector || selector == IInKindFacility.NothingToBurn.selector
-      || selector == IInKindFacility.DebtMirrorMismatch.selector;
+      || selector == IInKindFacility.BadDebtState.selector || selector == IInKindFacility.NothingToBurn.selector;
   }
 
   function _selectorOf(bytes memory reason) internal pure returns (bytes4 selector) {

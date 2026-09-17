@@ -674,7 +674,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 feeSharesBefore = positionManager.balanceOf(feeRecipient);
     uint256 supplyBefore = positionManager.totalSupply();
 
-    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee) =
+    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), shares);
     (uint256 out, uint256 debtIn) = _exit(user, shares, receiver);
 
@@ -713,8 +713,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 supplyBefore = positionManager.totalSupply();
     uint256 userDebtBefore = debtToken.balanceOf(user);
 
-    (uint256 previewDebtIn,, uint256 previewFee) = facility.previewExit(address(positionManager), shares);
-    uint256 allowance = previewDebtIn + 1;
+    (uint256 previewDebtIn,, uint256 previewFee,) = facility.previewExit(address(positionManager), shares);
+    uint256 allowance = _required(previewDebtIn);
     _approveExit(user, shares, allowance);
     vm.prank(user);
     (, uint256 debtIn) = facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
@@ -723,7 +723,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(supplyBefore - positionManager.totalSupply(), shares - previewFee, "burnShares burned");
     assertEq(positionManager.balanceOf(user), 0, "user shares pulled");
     assertEq(debtToken.balanceOf(user), userDebtBefore + allowance - debtIn, "exactly debtIn pulled");
-    assertEq(debtToken.allowance(user, address(facility)), 1, "allowance over debtIn left intact");
+    assertEq(debtToken.allowance(user, address(facility)), 0, "the required pull consumed the allowance");
     _assertFacilityClean();
   }
 
@@ -737,23 +737,23 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.previewExit(address(positionManager), 1);
 
     // Two shares leave one to burn.
-    (uint256 debtIn,, uint256 feeShares) = facility.previewExit(address(positionManager), 2);
+    (uint256 debtIn,, uint256 feeShares,) = facility.previewExit(address(positionManager), 2);
     assertEq(feeShares, 1, "fee on two shares");
     assertGt(debtIn, 0, "one burnable share still owes a rounded-up debt wei");
   }
 
   function test_exit_revertsOnMaxDebtIn() public {
     (uint256 shares,) = _enter(user, 1_000e18, user);
-    (uint256 previewDebtIn,,) = facility.previewExit(address(positionManager), shares);
+    (,,, uint256 required) = facility.previewExit(address(positionManager), shares);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.ExcessiveDebtIn.selector, previewDebtIn, previewDebtIn - 1));
-    facility.exit(address(positionManager), shares, previewDebtIn - 1, 0, receiver, "");
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.ExcessiveDebtIn.selector, required, required - 1));
+    facility.exit(address(positionManager), shares, required - 1, 0, receiver, "");
   }
 
   function test_exit_revertsOnMinUnderlyingOut() public {
     (uint256 shares,) = _enter(user, 1_000e18, user);
-    (uint256 previewDebtIn, uint256 previewOut,) = facility.previewExit(address(positionManager), shares);
-    _approveExit(user, shares, previewDebtIn + 1);
+    (uint256 previewDebtIn, uint256 previewOut,,) = facility.previewExit(address(positionManager), shares);
+    _approveExit(user, shares, _required(previewDebtIn));
     vm.prank(user);
     vm.expectRevert(
       abi.encodeWithSelector(IInKindFacility.InsufficientUnderlyingOut.selector, previewOut, previewOut + 1)
@@ -774,11 +774,11 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_exit_absoluteCapExhaustionReverts() public {
     (uint256 shares,) = _enter(user, 1_000e18, user);
-    (uint256 previewDebtIn,,) = facility.previewExit(address(positionManager), shares);
+    (uint256 previewDebtIn,,,) = facility.previewExit(address(positionManager), shares);
     uint256 cap = previewDebtIn - 1;
     _setExit(positionManager, cap, FAR_EXPIRY, DEFAULT_FEE_BPS);
 
-    _approveExit(user, shares, previewDebtIn + 1);
+    _approveExit(user, shares, _required(previewDebtIn));
     vm.prank(user);
     vm.expectRevert(
       abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), cap, previewDebtIn)
@@ -813,8 +813,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setExit(positionManager, _absWord(MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     (uint256 shares,) = _enter(user, 1_000e18, user);
 
-    (uint256 previewDebtIn,,) = facility.previewExit(address(positionManager), shares);
-    _approveExit(user, shares, previewDebtIn + 1);
+    (uint256 previewDebtIn,,,) = facility.previewExit(address(positionManager), shares);
+    _approveExit(user, shares, _required(previewDebtIn));
     vm.prank(user);
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, POOL_ID));
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
@@ -853,7 +853,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // Entries are closed to everyone; exits do not read the security cap.
     _setSecurityCap(0);
 
-    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee) =
+    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), shares);
     assertEq(previewDebtIn, 0, "unlevered debtIn must be zero");
     // The share fee is independent of the debt leg.
@@ -887,7 +887,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertGt(perfShares, 0, "no pending performance fee shares");
 
     // The preview denominator includes pending fee shares, diluting the exiter's slice.
-    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee) =
+    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), shares);
     uint256 undilutedOut = positionManager.collateralAmount()
       .mulDiv(shares - previewFee, totalSupply_ + positionManager.virtualShareOffset());
@@ -905,8 +905,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_exit_callbackSourcesDebt() public {
     ExitCallbackStub stub = new ExitCallbackStub(address(facility), address(debtToken));
     (uint256 shares,) = _enter(user, 1_000e18, address(stub));
-    (uint256 previewDebtIn, uint256 previewOut,) = facility.previewExit(address(positionManager), shares);
-    debtToken.setBalance(address(stub), previewDebtIn);
+    (uint256 previewDebtIn, uint256 previewOut,,) = facility.previewExit(address(positionManager), shares);
+    debtToken.setBalance(address(stub), _required(previewDebtIn));
 
     // The stub approves exactly the debt it is told inside the callback.
     bytes memory data = abi.encode("source");
@@ -914,12 +914,16 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(stub.calls(), 1, "callback not invoked once");
     assertEq(stub.lastPositionManager(), address(positionManager), "callback pm");
     assertEq(stub.lastShares(), shares, "callback shares (fee included)");
-    assertEq(stub.lastDebtIn(), previewDebtIn, "callback debtIn");
+    assertEq(stub.lastDebtIn(), _required(previewDebtIn), "callback debtIn");
     assertEq(keccak256(stub.lastData()), keccak256(data), "callback data");
     assertEq(debtIn, previewDebtIn, "debtIn");
     assertEq(out, previewOut, "out");
     assertEq(underlyingToken.balanceOf(address(stub)), out, "stub received the underlying");
-    assertEq(debtToken.balanceOf(address(stub)), 0, "stub debt spent");
+    assertEq(
+      debtToken.balanceOf(address(stub)),
+      _required(previewDebtIn) - previewDebtIn,
+      "stub kept only the refunded headroom"
+    );
     _assertFacilityClean();
     _assertNoAllowances();
   }
@@ -927,9 +931,9 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_exit_emptyDataSkipsCallback() public {
     ExitCallbackStub stub = new ExitCallbackStub(address(facility), address(debtToken));
     (uint256 shares,) = _enter(user, 1_000e18, address(stub));
-    (uint256 previewDebtIn,,) = facility.previewExit(address(positionManager), shares);
-    debtToken.setBalance(address(stub), previewDebtIn);
-    stub.approveDebt(previewDebtIn);
+    (uint256 previewDebtIn,,,) = facility.previewExit(address(positionManager), shares);
+    debtToken.setBalance(address(stub), _required(previewDebtIn));
+    stub.approveDebt(_required(previewDebtIn));
 
     stub.doExit(address(positionManager), shares, "");
     assertEq(stub.calls(), 0, "callback invoked on empty data");
@@ -984,9 +988,9 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_exit_emitsEvent() public {
     (uint256 shares,) = _enter(user, 1_000e18, user);
-    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee) =
+    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), shares);
-    _approveExit(user, shares, previewDebtIn + 1);
+    _approveExit(user, shares, _required(previewDebtIn));
 
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
@@ -1638,9 +1642,9 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     // ...and a chunk more does not.
     uint256 over = max + 1e18;
-    (uint256 overDebtIn,,) = facility.previewExit(address(positionManager), over);
+    (uint256 overDebtIn,,,) = facility.previewExit(address(positionManager), over);
     assertGt(overDebtIn, cap, "chunk too small to exceed the cap");
-    _approveExit(user, over, overDebtIn + 1);
+    _approveExit(user, over, _required(overDebtIn));
     vm.prank(user);
     vm.expectRevert(
       abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), cap, overDebtIn)
@@ -1761,11 +1765,11 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _assertNoAllowances();
 
     // 2a. Interest accrues: the exit's debt quote drifts up with the pool's debt.
-    (uint256 debtInBefore, uint256 outBefore,) = facility.previewExit(address(positionManager), shares / 2);
+    (uint256 debtInBefore, uint256 outBefore,,) = facility.previewExit(address(positionManager), shares / 2);
     vm.warp(block.timestamp + 60 days);
     morpho.accrueInterest(marketParams);
     {
-      (uint256 debtInDrifted, uint256 outDrifted,) = facility.previewExit(address(positionManager), shares / 2);
+      (uint256 debtInDrifted, uint256 outDrifted,,) = facility.previewExit(address(positionManager), shares / 2);
       assertGt(debtInDrifted, debtInBefore, "interest did not drift the exit quote");
       assertEq(outDrifted, outBefore, "interest moved the collateral slice");
     }
@@ -1779,7 +1783,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
       assertGt(mgmtShares, 0, "no pending management fee shares");
       assertGt(perfShares, 0, "no pending performance fee shares");
     }
-    (uint256 debtInAfter, uint256 outAfter,) = facility.previewExit(address(positionManager), shares / 2);
+    (uint256 debtInAfter, uint256 outAfter,,) = facility.previewExit(address(positionManager), shares / 2);
     assertLt(outAfter, outBefore, "PM fees did not dilute the exit quote");
 
     // 3. Partial exit by the receiver: half the shares against the fresh quote.
@@ -1859,7 +1863,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 exitShares = bound(shareFraction, 2, shares);
 
     // The facility's mirror math must equal burn's pulled amounts to the wei.
-    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee) =
+    (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), exitShares);
     uint256 feeSharesBefore = positionManager.balanceOf(feeRecipient);
     (uint256 out, uint256 debtIn) = _exit(user, exitShares, receiver);

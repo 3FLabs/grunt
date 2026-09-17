@@ -70,7 +70,7 @@ contract ApproveExactExiter is BaseExiter {
   {}
 
   function _onExit(address positionManager, uint256 shares, uint256 debtIn, bytes calldata) internal override {
-    (uint256 preview,,) = facility.previewExit(positionManager, shares);
+    (,,, uint256 preview) = facility.previewExit(positionManager, shares);
     if (preview != debtIn) revert PreviewMismatch(preview, debtIn);
     debtToken.approve(address(facility), debtIn);
   }
@@ -298,7 +298,7 @@ contract ReenterExiter is BaseExiter {
     } else if (mode == 1) {
       facility.enter(positionManager, 1, 0, type(uint256).max, 0, address(this));
     } else {
-      (previewDebtInFromCallback,,) = facility.previewExit(positionManager, shares);
+      (previewDebtInFromCallback,,,) = facility.previewExit(positionManager, shares);
     }
     debtToken.approve(address(facility), debtIn);
   }

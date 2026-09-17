@@ -19,6 +19,22 @@ library LibInKindView {
   using FixedPointMathLib for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Headroom pulled on top of the mirrored exit debt, in basis points, refunded once
+  ///         `PM.burn` settled. Covers a burn that pulls slightly more than the mirror (a rounding
+  ///         or accounting change in the PM) without blocking exits.
+  uint256 internal constant EXIT_DEBT_HEADROOM_BPS = 10;
+
+  /// @notice Rounding units a ratio-matched mint may exceed the fair fraction by: one for the
+  ///         floored debt, one per module the deposit touches (each floors its quoted collateral
+  ///         on both sides of the flow). A constant rather than a queue length so the check does
+  ///         not depend on the PM's module layout; 32 covers any realistic supply queue at a
+  ///         cost of 32 debt-wei of equity.
+  uint256 internal constant MINT_ROUNDING_UNITS = 32;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          POOL READS                        */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -61,6 +77,14 @@ library LibInKindView {
     return pm.debtAmount().mulDivUp(burnShares, adjustedSupply(pm));
   }
 
+  /// @dev The debt asset an exit pulls up front for a mirrored `debt`: the debt plus
+  ///      EXIT_DEBT_HEADROOM_BPS and one unit, zero when the debt is zero. Whatever `PM.burn`
+  ///      leaves unused is refunded to the caller.
+  function exitDebtRequired(uint256 debt) internal pure returns (uint256 required) {
+    if (debt == 0) return 0;
+    return debt + debt.mulDivUp(EXIT_DEBT_HEADROOM_BPS, BPS) + 1;
+  }
+
   /// @dev Mirror of `PM.burn`'s collateral slice for `burnShares`, rounded down.
   function exitCollateral(IPositionManager pm, uint256 burnShares) internal view returns (uint256 collateral) {
     return pm.collateralAmount().mulDiv(burnShares, adjustedSupply(pm));
@@ -73,12 +97,15 @@ library LibInKindView {
     net = shares - fee;
   }
 
-  /// @dev Fair mint for a ratio-matched entrant of `amount` into a pool of `totalCollateral`:
-  ///      the fraction `amount / C` of the post-accrual supply (virtual offset included, as
-  ///      burn's denominator). Under one quote the actual mint is that times `TA / (TA + 1)`
-  ///      plus rounding: one debt-wei from rounding the debt down and one per module the deposit
-  ///      touches (each floors its quoted collateral on both sides of the flow). The tolerance
-  ///      is that many debt-wei worth of shares plus one share.
+  /// @dev Upper bound on the shares a ratio-matched entry of `amount` may mint. The entrant
+  ///      adds `amount / C` of the pool's collateral and the same fraction of its debt, so it
+  ///      adds that fraction of the pool's equity whatever the quote: its fair share is
+  ///      `expected = S_adj * amount / C` (the post-accrual supply plus the virtual offset, as
+  ///      burn's denominator). `PM.deposit` instead mints from the quoted equity it observes;
+  ///      under one quote that is `expected * TA / (TA + 1)` plus integer rounding, so a mint
+  ///      above `expected + tolerance` means the PM valued the entry above the pool average (a
+  ///      divergent module quote or a bug) and would dilute holders. `tolerance` is
+  ///      MINT_ROUNDING_UNITS debt-wei of equity converted to shares, plus one share.
   function fairMint(IPositionManager pm, uint256 amount, uint256 totalCollateral)
     internal
     view
@@ -86,7 +113,7 @@ library LibInKindView {
   {
     uint256 supplyAdj = adjustedSupply(pm);
     expected = supplyAdj.mulDiv(amount, totalCollateral);
-    tolerance = supplyAdj.mulDivUp(2 + pm.supplyQueue().length, pm.totalAssets() + 1) + 1;
+    tolerance = supplyAdj.mulDivUp(MINT_ROUNDING_UNITS, pm.totalAssets() + 1) + 1;
   }
 
   /// @dev Best-effort share estimate for previews: quoted equity added, converted at the

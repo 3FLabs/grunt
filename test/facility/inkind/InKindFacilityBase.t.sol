@@ -17,6 +17,7 @@ import {BorrowOffersRegistry} from "src/borrow/BorrowOffersRegistry.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {TransferGuard} from "src/guard/TransferGuard.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {Morpho} from "lib/morpho-blue/src/Morpho.sol";
 import {IMorpho, MarketParams, Id} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
@@ -345,9 +346,9 @@ contract InKindFacilityBaseTest is Test {
     internal
     returns (uint256 out, uint256 debtIn)
   {
-    (uint256 previewDebtIn,,) = facility.previewExit(address(pm), shares);
-    // Headroom over the preview: debtIn drifts up with interest accrual.
-    uint256 allowance = previewDebtIn + previewDebtIn / 10 + 1;
+    (uint256 previewDebtIn,,, uint256 required) = facility.previewExit(address(pm), shares);
+    // Headroom over the required pull: it drifts up with interest accrual.
+    uint256 allowance = required + previewDebtIn / 10;
     debtToken.setBalance(who, debtToken.balanceOf(who) + allowance);
     vm.startPrank(who);
     debtToken.approve(address(facility), allowance);
@@ -360,6 +361,11 @@ contract InKindFacilityBaseTest is Test {
   function _setPmFees(uint24 managementFee, uint24 performanceFee) internal {
     vm.prank(owner);
     positionManager.setFeeData(pmFeeRecipient, managementFee, performanceFee);
+  }
+
+  /// @dev The debt an exit pulls up front for a mirrored `debtIn` (headroom included).
+  function _required(uint256 debtIn) internal pure returns (uint256) {
+    return LibInKindView.exitDebtRequired(debtIn);
   }
 
   /// @dev Asserts the facility retains no tokens: it is a pure pass-through.

@@ -132,7 +132,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     uint256 shares;
     uint256 burnShares;
     uint256 feeShares;
-    uint256 debt;
+    uint256 debtRequired;
     uint256 minUnderlyingOut;
   }
 
@@ -273,13 +273,16 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   function previewExit(address positionManager, uint256 shares)
     external
     view
-    returns (uint256 debtIn, uint256 underlyingOut, uint256 feeShares)
+    returns (uint256 debtIn, uint256 underlyingOut, uint256 feeShares, uint256 debtRequired)
   {
     shares.checkNotZero();
     ExitOffer storage offer = LibInKindStorage.inKindStorage().getEnabledExit(positionManager);
     IPositionManager pm = IPositionManager(positionManager);
-    (uint256 burnShares, uint256 fee) = _splitExitShares(shares, offer.feeBps);
-    return (pm.exitDebt(burnShares), pm.exitCollateral(burnShares), fee);
+    uint256 burnShares;
+    (burnShares, feeShares) = _splitExitShares(shares, offer.feeBps);
+    debtIn = pm.exitDebt(burnShares);
+    underlyingOut = pm.exitCollateral(burnShares);
+    debtRequired = LibInKindView.exitDebtRequired(debtIn);
   }
 
   /// @inheritdoc IInKindFacility
@@ -375,17 +378,17 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (exit_.burnShares, exit_.feeShares) = _splitExitShares(shares, offer.feeBps);
 
     // Mirror of burn's debt math, final before the callback: nothing outside this transaction
-    // can interleave, and any module state change the callback makes is caught by the mirror
-    // check after burn.
-    debtIn = pm.exitDebt(exit_.burnShares);
-    if (debtIn > maxDebtIn) revert ExcessiveDebtIn(debtIn, maxDebtIn);
-    exit_.debt = debtIn;
+    // can interleave. The pull carries a headroom so a burn that drifts above the mirror still
+    // settles; the unused part is refunded.
+    uint256 debt = pm.exitDebt(exit_.burnShares);
+    exit_.debtRequired = LibInKindView.exitDebtRequired(debt);
+    if (exit_.debtRequired > maxDebtIn) revert ExcessiveDebtIn(exit_.debtRequired, maxDebtIn);
 
-    // the cap absorbs the gross debt before any token interaction (CEI); a pool that became
+    // the cap absorbs the mirrored debt before any token interaction (CEI); a pool that became
     // unlevered stays exitable
-    if (debtIn > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debtIn);
+    if (debt > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debt);
 
-    underlyingOut = _burnAndUnwrap(exit_, data);
+    (underlyingOut, debtIn) = _burnAndUnwrap(exit_, data);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -423,27 +426,32 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   }
 
   /// @dev Pulls `shares` PM shares, runs the exit callback when `data` is non-empty, pulls
-  ///      exactly `debt` debt asset from the caller, repays and burns the shares net of fee,
-  ///      forwards the fee shares to the recipient, then unwraps the collateral straight to
-  ///      `receiver` and emits the exit event. Approvals are exact and reset.
-  function _burnAndUnwrap(Exit memory exit_, bytes calldata data) internal returns (uint256 collateralOut) {
+  ///      `debtRequired` debt asset from the caller, repays and burns the shares net of fee,
+  ///      refunds the debt burn left unused, forwards the fee shares to the recipient, then
+  ///      unwraps the collateral straight to `receiver` and emits the exit event. Approvals are
+  ///      exact and reset.
+  function _burnAndUnwrap(Exit memory exit_, bytes calldata data)
+    internal
+    returns (uint256 collateralOut, uint256 debtPulled)
+  {
     exit_.positionManager.safeTransferFrom(msg.sender, address(this), exit_.shares);
     // The facility holds the shares and the PM is in no guarded frame: every PM view the
     // callback reads returns exactly the inputs the mirror math used. Settlement is pull-only.
     if (data.length > 0) {
-      IInKindExitCallback(msg.sender).onInKindExit(exit_.positionManager, exit_.shares, exit_.debt, data);
+      IInKindExitCallback(msg.sender).onInKindExit(exit_.positionManager, exit_.shares, exit_.debtRequired, data);
     }
-    if (exit_.debt > 0) {
-      exit_.debtAsset.safeTransferFrom(msg.sender, address(this), exit_.debt);
-      exit_.debtAsset.safeApproveWithRetry(exit_.positionManager, exit_.debt);
+    if (exit_.debtRequired > 0) {
+      exit_.debtAsset.safeTransferFrom(msg.sender, address(this), exit_.debtRequired);
+      exit_.debtAsset.safeApproveWithRetry(exit_.positionManager, exit_.debtRequired);
     }
-    uint256 debtPulled;
+    // burn pulls at most the approved headroom, or reverts on the allowance
     (collateralOut, debtPulled) =
       IPositionManager(exit_.positionManager).burn(exit_.burnShares, WithdrawalStrategy.PROPORTIONAL);
-    // Divergence below burn's figure already fails on burn's allowance pull; divergence above
-    // would silently strand the difference here. Fail loudly instead (mirror symmetry).
-    if (debtPulled != exit_.debt) revert DebtMirrorMismatch(exit_.debt, debtPulled);
-    if (exit_.debt > 0) exit_.debtAsset.safeApproveWithRetry(exit_.positionManager, 0);
+    if (exit_.debtRequired > 0) {
+      exit_.debtAsset.safeApproveWithRetry(exit_.positionManager, 0);
+      uint256 refund = exit_.debtRequired - debtPulled;
+      if (refund > 0) exit_.debtAsset.safeTransfer(msg.sender, refund);
+    }
     if (collateralOut < exit_.minUnderlyingOut) {
       revert InsufficientUnderlyingOut(collateralOut, exit_.minUnderlyingOut);
     }
@@ -452,7 +460,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     }
     if (collateralOut > 0) IWrappedAsset(exit_.collateralAsset).burn(address(this), exit_.receiver, collateralOut);
     emit Exited(
-      exit_.positionManager, msg.sender, exit_.receiver, collateralOut, exit_.debt, exit_.burnShares, exit_.feeShares
+      exit_.positionManager, msg.sender, exit_.receiver, collateralOut, debtPulled, exit_.burnShares, exit_.feeShares
     );
   }
 
