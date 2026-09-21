@@ -296,7 +296,8 @@ contract InKindFacilityHandler is Test {
   /// @notice Enters the PM through the facility as a fuzzed user, forwarding to a fuzzed
   ///         receiver from the users array.
   /// @dev Funds and approves exactly `amount`; unconstrained bounds so every gate (unknown
-  ///      offer, pause, bad debt, unlevered pool, caps, PM LTV) is reachable and caught. One
+  ///      offer, pause, bad debt, empty or unlevered pool, dust, caps, PM LTV) is reachable and
+  ///      caught. One
   ///      time in four the amount is `maxEnter`'s quote, which must then not fail on a cap
   ///      (INK-6). Mirrors the consumed debt on the capacity, auth and security ghosts (INK-3)
   ///      and cross-checks the preview (INK-5), the fee (INK-7) and the legs (INK-8).
@@ -580,7 +581,9 @@ contract InKindFacilityHandler is Test {
   /// @notice Re-arms the entry offer as the facilitator with an ABSOLUTE capacity word: either
   ///         effectively unlimited or tight (so cap shortfalls are reachable).
   /// @dev Keeps the offer mostly enabled with a long expiry; occasionally sets a short expiry
-  ///      so warps exercise the expired-offer path. Re-arms reset the ghost mirrors (INK-3, INK-4).
+  ///      so warps exercise the expired-offer path, and flips `allowUnlevered` so a pool the
+  ///      exits took to zero debt is reachable from both sides. Re-arms reset the ghost mirrors
+  ///      (INK-3, INK-4).
   /// @param capSeed Seed for fuzzing the ABSOLUTE cap.
   /// @param expirySeed Seed for choosing the expiry.
   /// @param feeSeed Seed for fuzzing the fee.
@@ -590,7 +593,7 @@ contract InKindFacilityHandler is Test {
     uint40 expiry = expirySeed % 16 == 0 ? uint40(block.timestamp + 1) : uint40(block.timestamp + 365 days);
 
     vm.prank(facilitator);
-    facility.setEntry(address(positionManager), cap, expiry, feeBps);
+    facility.setEntry(address(positionManager), cap, expiry, feeBps, capSeed % 2 == 0);
     entryRearms++;
 
     ghostCapacity = cap;
@@ -678,7 +681,8 @@ contract InKindFacilityHandler is Test {
   /// @dev Whether a revert is one of the entry gates `previewEnter` claims to share.
   function _isEnterGate(bytes4 selector) internal pure returns (bool) {
     return selector == IInKindFacility.UnknownEntry.selector || selector == LibCommonErrors.Paused.selector
-      || selector == IInKindFacility.BadDebtState.selector || selector == IInKindFacility.UnleveredPool.selector;
+      || selector == IInKindFacility.BadDebtState.selector || selector == IInKindFacility.EmptyPool.selector
+      || selector == IInKindFacility.UnleveredEntryDisabled.selector || selector == IInKindFacility.DustEntry.selector;
   }
 
   /// @dev Whether a revert is one of the exit gates `previewExit` claims to share, or the

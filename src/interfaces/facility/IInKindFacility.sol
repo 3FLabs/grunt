@@ -5,10 +5,14 @@ pragma solidity ^0.8.22;
 /// @param capacityCap LibCaps word consumed with the gross debt every entry borrows.
 /// @param expiry Timestamp the offer expires at (0 or past = disabled).
 /// @param feeBps Share of the minted PM shares sent to the fee recipient, in basis points.
+/// @param allowUnlevered Whether entries are served while the pool carries no debt. Such an
+///        entry borrows nothing, so it consumes no cap and no auth: the flag and the expiry are
+///        its only gates.
 struct EntryOffer {
   uint256 capacityCap;
   uint40 expiry;
   uint24 feeBps;
+  bool allowUnlevered;
 }
 
 /// @dev Exit offer of a position manager. Enabled iff `block.timestamp < expiry`.
@@ -42,13 +46,20 @@ struct Auth {
 ///      - `auths[asset][user]`: a user allowance consumed before the security cap (spill-over).
 ///      An exit consumes `exits[pm].cap` only; a negative multiplier on a shared absolute pool
 ///      gives entry capacity back.
+///
+///      A pool with no debt moves no debt, so every one of those caps reads as zero on it: an
+///      entry into an unlevered pool is gated by `entries[pm].allowUnlevered` and the offer
+///      expiry alone, and an exit from one by the offer expiry alone (a pool that repays to
+///      zero must stay exitable). Size is uncapped on both; disable the offer to stop them.
 interface IInKindFacility {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Emitted when an entry offer is set (or disabled via `expiry = 0`).
-  event EntrySet(address indexed positionManager, uint256 capacityCap, uint40 expiry, uint24 feeBps);
+  event EntrySet(
+    address indexed positionManager, uint256 capacityCap, uint40 expiry, uint24 feeBps, bool allowUnlevered
+  );
 
   /// @notice Emitted when an exit offer is set (or disabled via `expiry = 0`).
   event ExitSet(address indexed positionManager, uint256 cap, uint40 expiry, uint24 feeBps);
@@ -128,9 +139,18 @@ interface IInKindFacility {
   /// @notice Thrown when the position manager reports bad debt (pricing undefined).
   error BadDebtState(address positionManager);
 
-  /// @notice Thrown on an entry when the pool has no collateral or no debt (no ratio to match),
-  ///         or when the ratio-derived debt rounds to zero.
-  error UnleveredPool(address positionManager);
+  /// @notice Thrown on an entry into a pool with no collateral: there is no fraction to match
+  ///         and no ratio to bootstrap one from.
+  error EmptyPool(address positionManager);
+
+  /// @notice Thrown on an entry into a pool carrying no debt while the offer does not allow it
+  ///         (`EntryOffer.allowUnlevered`). Nothing about the pool is wrong: no cap can bound
+  ///         such an entry, so it is served only on an explicit opt-in.
+  error UnleveredEntryDisabled(address positionManager);
+
+  /// @notice Thrown when the ratio-derived debt of an entry into a levered pool rounds to zero:
+  ///         the entry would consume none of the debt-denominated caps. Enter more.
+  error DustEntry(uint256 amount);
 
   /// @notice Thrown when the ratio-derived debt falls outside the caller's bounds.
   error DebtOutOfBounds(uint256 debt, uint256 minDebt, uint256 maxDebt);
@@ -163,8 +183,11 @@ interface IInKindFacility {
   /// @dev Reverts with FeeExceedsMax above 10%, InvalidPositionManager when `positionManager`
   ///      does not expose `assets()` over a wrapped collateral, like LibCaps.validate on the
   ///      word, and NonConsumingCap on an EXTERNAL word with a non-positive multiplier.
-  ///      Overwrites the remaining capacity of an ABSOLUTE word.
-  function setEntry(address positionManager, uint256 capacityCap, uint40 expiry, uint24 feeBps) external;
+  ///      Overwrites the remaining capacity of an ABSOLUTE word. `allowUnlevered` opens entries
+  ///      into a pool with no debt, which no cap bounds: only set it on PMs whose size is
+  ///      acceptable unbounded.
+  function setEntry(address positionManager, uint256 capacityCap, uint40 expiry, uint24 feeBps, bool allowUnlevered)
+    external;
 
   /// @notice Sets the exit offer of a position manager (owner or FACILITATOR).
   /// @dev Same checks as {setEntry} except the multiplier: a negative one on a shared absolute
@@ -233,9 +256,11 @@ interface IInKindFacility {
 
   /// @notice Returns an underlying amount `user` can enter right now under the capacity cap, the
   ///         security cap and the user's auth.
-  /// @dev Reverts like {enter} on a disabled offer, pause, bad debt or unlevered pool. Rounded
-  ///      down: the bound always fits, a few more wei may fit too. Saturates at
-  ///      type(uint256).max (an ABSOLUTE word near MAX_ABSOLUTE scaled by the pool ratio).
+  /// @dev Reverts like {enter} on a disabled offer, pause, bad debt, an empty pool or an
+  ///      unlevered pool the offer does not allow. Rounded down: the bound always fits, a few
+  ///      more wei may fit too. Saturates at type(uint256).max (an ABSOLUTE word near
+  ///      MAX_ABSOLUTE scaled by the pool ratio), and returns it outright on an unlevered pool
+  ///      the offer allows: no cap binds there.
   function maxEnter(address positionManager, address user) external view returns (uint256 amount);
 
   /// @notice Returns an estimate of the PM shares (fee included) that can exit right now under
@@ -255,7 +280,8 @@ interface IInKindFacility {
   ///         the minted PM shares net of fee to `receiver`.
   /// @dev Consumes the capacity cap, then the caller's auth and the security cap, with the gross
   ///      debt before any token moves. The mint is checked against the ratio-matched fraction
-  ///      (see `NonNeutralMint`).
+  ///      (see `NonNeutralMint`). A pool with no debt borrows nothing: the entry is a plain
+  ///      ratio-matched deposit, allowed only under `allowUnlevered` and consuming no cap.
   /// @param positionManager The position manager to enter.
   /// @param amount The underlying to wrap and supply (pulled from the caller).
   /// @param minDebt The minimum debt to borrow (a flash-funded router needs a floor on the cash leg).

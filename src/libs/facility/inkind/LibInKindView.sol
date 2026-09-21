@@ -44,13 +44,21 @@ library LibInKindView {
     if (pm.hasBadDebt()) revert IInKindFacility.BadDebtState(address(pm));
   }
 
-  /// @dev Returns the pool aggregates for an entry, enforcing the bad-debt and unlevered gates:
-  ///      with no rate field there is no bootstrap ratio for an empty or unlevered pool.
-  function leveredPoolState(IPositionManager pm) internal view returns (uint256 totalCollateral, uint256 totalDebt) {
+  /// @dev Returns the pool aggregates for an entry, enforcing the bad-debt and unlevered gates.
+  ///      An empty pool never passes: with no rate field there is no bootstrap ratio, and the
+  ///      neutrality gate would price the first entry against the virtual offset alone. A pool
+  ///      with collateral but no debt has a ratio (the entry borrows nothing) and passes when
+  ///      the offer allows it.
+  function entryPoolState(IPositionManager pm, bool allowUnlevered)
+    internal
+    view
+    returns (uint256 totalCollateral, uint256 totalDebt)
+  {
     checkNoBadDebt(pm);
     totalCollateral = pm.collateralAmount();
     totalDebt = pm.debtAmount();
-    if (totalCollateral == 0 || totalDebt == 0) revert IInKindFacility.UnleveredPool(address(pm));
+    if (totalCollateral == 0) revert IInKindFacility.EmptyPool(address(pm));
+    if (totalDebt == 0 && !allowUnlevered) revert IInKindFacility.UnleveredEntryDisabled(address(pm));
   }
 
   /// @dev The underlying asset of the PM's wrapped collateral.

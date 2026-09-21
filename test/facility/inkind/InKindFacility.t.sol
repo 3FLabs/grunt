@@ -411,13 +411,13 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
-  function test_enter_revertsOnUnleveredPool() public {
-    // Collateral but zero debt on a fresh PM: no ratio to match.
+  function test_enter_revertsOnUnleveredPoolWhileTheOfferIsClosedToIt() public {
+    // Collateral but zero debt on a fresh PM, and an offer that does not opt in.
     _seedPool(positionManager2, SEED_COLLATERAL, 0);
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredEntryDisabled.selector, address(positionManager2)));
     facility.enter(address(positionManager2), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -425,7 +425,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.EmptyPool.selector, address(positionManager2)));
     facility.enter(address(positionManager2), 1_000e18, 0, type(uint256).max, 0, receiver);
   }
 
@@ -435,7 +435,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(_expectedDebt(amount), 0, "debt must round to zero");
     _fundEntrant(user, amount);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.DustEntry.selector, amount));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
   }
 
@@ -489,7 +489,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     InKindFacility fresh = InKindFacility(address(implementation).clone());
     fresh.initialize(owner, facilitator, feeRecipient);
     vm.prank(facilitator);
-    fresh.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    fresh.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     assertEq(fresh.getSecurityCap(address(underlyingToken)), 0, "unset security cap");
 
     uint256 amount = 1_000e18;
@@ -1001,6 +1001,167 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     UNLEVERED POOLS                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_unlevered_entryRevertsWhileTheOfferIsClosedToIt() public {
+    _unleverPool();
+    _fundEntrant(user, 1_000e18);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredEntryDisabled.selector, address(positionManager)));
+    facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
+  }
+
+  function test_unlevered_entryMintsTheRatioMatchedFractionAndBorrowsNothing() public {
+    _unleverPool();
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+
+    uint256 amount = 1_000e18;
+    uint256 collateralBefore = positionManager.collateralAmount();
+    uint256 expected = _adjustedSupply().mulDiv(amount, collateralBefore);
+    uint256 feeSharesBefore = positionManager.balanceOf(feeRecipient);
+
+    (uint256 shares, uint256 debt) = _enter(user, amount, receiver);
+    uint256 feeShares = positionManager.balanceOf(feeRecipient) - feeSharesBefore;
+
+    assertEq(debt, 0, "unlevered entry borrowed");
+    assertEq(debtToken.balanceOf(receiver), 0, "receiver got debt asset");
+    assertEq(positionManager.debtAmount(), 0, "pool levered by the entry");
+    assertEq(positionManager.collateralAmount(), collateralBefore + amount, "collateral supplied");
+    assertEq(positionManager.balanceOf(receiver), shares, "receiver shares");
+    // The mint is the fair fraction: the neutrality gate bounds it above, rounding below.
+    assertLe(shares + feeShares, expected, "minted above the ratio-matched fraction");
+    assertApproxEqRel(shares + feeShares, expected, 1e12, "minted below the ratio-matched fraction");
+    assertEq(feeShares, _feeOn(shares + feeShares), "fee shares");
+    _assertFacilityClean();
+    _assertNoAllowances();
+  }
+
+  function test_unlevered_entryConsumesNoCapNoSecurityAndNoAuth() public {
+    _unleverPool();
+    // Everything a levered entry needs is shut: a zero capacity word, a zero security cap and
+    // no auth. None of them is denominated in anything an unlevered entry moves.
+    _setEntry(positionManager, 0, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    _setSecurityCap(0);
+    _setAuth(user, 0, 0);
+
+    (uint256 shares, uint256 debt) = _enter(user, 1_000e18, receiver);
+
+    assertGt(shares, 0, "no shares minted");
+    assertEq(debt, 0, "unlevered entry borrowed");
+    assertEq(facility.getEntry(address(positionManager)).capacityCap, 0, "capacity word moved");
+    assertEq(facility.getSecurityCap(address(underlyingToken)), 0, "security word moved");
+    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth moved");
+  }
+
+  function test_unlevered_dustEntryStillRevertsInALeveredPool() public {
+    // The flag only opens pools with no debt at all: in a levered pool a debt leg that rounds
+    // to zero would still be a free pass on every debt-denominated cap.
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    uint256 amount = 1e12;
+    assertEq(_expectedDebt(amount), 0, "debt must round to zero");
+    _fundEntrant(user, amount);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.DustEntry.selector, amount));
+    facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
+  }
+
+  function test_unlevered_emptyPoolStillReverts() public {
+    // No collateral, so no fraction to match: the flag does not bootstrap a pool.
+    _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    _fundEntrant(user, 1_000e18);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.EmptyPool.selector, address(positionManager2)));
+    facility.enter(address(positionManager2), 1_000e18, 0, type(uint256).max, 0, receiver);
+  }
+
+  function test_unlevered_offersAreTheOnlyKillSwitch() public {
+    _unleverPool();
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    (uint256 shares,) = _enter(user, 1_000e18, user);
+
+    // Entry side: clear the flag, or expire the offer.
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
+    _fundEntrant(user, 1_000e18);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredEntryDisabled.selector, address(positionManager)));
+    facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
+
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, 0, DEFAULT_FEE_BPS, true);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager)));
+    facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
+
+    // Exit side: the expiry only, since an unlevered exit reads no cap either.
+    _setExit(positionManager, 0, 0, DEFAULT_FEE_BPS);
+    vm.prank(user);
+    positionManager.approve(address(facility), shares);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager)));
+    facility.exit(address(positionManager), shares, 0, 0, receiver, "");
+
+    // And the facility-wide pause covers both.
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    _setExit(positionManager, 0, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    vm.prank(compliance);
+    facility.pauseFor(1 days);
+    vm.prank(user);
+    vm.expectRevert(LibCommonErrors.Paused.selector);
+    facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
+    vm.prank(user);
+    vm.expectRevert(LibCommonErrors.Paused.selector);
+    facility.exit(address(positionManager), shares, 0, 0, receiver, "");
+  }
+
+  function test_unlevered_roundTripReturnsTheUnderlyingNetOfFees() public {
+    _unleverPool();
+    _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    uint256 amount = 1_000e18;
+
+    (uint256 shares, uint256 debt) = _enter(user, amount, user);
+    assertEq(debt, 0, "entry borrowed");
+
+    (uint256 out, uint256 debtIn) = _exit(user, shares, receiver);
+
+    assertEq(debtIn, 0, "exit repaid");
+    assertEq(underlyingToken.balanceOf(receiver), out, "receiver underlying");
+    // Strictly lossy: the two share fees plus rounding.
+    assertLt(out, amount, "round trip profited");
+    assertApproxEqRel(out, amount, 1e16, "round trip lost more than the fees");
+    _assertFacilityClean();
+    _assertNoAllowances();
+  }
+
+  function test_unlevered_previewAndMaxEnter() public {
+    _unleverPool();
+    _setEntry(positionManager, 0, FAR_EXPIRY, DEFAULT_FEE_BPS, true);
+    _setSecurityCap(0);
+    uint256 amount = 1_000e18;
+
+    (uint256 debt, uint256 previewShares, uint256 previewFee) = facility.previewEnter(address(positionManager), amount);
+    assertEq(debt, 0, "previewed debt");
+    assertGt(previewShares, 0, "previewed shares");
+    assertEq(previewFee, _feeOn(previewShares + previewFee), "previewed fee");
+
+    // No debt-denominated word bounds the size, and maxExit already reports the same.
+    assertEq(facility.maxEnter(address(positionManager), user), type(uint256).max, "maxEnter bounded");
+    assertEq(facility.maxExit(address(positionManager)), type(uint256).max, "maxExit bounded");
+
+    (uint256 shares,) = _enter(user, amount, receiver);
+    assertApproxEqRel(shares, previewShares, 1e12, "preview off the mint");
+  }
+
+  function test_unlevered_flagRoundTripsThroughStorageAndEvent() public {
+    vm.expectEmit(true, true, true, true, address(facility));
+    emit IInKindFacility.EntrySet(address(positionManager), 123e6, FAR_EXPIRY, 42, true);
+    _setEntry(positionManager, 123e6, FAR_EXPIRY, 42, true);
+    assertTrue(facility.getEntry(address(positionManager)).allowUnlevered, "flag not stored");
+
+    _setEntry(positionManager, 123e6, FAR_EXPIRY, 42, false);
+    assertFalse(facility.getEntry(address(positionManager)).allowUnlevered, "flag not cleared");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           ADMIN                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -1051,15 +1212,15 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_setEntry_roleMatrix() public {
     vm.prank(owner);
-    facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     vm.prank(facilitator);
-    facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
 
     address[3] memory rejected = [operator, compliance, user];
     for (uint256 i = 0; i < rejected.length; ++i) {
       vm.prank(rejected[i]);
       vm.expectRevert(Ownable.Unauthorized.selector);
-      facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+      facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     }
   }
 
@@ -1178,7 +1339,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_setEntryAndExit_revertOnFeeAboveMax() public {
     vm.prank(facilitator);
     vm.expectRevert(IInKindFacility.FeeExceedsMax.selector);
-    facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, uint24(MAX_FEE + 1));
+    facility.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, uint24(MAX_FEE + 1), false);
     vm.prank(facilitator);
     vm.expectRevert(IInKindFacility.FeeExceedsMax.selector);
     facility.setExit(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, uint24(MAX_FEE + 1));
@@ -1204,7 +1365,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     for (uint256 i = 0; i < bad.length; ++i) {
       vm.prank(facilitator);
       vm.expectRevert(abi.encodeWithSelector(IInKindFacility.InvalidPositionManager.selector, bad[i]));
-      facility.setEntry(bad[i], LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+      facility.setEntry(bad[i], LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
       vm.prank(facilitator);
       vm.expectRevert(abi.encodeWithSelector(IInKindFacility.InvalidPositionManager.selector, bad[i]));
       facility.setExit(bad[i], LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
@@ -1214,7 +1375,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     address zeroUnderlyingPm = address(new PmSurfaceStub(address(new ZeroUnderlyingWrapper())));
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.InvalidPositionManager.selector, zeroUnderlyingPm));
-    facility.setEntry(zeroUnderlyingPm, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    facility.setEntry(zeroUnderlyingPm, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
 
     // A stub whose collateral is the real wrapper passes the surface check.
     address surfacePm = address(new PmSurfaceStub(address(collateralToken)));
@@ -1242,7 +1403,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     for (uint256 i = 0; i < words.length; ++i) {
       vm.prank(facilitator);
       vm.expectRevert(errors[i]);
-      facility.setEntry(address(positionManager), words[i], FAR_EXPIRY, DEFAULT_FEE_BPS);
+      facility.setEntry(address(positionManager), words[i], FAR_EXPIRY, DEFAULT_FEE_BPS, false);
       vm.prank(facilitator);
       vm.expectRevert(errors[i]);
       facility.setExit(address(positionManager), words[i], FAR_EXPIRY, DEFAULT_FEE_BPS);
@@ -1252,7 +1413,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
       // Validation is unconditional: a disabled offer (expiry 0) is rejected too.
       vm.prank(facilitator);
       vm.expectRevert(errors[i]);
-      facility.setEntry(address(positionManager), words[i], 0, 0);
+      facility.setEntry(address(positionManager), words[i], 0, 0, false);
     }
 
     // Valid EXTERNAL words on both whitelisted caps contracts are accepted everywhere.
@@ -1272,13 +1433,13 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
-    facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
-    facility.setEntry(address(positionManager), negWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    facility.setEntry(address(positionManager), negWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negAbsWord));
-    facility.setEntry(address(positionManager), negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    facility.setEntry(address(positionManager), negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
 
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
@@ -1327,8 +1488,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.EntrySet(address(positionManager), 123e6, expiry, 42);
-    facility.setEntry(address(positionManager), 123e6, expiry, 42);
+    emit IInKindFacility.EntrySet(address(positionManager), 123e6, expiry, 42, false);
+    facility.setEntry(address(positionManager), 123e6, expiry, 42, false);
 
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true, address(facility));
@@ -1438,7 +1599,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.previewEnter(address(positionManager), 0);
 
     // Zero-debt rounding.
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.DustEntry.selector, uint256(1e12)));
     facility.previewEnter(address(positionManager), 1e12);
 
     // Paused.
@@ -1464,10 +1625,10 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     // Unlevered and empty pools.
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.EmptyPool.selector, address(positionManager2)));
     facility.previewEnter(address(positionManager2), 1_000e18);
     _seedPool(positionManager2, SEED_COLLATERAL, 0);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredEntryDisabled.selector, address(positionManager2)));
     facility.previewEnter(address(positionManager2), 1_000e18);
   }
 
@@ -1616,7 +1777,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.pauseFor(0);
 
     _setEntry(positionManager2, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnleveredPool.selector, address(positionManager2)));
+    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.EmptyPool.selector, address(positionManager2)));
     facility.maxEnter(address(positionManager2), user);
 
     _triggerBadDebt();
@@ -1713,16 +1874,18 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_slot_entryAndExitOfferLayout() public {
     uint40 expiry = uint40(block.timestamp + 7 days);
-    _setEntry(positionManager, 123e6, expiry, 42);
+    _setEntry(positionManager, 123e6, expiry, 42, true);
     _setExit(positionManager, 456e6, expiry + 1, 43);
 
-    // entries[pm] at keccak256(pm . slot+0): capacityCap (word 0), expiry | feeBps << 40 (word 1).
+    // entries[pm] at keccak256(pm . slot+0): capacityCap (word 0), then
+    // expiry | feeBps << 40 | allowUnlevered << 64 (word 1).
     bytes32 entryBase = keccak256(abi.encode(address(positionManager), uint256(IN_KIND_STORAGE_SLOT)));
     assertEq(uint256(vm.load(address(facility), entryBase)), 123e6, "entry capacityCap");
     uint256 entryWord1 = uint256(vm.load(address(facility), bytes32(uint256(entryBase) + 1)));
     assertEq(uint40(entryWord1), expiry, "entry expiry at bits 0..39");
     assertEq(uint24(entryWord1 >> 40), 42, "entry feeBps at bits 40..63");
-    assertEq(entryWord1 >> 64, 0, "entry dirty high bits");
+    assertEq(uint8(entryWord1 >> 64), 1, "entry allowUnlevered at bit 64");
+    assertEq(entryWord1 >> 72, 0, "entry dirty high bits");
 
     // exits[pm] at keccak256(pm . slot+1), same layout.
     bytes32 exitBase = keccak256(abi.encode(address(positionManager), uint256(IN_KIND_STORAGE_SLOT) + 1));

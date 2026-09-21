@@ -43,7 +43,8 @@ import {BPS} from "../../libs/Constants.sol";
 ///      the caller's auth on the underlying asset and, for the remainder, the asset's security
 ///      cap (shared by every PM wrapping that asset, against unbacked issuer mints). Exits consume
 ///      the PM's exit cap; pointing it at the shared absolute pool with a negative multiplier
-///      gives entry capacity back.
+///      gives entry capacity back. A pool with no debt moves none, so every cap reads as zero on
+///      it: those flows are gated by the offers alone (see the known limitations).
 ///
 ///      Trust surface: the facility holds MINTER_ROLE on each PM it serves and is itself
 ///      permissionless, so PM flows are publicly reachable through this code. Disabling an offer
@@ -71,6 +72,11 @@ import {BPS} from "../../libs/Constants.sol";
 ///        every flow.
 ///      - The underlying and the debt asset must be exact-transfer tokens (no fee on transfer,
 ///        no rebasing, no transfer hooks), as required by every fund adapter.
+///      - An unlevered pool (`D == 0`) is served on the entry side only under the offer's
+///        `allowUnlevered` flag, and on the exit side always (a pool that repays to zero must
+///        stay exitable). Both borrow and repay nothing, so no cap, auth or per-user gate binds
+///        them: the flag and the offer expiry are the only levers, and size is unbounded. Set
+///        the flag only on PMs whose in-kind size is acceptable unbounded.
 ///      - Gains between NAV prints travel with the collateral, so an exit before a print and a
 ///        re-entry after it skip the PM performance fee on that gain (a loss to the PM fee
 ///        recipient, not to holders). The share fees are the deterrent.
@@ -165,7 +171,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IInKindFacility
-  function setEntry(address positionManager, uint256 capacityCap, uint40 expiry, uint24 feeBps)
+  function setEntry(address positionManager, uint256 capacityCap, uint40 expiry, uint24 feeBps, bool allowUnlevered)
     external
     onlyOwnerOrRoles(FACILITATOR_ROLE)
   {
@@ -173,8 +179,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     LibInKindView.validatePositionManager(positionManager);
     _validateConsumingWord(capacityCap);
     LibInKindStorage.inKindStorage().entries[positionManager] =
-      EntryOffer({capacityCap: capacityCap, expiry: expiry, feeBps: feeBps});
-    emit EntrySet(positionManager, capacityCap, expiry, feeBps);
+      EntryOffer({capacityCap: capacityCap, expiry: expiry, feeBps: feeBps, allowUnlevered: allowUnlevered});
+    emit EntrySet(positionManager, capacityCap, expiry, feeBps, allowUnlevered);
   }
 
   /// @inheritdoc IInKindFacility
@@ -263,9 +269,9 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     amount.checkNotZero();
     EntryOffer storage offer = LibInKindStorage.inKindStorage().getEnabledEntry(positionManager);
     IPositionManager pm = IPositionManager(positionManager);
-    (uint256 totalCollateral, uint256 totalDebt) = pm.leveredPoolState();
+    (uint256 totalCollateral, uint256 totalDebt) = pm.entryPoolState(offer.allowUnlevered);
     debt = amount.mulDiv(totalDebt, totalCollateral);
-    if (debt == 0) revert UnleveredPool(positionManager);
+    if (totalDebt > 0 && debt == 0) revert DustEntry(amount);
     (shares, feeShares) = LibInKindView.splitFee(pm.estimateShares(amount, totalCollateral, debt), offer.feeBps);
   }
 
@@ -290,7 +296,9 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     InKindStorageData storage s = LibInKindStorage.inKindStorage();
     EntryOffer storage offer = s.getEnabledEntry(positionManager);
     IPositionManager pm = IPositionManager(positionManager);
-    (uint256 totalCollateral, uint256 totalDebt) = pm.leveredPoolState();
+    (uint256 totalCollateral, uint256 totalDebt) = pm.entryPoolState(offer.allowUnlevered);
+    // an unlevered entry borrows nothing, so no debt-denominated cap bounds it
+    if (totalDebt == 0) return type(uint256).max;
     uint256 debtMax = s.securityLimit(pm.underlying(), user).min(offer.capacityCap.available());
     return LibSaturatingMath.mulDiv(debtMax, totalCollateral, totalDebt);
   }
@@ -337,17 +345,20 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     entry.underlying = IWrappedAsset(entry.collateralAsset).underlying();
     {
       uint256 totalDebt;
-      (entry.totalCollateral, totalDebt) = pm.leveredPoolState();
+      (entry.totalCollateral, totalDebt) = pm.entryPoolState(offer.allowUnlevered);
       debt = amount.mulDiv(totalDebt, entry.totalCollateral);
+      // in a levered pool a zero ratio-derived debt would slip past the debt-denominated caps
+      // for free; in an unlevered one there is no debt to bound
+      if (totalDebt > 0 && debt == 0) revert DustEntry(amount);
     }
-    // a zero ratio-derived debt would slip past the debt-denominated caps for free
-    if (debt == 0) revert UnleveredPool(positionManager);
     if (debt < minDebt || debt > maxDebt) revert DebtOutOfBounds(debt, minDebt, maxDebt);
     entry.debt = debt;
 
     // caps absorb the gross debt before any token interaction (CEI)
-    offer.capacityCap = offer.capacityCap.consume(LibInKindStorage.capId(positionManager), debt);
-    s.consumeSecurity(entry.underlying, msg.sender, debt);
+    if (debt > 0) {
+      offer.capacityCap = offer.capacityCap.consume(LibInKindStorage.capId(positionManager), debt);
+      s.consumeSecurity(entry.underlying, msg.sender, debt);
+    }
 
     entry.underlying.safeTransferFrom(msg.sender, address(this), amount);
     uint256 feeShares;
@@ -420,7 +431,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (shares, feeShares) = LibInKindView.splitFee(minted, entry.feeBps);
     if (shares < entry.minSharesOut) revert InsufficientSharesOut(shares, entry.minSharesOut);
 
-    entry.debtAsset.safeTransfer(entry.receiver, entry.debt);
+    if (entry.debt > 0) entry.debtAsset.safeTransfer(entry.receiver, entry.debt);
     if (feeShares > 0) entry.positionManager.safeTransfer(LibInKindStorage.inKindStorage().feeRecipient, feeShares);
     if (shares > 0) entry.positionManager.safeTransfer(entry.receiver, shares);
   }

@@ -270,10 +270,15 @@ contract InKindFacilityBaseTest is Test {
     return _seedPool(positionManager, collateral, debt);
   }
 
-  /// @dev Sets the entry offer of `pm` as the facilitator.
+  /// @dev Sets the entry offer of `pm` as the facilitator, closed to unlevered pools.
   function _setEntry(PositionManager pm, uint256 cap, uint40 expiry, uint24 feeBps) internal {
+    _setEntry(pm, cap, expiry, feeBps, false);
+  }
+
+  /// @dev Sets the entry offer of `pm` as the facilitator.
+  function _setEntry(PositionManager pm, uint256 cap, uint40 expiry, uint24 feeBps, bool allowUnlevered) internal {
     vm.prank(facilitator);
-    facility.setEntry(address(pm), cap, expiry, feeBps);
+    facility.setEntry(address(pm), cap, expiry, feeBps, allowUnlevered);
   }
 
   /// @dev Sets the exit offer of `pm` as the facilitator.
