@@ -457,11 +457,13 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     uint256 debtMax = capacity.min(security + authed);
     assertEq(max, debtMax.mulDiv(totalCollateral, totalDebt), "maxEnter is the binding debt budget at the live ratio");
 
-    // A couple of debt units over the bound reverts on whichever cap binds (capacity first).
+    // A couple of debt units over the bound reverts on whichever cap binds. Capacity is
+    // consumed first, so it reports whenever the overshoot busts it, even when the security
+    // leg would have failed too.
     uint256 over = max + totalCollateral.mulDiv(2, totalDebt) + 1;
     uint256 overDebt = over.mulDiv(totalDebt, totalCollateral);
     assertGt(overDebt, debtMax, "the overshoot exceeds the budget");
-    bytes memory err = capacity <= security + authed
+    bytes memory err = overDebt > capacity
       ? _capError(address(positionManager), capacity, overDebt)
       : _capError(address(underlyingToken), security, overDebt - overDebt.min(authed));
     _fundEntrant(user, over);
