@@ -8,12 +8,13 @@ import {Order} from "../../../libs/funds/Order.sol";
 /// @notice Owner-set yield and duration estimates feeding the principal-cap formulas.
 /// @param requestYieldRate The expected bridge-loan yield rate (WAD per 365 days)
 /// @param borrowRate The expected venue borrow rate on existing debt (WAD per 365 days)
-/// @param collateralYieldRate The expected collateral yield rate (WAD per 365 days)
+/// @param collateralYieldRate Reserved for storage and ABI compatibility; ignored
 /// @param subscriptionDuration The expected DEPOSIT settlement duration in seconds
 /// @param redemptionDuration The expected REDEEM settlement duration in seconds
 struct YieldEstimates {
   uint64 requestYieldRate;
   uint64 borrowRate;
+  // Retained to preserve the deployed proxy storage layout.
   uint64 collateralYieldRate;
   uint32 subscriptionDuration;
   uint32 redemptionDuration;
@@ -26,7 +27,7 @@ struct YieldEstimates {
 ///        tickDuration; doubles as the consumption window length (capital entry closes this
 ///        long after the loan clock origin)
 /// @param maxYieldBps The owner ceiling on per-operation yield caps, at most 5000
-/// @param principalBufferBps The headroom over the computed principal cap, at most 2000
+/// @param principalBufferBps Reserved for storage and ABI compatibility; ignored
 /// @param collateralResidualExponent The settlement tolerance for the collateral asset:
 ///        balances strictly below 2^exponent pass the residual gate, so dust donations
 ///        cannot grief settlement (zero keeps the gate exact)
@@ -419,15 +420,9 @@ interface IRetargetter {
   function bridgeOutstanding() external view returns (bool);
 
   /// @notice Computes the current principal cap for the bound position manager.
-  /// @dev Quoter formula on live state with the owner estimates, auto-detected direction,
-  ///      times one plus the principal buffer. Below target the cap is further bounded by
-  ///      the one-trip repayment bound, so a cap-sized, fully deployed operation can always
-  ///      borrow its worst permitted repayment back at target in a single settlement trip.
-  ///      This view sizes that bound on the config yield-cap ceiling, a safe floor for
-  ///      every permissible operation; the operation gates size it on the effective
-  ///      per-operation cap (zero for a SYNC window, whose flash repayment carries no
-  ///      yield) and can admit up to that looser bound. Reverts if no position manager is
-  ///      bound.
+  /// @dev Uses the quoter formula on live state with the owner estimates and auto-detected
+  ///      direction. Auction yield limits govern accepted offers separately. Reverts if no
+  ///      position manager is bound.
   /// @return The principal cap in debt-asset units
   function maxPrincipal() external view returns (uint256);
 

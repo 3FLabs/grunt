@@ -42,10 +42,6 @@ uint24 constant MAX_TICK_DURATION = 30 days;
 /// @custom:value 5,000
 uint16 constant MAX_YIELD_CAP_BPS = 5000;
 
-/// @dev Maximum headroom over the computed principal cap: 20% (2000 basis points).
-/// @custom:value 2,000
-uint16 constant MAX_PRINCIPAL_BUFFER_BPS = 2000;
-
 /// @dev Maximum number of accounts holding a registered mint authorization at once. Bounds
 ///      every loop over the authorization set (pruning, revocation at the first pull of
 ///      funds, clearing at resolve), so a consumer handing out dust authorizations cannot

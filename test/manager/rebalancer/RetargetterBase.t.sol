@@ -56,7 +56,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
   uint24 internal constant DEFAULT_TICK_DURATION = 1 days;
   uint24 internal constant DEFAULT_TICK_THRESHOLD = 10 hours;
   uint16 internal constant DEFAULT_MAX_YIELD_BPS = 1000;
-  uint16 internal constant DEFAULT_PRINCIPAL_BUFFER_BPS = 100;
+  uint16 internal constant DEFAULT_PRINCIPAL_BUFFER_BPS = 0;
 
   string internal constant REQUEST_NAME = "Retarget Bridge";
   string internal constant REQUEST_SYMBOL = "RTG";
@@ -266,17 +266,12 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
       RebalancingOperation({position: address(borrowPosition1), operationType: secondType, amount: secondAmount});
   }
 
-  /// @dev The gate-side principal cap for an operation carrying `yieldCapBps`, on the
-  ///      fixture's zero estimates: the buffered ideal capped by the quoter's one-trip
-  ///      repayment bound, the same min Retargetter._maxPrincipal computes.
-  function _gateCap(uint16 yieldCapBps) internal view returns (uint256) {
+  /// @dev The gate-side principal cap on the fixture's zero estimates.
+  function _gateCap(uint16) internal view returns (uint256) {
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
     (uint256 target,) = positionManager.config();
-    uint256 buffered = retargetterQuoter.retargetPrincipal(collateralQuoted, debt, target, 0, 0, 0, 0, 0)
-      * (10_000 + DEFAULT_PRINCIPAL_BUFFER_BPS) / 10_000;
-    uint256 oneTrip = retargetterQuoter.ltvUpOneTripPrincipal(collateralQuoted, debt, target, yieldCapBps, 0, 0, 0);
-    return buffered < oneTrip ? buffered : oneTrip;
+    return retargetterQuoter.retargetPrincipal(collateralQuoted, debt, target, 0, 0, 0, 0, 0);
   }
 
   /// @dev Current aggregate LTV of the position manager (WAD; 0 when debt is 0).

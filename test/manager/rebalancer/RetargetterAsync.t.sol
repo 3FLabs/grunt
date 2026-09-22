@@ -170,8 +170,8 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(owner);
     positionManager.setRebalanceConfig(200, 0);
 
-    // Zero estimates: cap = (debt - target * collateral) / (1 - target), plus the 1% buffer
-    uint256 expectedCap = (uint256(2_000e18) * WAD / 0.7e18) * 10_100 / 10_000;
+    // Zero estimates: cap = (debt - target * collateral) / (1 - target)
+    uint256 expectedCap = uint256(2_000e18) * WAD / 0.7e18;
     assertEq(retargetter.maxPrincipal(), expectedCap, "down principal cap");
 
     address request = _startAsync(2_857e18, 100);
@@ -1362,57 +1362,6 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(consumer);
     vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
     retargetter.consume(offer, "", 12_000e18);
-  }
-
-  /// @notice A cap-sized operation keeps one-trip settlement headroom: after full deployment
-  ///         the owed repayment is borrowable back through the rebalancer direction checks
-  ///         (LTV lands at or below target, not above) and the operation settles. The cap is
-  ///         now the quoter's one-trip bound, so this holds by construction; the exact
-  ///         worst-case equality is pinned in the quoter unit test.
-  function test_async_capSizedOperation_oneTripSettlementHeadroom() public {
-    _seedPosition(10_000e18, 5_000e18);
-    fund.setSyncSettlement(true);
-    // The borrow leg funds the lenders' yield, a real NAV loss bounded by the yield; widen
-    // the position manager's loss tolerance so the loss knob is not the bottleneck
-    vm.prank(owner);
-    positionManager.setRebalanceConfig(1000, 0);
-
-    // At the config's 10% cap the one-trip bound is exactly (0.7 * 10,000 - 5,000) / 0.4
-    uint256 cap = _gateCap(DEFAULT_MAX_YIELD_BPS);
-    assertEq(cap, 5_000e18, "clean-number one-trip bound");
-
-    // The gate admits exactly the cap and rejects a single wei more
-    vm.prank(rebalancer);
-    vm.expectRevert(LibRetargetterErrors.PrincipalCapExceeded.selector);
-    retargetter.startRetargetting(cap + 1, DEFAULT_MAX_YIELD_BPS, address(fund), REQUEST_NAME, REQUEST_SYMBOL);
-
-    address request = _startAsync(cap, DEFAULT_MAX_YIELD_BPS);
-    _consume(request, cap, cap / 10, cap);
-    vm.startPrank(rebalancer);
-    retargetter.pullRequestFunds(cap);
-    retargetter.create(_order(Mode.DEPOSIT, cap, cap, bytes32(uint256(31))));
-    retargetter.commit();
-    retargetter.unlock();
-    vm.stopPrank();
-
-    // A few ticks in, the owed amount is the deployed principal plus its prorated yield
-    vm.warp(block.timestamp + 2 days);
-    uint256 owedAmount = retargetter.owed();
-
-    // One trip: supply the settled shares, borrow the owed amount back. The rebalancer is a
-    // non-owner, so the direction guard applies; it passes only because the resulting LTV is
-    // at or below target, which is exactly the headroom the one-trip cap guarantees
-    vm.startPrank(rebalancer);
-    retargetter.rebalance(
-      _rebalancingData2(
-        MAX_SENTINEL, 0, RebalancingOperationType.SUPPLY, MAX_SENTINEL, RebalancingOperationType.BORROW, owedAmount
-      )
-    );
-    assertLe(_currentLtv(), POSITION_MANAGER_LTV, "settled at or below target");
-    retargetter.repay();
-    retargetter.resolve();
-    vm.stopPrank();
-    assertFalse(retargetter.isActive(), "settled in one trip");
   }
 
   /// @notice The bridge cannot be dissolved into the position: once Request principal has

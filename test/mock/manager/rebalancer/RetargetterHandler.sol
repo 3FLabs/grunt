@@ -327,12 +327,8 @@ contract RetargetterHandler is Test {
     vm.stopPrank();
   }
 
-  /// @dev The gate-side principal cap for an operation carrying `yieldCapBps`, mirroring
-  ///      Retargetter._maxPrincipal: the buffered ideal principal capped, below target, by
-  ///      the quoter's one-trip repayment bound sized on that yield cap. The gates size on
-  ///      the operation's own cap, so the invariants must compare against this rather than
-  ///      the config-ceiling view maxPrincipal.
-  function _gateCap(uint16 yieldCapBps) internal view returns (uint256) {
+  /// @dev The gate-side principal cap, mirroring Retargetter._maxPrincipal.
+  function _gateCap(uint16) internal view returns (uint256) {
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
     (uint256 target,) = positionManager.config();
@@ -350,13 +346,7 @@ contract RetargetterHandler is Test {
         e.subscriptionDuration,
         e.redemptionDuration
       );
-    uint256 buffered = principal * (BPS + config_.principalBufferBps) / BPS;
-    if (debt.divWad(collateralQuoted) >= target) return buffered;
-    uint256 oneTrip = IRetargetterQuoter(quoter)
-      .ltvUpOneTripPrincipal(
-        collateralQuoted, debt, target, yieldCapBps, e.borrowRate, e.collateralYieldRate, e.subscriptionDuration
-      );
-    return buffered < oneTrip ? buffered : oneTrip;
+    return principal;
   }
 
   /// @dev Sums the still-unminted authorized principal over the registered accounts, the same
@@ -607,16 +597,14 @@ contract RetargetterHandler is Test {
   }
 
   /// @notice Owner update of the yield estimates with small bounded rates and durations.
-  function act_setEstimates(
-    uint256 requestYieldSeed,
-    uint256 borrowRateSeed,
-    uint256 collateralYieldSeed,
-    uint256 durationSeed
-  ) external trackStartedAt {
+  function act_setEstimates(uint256 requestYieldSeed, uint256 borrowRateSeed, uint256, uint256 durationSeed)
+    external
+    trackStartedAt
+  {
     YieldEstimates memory estimates = YieldEstimates({
       requestYieldRate: uint64(_bound(requestYieldSeed, 0, 0.1e18)),
       borrowRate: uint64(_bound(borrowRateSeed, 0, 0.1e18)),
-      collateralYieldRate: uint64(_bound(collateralYieldSeed, 0, 0.1e18)),
+      collateralYieldRate: 0,
       subscriptionDuration: uint32(_bound(durationSeed, 0, 14 days)),
       redemptionDuration: uint32(_bound(durationSeed >> 128, 0, 14 days))
     });

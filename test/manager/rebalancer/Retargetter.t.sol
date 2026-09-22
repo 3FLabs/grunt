@@ -12,7 +12,6 @@ import {
   MAX_HORIZON,
   MAX_TICK_DURATION,
   MAX_YIELD_CAP_BPS,
-  MAX_PRINCIPAL_BUFFER_BPS,
   ASSETS_STORAGE_SLOT,
   CONFIG_STORAGE_SLOT,
   WHITELISTS_STORAGE_SLOT,
@@ -192,10 +191,6 @@ contract RetargetterTest is RetargetterBaseTest {
     bad = _defaultConfig();
     bad.maxYieldBps = MAX_YIELD_CAP_BPS + 1;
     _expectCreateInvalidParameters(bad);
-
-    bad = _defaultConfig();
-    bad.principalBufferBps = MAX_PRINCIPAL_BUFFER_BPS + 1;
-    _expectCreateInvalidParameters(bad);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -251,12 +246,12 @@ contract RetargetterTest is RetargetterBaseTest {
     assertEq(stored.tickDuration, 2 days, "tick duration");
     assertEq(stored.tickThreshold, 1 days, "tick threshold");
     assertEq(stored.maxYieldBps, 500, "max yield bps");
-    assertEq(stored.principalBufferBps, 50, "principal buffer bps");
+    assertEq(stored.principalBufferBps, 50, "reserved principal buffer bps");
     assertEq(stored.collateralResidualExponent, 12, "collateral residual exponent");
     assertEq(stored.debtResidualExponent, 20, "debt residual exponent");
     assertEq(stored.estimates.requestYieldRate, 0.05e18, "request yield rate");
     assertEq(stored.estimates.borrowRate, 0.02e18, "borrow rate");
-    assertEq(stored.estimates.collateralYieldRate, 0.01e18, "collateral yield rate");
+    assertEq(stored.estimates.collateralYieldRate, 0.01e18, "reserved collateral yield rate");
     assertEq(stored.estimates.subscriptionDuration, 2 days, "subscription duration");
     assertEq(stored.estimates.redemptionDuration, 3 days, "redemption duration");
   }
@@ -346,20 +341,17 @@ contract RetargetterTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
-    uint256 yieldCapDenominator = WAD + uint256(DEFAULT_MAX_YIELD_BPS) * WAD / BPS - POSITION_MANAGER_LTV;
 
-    // Zero-estimate cap: the one-trip bound (target * K - D) / (1 + yieldCap - target)
-    // undercuts the buffered ideal (see test_maxPrincipal_upBranchZeroEstimates)
+    // Zero-estimate cap: the ideal principal.
     uint256 capBefore = retargetter.maxPrincipal();
-    assertEq(
-      capBefore, (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / yieldCapDenominator, "zero-estimate cap"
-    );
+    uint256 idealBefore = (POSITION_MANAGER_LTV * collateralQuoted / WAD - debt) * WAD / (WAD - POSITION_MANAGER_LTV);
+    assertEq(capBefore, idealBefore, "zero-estimate cap");
 
     // A 10% per-year borrow rate over a full-year subscription makes Rb = 0.1
     YieldEstimates memory estimates = YieldEstimates({
       requestYieldRate: 0,
       borrowRate: 0.1e18,
-      collateralYieldRate: 0,
+      collateralYieldRate: 0.1e18,
       subscriptionDuration: 365 days,
       redemptionDuration: 0
     });
@@ -369,14 +361,12 @@ contract RetargetterTest is RetargetterBaseTest {
     emit IRetargetter.EstimatesSet(estimates);
     retargetter.setEstimates(estimates);
 
-    // The drifted debt D * 1.1 tightens both formulas; the one-trip bound still binds
+    // The drifted debt D * 1.1 tightens the formula.
     uint256 capAfter = retargetter.maxPrincipal();
     uint256 driftedDebt = debt * (WAD + 0.1e18) / WAD;
-    assertEq(
-      capAfter,
-      (POSITION_MANAGER_LTV * collateralQuoted / WAD - driftedDebt) * WAD / yieldCapDenominator,
-      "estimated cap"
-    );
+    uint256 idealAfter =
+      (POSITION_MANAGER_LTV * collateralQuoted / WAD - driftedDebt) * WAD / (WAD - POSITION_MANAGER_LTV);
+    assertEq(capAfter, idealAfter, "estimated cap");
     assertLt(capAfter, capBefore, "borrow estimate tightens the cap");
   }
 
@@ -719,15 +709,10 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
 
-    // Buffered ideal x = (target * K - D) / (1 - target) times 1.01 (100 bps buffer), capped
-    // by the one-trip repayment bound (target * K - D) / (1 + yieldCap - target) sized on
-    // the config ceiling (10%); the bound is the smaller of the two here
+    // Ideal x = (target * K - D) / (1 - target).
     uint256 numerator = POSITION_MANAGER_LTV * collateralQuoted / WAD - debt;
-    uint256 buffered = numerator * WAD / (WAD - POSITION_MANAGER_LTV) * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS;
-    uint256 oneTrip = numerator * WAD / (WAD + uint256(DEFAULT_MAX_YIELD_BPS) * WAD / BPS - POSITION_MANAGER_LTV);
-    assertLt(oneTrip, buffered, "the one-trip bound binds");
-
-    assertEq(retargetter.maxPrincipal(), oneTrip, "up cap");
+    uint256 ideal = numerator * WAD / (WAD - POSITION_MANAGER_LTV);
+    assertEq(retargetter.maxPrincipal(), ideal, "up cap");
   }
 
   function test_maxPrincipal_downBranchZeroEstimates() public {
@@ -738,11 +723,9 @@ contract RetargetterTest is RetargetterBaseTest {
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
 
-    // x = (D - target * K) / (1 - target); cap = x * 1.01 (100 bps buffer)
+    // x = (D - target * K) / (1 - target)
     uint256 idealPrincipal = (debt - target * collateralQuoted / WAD) * WAD / (WAD - target);
-    uint256 expectedCap = idealPrincipal * (BPS + DEFAULT_PRINCIPAL_BUFFER_BPS) / BPS;
-
-    assertEq(retargetter.maxPrincipal(), expectedCap, "down cap");
+    assertEq(retargetter.maxPrincipal(), idealPrincipal, "down cap");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -801,8 +784,7 @@ contract RetargetterTest is RetargetterBaseTest {
   function test_startRetargetting_effectiveYieldCapConfigLower() public {
     _seedPosition(10_000e18, 5_000e18);
 
-    // Caller cap 2000 above the config's 1000: the config cap binds (and sizes the one-trip
-    // principal bound, so the announced principal sits under that tighter cap)
+    // Caller cap 2000 above the config's 1000: the config cap binds.
     vm.prank(rebalancer);
     vm.expectEmit(true, false, true, true, address(retargetter));
     emit IRetargetter.RetargettingStarted(

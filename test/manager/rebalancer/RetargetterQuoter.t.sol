@@ -36,14 +36,8 @@ contract RetargetterQuoterTest is Test {
     return rate.fullMulDiv(duration, RATE_YEAR);
   }
 
-  /// @dev Mirrors the quoter's grown target term: `targetLtv * K * (1 + Yc)`, growing the
-  ///      collateral before applying the target (floor at each step).
-  function _grownTarget(uint256 collateralQuoted, uint256 targetLtv, uint256 collateralYieldRate, uint256 duration)
-    internal
-    pure
-    returns (uint256)
-  {
-    return collateralQuoted.fullMulDiv(WAD + _scaled(collateralYieldRate, duration), WAD).fullMulDiv(targetLtv, WAD);
+  function _targetValue(uint256 collateralQuoted, uint256 targetLtv) internal pure returns (uint256) {
+    return collateralQuoted.fullMulDiv(targetLtv, WAD);
   }
 
   /// @dev Mirrors the quoter's drifted debt term: `D * (1 + Rb)` (floor).
@@ -67,7 +61,7 @@ contract RetargetterQuoterTest is Test {
   }
 
   function test_ltvUpPrincipal_extendedRatesFixture() public view {
-    // All three rates nonzero over a 30-day subscription window
+    // Debt and Request rates are nonzero over a 30-day subscription window.
     uint256 k = 10_000e18;
     uint256 d = 5_000e18;
     uint256 tau = 0.7e18;
@@ -78,12 +72,12 @@ contract RetargetterQuoterTest is Test {
 
     uint256 principal = quoter.ltvUpPrincipal(k, d, tau, yr, rb, yc, dt);
 
-    // Exact recomputation from the same integer formulas
-    uint256 numerator = _grownTarget(k, tau, yc, dt) - _driftedDebt(d, rb, dt);
+    // The legacy collateral-yield argument is ignored.
+    uint256 numerator = _targetValue(k, tau) - _driftedDebt(d, rb, dt);
     uint256 denominator = WAD - tau + _scaled(yr, dt);
     assertEq(principal, numerator.fullMulDiv(WAD, denominator), "extended formula");
-    // Anchor: about 6_583.56 (debt drift shrinks the room, request yield thickens the divisor)
-    assertApproxEqRel(principal, 6583.56e18, 1e15, "anchor");
+    // Anchor: about 6_526.65 (debt drift shrinks the room, request yield thickens the divisor)
+    assertApproxEqRel(principal, 6526.65e18, 1e15, "anchor");
     // The rate-adjusted principal sits below the zero-rate ideal for these inputs
     assertLt(principal, quoter.ltvUpPrincipal(k, d, tau, 0, 0, 0, 0), "below ideal");
   }
@@ -133,7 +127,7 @@ contract RetargetterQuoterTest is Test {
   }
 
   function test_ltvUpOneTripPrincipal_extendedRatesFixture() public view {
-    // Debt drift and collateral yield over a 30-day window, 10% flat cap
+    // Debt drift over a 30-day window, 10% flat cap.
     uint256 k = 10_000e18;
     uint256 d = 5_000e18;
     uint256 tau = 0.7e18;
@@ -143,9 +137,7 @@ contract RetargetterQuoterTest is Test {
 
     uint256 principal = quoter.ltvUpOneTripPrincipal(k, d, tau, 1000, rb, yc, dt);
 
-    // Exact recomputation: the collateral term matches ltvUpPrincipal, the debt drift
-    // rounds up instead of down and the divisor carries the flat cap
-    uint256 numerator = _grownTarget(k, tau, yc, dt) - d.fullMulDivUp(WAD + _scaled(rb, dt), WAD);
+    uint256 numerator = _targetValue(k, tau) - d.fullMulDivUp(WAD + _scaled(rb, dt), WAD);
     assertEq(principal, numerator.fullMulDiv(WAD, WAD + 0.1e18 - tau), "extended formula");
     // The flat cap always undercuts the same-numerator ideal whose scaled Yr is below it
     assertLt(principal, quoter.ltvUpPrincipal(k, d, tau, 0.04e18, rb, yc, dt), "below the estimated ideal");
@@ -162,29 +154,10 @@ contract RetargetterQuoterTest is Test {
     quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, WAD, 0, 0, 0, 0);
   }
 
-  function test_ltvUpOneTripPrincipal_settlementRoundingOrder() public view {
-    // Six-decimal fixture (target 0.7, flat cap 10%, collateral growth 0.001 over a
-    // rate-year window so the scaled rate is the literal) where applying the target before
-    // the collateral growth rounds the bound three units too high: the worst repayment of
-    // that reversed-order principal exceeds the settled borrow capacity at target by one
-    // unit, so the settlement direction check would revert. The shipped order (grow first,
-    // then target) stays borrowable exactly.
-    uint256 k = 1_000_002.412953e6;
-    uint256 d = 500_007.6209e6;
-
-    uint256 principal = quoter.ltvUpOneTripPrincipal(k, d, 0.7e18, 1000, 0, 0.001e18, RATE_YEAR);
-    assertEq(principal, 501_735.174637e6, "literal anchor");
-
-    // Settled state under the exact forecast: the collateral quote grows, the subscription
-    // lands at face value, and the worst repayment carries the full flat cap
-    uint256 grownCollateral = k.fullMulDiv(WAD + 0.001e18, WAD);
-    assertLe((d + principal + principal * 1000 / 10_000).divWad(grownCollateral + principal), 0.7e18, "borrowable");
-
-    // The reversed rounding order oversizes and its worst repayment trips the check
-    uint256 reversed =
-      (k.fullMulDiv(0.7e18, WAD).fullMulDiv(WAD + 0.001e18, WAD) - d).fullMulDiv(WAD, WAD + 0.1e18 - 0.7e18);
-    assertEq(reversed, principal + 3, "reversed order oversizes");
-    assertGt((d + reversed + reversed * 1000 / 10_000).divWad(grownCollateral + reversed), 0.7e18, "over target");
+  function test_ltvUpOneTripPrincipal_ignoresCollateralYield() public view {
+    uint256 withoutYield = quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, 0.7e18, 1000, 0, 0, RATE_YEAR);
+    uint256 withYield = quoter.ltvUpOneTripPrincipal(10_000e18, 5_000e18, 0.7e18, 1000, 0, 0.5e18, RATE_YEAR);
+    assertEq(withYield, withoutYield, "collateral yield is not forecast");
   }
 
   function testFuzz_ltvUpOneTripPrincipal_worstRepaymentBorrowableAtTarget(
@@ -206,9 +179,8 @@ contract RetargetterQuoterTest is Test {
       quoter.ltvUpOneTripPrincipal(collateral, debt, targetLtv, yieldCapBps, borrowDrift, collateralYield, RATE_YEAR);
     if (principal == 0) return;
 
-    // Worst-case realized integers consistent with the forecast: the collateral quote
-    // floors its growth, the venue rounds its debt accrual up, repayment carries the cap
-    uint256 settledCollateral = collateral.fullMulDiv(WAD + collateralYield, WAD) + principal;
+    // The current collateral quote is unchanged; debt accrual rounds up and repayment carries the cap.
+    uint256 settledCollateral = collateral + principal;
     uint256 settledDebt = debt.fullMulDivUp(WAD + borrowDrift, WAD) + principal + principal * yieldCapBps / 10_000;
     assertLe(settledDebt.divWad(settledCollateral), targetLtv, "worst repayment borrowable at target");
   }
@@ -288,7 +260,7 @@ contract RetargetterQuoterTest is Test {
     (uint256 principal, uint256 collateralToFreeQuoted) = quoter.ltvDownPrincipal(k, d, tau, yr, rb, 0, dt);
 
     // Exact recomputation from the same integer formulas
-    uint256 numerator = _driftedDebt(d, rb, dt) - _grownTarget(k, tau, 0, dt);
+    uint256 numerator = _driftedDebt(d, rb, dt) - _targetValue(k, tau);
     uint256 denominator = (WAD + _scaled(rb, dt)) - tau.fullMulDiv(WAD + _scaled(yr, dt), WAD);
     uint256 expectedPrincipal = numerator.fullMulDiv(WAD, denominator);
     assertEq(principal, expectedPrincipal, "extended principal formula");
@@ -339,8 +311,7 @@ contract RetargetterQuoterTest is Test {
   }
 
   function test_ltvDownPrincipal_collateralEqualsPrincipalWithZeroYields() public view {
-    // With yr == 0 and yc == 0 the collateral factor (1 + Yr) / (1 + Yc) is exactly one,
-    // so ceiling rounding has nothing to round: collateralToFreeQuoted == principal.
+    // With yr == 0, ceiling rounding has nothing to round: collateralToFreeQuoted == principal.
     (uint256 principal, uint256 collateralToFreeQuoted) =
       quoter.ltvDownPrincipal(10_000e18, 8_000e18, 0.7e18, 0, 0.05e18, 0, 30 days);
     assertGt(principal, 0, "down direction sanity");
@@ -510,16 +481,16 @@ contract RetargetterQuoterTest is Test {
     assertEq(quoter.remediationDelta(1_000_000e18, 0.04e18, 0, 30 days, WAD), int256(0), "zero at unity");
   }
 
-  function test_remediationDelta_expectedCollateralYieldIsNotASurplus() public view {
-    // The price moves exactly by the expected collateral yield (rho == 1 + Yc): the freed
-    // collateral redeems into precisely the repayment and there is nothing to remediate.
-    // A mis-derivation measuring drift against unity instead of the expected growth would
-    // report a phantom repayment * Yc surplus here.
+  function test_remediationDelta_ignoresCollateralYield() public view {
     uint256 yr = 0.05e18;
     uint256 yc = 0.05e18;
     uint256 dt = 30 days;
-    uint256 rho = WAD + _scaled(yc, dt);
-    assertEq(quoter.remediationDelta(1_000_000e18, yr, yc, dt, rho), int256(0), "forecast yield is not a surplus");
+    uint256 rho = 1.01e18;
+    assertEq(
+      quoter.remediationDelta(1_000_000e18, yr, yc, dt, rho),
+      quoter.remediationDelta(1_000_000e18, yr, 0, dt, rho),
+      "collateral yield is not forecast"
+    );
   }
 
   function test_remediationDelta_matchesFreedCollateralProceeds() public view {
@@ -538,20 +509,19 @@ contract RetargetterQuoterTest is Test {
     (uint256 principal, uint256 collateralToFreeQuoted) = quoter.ltvDownPrincipal(k, d, tau, yr, rb, yc, dt);
     uint256 repayment = principal.fullMulDiv(WAD + _scaled(yr, dt), WAD);
 
-    // Surplus side: rho above the expected growth
-    uint256 expectedGrowth = WAD + _scaled(yc, dt);
+    // Surplus side.
     uint256 rho = 1.02e18;
     int256 proceedsDelta = int256(collateralToFreeQuoted.fullMulDiv(rho, WAD)) - int256(repayment);
     int256 delta = quoter.remediationDelta(principal, yr, yc, dt, rho);
-    assertEq(delta, int256(repayment.fullMulDiv(rho - expectedGrowth, expectedGrowth)), "surplus formula");
+    assertEq(delta, int256(repayment.fullMulDiv(rho - WAD, WAD)), "surplus formula");
     assertLe(delta, proceedsDelta, "surplus never overstated");
     assertApproxEqAbs(delta, proceedsDelta, 3, "matches surplus proceeds");
 
-    // Shortfall side: rho below the expected growth
+    // Shortfall side.
     rho = 0.98e18;
     proceedsDelta = int256(collateralToFreeQuoted.fullMulDiv(rho, WAD)) - int256(repayment);
     delta = quoter.remediationDelta(principal, yr, yc, dt, rho);
-    assertEq(delta, -int256(repayment.fullMulDivUp(expectedGrowth - rho, expectedGrowth)), "shortfall formula");
+    assertEq(delta, -int256(repayment.fullMulDivUp(WAD - rho, WAD)), "shortfall formula");
     assertLe(delta, proceedsDelta, "shortfall never understated");
     assertApproxEqAbs(delta, proceedsDelta, 3, "matches shortfall proceeds");
   }
@@ -581,15 +551,13 @@ contract RetargetterQuoterTest is Test {
 
     int256 delta = quoter.remediationDelta(principal, yr, yc, dt, priceDriftWad);
 
-    // The sign pivots at the expected collateral growth, not at unity
-    uint256 expectedGrowth = WAD + _scaled(yc, dt);
-    if (priceDriftWad >= expectedGrowth) {
+    if (priceDriftWad >= WAD) {
       assertGe(delta, 0, "surplus is nonnegative");
     } else {
       assertLe(delta, 0, "shortfall is nonpositive");
       // With an actual repayment outstanding, ceiling rounding makes any downward drift owe
       if (principal > 0) assertLt(delta, 0, "strict shortfall");
     }
-    if (priceDriftWad == expectedGrowth) assertEq(delta, 0, "zero at expected growth");
+    if (priceDriftWad == WAD) assertEq(delta, 0, "zero at the start price");
   }
 }

@@ -25,7 +25,6 @@ import {
   MAX_HORIZON,
   MAX_TICK_DURATION,
   MAX_YIELD_CAP_BPS,
-  MAX_PRINCIPAL_BUFFER_BPS,
   MAX_AUTHORIZED_ACCOUNTS,
   REPAYMENT_DEADLINE_OFFSET,
   FULL_BALANCE_SENTINEL,
@@ -36,7 +35,6 @@ import {
   BALANCE_TSLOT,
   REENTRANCY_TSLOT
 } from "../../libs/manager/rebalancer/LibRetargetterConstants.sol";
-import {BPS} from "../../libs/Constants.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
 import {LibTransientSlot} from "../../libs/common/LibTransientSlot.sol";
 import {EnumerableSetLib} from "lib/solady/src/utils/EnumerableSetLib.sol";
@@ -217,7 +215,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     }
 
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
-    address positionManager = _checkStart(operation_, fund, principal, effectiveYieldCap);
+    address positionManager = _checkStart(operation_, fund, principal);
 
     // Safe: block.timestamp + 90 days fits in uint40 for ~35,000 years
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -280,9 +278,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     operation_.checkYield(offer.amount, offer.expectedReturn);
     operation_.checkConsumptionWindow();
     ytAmount = IRequest(request).consume(offer, signature, ptAmount);
-    operation_.checkPrincipalCap(
-      request, 0, _maxPrincipal(LibStorage.assetsStorage().positionManager, operation_.operationMaxYieldBps)
-    );
+    operation_.checkPrincipalCap(request, 0, _maxPrincipal(LibStorage.assetsStorage().positionManager));
     emit OfferConsumed(request, offer.maker, ptAmount, ytAmount);
   }
 
@@ -309,11 +305,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     accounts.remove(to);
     if (ptAmount != 0 || ytAmount != 0) {
       operation_.checkOffer(
-        request,
-        ptAmount,
-        ytAmount,
-        ptAmount,
-        _maxPrincipal(LibStorage.assetsStorage().positionManager, operation_.operationMaxYieldBps)
+        request, ptAmount, ytAmount, ptAmount, _maxPrincipal(LibStorage.assetsStorage().positionManager)
       );
       // The capacity bound keeps every loop over the set within gas reach; see the constant
       accounts.add(to, MAX_AUTHORIZED_ACCOUNTS);
@@ -612,9 +604,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     onlyOwnerOrRebalancer
   {
     RetargetterOperation storage operation_ = LibStorage.operationStorage();
-    // The flash repayment carries no yield, so the window's principal cap is sized on a
-    // zero yield cap (the pure one-trip headroom bound)
-    address positionManager = _checkStart(operation_, fund, flashLoanAmount, 0);
+    address positionManager = _checkStart(operation_, fund, flashLoanAmount);
     if (!LibStorage.whitelistsStorage().flashLoanModules[flashLoanModule]) {
       revert LibRetargetterErrors.ModuleNotWhitelisted();
     }
@@ -815,13 +805,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
-  /// @dev Sized on the config ceiling maxYieldBps, the largest yield cap any operation may
-  ///      carry, so this view is a safe floor for every permissible operation; the operation
-  ///      gates size on the effective per-operation cap instead (zero for a SYNC window,
-  ///      whose flash repayment carries no yield) and can admit up to that looser bound.
-  ///      See {_maxPrincipal} for the formula. Reverts if no position manager is bound.
+  /// @dev See {_maxPrincipal} for the formula. Reverts if no position manager is bound.
   function maxPrincipal() public view returns (uint256) {
-    return _maxPrincipal(LibStorage.assetsStorage().positionManager, LibStorage.configStorage().maxYieldBps);
+    return _maxPrincipal(LibStorage.assetsStorage().positionManager);
   }
 
   /// @inheritdoc IRetargetter
@@ -885,7 +871,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     if (
       config_.horizon < MIN_HORIZON || config_.horizon > MAX_HORIZON || config_.tickDuration == 0
         || config_.tickDuration > MAX_TICK_DURATION || config_.tickThreshold >= config_.tickDuration
-        || config_.maxYieldBps > MAX_YIELD_CAP_BPS || config_.principalBufferBps > MAX_PRINCIPAL_BUFFER_BPS
+        || config_.maxYieldBps > MAX_YIELD_CAP_BPS
     ) {
       revert LibRetargetterErrors.InvalidParameters();
     }
@@ -906,9 +892,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      and a SYNC window keeps it populated, so this also locks out starts smuggled into a
   ///      window payload. Requires a bound position manager (unbound means the instance was
   ///      abandoned), a whitelisted fund, and the requested amount within the live principal
-  ///      cap sized on the operation's yield cap (fail-fast for ASYNC, where the cap re-runs
-  ///      at every consume; zero for SYNC, whose flash repayment carries no yield).
-  function _checkStart(RetargetterOperation storage operation_, address fund, uint256 amount, uint16 yieldCapBps)
+  ///      cap (fail-fast for ASYNC, where the cap re-runs at every consume).
+  function _checkStart(RetargetterOperation storage operation_, address fund, uint256 amount)
     internal
     view
     returns (address positionManager)
@@ -918,7 +903,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     positionManager = LibStorage.assetsStorage().positionManager;
     if (positionManager == address(0)) revert LibRetargetterErrors.PositionManagerNotBound();
     if (!LibStorage.whitelistsStorage().funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
-    if (amount > _maxPrincipal(positionManager, yieldCapBps)) revert LibRetargetterErrors.PrincipalCapExceeded();
+    if (amount > _maxPrincipal(positionManager)) revert LibRetargetterErrors.PrincipalCapExceeded();
   }
 
   /// @dev Shared preamble of the wrappers acting on the live order: requires an active
@@ -962,12 +947,9 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      from live position manager state, so the cap self-corrects: once a rebalance moves
   ///      the position to target the cap collapses toward zero and further consumption is
   ///      blocked. An empty position reverts EmptyPosition; debt against zero collateral
-  ///      reverts BadDebtPosition. Below target the buffered cap is further bounded by the
-  ///      quoter's one-trip repayment bound: repayment prices actual YT supply, which the
-  ///      flat yield cap bounds rather than the yield estimate, so the buffer alone would
-  ///      let a cap-sized operation owe more than the post-supply target-LTV borrow
-  ///      capacity can fund in one settlement trip.
-  function _maxPrincipal(address positionManager, uint16 yieldCapBps) internal view returns (uint256) {
+  ///      reverts BadDebtPosition. Auction yield limits govern accepted offers separately and
+  ///      do not change this position-sizing result.
+  function _maxPrincipal(address positionManager) internal view returns (uint256) {
     uint256 collateralQuoted = IPositionManager(positionManager).collateralAmountQuoted();
     uint256 debt = IPositionManager(positionManager).debtAmount();
     if (collateralQuoted == 0) {
@@ -990,19 +972,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
         estimates.subscriptionDuration,
         estimates.redemptionDuration
       );
-    uint256 buffered = principal * (BPS + config_.principalBufferBps) / BPS;
-    if (debt.divWad(collateralQuoted) >= target) return buffered;
-    uint256 oneTrip = IRetargetterQuoter(_QUOTER)
-      .ltvUpOneTripPrincipal(
-        collateralQuoted,
-        debt,
-        target,
-        yieldCapBps,
-        estimates.borrowRate,
-        estimates.collateralYieldRate,
-        estimates.subscriptionDuration
-      );
-    return buffered.min(oneTrip);
+    return principal;
   }
 
   /// @dev Current owed amount on the operation's Request, priced on the repayment terms

@@ -253,9 +253,8 @@ contract RetargetterSyncTest is RetargetterBaseTest {
     assertLe(_currentLtv(), POSITION_MANAGER_LTV, "at or below target");
   }
 
-  /// @notice A flash loan sized exactly at the SYNC principal cap (the zero-yield one-trip
-  ///         bound) deploys, borrows its own repayment back and lands the position exactly
-  ///         at target: the cap is the largest one-trip-settleable size, not just a limit.
+  /// @notice A flash loan sized exactly by the zero-rate target formula deploys, borrows its
+  ///         own repayment back and lands the position exactly at target.
   function test_startSyncRetargetting_capSizedFlashLoanSettles() public {
     _seedPosition(10_000e18, 5_000e18);
     fund.setSyncSettlement(true);
