@@ -255,14 +255,14 @@ contract FacilityIntentsTest is FacilityBaseTest {
     uint256 intentId = _createIntentWithDeposits(DEFAULT_AMOUNT);
     assertTrue(_isResolving(intentId), "Intent should be resolving");
 
-    // a reverted deposit releases into the word set while resolving
+    // a reverted deposit leaves the absolute word set while resolving untouched
     vm.prank(facilitator);
     facility.setDepositCap(intentId, 0);
     vm.prank(owner);
     facility.revertDeposit(intentId, user, user);
 
     (IntentProperties memory props,,,) = facility.getIntent(intentId);
-    assertEq(props.depositCap, DEFAULT_AMOUNT, "Reverted deposit should release into the new cap");
+    assertEq(props.depositCap, 0, "Reverted deposit should not change an absolute cap");
     assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
   }
 

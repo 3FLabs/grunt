@@ -294,9 +294,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), cap - 500e6, nextDebt
-      )
+      abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _pmId(positionManager), cap - 500e6, nextDebt)
     );
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
 
@@ -480,7 +478,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 debt = _expectedDebt(amount);
     _fundEntrant(user, amount);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _assetId(), 0, debt));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _assetId(), 0, debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
   }
 
@@ -497,7 +495,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     underlyingToken.setBalance(user, amount);
     vm.startPrank(user);
     underlyingToken.approve(address(fresh), amount);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _assetId(), 0, debt));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _assetId(), 0, debt));
     fresh.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
     vm.stopPrank();
   }
@@ -640,9 +638,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 debt = _expectedDebt(amount);
     _fundEntrant(user, amount);
     vm.prank(user);
-    vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), 100e6, debt)
-    );
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _pmId(positionManager), 100e6, debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
     assertEq(facility.getSecurityCap(address(underlyingToken)), 100e6, "security cap touched");
     assertEq(facility.getEntry(address(positionManager)).capacityCap, 100e6, "capacity touched");
@@ -658,7 +654,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 debt = _expectedDebt(amount);
     _fundEntrant(user, amount);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _assetId(), 100e6, debt));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _assetId(), 100e6, debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
     assertEq(facility.getEntry(address(positionManager)).capacityCap, 1_000e6, "capacity consumption not rolled back");
     assertEq(facility.getSecurityCap(address(underlyingToken)), 100e6, "security cap touched");
@@ -781,7 +777,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _approveExit(user, shares, _required(previewDebtIn));
     vm.prank(user);
     vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), cap, previewDebtIn)
+      abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _pmId(positionManager), cap, previewDebtIn)
     );
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
     assertEq(positionManager.balanceOf(user), shares, "shares moved on a capped exit");
@@ -1691,7 +1687,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // ...and a chunk more does not.
     uint256 over = max + 1e18;
     bytes memory err = abi.encodeWithSelector(
-      LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), 600e6, _expectedDebt(over)
+      LibFacilityErrors.CapExceeded.selector, _pmId(positionManager), 600e6, _expectedDebt(over)
     );
     _fundEntrant(user, over);
     vm.prank(user);
@@ -1722,9 +1718,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     uint256 over = max + 1e18;
     // Computed before the prank: an external call would consume it.
-    bytes memory err = abi.encodeWithSelector(
-      LibFacilityErrors.DepositCapExceeded.selector, _assetId(), 400e6, _expectedDebt(over) - 300e6
-    );
+    bytes memory err =
+      abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _assetId(), 400e6, _expectedDebt(over) - 300e6);
     _fundEntrant(user, over);
     vm.prank(user);
     vm.expectRevert(err);
@@ -1808,7 +1803,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _approveExit(user, over, _required(overDebtIn));
     vm.prank(user);
     vm.expectRevert(
-      abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, _pmId(positionManager), cap, overDebtIn)
+      abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _pmId(positionManager), cap, overDebtIn)
     );
     facility.exit(address(positionManager), over, type(uint256).max, 0, receiver, "");
   }

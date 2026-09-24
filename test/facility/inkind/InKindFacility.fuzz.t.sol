@@ -135,8 +135,7 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
 
   /// @dev ABSOLUTE cap error of LibCaps, keyed by the consumer's id.
   function _capError(address key, uint256 remaining, uint256 amount) internal pure returns (bytes memory) {
-    return
-      abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, uint256(uint160(key)), remaining, amount);
+    return abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, uint256(uint160(key)), remaining, amount);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -482,7 +481,7 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
   }
 
   /// @notice `maxExit` is tight under an ABSOLUTE exit cap: exiting `min(maxExit, balance)`
-  ///         fits, and when the cap binds, exiting a small chunk more reverts DepositCapExceeded.
+  ///         fits, and when the cap binds, exiting a small chunk more reverts CapExceeded.
   function testFuzz_maxExitFits(uint256 exitCap, uint256 shareFraction) public {
     _seedPool(SEED_COLLATERAL, SEED_DEBT);
     _openOffers();

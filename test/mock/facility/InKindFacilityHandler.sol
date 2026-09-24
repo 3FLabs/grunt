@@ -385,7 +385,7 @@ contract InKindFacilityHandler is Test {
   /// @dev Classification of a failed entry: cap shortfalls must not follow a `maxEnter` quote
   ///      (INK-6), gates must not follow a passing preview (INK-5).
   function _onEnterFailed(EnterCtx memory ctx, bytes4 selector) internal {
-    if (selector == LibFacilityErrors.DepositCapExceeded.selector) {
+    if (selector == LibFacilityErrors.CapExceeded.selector) {
       enterCapFailures++;
       // INK-6: the quote was computed against the same caps this call consumed.
       if (ctx.usesMax) maxEnterLied = true;
@@ -507,7 +507,7 @@ contract InKindFacilityHandler is Test {
   /// @dev Classification of a failed exit: cap shortfalls must not follow a `maxExit` quote
   ///      (INK-6), gates and over-pulls must not follow a passing preview (INK-5).
   function _onExitFailed(ExitCtx memory ctx, bytes4 selector) internal {
-    if (selector == LibFacilityErrors.DepositCapExceeded.selector) {
+    if (selector == LibFacilityErrors.CapExceeded.selector) {
       exitCapFailures++;
       if (ctx.usesMax) maxExitLied = true;
     } else if (_isExitGate(selector)) {
