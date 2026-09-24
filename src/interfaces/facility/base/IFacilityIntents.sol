@@ -92,6 +92,8 @@ interface IFacilityIntents {
   ///      LibCaps for the exact layout). Releases follow the current word, so change the
   ///      encoding or the referenced cap only after setting the word to zero and letting
   ///      outstanding shares exit.
+  ///      Callable in any intent state: caps are only consumed while depositing, but releases
+  ///      (e.g. reverted deposits while resolving) follow the current word.
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.
   function setDepositCap(uint256 id, uint256 newDepositCap) external;

@@ -214,6 +214,68 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.setDepositCap(intentId, 500_000e18);
   }
 
+  function test_setDepositCap_worksOnResolving() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 newCap = 500_000e18;
+
+    vm.prank(facilitator);
+    vm.expectEmit(true, true, true, true);
+    emit IFacilityIntents.DepositCapUpdated(intentId, newCap);
+    facility.setDepositCap(intentId, newCap);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, newCap, "Deposit cap should be updated while resolving");
+  }
+
+  function test_setDepositCap_worksAfterLock() public {
+    uint256 intentId = _createDefaultIntent();
+    vm.prank(facilitator);
+    facility.lock(intentId);
+
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 0);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, 0, "Deposit cap should be updated after lock");
+  }
+
+  function test_setDepositCap_worksOnResolved() public {
+    uint256 intentId = _createResolvingIntent();
+    vm.prank(facilitator);
+    facility.resolve(intentId);
+
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 500_000e18);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, 500_000e18, "Deposit cap should be updated when resolved");
+  }
+
+  function test_setDepositCap_thenRevertDepositOnResolving() public {
+    uint256 intentId = _createIntentWithDeposits(DEFAULT_AMOUNT);
+    assertTrue(_isResolving(intentId), "Intent should be resolving");
+
+    // a reverted deposit releases into the word set while resolving
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 0);
+    vm.prank(owner);
+    facility.revertDeposit(intentId, user, user);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, DEFAULT_AMOUNT, "Reverted deposit should release into the new cap");
+    assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
+  }
+
+  function test_setDepositCap_revertOnPaused() public {
+    uint256 intentId = _createResolvingIntent();
+    vm.prank(owner);
+    facility.pauseFor(type(uint256).max);
+
+    vm.prank(facilitator);
+    vm.expectRevert();
+    facility.setDepositCap(intentId, 500_000e18);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        LOCK TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
