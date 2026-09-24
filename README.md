@@ -259,7 +259,7 @@ stateDiagram-v2
 |----------|--------------|----------------|-------------------|
 | `createIntent` | Owner/Facilitator | Any | resolveStart > now |
 | `updateTarget` | Owner | DEPOSITING / RESOLVING | - |
-| `setDepositCap` | Facilitator | DEPOSITING | - |
+| `setDepositCap` | Facilitator | Any | Valid cap encoding |
 | `lock` | Facilitator | DEPOSITING | - |
 | `setFund` | Facilitator | Any | No active order |
 | `setRequest` | Facilitator | Any | Request repaid (if previously set) |
