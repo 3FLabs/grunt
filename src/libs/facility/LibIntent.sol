@@ -16,7 +16,7 @@ import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
-import {LibCaps} from "./LibCaps.sol";
+import {LibCaps, CapType} from "./LibCaps.sol";
 import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhitelist.sol";
 
 /// @dev Asset configuration for intents and swaps.
@@ -30,7 +30,7 @@ struct Asset {
 /// @dev Configuration values that define an intent's behavior.
 /// @param depositAsset Asset deposited into the intent.
 /// @param targetAsset Target asset or position manager for the intent.
-/// @param depositCap Encoded deposit cap word: the remaining absolute deposit capacity, or a
+/// @param depositCap Encoded deposit cap word: the max total supply of the intent, or a
 ///                   reference to a cap in an IFacilityCaps contract (see LibCaps for the layout).
 /// @param guardKey Address of the position manager whose transfer guard authorizes intent transfers.
 ///                  Must equal the deposit asset, the target asset, or both (when both are position managers).
@@ -129,25 +129,32 @@ library LibIntent {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Consumes the intent's deposit cap for a deposit.
-  /// @dev Absolute caps decrement their remaining capacity in place and revert with
-  ///      DepositCapExceeded when the amount exceeds it. External caps consume
-  ///      amount x multiplier from their caps contract (state-changing external call,
-  ///      reverting when the cap cannot absorb it).
+  /// @dev Absolute caps are the max total supply, as before cap types existed: reverts with
+  ///      DepositCapExceeded if the total supply after deposit would exceed the cap, and the
+  ///      word is never written. External caps consume amount x multiplier from their caps
+  ///      contract (state-changing external call, reverting when the cap cannot absorb it).
+  ///      Must run before the shares are minted.
   /// @param _self The intent storage reference.
   /// @param id The intent ID (used for error reporting).
   /// @param amount The amount being deposited.
   function consumeCap(Intent storage _self, uint256 id, uint256 amount) internal {
-    _self.properties.depositCap = _self.properties.depositCap.consume(id, amount);
+    uint256 cap = _self.properties.depositCap;
+    if (cap.capType() == CapType.ABSOLUTE) {
+      uint256 attemptedTotal = _self.totalSupply + amount;
+      if (attemptedTotal > cap) revert LibFacilityErrors.DepositCapExceeded(id, cap, attemptedTotal);
+      return;
+    }
+    cap.consume(id, amount);
   }
 
   /// @notice Releases the cap consumption of a deposit being undone.
-  /// @dev Absolute caps restore their remaining capacity in place. External caps consume with
-  ///      the opposite multiplier, reversing the direction the deposit took in the caps
-  ///      contract (FacilityDynamicCaps ignores the release direction).
+  /// @dev No-op for absolute caps, which follow totalSupply. External caps consume with the
+  ///      opposite multiplier, reversing the direction the deposit took in the caps contract
+  ///      (FacilityDynamicCaps ignores the release direction).
   /// @param _self The intent storage reference.
   /// @param amount The deposited amount being undone.
   function releaseCap(Intent storage _self, uint256 amount) internal {
-    _self.properties.depositCap = _self.properties.depositCap.release(amount);
+    _self.properties.depositCap.release(amount);
   }
 
   /// @notice Validates that the intent's associated request has been repaid.
@@ -250,9 +257,8 @@ library LibIntent {
   ///      current word, so changing the encoding, the caps contract, the cap ID or the
   ///      multiplier while shares are outstanding credits or debits a cap for deposits it never
   ///      saw. To switch, set the word to zero first, let outstanding shares exit, then set the
-  ///      new word. An ABSOLUTE zero only stops new deposits, since releases regrow it; to close
-  ///      an intent for good, point it at a FacilityDynamicCaps cap with zero recovery (any unset
-  ///      ID), where deposits revert and releases are no-ops.
+  ///      new word. An ABSOLUTE word is the max total supply and may be set below it, which
+  ///      blocks deposits until enough shares exit.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.

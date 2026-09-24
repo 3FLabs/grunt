@@ -105,18 +105,18 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
   /*                        CONSUMPTION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_deposit_absoluteCap_decrementsAndRestores() public {
+  function test_deposit_absoluteCap_wordUnchanged() public {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(_intentParamsWithTargetPM());
 
     _deposit(intentId, user, 1000e18);
     (IntentProperties memory props,,,) = facility.getIntent(intentId);
-    assertEq(props.depositCap, DEFAULT_DEPOSIT_CAP - 1000e18, "Absolute cap should decrement on deposit");
+    assertEq(props.depositCap, DEFAULT_DEPOSIT_CAP, "Absolute cap should not change on deposit");
 
     vm.prank(user);
     facility.withdraw(intentId, user, user, 400e18);
     (props,,,) = facility.getIntent(intentId);
-    assertEq(props.depositCap, DEFAULT_DEPOSIT_CAP - 600e18, "Absolute cap should restore on withdrawal");
+    assertEq(props.depositCap, DEFAULT_DEPOSIT_CAP, "Absolute cap should not change on withdrawal");
   }
 
   function test_deposit_externalCap_consumesSharedPool() public {
@@ -297,30 +297,35 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
 
     _deposit(intentId, user, 600e18);
 
-    // the error reports the remaining capacity and the attempted amount
+    // the error reports the cap and the total supply the deposit would reach
     _mintDebt(user, 500e18);
     vm.prank(user);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 400e18, 500e18));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 1000e18, 1100e18));
     facility.deposit(intentId, 500e18);
   }
 
-  function test_setDepositCap_absoluteZeroRegrowsOnWithdraw() public {
+  function test_setDepositCap_absoluteBelowSupplyBlocksDeposits() public {
     uint256 intentId = _createAbsoluteIntent();
     _deposit(intentId, user, 1000e18);
 
     vm.prank(facilitator);
-    facility.setDepositCap(intentId, 0);
+    facility.setDepositCap(intentId, 500e18);
     _mintDebt(user2, 1e18);
     vm.prank(user2);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 0, 1e18));
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 500e18, 1001e18));
     facility.deposit(intentId, 1e18);
 
-    // a withdrawal regrows the zero word, reopening room for deposits
+    // withdrawals only reopen room once the supply drops below the cap
     vm.prank(user);
     facility.withdraw(intentId, user, user, 600e18);
     (IntentProperties memory props,,,) = facility.getIntent(intentId);
-    assertEq(props.depositCap, 600e18, "Zero absolute cap should regrow on withdrawal");
-    _deposit(intentId, user2, 600e18);
+    assertEq(props.depositCap, 500e18, "Absolute cap should not change on withdrawal");
+    _deposit(intentId, user2, 100e18);
+
+    _mintDebt(user2, 1);
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, intentId, 500e18, 500e18 + 1));
+    facility.deposit(intentId, 1);
   }
 
   function test_setDepositCap_closeViaDynamicCaps() public {

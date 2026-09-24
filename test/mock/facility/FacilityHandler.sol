@@ -67,10 +67,8 @@ contract FacilityHandler is Test {
   /// @notice Tracks whether an intent uses debtToken (true) or PM shares (false) as deposit asset.
   mapping(uint256 => bool) public intentIsDebtToken;
 
-  /// @notice FAC-4: totalSupply + remaining absolute cap when the cap was last set (creation or
-  ///         setDepositCap). Deposits and releases move value between the two, so the sum holds
-  ///         while the intent is depositing.
-  mapping(uint256 => uint256) public capBaseline;
+  /// @notice FAC-4a: the absolute cap word last set (creation or setDepositCap).
+  mapping(uint256 => uint256) public lastSetCap;
 
   /// @notice Fixed users array used by the fuzzer.
   address[] public users;
@@ -286,13 +284,13 @@ contract FacilityHandler is Test {
     intentIds.push(id);
     intentStates[id] = 0; // DEPOSITING
     intentIsDebtToken[id] = isDebt;
-    capBaseline[id] = depositCap;
+    lastSetCap[id] = depositCap;
   }
 
   /// @notice Deposits into a DEPOSITING intent on behalf of a fuzzed user.
   /// @dev Handles both PM-share and debtToken intents. Verifies 1:1 LP minting (FAC-3) and
-  ///      that the cap decrements by the deposited amount (FAC-4). One deposit in eight is
-  ///      attempted above the remaining cap and must revert with DepositCapExceeded.
+  ///      that the deposit did not push totalSupply above the cap (FAC-4). One deposit in eight
+  ///      is attempted above the cap and must revert with DepositCapExceeded.
   ///      Early-returns if no depositing intents.
   /// @param intentSeed Seed for selecting an intent.
   /// @param amountSeed Seed for fuzzing the deposit amount.
@@ -304,11 +302,12 @@ contract FacilityHandler is Test {
     uint256 id = depositingIds[intentSeed % depositingIds.length];
 
     (IntentProperties memory props,,,) = facility.getIntent(id);
-    // the absolute cap is the remaining capacity: it decrements on deposits
-    uint256 remaining = props.depositCap;
+    // the absolute cap is the max total supply, which a cap cut may leave below the supply
+    uint256 currentSupply = facility.totalSupply(id);
+    uint256 remaining = currentSupply < props.depositCap ? props.depositCap - currentSupply : 0;
     address depositor = users[userSeed % users.length];
 
-    // FAC-4: a deposit above the remaining cap must revert with the remaining cap and the amount
+    // FAC-4: a deposit above the cap must revert with the cap and the attempted total
     if (amountSeed % 8 == 0 && remaining < 1_000_000e18) {
       uint256 over = remaining + 1;
       _fundDepositor(id, depositor, over);
@@ -318,8 +317,9 @@ contract FacilityHandler is Test {
       } catch (bytes memory reason) {
         // other reverts (pause, intent past resolveStart) are not cap decisions
         if (reason.length >= 4 && bytes4(reason) == LibFacilityErrors.DepositCapExceeded.selector) {
-          bytes memory expected =
-            abi.encodeWithSelector(LibFacilityErrors.DepositCapExceeded.selector, id, remaining, over);
+          bytes memory expected = abi.encodeWithSelector(
+            LibFacilityErrors.DepositCapExceeded.selector, id, props.depositCap, currentSupply + over
+          );
           if (keccak256(reason) != keccak256(expected)) depositExceededCap = true;
         }
       }
@@ -344,9 +344,9 @@ contract FacilityHandler is Test {
         depositNotOneToOne = true;
       }
 
-      // FAC-4: Verify the deposit consumed exactly `amount` of the remaining cap
+      // FAC-4: Verify deposit did not push supply above cap
       (IntentProperties memory propsAfter,,,) = facility.getIntent(id);
-      if (propsAfter.depositCap != props.depositCap - amount) {
+      if (facility.totalSupply(id) > propsAfter.depositCap) {
         depositExceededCap = true;
       }
 
@@ -612,8 +612,8 @@ contract FacilityHandler is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Updates the deposit cap of a DEPOSITING intent.
-  /// @dev The new word is the remaining capacity, independent of totalSupply, so this rebases
-  ///      the FAC-4 baseline to totalSupply + newCap.
+  /// @dev Allows setting cap below current totalSupply (which is valid on-chain).
+  ///      This exercises the scenario where totalSupply > depositCap after a cap reduction.
   /// @param intentSeed Seed for selecting an intent.
   /// @param capSeed Seed for fuzzing the new deposit cap.
   function act_updateDepositCap(uint256 intentSeed, uint256 capSeed) external {
@@ -625,7 +625,7 @@ contract FacilityHandler is Test {
 
     vm.prank(facilitator);
     try facility.setDepositCap(id, newCap) {
-      capBaseline[id] = facility.totalSupply(id) + newCap;
+      lastSetCap[id] = newCap;
     } catch {
       return;
     }

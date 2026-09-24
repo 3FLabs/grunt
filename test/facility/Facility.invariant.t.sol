@@ -320,42 +320,22 @@ contract FacilityInvariantTest is StdInvariant, Test {
     }
   }
 
-  /// @notice FAC-4: A deposit never consumes more than the available cap.
-  /// @dev Checked per-action in the handler: a deposit above the remaining cap must revert with
-  ///      DepositCapExceeded, and a successful deposit must decrement the cap by its amount.
+  /// @notice FAC-4: Deposit cap cannot be exceeded by a new deposit.
+  /// @dev The deposit cap is only enforced at deposit time. Reducing the cap below the current
+  ///      totalSupply is allowed, so totalSupply may temporarily exceed depositCap.
+  ///      Checked per-action in the handler: a deposit above the cap must revert with
+  ///      DepositCapExceeded(id, cap, attemptedTotal). This invariant verifies the ghost flag.
   function invariant_depositCapNotExceeded() public view {
-    assertFalse(handler.depositExceededCap(), "FAC-4: deposit consumed more than the available cap");
+    assertFalse(handler.depositExceededCap(), "FAC-4: deposit pushed totalSupply above depositCap");
   }
 
-  /// @notice FAC-4a: An absolute cap conserves totalSupply + remaining cap while depositing.
-  /// @dev The baseline is taken when the cap is set (creation or setDepositCap). Deposits move
-  ///      value from the cap to totalSupply, withdrawals and reverted deposits move it back, so
-  ///      the sum is constant until the cap is set again. Only holds in the DEPOSITING state:
-  ///      claims burn shares without releasing the cap. Handler caps stay far below the
-  ///      saturation bound of absolute words.
-  function invariant_absoluteCapConservation() public view {
+  /// @notice FAC-4a: An absolute cap word only changes through createIntent and setDepositCap.
+  /// @dev Deposits, withdrawals, reverted deposits and claims never write it, in any state.
+  function invariant_absoluteCapOnlySetByFacilitator() public view {
     uint256[] memory ids = handler.getIntentIds();
     for (uint256 i = 0; i < ids.length; i++) {
-      uint256 id = ids[i];
-      if (handler.intentStates(id) != 0) continue;
-      (IntentProperties memory props,,,) = facility.getIntent(id);
-      assertEq(
-        facility.totalSupply(id) + props.depositCap,
-        handler.capBaseline(id),
-        "FAC-4a: totalSupply + remaining cap drifted from the baseline"
-      );
-    }
-  }
-
-  /// @notice FAC-4b: totalSupply never exceeds what was available when the cap was last set.
-  /// @dev Follows from FAC-4a and a non-negative cap, stated on its own so a conservation
-  ///      failure that still respects availability is told apart from one that does not.
-  function invariant_supplyWithinAvailableCap() public view {
-    uint256[] memory ids = handler.getIntentIds();
-    for (uint256 i = 0; i < ids.length; i++) {
-      uint256 id = ids[i];
-      if (handler.intentStates(id) != 0) continue;
-      assertLe(facility.totalSupply(id), handler.capBaseline(id), "FAC-4b: totalSupply above the available cap");
+      (IntentProperties memory props,,,) = facility.getIntent(ids[i]);
+      assertEq(props.depositCap, handler.lastSetCap(ids[i]), "FAC-4a: absolute cap word changed outside setDepositCap");
     }
   }
 

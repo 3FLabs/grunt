@@ -6,7 +6,7 @@ import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
 import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhitelist.sol";
 
 /// @dev Deposit cap types, encoded in the top byte of a cap word.
-/// @param ABSOLUTE The word is the remaining deposit capacity of the intent.
+/// @param ABSOLUTE The word is a plain amount (see LibCaps for how each consumer reads it).
 /// @param EXTERNAL The word references a cap in an IFacilityCaps contract.
 enum CapType {
   ABSOLUTE,
@@ -17,9 +17,9 @@ enum CapType {
 /// @author 3F Protocol
 /// @notice Encoding, consumption and release of intent deposit caps.
 /// @dev A deposit cap is a single uint256 word whose top byte selects the cap type:
-///      - ABSOLUTE (0): the word is the remaining deposit capacity of the intent, decremented
-///        by deposits and restored by releases. Caps deployed before cap types existed have a
-///        zero top byte, so they read as ABSOLUTE.
+///      - ABSOLUTE (0): the word is a plain amount. Intents read it as their max total supply
+///        (LibIntent checks it and never writes it), so caps deployed before cap types existed
+///        keep their meaning. consume() reads it as a remaining budget and decrements it.
 ///      - EXTERNAL (1): the word points at a cap in an IFacilityCaps contract that deposits
 ///        consume and releases give back (FacilityAbsoluteCaps) or ignore (FacilityDynamicCaps).
 ///
@@ -138,36 +138,30 @@ library LibCaps {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Consumes the deposit cap for a deposit of `amount`.
-  /// @dev ABSOLUTE: reverts with DepositCapExceeded if the amount exceeds the remaining
-  ///      capacity, and returns the decremented word. EXTERNAL: consumes amount x multiplier
+  /// @dev ABSOLUTE: reverts with CapExceeded if the amount exceeds the remaining budget, and
+  ///      returns the decremented word. EXTERNAL: consumes amount x multiplier
   ///      from the caps contract (a negative multiplier takes the release direction instead)
   ///      and returns the word unchanged.
   /// @param self The encoded deposit cap word.
-  /// @param intentId The intent ID (used for error reporting).
+  /// @param capId The consumer's cap ID (used for error reporting).
   /// @param amount The amount being deposited.
   /// @return newCap The new cap word to store.
-  function consume(uint256 self, uint256 intentId, uint256 amount) internal returns (uint256 newCap) {
+  function consume(uint256 self, uint256 capId, uint256 amount) internal returns (uint256 newCap) {
     if (capType(self) == CapType.EXTERNAL) return _poolConsume(self, amount, false);
-    if (amount > self) revert LibFacilityErrors.DepositCapExceeded(intentId, self, amount);
+    if (amount > self) revert LibFacilityErrors.CapExceeded(capId, self, amount);
     unchecked {
       return self - amount;
     }
   }
 
   /// @notice Releases the cap consumption of a deposit of `amount` being undone.
-  /// @dev ABSOLUTE: returns the restored word, saturating at MAX_ABSOLUTE so a release can
-  ///      never overflow into the type byte. EXTERNAL: consumes with the opposite multiplier,
-  ///      reversing the direction the deposit took in the caps contract, and returns the
-  ///      word unchanged.
+  /// @dev ABSOLUTE: no-op, the word is never restored. EXTERNAL: consumes with the opposite
+  ///      multiplier, reversing the direction the deposit took in the caps contract. The word
+  ///      never changes, so there is nothing to store.
   /// @param self The encoded deposit cap word.
   /// @param amount The deposited amount being undone.
-  /// @return newCap The new cap word to store.
-  function release(uint256 self, uint256 amount) internal returns (uint256 newCap) {
-    if (capType(self) == CapType.EXTERNAL) return _poolConsume(self, amount, true);
-    unchecked {
-      newCap = self + amount;
-    }
-    if (newCap < self || newCap > MAX_ABSOLUTE) newCap = MAX_ABSOLUTE;
+  function release(uint256 self, uint256 amount) internal {
+    if (capType(self) == CapType.EXTERNAL) _poolConsume(self, amount, true);
   }
 
   /// @dev Consumes `amount` from a EXTERNAL word's caps contract with the word's multiplier
