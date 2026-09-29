@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {FacilityBaseTest} from "test/facility/FacilityBase.t.sol";
 import {MorphoFlashLoanRequest} from "src/request/MorphoFlashLoanRequest.sol";
 import {MorphoFlashLoanRequestFactory} from "src/request/MorphoFlashLoanRequestFactory.sol";
+import {SyncMidasWithdrawal} from "src/request/scripts/SyncMidasWithdrawal.sol";
 import {SyncDeposit} from "src/request/scripts/SyncDeposit.sol";
 import {SyncWithdrawal} from "src/request/scripts/SyncWithdrawal.sol";
 import {SyncAllocatorDeposit} from "src/request/scripts/SyncAllocatorDeposit.sol";
@@ -12,6 +13,7 @@ import {MockMorphoAllocator} from "test/mock/request/MockMorphoAllocator.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
+import {MockBorrowPosition} from "test/mock/borrow/MockBorrowPosition.sol";
 import {Mode, State} from "src/libs/funds/Order.sol";
 import {IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
@@ -105,6 +107,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   MorphoFlashLoanRequest public flashLoanRequest;
   MockScript public mockScript;
   SyncDeposit public syncDeposit;
+  SyncMidasWithdrawal public syncMidasWithdrawal;
   SyncWithdrawal public syncWithdrawal;
   SyncAllocatorDeposit public syncAllocatorDeposit;
   MockMorphoAllocator public mockAllocator;
@@ -140,6 +143,12 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.label(address(syncDeposit), "SyncDeposit");
     vm.prank(owner);
     flashLoanRequest.setScript(address(syncDeposit), true);
+
+    // Deploy and whitelist SyncMidasWithdrawal
+    syncMidasWithdrawal = new SyncMidasWithdrawal();
+    vm.label(address(syncMidasWithdrawal), "SyncMidasWithdrawal");
+    vm.prank(owner);
+    flashLoanRequest.setScript(address(syncMidasWithdrawal), true);
 
     // Deploy and whitelist SyncWithdrawal
     syncWithdrawal = new SyncWithdrawal();
@@ -908,8 +917,8 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
         .execute(
           actualDebtBorrowed,
           MorphoFlashLoanRequest.SetRequestParams({
-            intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
-          }),
+          intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
+        }),
           address(syncWithdrawal),
           withdrawPayload
         );
@@ -935,6 +944,90 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     // Facility retains the user's original deposit, no collateral
     assertEq(debtToken.balanceOf(address(facility)), amount);
     assertEq(collateralToken.balanceOf(address(facility)), 0);
+  }
+
+  function test_execute_syncMidasWithdrawalCommitUnlock() public {
+    uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 5_000e18, false);
+
+    // A price drop makes the live LTV exceed the requested 50% target.
+    oracle.setPrice(0.9e36);
+    uint256 withdrawAmount = 1_000e18;
+    uint256 repayAmount = 950e18; // 5,000 - (10,000 - 1,000) * 0.9 * 0.5
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    // MockFund represents the remaining redemption at the script's facility boundary.
+    mockFund.setNextCommitState(State.UNLOCKING);
+    mockFund.setUnlockAmount(withdrawAmount);
+    debtToken.setBalance(address(mockFund), withdrawAmount);
+    vm.prank(facilitator);
+    facility.create(intentId, withdrawAmount, withdrawAmount, Mode.REDEEM);
+
+    vm.prank(executor);
+    flashLoanRequest.execute(
+      repayAmount,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncMidasWithdrawal),
+      abi.encodeCall(SyncMidasWithdrawal.run, (address(facility), intentId, withdrawAmount, 0.5e18, false))
+    );
+
+    assertEq(positionManager.collateralAmount(), 9_000e18);
+    assertEq(positionManager.debtAmount(), 4_050e18);
+    assertEq(positionManager.debtAmount() * 1e18 / positionManager.collateralAmountQuoted(), 0.5e18);
+    assertEq(collateralToken.balanceOf(address(mockFund)), withdrawAmount);
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+    assertEq(debtToken.balanceOf(address(facility)), 5_050e18);
+    assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore - 4_050e18);
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+    (, address fund, address request,) = facility.getIntent(intentId);
+    assertEq(fund, address(0));
+    assertEq(request, address(0));
+  }
+
+  function test_syncMidasWithdrawal_rejectsInvalidParameters() public {
+    vm.expectRevert(SyncMidasWithdrawal.InvalidTargetLtv.selector);
+    syncMidasWithdrawal.run(address(facility), intentId, 1, 1e18, false);
+    vm.expectRevert(SyncMidasWithdrawal.InvalidPositionManager.selector);
+    syncMidasWithdrawal.run(address(facility), intentId, 1, 0.5e18, true);
+    vm.expectRevert(SyncMidasWithdrawal.InvalidWithdrawAmount.selector);
+    syncMidasWithdrawal.run(address(facility), intentId, 0, 0.5e18, false);
+    uint256 tooMuch = positionManager.collateralAmount() + 1;
+    vm.expectRevert(SyncMidasWithdrawal.InvalidWithdrawAmount.selector);
+    syncMidasWithdrawal.run(address(facility), intentId, tooMuch, 0.5e18, false);
+  }
+
+  function test_syncMidasWithdrawal_revertsWhenPartialQueueRemovesMoreQuotedCollateral() public {
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 4_500e18, false);
+
+    // This lower-priced module contributes to the aggregate quote but is excluded from withdrawals.
+    MockBorrowPosition excluded = new MockBorrowPosition(address(collateralToken), address(debtToken));
+    excluded.setTotalCollateral(10_000e18);
+    excluded.setTotalCollateralQuoted(5_000e18);
+    excluded.setSafeLtv(uint128(PM_LTV));
+    vm.mockCall(address(excluded), abi.encodeWithSignature("owner()"), abi.encode(address(positionManager)));
+    vm.prank(owner);
+    positionManager.addBorrowModule(address(excluded));
+
+    uint256 withdrawAmount = 1_000e18;
+    uint256 repayAmount = 225e18; // Aggregate quote estimates 750 removed; the queued position removes 1,000.
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    mockFund.setNextCommitState(State.UNLOCKING);
+    mockFund.setUnlockAmount(withdrawAmount);
+    debtToken.setBalance(address(mockFund), withdrawAmount);
+    vm.prank(facilitator);
+    facility.create(intentId, withdrawAmount, withdrawAmount, Mode.REDEEM);
+
+    vm.prank(executor);
+    vm.expectRevert(SyncMidasWithdrawal.TargetLtvExceeded.selector);
+    flashLoanRequest.execute(
+      repayAmount,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncMidasWithdrawal),
+      abi.encodeCall(SyncMidasWithdrawal.run, (address(facility), intentId, withdrawAmount, 0.3e18, false))
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
