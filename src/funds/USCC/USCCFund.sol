@@ -345,7 +345,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.PROCESSING;
-c
+
     emit OrderProcessing(_storage.currentOrderId);
   }
 
