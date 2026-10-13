@@ -357,6 +357,13 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
+  function setRecipient(address recipient) external override onlyOwner {
+    recipient.checkNotZero();
+    _usccFundStorage().recipient = recipient;
+    emit RecipientUpdated(recipient);
+  }
+
+  /// @inheritdoc IUSCCFund
   function resolve(Order memory order, uint256 input, uint256 output)
     external
     override
