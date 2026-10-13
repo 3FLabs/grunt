@@ -345,7 +345,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     if (orderId != _storage.currentOrderId) revert LibFundsErrors.InvalidOrder(orderId);
     if (_storage.internalState != State.RECOVERING) revert LibFundsErrors.InvalidState(_storage.internalState);
     _storage.internalState = State.PROCESSING;
-
+c
     emit OrderProcessing(_storage.currentOrderId);
   }
 
@@ -357,7 +357,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
-  function setRecipient(address recipient) external override onlyOwner {
+  function setRecipient(address recipient) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
     recipient.checkNotZero();
     _usccFundStorage().recipient = recipient;
     emit RecipientUpdated(recipient);

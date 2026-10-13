@@ -116,7 +116,7 @@ interface IUSCCFund is IFund {
   function setOracle(address oracle) external;
 
   /// @notice Sets the Superstate address receiving USDC to mint USCC.
-  /// @dev Can only be called by the owner.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   /// @param recipient The new recipient address.
   function setRecipient(address recipient) external;
 

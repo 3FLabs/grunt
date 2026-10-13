@@ -860,11 +860,18 @@ contract USCCFundTest is Test {
     fund.setRecipient(address(0));
   }
 
-  function test_SetRecipient_OnlyOwner() public {
+  function test_SetRecipient_Operator() public {
     vm.prank(owner);
     fund.grantRoles(operator, OPERATOR_ROLE);
 
     vm.prank(operator);
+    vm.expectEmit(true, true, true, true);
+    emit RecipientUpdated(outsider);
+    fund.setRecipient(outsider);
+  }
+
+  function test_SetRecipient_OnlyOperatorOrOwner() public {
+    vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
     fund.setRecipient(outsider);
   }
