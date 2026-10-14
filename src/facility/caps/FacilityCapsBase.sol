@@ -46,8 +46,22 @@ abstract contract FacilityCapsBase is Initializable, OwnableRoles, IFacilityCaps
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @inheritdoc IFacilityCaps
+  function validate(uint64 id, int24 multiplier) external view {
+    if (multiplier == type(int24).min) revert InvalidMultiplier();
+    _validateId(id);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         INTERNAL                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Reverts if `id` is not a valid cap ID. Accepts every ID by default.
+  // forge-lint: disable-next-line(empty-block)
+  function _validateId(uint64 id) internal view virtual {}
 
   function _batchGrantRoles(uint256 role, address[] calldata accounts) internal {
     uint256 len = accounts.length;

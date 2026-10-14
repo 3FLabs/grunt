@@ -25,8 +25,8 @@ contract FacilityDynamicCapsTest is Test {
   address consumer = makeAddr("consumer");
   address stranger = makeAddr("stranger");
 
-  uint32 constant ID = 1;
-  uint32 constant OTHER_ID = 2;
+  uint64 constant ID = 1;
+  uint64 constant OTHER_ID = 2;
   uint128 constant RECOVERY = 1_000_000e18;
   uint64 constant RECOVERY_TIME = 24 hours;
   uint256 constant START = 1_700_000_000;
@@ -78,6 +78,17 @@ contract FacilityDynamicCapsTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                       INITIALIZATION                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_validate_acceptsAnyId() public view {
+    caps.validate(0, MULT_1X);
+    caps.validate(ID, -MULT_1X);
+    caps.validate(type(uint64).max, 0);
+  }
+
+  function test_validate_revertOnMinMultiplier() public {
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    caps.validate(ID, type(int24).min);
+  }
 
   function test_initialize_setsOwnerAndRoles() public view {
     assertEq(caps.owner(), owner, "Owner should be set");

@@ -54,4 +54,16 @@ library LibCapsMath {
     // forge-lint: disable-next-line(unsafe-typecast)
     return FixedPointMathLib.mulDiv(headroom, MULTIPLIER_ONE, uint256(-int256(multiplier)));
   }
+
+  /// @notice Capacity moved by `amount` at `multiplier`: consumption() for a non-negative
+  ///         multiplier, release() for a negative one.
+  function charge(uint256 amount, int24 multiplier) internal pure returns (uint256) {
+    return multiplier < 0 ? release(amount, multiplier) : consumption(amount, multiplier);
+  }
+
+  /// @notice Maximum amount whose charge fits in `room` (a cap for a non-negative multiplier,
+  ///         a headroom for a negative one): depositable() or releasable().
+  function quote(uint256 room, int24 multiplier) internal pure returns (uint256) {
+    return multiplier < 0 ? releasable(room, multiplier) : depositable(room, multiplier);
+  }
 }
