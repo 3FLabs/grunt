@@ -32,6 +32,7 @@ contract USCCFundTest is Test {
   event OrderRecovering(bytes32 indexed orderId);
   event OrderProcessing(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
+  event RecipientUpdated(address indexed newRecipient);
   event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
   uint256 private constant ONE_USDC = 1e6;
@@ -837,6 +838,42 @@ contract USCCFundTest is Test {
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
     fund.setOracle(address(newOracle));
+  }
+
+  function test_SetRecipient_Success() public {
+    address newRecipient = makeAddr("newRecipient");
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit RecipientUpdated(newRecipient);
+    fund.setRecipient(newRecipient);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    assertEq(usdc.balanceOf(newRecipient), order.input, "new recipient");
+    assertEq(usdc.balanceOf(recipient), 0, "old recipient");
+  }
+
+  function test_SetRecipient_RevertsZeroAddress() public {
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    fund.setRecipient(address(0));
+  }
+
+  function test_SetRecipient_Operator() public {
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+
+    vm.prank(operator);
+    vm.expectEmit(true, true, true, true);
+    emit RecipientUpdated(outsider);
+    fund.setRecipient(outsider);
+  }
+
+  function test_SetRecipient_OnlyOperatorOrOwner() public {
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.setRecipient(outsider);
   }
 
   function test_Resolve_Success() public {

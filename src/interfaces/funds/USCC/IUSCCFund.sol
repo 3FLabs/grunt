@@ -63,6 +63,10 @@ interface IUSCCFund is IFund {
   /// @param operator The address that updated the oracle.
   event OracleUpdated(address indexed newOracle, address indexed operator);
 
+  /// @notice Emitted when the Superstate recipient address is updated.
+  /// @param newRecipient The new recipient address.
+  event RecipientUpdated(address indexed newRecipient);
+
   /// @notice Emitted when an order is manually resolved by an operator.
   /// @param orderId The unique identifier of the resolved order.
   /// @param newInput The new input amount set by the operator.
@@ -110,6 +114,11 @@ interface IUSCCFund is IFund {
   /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
   /// @param oracle The new oracle address.
   function setOracle(address oracle) external;
+
+  /// @notice Sets the Superstate address receiving USDC to mint USCC.
+  /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
+  /// @param recipient The new recipient address.
+  function setRecipient(address recipient) external;
 
   /// @notice Resolves the current order by setting its input and output amounts.
   /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
