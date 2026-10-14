@@ -131,7 +131,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
     _storage().caps[id].originTime = originTime;
     // casting to 'uint128' is safe because left <= recovery, which is a uint128
     // forge-lint: disable-next-line(unsafe-typecast)
-    emit CapConsumed(id, amount, multiplier, uint128(left));
+    emit CapConsumed(id, amount, multiplier, consumption, uint128(left));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

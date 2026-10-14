@@ -133,7 +133,8 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
   }
 
   function test_deposit_externalCap_multiPoolSpillsOver() public {
-    _setPool(1000e18, POOL_CAP);
+    // [asset pool, shared pool]: the asset pool's hard cap is its own allocation
+    _setPool(1000e18, 1000e18);
     vm.prank(owner);
     caps.setCap(OTHER_POOL_ID, 2000e18, 2000e18);
     // POOL_ID first, spilling over to OTHER_POOL_ID
@@ -158,8 +159,8 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     vm.prank(user);
     facility.withdraw(intentId, user, user, 1000e18);
     (otherCap,) = caps.getCap(OTHER_POOL_ID);
-    assertEq(otherCap, 2000e18, "Withdrawal should refill the second pool first");
-    assertEq(_poolCap(), 1000e18, "Withdrawal should then refill the first pool");
+    assertEq(_poolCap(), 1000e18, "Withdrawal should refill the first pool first");
+    assertEq(otherCap, 2000e18, "Withdrawal should then refill the second pool");
   }
 
   function test_deposit_externalCap_sharedAcrossIntents() public {

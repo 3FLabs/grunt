@@ -260,7 +260,7 @@ contract FacilityDynamicCapsTest is Test {
   function test_consume_movesOriginToRemaining() public {
     // 1m per 24h with 500k consumed: the origin sits 12h in the past
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(ID, 500_000e18, MULT_1X, 500_000e18);
+    emit IFacilityCaps.CapConsumed(ID, 500_000e18, MULT_1X, 500_000e18, 500_000e18);
     _consume(500_000e18, MULT_1X);
 
     assertEq(_origin(), START - 12 hours, "Origin should move to now minus 12h");

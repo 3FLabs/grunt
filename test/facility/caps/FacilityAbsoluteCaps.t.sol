@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {Initializable} from "lib/solady/src/utils/Initializable.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 
 import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
@@ -174,7 +175,7 @@ contract FacilityAbsoluteCapsTest is Test {
 
   function test_consume_positiveDecrementsAndEmits() public {
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(ID, 1000e18, MULT_1_5X, HARD_CAP - 1500e18);
+    emit IFacilityCaps.CapConsumed(ID, 1000e18, MULT_1_5X, 1500e18, HARD_CAP - 1500e18);
     _consume(1000e18, MULT_1_5X);
     assertEq(_cap(), HARD_CAP - 1500e18, "Cap should shrink by amount x multiplier");
 
@@ -207,7 +208,7 @@ contract FacilityAbsoluteCapsTest is Test {
     _setCap(0, HARD_CAP);
 
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(ID, 1000e18, -MULT_1_5X, 1500e18);
+    emit IFacilityCaps.CapConsumed(ID, 1000e18, -MULT_1_5X, 1500e18, 1500e18);
     _consume(1000e18, -MULT_1_5X);
     assertEq(_cap(), 1500e18, "Cap should grow by amount x |multiplier|");
 
@@ -269,9 +270,9 @@ contract FacilityAbsoluteCapsTest is Test {
 
     // OTHER_ID first: drained, the rest spills to ID
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(OTHER_ID, 6000e18, MULT_1X, 0);
+    emit IFacilityCaps.CapConsumed(OTHER_ID, 6000e18, MULT_1X, 5000e18, 0);
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(ID, 6000e18, MULT_1X, HARD_CAP - 1000e18);
+    emit IFacilityCaps.CapConsumed(ID, 6000e18, MULT_1X, 1000e18, HARD_CAP - 1000e18);
     vm.prank(consumer);
     caps.consume(_ids(OTHER_ID, ID, 0, 0), 6000e18, MULT_1X);
 
@@ -318,15 +319,15 @@ contract FacilityAbsoluteCapsTest is Test {
     assertEq(_poolCap(OTHER_ID), 0, "Second pool should be drained");
   }
 
-  function test_release_multiPool_refillsInReverseOrder() public {
+  function test_release_multiPool_refillsInConsumptionOrder() public {
     _setPool(ID, HARD_CAP - 1000e18, HARD_CAP);
     _setPool(OTHER_ID, 0, 5000e18);
 
-    // OTHER_ID is last: refilled to its hard cap first, the rest goes back to ID
+    // ID is first: refilled to its hard cap first, the rest goes to OTHER_ID
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(OTHER_ID, 5500e18, -MULT_1X, 5000e18);
+    emit IFacilityCaps.CapConsumed(ID, 5500e18, -MULT_1X, 1000e18, HARD_CAP);
     vm.expectEmit(true, true, true, true, address(caps));
-    emit IFacilityCaps.CapConsumed(ID, 5500e18, -MULT_1X, HARD_CAP - 500e18);
+    emit IFacilityCaps.CapConsumed(OTHER_ID, 5500e18, -MULT_1X, 4500e18, 4500e18);
     vm.prank(consumer);
     caps.consume(_ids(ID, OTHER_ID, 0, 0), 5500e18, -MULT_1X);
   }
@@ -339,11 +340,12 @@ contract FacilityAbsoluteCapsTest is Test {
     vm.prank(consumer);
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ids));
     caps.consume(ids, 1500e18 + 1, -MULT_1X);
-    assertEq(_poolCap(OTHER_ID), 0, "Last pool should be rolled back");
+    assertEq(_poolCap(ID), HARD_CAP - 1000e18, "First pool should be rolled back");
   }
 
   function test_consume_multiPool_roundTripRestoresPools() public {
-    _setPool(ID, 1000e18, HARD_CAP);
+    // [asset pool, shared pool]: the asset pool's hard cap is its own allocation
+    _setPool(ID, 1000e18, 1000e18);
     _setPool(OTHER_ID, 2000e18, 2000e18);
     uint64 ids = _ids(ID, OTHER_ID, 0, 0);
 
@@ -354,13 +356,106 @@ contract FacilityAbsoluteCapsTest is Test {
 
     vm.prank(consumer);
     caps.consume(ids, 1000e18, -MULT_1_5X);
-    assertEq(_poolCap(OTHER_ID), 1500e18, "Last pool should be refilled first");
-    assertEq(_poolCap(ID), 0, "First pool should wait for the last to be refilled");
+    assertEq(_poolCap(ID), 1000e18, "First pool should be refilled first");
+    assertEq(_poolCap(OTHER_ID), 500e18, "Second pool should take the rest of the release");
 
     vm.prank(consumer);
     caps.consume(ids, 1000e18, -MULT_1_5X);
-    assertEq(_poolCap(OTHER_ID), 2000e18, "Last pool should be back to its hard cap");
-    assertEq(_poolCap(ID), 1000e18, "First pool should be restored");
+    assertEq(_poolCap(ID), 1000e18, "First pool should stay at its hard cap");
+    assertEq(_poolCap(OTHER_ID), 2000e18, "Second pool should be restored");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         ADJUST CAP                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _adjust(uint16 id, int256 delta) internal returns (uint128 cap, uint128 hardCap) {
+    vm.prank(manager);
+    return caps.adjustCap(id, delta);
+  }
+
+  function test_adjustCap_growKeepsConsumption() public {
+    _consume(3000e18, MULT_1X);
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit FacilityAbsoluteCaps.CapSet(ID, 9000e18, HARD_CAP + 2000e18);
+    (uint128 cap, uint128 hardCap) = _adjust(ID, 2000e18);
+    assertEq(cap, 9000e18, "Cap should grow by the delta");
+    assertEq(hardCap, HARD_CAP + 2000e18, "Hard cap should follow the cap");
+
+    // the consumption made before the adjustment is still fully releasable
+    _consume(3000e18, -MULT_1X);
+    assertEq(_cap(), HARD_CAP + 2000e18, "Release should reach the new hard cap");
+  }
+
+  function test_adjustCap_shrinkKeepsConsumption() public {
+    _consume(3000e18, MULT_1X);
+
+    (uint128 cap, uint128 hardCap) = _adjust(ID, -5000e18);
+    assertEq(cap, 2000e18, "Cap should shrink by the delta");
+    assertEq(hardCap, 5000e18, "Hard cap should follow the cap");
+
+    _consume(3000e18, -MULT_1X);
+    assertEq(_cap(), 5000e18, "Consumption should stay releasable");
+  }
+
+  function test_adjustCap_shrinkPastCapStopsAtZero() public {
+    _consume(7000e18, MULT_1X);
+
+    (uint128 cap, uint128 hardCap) = _adjust(ID, -8000e18);
+    assertEq(cap, 0, "Cap should stop at zero");
+    assertEq(hardCap, 7000e18, "Hard cap should not drop below the consumption");
+
+    _consume(7000e18, -MULT_1X);
+    assertEq(_cap(), 7000e18, "Consumption should stay releasable");
+  }
+
+  function test_adjustCap_unsetPool() public {
+    (uint128 cap, uint128 hardCap) = _adjust(OTHER_ID, 500e18);
+    assertEq(cap, 500e18, "Unset pool should grow from zero");
+    assertEq(hardCap, 500e18, "Unset pool hard cap should grow from zero");
+
+    (cap, hardCap) = _adjust(THIRD_ID, -500e18);
+    assertEq(cap, 0, "Unset pool should not shrink below zero");
+    assertEq(hardCap, 0, "Unset pool hard cap should stay zero");
+  }
+
+  function test_adjustCap_reverts() public {
+    vm.prank(manager);
+    vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+    caps.adjustCap(0, 1);
+
+    vm.prank(manager);
+    vm.expectRevert(SafeCastLib.Overflow.selector);
+    caps.adjustCap(ID, int256(uint256(type(uint128).max)));
+
+    vm.prank(consumer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.adjustCap(ID, 1);
+
+    vm.prank(stranger);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.adjustCap(ID, 1);
+  }
+
+  function testFuzz_adjustCap_keepsConsumption(uint128 cap, uint128 hardCap, int256 delta) public {
+    hardCap = uint128(bound(hardCap, cap, type(uint128).max));
+    delta = bound(delta, -int256(uint256(type(uint128).max)), int256(uint256(type(uint128).max)));
+    _setCap(cap, hardCap);
+    uint256 consumed = hardCap - cap;
+
+    int256 target = int256(uint256(cap)) + delta;
+    uint256 expectedCap = target < 0 ? 0 : uint256(target);
+    if (expectedCap + consumed > type(uint128).max) {
+      vm.prank(manager);
+      vm.expectRevert(SafeCastLib.Overflow.selector);
+      caps.adjustCap(ID, delta);
+      return;
+    }
+
+    (uint128 newCap, uint128 newHardCap) = _adjust(ID, delta);
+    assertEq(newCap, expectedCap, "Cap should move by the delta, stopping at zero");
+    assertEq(newHardCap - newCap, consumed, "Outstanding consumption should be kept");
   }
 
   function test_validate_acceptsContiguousDistinctIds() public view {

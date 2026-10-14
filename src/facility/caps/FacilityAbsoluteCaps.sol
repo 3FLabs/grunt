@@ -2,6 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
 import {LibCapsMath} from "../../libs/common/LibCapsMath.sol";
 import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
 import {FacilityCapsBase} from "./FacilityCapsBase.sol";
@@ -9,12 +10,13 @@ import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 /// @title FacilityAbsoluteCaps
 /// @author 3F Protocol
 /// @notice Shared deposit-cap pools consumed by facilities with EXTERNAL deposit caps.
-/// @dev Each pool is a remaining capacity bounded by a constant hard cap. Positive multipliers
-///      consume it, negative multipliers credit it back up to the hard cap.
+/// @dev Each pool is a remaining capacity bounded by a hard cap. Positive multipliers consume
+///      it, negative multipliers credit it back up to the hard cap.
 ///
 ///      A cap ID packs up to four additive 16-bit pool IDs (id1 in the low bits, 0 = empty).
-///      Consumption drains id1 to id4, release refills id4 to id1. validate() requires id1
-///      set, no gap and no repeat.
+///      Consumption and release both walk id1 to id4, so with [asset pool, shared pool] a
+///      release refills the asset pool before the shared one. validate() requires id1 set, no
+///      gap and no repeat.
 ///
 ///      Known limitation: pools do not track consumers, so a release may refill pools another
 ///      consumer drained.
@@ -23,7 +25,7 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
   /*                          EVENTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Emitted when a cap is set.
+  /// @notice Emitted when a cap is set or adjusted.
   /// @param id The cap ID.
   /// @param cap The remaining shared capacity.
   /// @param hardCap The constant upper bound for the cap.
@@ -60,7 +62,7 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
   struct CapData {
     /// @notice Remaining shared capacity (invariant: cap <= hardCap).
     uint128 cap;
-    /// @notice Constant upper bound for the cap, only changed by setCap.
+    /// @notice Upper bound for the cap, only changed by setCap and adjustCap.
     uint128 hardCap;
   }
 
@@ -112,9 +114,9 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @inheritdoc IFacilityCaps
-  /// @dev Spreads the charge over the pools, each taking up to its room (see _room): from the
-  ///      first pool ID when consuming, from the last when releasing. Emits CapConsumed for each
-  ///      pool it changes, with the full amount and the pool's new cap. Reverts with
+  /// @dev Spreads the charge over the pools from the first pool ID, each taking up to its room
+  ///      (see _room). Emits CapConsumed for each pool it changes, with the capacity that pool
+  ///      moved and its new cap. Reverts with
   ///      InsufficientCap or HardCapExceeded carrying the whole cap ID when the pools together
   ///      cannot absorb it, and with InvalidCapId if the cap ID holds no pool ID.
   function consume(uint64 id, uint256 amount, int24 multiplier) external onlyRoles(CAPS_CONSUMER_ROLE) {
@@ -122,7 +124,7 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
     bool releasing = multiplier < 0;
     uint256 left = LibCapsMath.charge(amount, multiplier);
     for (uint256 i = 0; left != 0 && i < POOL_COUNT; i++) {
-      uint16 poolId = _poolId(id, releasing ? POOL_COUNT - 1 - i : i);
+      uint16 poolId = _poolId(id, i);
       if (poolId == 0) continue;
       CapData memory data = _storage().caps[poolId];
       uint256 moved = FixedPointMathLib.min(left, _room(data, releasing));
@@ -135,7 +137,7 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
         left -= moved;
       }
       _storage().caps[poolId].cap = newCap;
-      emit CapConsumed(poolId, amount, multiplier, newCap);
+      emit CapConsumed(poolId, amount, multiplier, moved, newCap);
     }
     if (left == 0) return;
     if (releasing) revert HardCapExceeded(id);
@@ -146,15 +148,45 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
   /*                          ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Sets the remaining capacity and its constant hard cap of a pool.
+  /// @notice Sets the remaining capacity and the hard cap of a pool.
   /// @dev Gated by the manager role. Reverts with InvalidCapId for pool ID 0 and with
-  ///      CapAboveHardCap if cap > hardCap.
+  ///      CapAboveHardCap if cap > hardCap. Overwrites consumption landing between reading the
+  ///      pool and this call, see adjustCap for updates on a live pool.
   /// @param id The pool ID.
   /// @param cap The remaining shared capacity.
   /// @param hardCap The constant upper bound for the cap.
   function setCap(uint16 id, uint128 cap, uint128 hardCap) external onlyRoles(CAPS_MANAGER_ROLE) {
     if (id == 0) revert InvalidCapId();
     if (cap > hardCap) revert CapAboveHardCap();
+    _storage().caps[id] = CapData(cap, hardCap);
+    emit CapSet(id, cap, hardCap);
+  }
+
+  /// @notice Grows or shrinks a pool by `delta`, keeping its outstanding consumption.
+  /// @dev Gated by the manager role. Reverts with InvalidCapId for pool ID 0. Moves the cap by
+  ///      `delta` and keeps hardCap - cap, so consumption landing before this call is kept
+  ///      and stays releasable. A shrink past the remaining cap stops at zero.
+  /// @param id The pool ID.
+  /// @param delta The signed change of the remaining capacity.
+  /// @return cap The new remaining capacity.
+  /// @return hardCap The new hard cap.
+  function adjustCap(uint16 id, int256 delta)
+    external
+    onlyRoles(CAPS_MANAGER_ROLE)
+    returns (uint128 cap, uint128 hardCap)
+  {
+    if (id == 0) revert InvalidCapId();
+    CapData memory data = _storage().caps[id];
+    uint256 newCap;
+    if (delta < 0) {
+      newCap = FixedPointMathLib.zeroFloorSub(data.cap, FixedPointMathLib.abs(delta));
+    } else {
+      // casting to 'uint256' is safe because delta is non-negative in this branch
+      // forge-lint: disable-next-line(unsafe-typecast)
+      newCap = data.cap + uint256(delta);
+    }
+    cap = SafeCastLib.toUint128(newCap);
+    hardCap = SafeCastLib.toUint128(newCap + (data.hardCap - data.cap));
     _storage().caps[id] = CapData(cap, hardCap);
     emit CapSet(id, cap, hardCap);
   }

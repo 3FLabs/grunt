@@ -15,13 +15,13 @@ interface IFacilityCaps {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Emitted when a cap is consumed (or released back, for a negative multiplier).
-  /// @dev FacilityAbsoluteCaps emits it once per pool it changes, with that pool ID, the full
-  ///      amount and that pool's new cap.
+  /// @dev FacilityAbsoluteCaps emits it once per pool it changes, with that pool ID.
   /// @param id The cap ID.
   /// @param amount The deposit amount the consumption was computed from.
   /// @param multiplier The signed Q12.12 multiplier applied to the amount.
+  /// @param moved The capacity this cap gave (positive multiplier) or got back (negative).
   /// @param newCap The remaining capacity after the call.
-  event CapConsumed(uint64 indexed id, uint256 amount, int24 multiplier, uint128 newCap);
+  event CapConsumed(uint64 indexed id, uint256 amount, int24 multiplier, uint256 moved, uint128 newCap);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ERRORS                            */
@@ -69,8 +69,8 @@ interface IFacilityCaps {
   ///      below zero. A negative multiplier is the release direction: FacilityAbsoluteCaps
   ///      increases the cap by amount * |multiplier| and reverts with HardCapExceeded above the
   ///      hard cap, FacilityDynamicCaps does nothing. FacilityAbsoluteCaps spreads it over its
-  ///      pool IDs (consumption from the first, release from the last) and reverts only if they
-  ///      cannot absorb it together. Gated by the consumer role.
+  ///      pool IDs, first pool first in both directions, and reverts only if they cannot absorb
+  ///      it together. Gated by the consumer role.
   /// @param id The cap ID.
   /// @param amount The deposit amount to consume capacity for.
   /// @param multiplier The signed Q12.12 multiplier applied to the amount.
