@@ -959,7 +959,9 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       repayAmount,
       _buildSetRequestParams(intentId, block.timestamp + 1 hours),
       address(syncWithdrawal),
-      abi.encodeCall(SyncWithdrawal.run, (address(facility), intentId, withdrawAmount, repayAmount, false, strategy, 0))
+      abi.encodeCall(
+        SyncWithdrawal.run, (address(facility), intentId, withdrawAmount, repayAmount, false, strategy, withdrawAmount)
+      )
     );
 
     assertEq(positionManager.collateralAmount(), 9_000e18);
@@ -1041,7 +1043,32 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     );
   }
 
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /// @dev The caller's minAssetsOut must still bind an existing order's output.
+  function test_execute_syncWithdrawalRevertsWhenExistingOrderOutputTooLow() public {
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 5_000e18, false);
+
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    vm.prank(facilitator);
+    facility.create(intentId, 1_000e18, 900e18, Mode.REDEEM);
+
+    vm.prank(executor);
+    vm.expectRevert(
+      abi.encodeWithSelector(SyncWithdrawal.InsufficientOrderOutput.selector, intentId, 900e18, 900e18 + 1)
+    );
+    flashLoanRequest.execute(
+      500e18,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncWithdrawal),
+      abi.encodeCall(
+        SyncWithdrawal.run,
+        (address(facility), intentId, 1_000e18, 500e18, false, WithdrawalStrategy.SEQUENTIAL, 900e18 + 1)
+      )
+    );
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                    I. pullFunds() TESTS                     */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

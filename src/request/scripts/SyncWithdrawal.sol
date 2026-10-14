@@ -13,6 +13,8 @@ import {WithdrawalStrategy} from "../../interfaces/manager/base/IPositionManager
 /// @notice Stateless script designed to be delegatecalled from MorphoFlashLoanRequest.
 ///         Executes a synchronous withdrawal flow: withdrawManager → create → commit → unlock.
 ///         If the intent already has an order (e.g. Midas, created ahead of time), create is skipped.
+///         On that path the existing order's input is committed as-is: collateral withdrawn beyond it
+///         stays on the facility, credited to the intent.
 /// @dev Must NOT have any storage variables. The fund must be set on the intent before execute().
 ///      The share token is queried on-chain from the intent's fund to measure actual collateral received.
 /// @author 3F Protocol
@@ -21,6 +23,12 @@ contract SyncWithdrawal {
   /// @param intentId The intent ID.
   error NotRedeemOrder(uint256 intentId);
 
+  /// @notice Thrown when the intent's existing order guarantees less than the caller's minimum.
+  /// @param intentId The intent ID.
+  /// @param orderOutput The existing order's minimum output.
+  /// @param minAssetsOut The caller's minimum output.
+  error InsufficientOrderOutput(uint256 intentId, uint256 orderOutput, uint256 minAssetsOut);
+
   /// @notice Executes the synchronous withdrawal flow for a facility intent.
   /// @param facility The facility contract address.
   /// @param intentId The intent ID on the facility.
@@ -28,7 +36,8 @@ contract SyncWithdrawal {
   /// @param repayAmount The amount of debt to repay to the position manager.
   /// @param useTarget Whether to use the target asset for the position manager withdrawal.
   /// @param strategy The withdrawal strategy (SEQUENTIAL or PROPORTIONAL).
-  /// @param minAssetsOut The minimum amount of assets expected from the redemption (ignored if the order exists).
+  /// @param minAssetsOut The minimum amount of assets expected from the redemption.
+  ///        If the order already exists, its output must be at least this amount.
   function run(
     address facility,
     uint256 intentId,
@@ -57,6 +66,8 @@ contract SyncWithdrawal {
       IFacilityFunds(facility).create(intentId, collateralReceived, minAssetsOut, Mode.REDEEM);
     } else if (order.mode != Mode.REDEEM) {
       revert NotRedeemOrder(intentId);
+    } else if (order.output < minAssetsOut) {
+      revert InsufficientOrderOutput(intentId, order.output, minAssetsOut);
     }
 
     // 5. Commit order (facility sends shares/collateral to fund)
