@@ -33,7 +33,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   /// @param recovery The capacity recovered over `recoveryTime`, also the maximum capacity.
   /// @param recoveryTime The seconds needed to recover from zero to `recovery`.
   /// @param originTime The timestamp at which the capacity is zero.
-  event CapSet(uint32 indexed id, uint128 recovery, uint64 recoveryTime, uint64 originTime);
+  event CapSet(uint64 indexed id, uint128 recovery, uint64 recoveryTime, uint64 originTime);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ERRORS                            */
@@ -66,7 +66,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
 
   struct Storage {
     /// @notice Mapping of cap IDs to their cap data.
-    mapping(uint32 => CapData) caps;
+    mapping(uint64 => CapData) caps;
   }
 
   function _storage() internal pure returns (Storage storage s) {
@@ -85,7 +85,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   /// @return recovery The capacity recovered over `recoveryTime`, also the maximum capacity.
   /// @return recoveryTime The seconds needed to recover from zero to `recovery`.
   /// @return originTime The timestamp at which the capacity is zero.
-  function getCap(uint32 id) external view returns (uint128 recovery, uint64 recoveryTime, uint64 originTime) {
+  function getCap(uint64 id) external view returns (uint128 recovery, uint64 recoveryTime, uint64 originTime) {
     CapData memory data = _storage().caps[id];
     return (data.recovery, data.recoveryTime, data.originTime);
   }
@@ -93,12 +93,12 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   /// @notice Returns the capacity of a cap at the current timestamp.
   /// @param id The cap ID.
   /// @return The remaining capacity, between zero and `recovery`.
-  function remaining(uint32 id) external view returns (uint256) {
+  function remaining(uint64 id) external view returns (uint256) {
     return _remaining(_storage().caps[id]);
   }
 
   /// @inheritdoc IFacilityCaps
-  function available(uint32 id, int24 multiplier) external view returns (uint256 amount) {
+  function available(uint64 id, int24 multiplier) external view returns (uint256 amount) {
     return LibCapsMath.depositable(_remaining(_storage().caps[id]), multiplier);
   }
 
@@ -111,7 +111,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   ///      the origin forward so the capacity now equals the previous capacity minus the
   ///      consumption, rounding the origin so the new capacity never exceeds that difference.
   ///      The origin never moves backwards, so a future origin set by the manager holds.
-  function consume(uint32 id, uint256 amount, int24 multiplier) external onlyRoles(CAPS_CONSUMER_ROLE) {
+  function consume(uint64 id, uint256 amount, int24 multiplier) external onlyRoles(CAPS_CONSUMER_ROLE) {
     if (multiplier <= 0) return;
     uint256 consumption = LibCapsMath.consumption(amount, multiplier);
     if (consumption == 0) return;
@@ -131,7 +131,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
     _storage().caps[id].originTime = originTime;
     // casting to 'uint128' is safe because left <= recovery, which is a uint128
     // forge-lint: disable-next-line(unsafe-typecast)
-    emit CapConsumed(id, amount, multiplier, uint128(left));
+    emit CapConsumed(id, amount, multiplier, consumption, uint128(left));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -146,7 +146,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   /// @param recovery The capacity recovered over `recoveryTime`, also the maximum capacity.
   /// @param recoveryTime The seconds needed to recover from zero to `recovery`.
   /// @param originTime The timestamp at which the capacity is zero.
-  function setCap(uint32 id, uint128 recovery, uint64 recoveryTime, uint64 originTime)
+  function setCap(uint64 id, uint128 recovery, uint64 recoveryTime, uint64 originTime)
     external
     onlyRoles(CAPS_MANAGER_ROLE)
   {

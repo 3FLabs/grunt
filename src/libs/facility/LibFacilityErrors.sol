@@ -69,8 +69,7 @@ library LibFacilityErrors {
   /// @param amount The attempted amount.
   error CapExceeded(uint256 capId, uint256 remaining, uint256 amount);
 
-  /// @notice Thrown when setting a deposit cap with an invalid encoding
-  ///         (unknown type byte, non-zero unused bits, or an unusable multiplier).
+  /// @notice Thrown when setting a deposit cap with an unknown type byte.
   /// @param newDepositCap The rejected deposit cap word.
   error InvalidDepositCap(uint256 newDepositCap);
 

@@ -24,7 +24,10 @@ enum CapType {
 ///        consume and releases give back (FacilityAbsoluteCaps) or ignore (FacilityDynamicCaps).
 ///
 ///      EXTERNAL word layout (msb -> lsb):
-///      | 8 bits type | 32 bits unused | 24 bits multiplier | 32 bits id | 160 bits caps address |
+///      | 8 bits type | 24 bits multiplier | 64 bits id | 160 bits caps address |
+///
+///      The 64-bit id is passed to the caps contract as is and each implementation reads it its
+///      own way (FacilityAbsoluteCaps splits it into four 16-bit pool IDs) and validates it.
 ///
 ///      The multiplier is a signed Q12.12 fixed-point value applied to deposited amounts
 ///      (typically leverage - 1). Withdrawal-side intents encode a negative multiplier so their
@@ -46,20 +49,16 @@ library LibCaps {
   /// @notice Bit offset of the cap type.
   uint256 internal constant TYPE_OFFSET = 248;
   /// @notice Bit offset of the signed Q12.12 multiplier.
-  uint256 internal constant MULTIPLIER_OFFSET = 192;
-  /// @notice Bit offset of the pool ID.
+  uint256 internal constant MULTIPLIER_OFFSET = 224;
+  /// @notice Bit offset of the cap ID.
   uint256 internal constant ID_OFFSET = 160;
 
   /// @notice Mask of the 24-bit signed Q12.12 multiplier field.
   uint256 internal constant MULTIPLIER_MASK = (1 << 24) - 1;
-  /// @notice Mask of the 32-bit pool ID field.
-  uint256 internal constant ID_MASK = (1 << 32) - 1;
+  /// @notice Mask of the 64-bit cap ID field.
+  uint256 internal constant ID_MASK = (1 << 64) - 1;
   /// @notice Mask of the 160-bit caps address field.
   uint256 internal constant ADDRESS_MASK = (1 << 160) - 1;
-  /// @notice Mask of the unused bits of a EXTERNAL word, between the multiplier and the type
-  ///         byte (must be zero).
-  uint256 internal constant UNUSED_MASK =
-    ((1 << (TYPE_OFFSET - MULTIPLIER_OFFSET - 24)) - 1) << (MULTIPLIER_OFFSET + 24);
   /// @notice Maximum value of an ABSOLUTE cap (all bits below the type byte).
   uint256 internal constant MAX_ABSOLUTE = (1 << TYPE_OFFSET) - 1;
 
@@ -84,7 +83,7 @@ library LibCaps {
   /// @param id The cap ID in the caps contract.
   /// @param multiplier The signed Q12.12 multiplier applied to deposited amounts.
   /// @return word The encoded deposit cap word.
-  function encodeExternal(address caps, uint32 id, int24 multiplier) internal pure returns (uint256 word) {
+  function encodeExternal(address caps, uint64 id, int24 multiplier) internal pure returns (uint256 word) {
     uint256 _type = uint256(CapType.EXTERNAL);
     assembly ("memory-safe") {
       word := or(
@@ -99,7 +98,7 @@ library LibCaps {
   /// @return caps The IFacilityCaps contract holding the cap.
   /// @return id The cap ID in the caps contract.
   /// @return multiplier The signed Q12.12 multiplier applied to deposited amounts.
-  function decodeExternal(uint256 self) internal pure returns (IFacilityCaps caps, uint32 id, int24 multiplier) {
+  function decodeExternal(uint256 self) internal pure returns (IFacilityCaps caps, uint64 id, int24 multiplier) {
     assembly ("memory-safe") {
       caps := and(self, ADDRESS_MASK)
       id := and(shr(ID_OFFSET, self), ID_MASK)
@@ -109,16 +108,32 @@ library LibCaps {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns the amount consume() can absorb right now.
+  /// @dev ABSOLUTE: the word itself. EXTERNAL: the caps contract's quote under the word's
+  ///      multiplier (type(uint256).max when that direction is unbounded). Assumes a validated word.
+  /// @param self The encoded deposit cap word.
+  /// @return amount The maximum consumable amount.
+  function available(uint256 self) internal view returns (uint256 amount) {
+    if (capType(self) == CapType.EXTERNAL) {
+      (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
+      return caps.available(id, multiplier);
+    }
+    return self;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        VALIDATION                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Validates a deposit cap word before it is stored.
-  /// @dev Reverts with InvalidDepositCap if the type byte is unknown, if an EXTERNAL word has
-  ///      non-zero unused bits, or if its multiplier is type(int24).min (which has no int24
-  ///      negation, so release() could never flip its direction). Reverts with CapsNotAllowed
+  /// @dev Reverts with InvalidDepositCap if the type byte is unknown. Reverts with CapsNotAllowed
   ///      if an EXTERNAL word points at a caps contract the whitelist does not allow: consume()
   ///      returns no data, so a call to an arbitrary address would silently succeed and disable
-  ///      the cap.
+  ///      the cap. The id and multiplier are then checked by the caps contract itself
+  ///      (IFacilityCaps.validate).
   /// @param self The encoded deposit cap word.
   /// @param whitelist The registry of allowed caps contracts.
   function validate(uint256 self, IFacilityCapsWhitelist whitelist) internal view {
@@ -126,10 +141,9 @@ library LibCaps {
     uint256 rawType = self >> TYPE_OFFSET;
     if (rawType > uint256(CapType.EXTERNAL)) revert LibFacilityErrors.InvalidDepositCap(self);
     if (rawType == uint256(CapType.EXTERNAL)) {
-      if (self & UNUSED_MASK != 0) revert LibFacilityErrors.InvalidDepositCap(self);
-      (IFacilityCaps caps,, int24 multiplier) = decodeExternal(self);
-      if (multiplier == type(int24).min) revert LibFacilityErrors.InvalidDepositCap(self);
+      (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
       if (!whitelist.isAllowed(address(caps))) revert LibFacilityErrors.CapsNotAllowed(address(caps));
+      caps.validate(id, multiplier);
     }
   }
 
@@ -172,8 +186,11 @@ library LibCaps {
   /// @param negate Whether to flip the multiplier's direction.
   /// @return The word, unchanged (cap state lives in the caps contract).
   function _poolConsume(uint256 self, uint256 amount, bool negate) private returns (uint256) {
-    (IFacilityCaps caps, uint32 id, int24 multiplier) = decodeExternal(self);
-    caps.consume(id, amount, negate ? -multiplier : multiplier);
+    (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
+    // validate() rejects type(int24).min, so the negation cannot overflow
+    unchecked {
+      caps.consume(id, amount, negate ? -multiplier : multiplier);
+    }
     return self;
   }
 }

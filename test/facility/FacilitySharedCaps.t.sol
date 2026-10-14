@@ -21,8 +21,9 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
   FacilityAbsoluteCaps public caps;
   FacilityDynamicCaps public timeCaps;
 
-  uint32 constant POOL_ID = 1;
-  uint32 constant UNSET_ID = 99;
+  uint16 constant POOL_ID = 1;
+  uint16 constant OTHER_POOL_ID = 2;
+  uint16 constant UNSET_ID = 99;
   // Q12.12 multipliers
   int24 constant MULT_1X = 4096;
   int24 constant MULT_1_5X = 6144;
@@ -129,6 +130,37 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     // consumption rounds up in favor of the pool: 1 wei x 1.5 -> 2
     _deposit(intentId, user, 1);
     assertEq(_poolCap(), POOL_CAP - 1500e18 - 2, "Consumption should round up");
+  }
+
+  function test_deposit_externalCap_multiPoolSpillsOver() public {
+    // [asset pool, shared pool]: the asset pool's hard cap is its own allocation
+    _setPool(1000e18, 1000e18);
+    vm.prank(owner);
+    caps.setCap(OTHER_POOL_ID, 2000e18, 2000e18);
+    // POOL_ID first, spilling over to OTHER_POOL_ID
+    uint64 ids = uint64(POOL_ID) | (uint64(OTHER_POOL_ID) << 16);
+    IntentProperties memory props = _intentParamsWithTargetPM();
+    props.depositCap = LibCaps.encodeExternal(address(caps), ids, MULT_1_5X);
+    vm.prank(owner);
+    uint256 intentId = facility.createIntent(props);
+
+    // 1000 at 1.5x = 1500: 1000 from the first pool, 500 from the second
+    _deposit(intentId, user, 1000e18);
+    (uint128 otherCap,) = caps.getCap(OTHER_POOL_ID);
+    assertEq(_poolCap(), 0, "First pool should be drained");
+    assertEq(otherCap, 1500e18, "Second pool should take the rest");
+
+    // 1500 left across both pools
+    _mintDebt(user2, 1001e18);
+    vm.prank(user2);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ids));
+    facility.deposit(intentId, 1001e18);
+
+    vm.prank(user);
+    facility.withdraw(intentId, user, user, 1000e18);
+    (otherCap,) = caps.getCap(OTHER_POOL_ID);
+    assertEq(_poolCap(), 1000e18, "Withdrawal should refill the first pool first");
+    assertEq(otherCap, 2000e18, "Withdrawal should then refill the second pool");
   }
 
   function test_deposit_externalCap_sharedAcrossIntents() public {
@@ -407,16 +439,22 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, rogue));
     facility.setDepositCap(intentId, LibCaps.encodeExternal(rogue, POOL_ID, MULT_1X));
 
-    // non-zero unused bits
-    uint256 dirtyWord = LibCaps.encodeExternal(address(caps), POOL_ID, MULT_1X) | (uint256(1) << 216);
+    // the caps contract validates the cap ID: no pool, a gap, or a repeated pool
+    uint64[3] memory badIds = [uint64(0), uint64(POOL_ID) << 16, uint64(POOL_ID) | (uint64(POOL_ID) << 16)];
+    for (uint256 i = 0; i < badIds.length; i++) {
+      vm.prank(facilitator);
+      vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+      facility.setDepositCap(intentId, LibCaps.encodeExternal(address(caps), badIds[i], MULT_1X));
+    }
+
+    // FacilityDynamicCaps accepts any ID
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, dirtyWord));
-    facility.setDepositCap(intentId, dirtyWord);
+    facility.setDepositCap(intentId, LibCaps.encodeExternal(address(timeCaps), 0, MULT_1X));
 
     // type(int24).min multiplier has no int24 negation, so it could never be released
     uint256 minMultiplier = LibCaps.encodeExternal(address(caps), POOL_ID, type(int24).min);
     vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, minMultiplier));
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
     facility.setDepositCap(intentId, minMultiplier);
   }
 }

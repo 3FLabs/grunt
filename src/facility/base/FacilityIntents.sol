@@ -135,10 +135,10 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
 
   /// @inheritdoc IFacilityIntents
   /// @dev Sets a new deposit cap for the intent.
-  ///      The intent must be in the depositing state.
+  ///      Allowed in any state so releases (withdrawals, reverted deposits) can be unblocked.
   function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
     LibStorage.checkNotPaused();
-    LibStorage.facilityStorage().getDepositingIntent(id).updateDepositCap(id, newDepositCap, CAPS_WHITELIST);
+    LibStorage.facilityStorage().getIntent(id).updateDepositCap(id, newDepositCap, CAPS_WHITELIST);
   }
 
   /// @inheritdoc IFacilityIntents
