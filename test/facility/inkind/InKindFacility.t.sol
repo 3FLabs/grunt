@@ -64,8 +64,24 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     return _externalWord(address(absoluteCaps), POOL_ID, multiplier);
   }
 
+  /// @dev EXTERNAL word over several absolute pools (see _poolIds).
+  function _absPoolsWord(uint64 ids, int24 multiplier) internal view returns (uint256) {
+    return _externalWord(address(absoluteCaps), ids, multiplier);
+  }
+
+  /// @dev Packs pool IDs into a FacilityAbsoluteCaps cap ID, id1 in the low bits.
+  function _poolIds(uint16 id1, uint16 id2, uint16 id3) internal pure returns (uint64) {
+    return uint64(id1) | (uint64(id2) << 16) | (uint64(id3) << 32);
+  }
+
+  /// @dev Sets an absolute pool as the caps manager (the owner).
+  function _setAbsPoolAt(uint16 id, uint128 cap, uint128 hardCap) internal {
+    vm.prank(owner);
+    absoluteCaps.setCap(id, cap, hardCap);
+  }
+
   /// @dev EXTERNAL word over a dynamic cap.
-  function _dynWord(uint32 id, int24 multiplier) internal view returns (uint256) {
+  function _dynWord(uint64 id, int24 multiplier) internal view returns (uint256) {
     return _externalWord(address(dynamicCaps), id, multiplier);
   }
 
@@ -76,7 +92,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   /// @dev Sets a dynamic cap fully recovered right now: `recovery` over one day, origin a day ago.
-  function _setDynPoolFull(uint32 id, uint128 recovery) internal {
+  function _setDynPoolFull(uint64 id, uint128 recovery) internal {
     vm.prank(owner);
     dynamicCaps.setCap(id, recovery, uint64(1 days), uint64(block.timestamp - 1 days));
   }
@@ -317,6 +333,35 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // The EXTERNAL word itself is stored unchanged.
     assertEq(facility.getEntry(address(positionManager)).capacityCap, word, "external word mutated");
     _assertFacilityClean();
+  }
+
+  function test_enter_multiPoolWordSpillsOver() public {
+    _setAbsPool(300e6, 1_000e6);
+    _setAbsPoolAt(OTHER_POOL_ID, 1_000e6, 1_000e6);
+    _setEntry(positionManager, _absPoolsWord(_poolIds(POOL_ID, OTHER_POOL_ID, 0), MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+
+    (, uint256 debt) = _enter(user, 1_000e18, receiver);
+    assertGt(debt, 300e6, "debt should exceed the first pool");
+    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
+    (uint128 second,) = absoluteCaps.getCap(OTHER_POOL_ID);
+    assertEq(first, 0, "first pool not drained first");
+    assertEq(second, 1_000e6 - (debt - 300e6), "second pool did not take the rest");
+    _assertFacilityClean();
+  }
+
+  function test_enter_multiPoolWordRevertsWhenPoolsTogetherFallShort() public {
+    _setAbsPool(100e6, 1_000e6);
+    _setAbsPoolAt(OTHER_POOL_ID, 100e6, 1_000e6);
+    uint64 ids = _poolIds(POOL_ID, OTHER_POOL_ID, 0);
+    _setEntry(positionManager, _absPoolsWord(ids, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+
+    uint256 amount = 1_000e18;
+    _fundEntrant(user, amount);
+    vm.prank(user);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ids));
+    facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
+    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
+    assertEq(first, 100e6, "first pool moved on a reverted entry");
   }
 
   function test_enter_externalDynamicWordConsumesAndExhausts() public {
@@ -800,6 +845,27 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // Round trips are lossy (two share fees plus rounding), so the pool lands just below start.
     assertLt(afterExit, 800e6, "round trip created capacity");
     assertApproxEqRel(afterExit, 800e6, 1e16, "pool did not return near its start");
+    _assertFacilityClean();
+  }
+
+  function test_exit_multiPoolWordRefillsFirstPoolFirst() public {
+    // [asset pool, shared pool]: the asset pool's hard cap is its own allocation.
+    _setAbsPool(300e6, 300e6);
+    _setAbsPoolAt(OTHER_POOL_ID, 1_000e6, 1_000e6);
+    uint64 ids = _poolIds(POOL_ID, OTHER_POOL_ID, 0);
+    _setEntry(positionManager, _absPoolsWord(ids, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+    _setExit(positionManager, _absPoolsWord(ids, MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+
+    (uint256 shares, uint256 debt) = _enter(user, 1_000e18, user);
+    uint256 sharedAfterEnter = 1_000e6 - (debt - 300e6);
+
+    // The exit refills the asset pool up to its hard cap, then spills into the shared pool.
+    (, uint256 debtIn) = _exit(user, shares, receiver);
+    assertGt(debtIn, 300e6, "exit should reach the shared pool");
+    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
+    (uint128 second,) = absoluteCaps.getCap(OTHER_POOL_ID);
+    assertEq(first, 300e6, "asset pool not refilled first");
+    assertEq(second, sharedAfterEnter + (debtIn - 300e6), "shared pool did not take the rest");
     _assertFacilityClean();
   }
 
@@ -1380,21 +1446,26 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   function test_setters_validateCapWord() public {
-    uint256[4] memory words;
-    bytes[4] memory errors;
+    uint256[7] memory words;
+    bytes[7] memory errors;
     // Unknown type byte.
     words[0] = uint256(2) << 248;
     errors[0] = abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, words[0]);
-    // EXTERNAL word with garbage in the unused bits.
-    words[1] = _absWord(MULT_1X) | (1 << 220);
-    errors[1] = abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, words[1]);
-    // EXTERNAL word with the un-negatable int24.min multiplier.
-    words[2] = _absWord(type(int24).min);
-    errors[2] = abi.encodeWithSelector(LibFacilityErrors.InvalidDepositCap.selector, words[2]);
+    // EXTERNAL word with the un-negatable int24.min multiplier, rejected by the caps contract.
+    words[1] = _absWord(type(int24).min);
+    errors[1] = abi.encodeWithSelector(IFacilityCaps.InvalidMultiplier.selector);
     // EXTERNAL word pointing at a caps contract the whitelist does not allow.
     address rogueCaps = address(new FacilityAbsoluteCaps());
-    words[3] = _externalWord(rogueCaps, POOL_ID, MULT_1X);
-    errors[3] = abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, rogueCaps);
+    words[2] = _externalWord(rogueCaps, POOL_ID, MULT_1X);
+    errors[2] = abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, rogueCaps);
+    // Absolute cap IDs the caps contract rejects: no pool, a gap, a repeat, id1 missing.
+    words[3] = _absPoolsWord(0, MULT_1X);
+    words[4] = _absPoolsWord(_poolIds(POOL_ID, 0, OTHER_POOL_ID), MULT_1X);
+    words[5] = _absPoolsWord(_poolIds(POOL_ID, POOL_ID, 0), MULT_1X);
+    words[6] = _absPoolsWord(_poolIds(0, POOL_ID, 0), MULT_1X);
+    for (uint256 i = 3; i < words.length; ++i) {
+      errors[i] = abi.encodeWithSelector(FacilityAbsoluteCaps.InvalidCapId.selector);
+    }
 
     for (uint256 i = 0; i < words.length; ++i) {
       vm.prank(facilitator);
@@ -1412,7 +1483,10 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
       facility.setEntry(address(positionManager), words[i], 0, 0, false);
     }
 
-    // Valid EXTERNAL words on both whitelisted caps contracts are accepted everywhere.
+    // Valid EXTERNAL words on both whitelisted caps contracts are accepted everywhere, including
+    // a multi-pool absolute word and dynamic ID 0 (FacilityDynamicCaps accepts any ID).
+    _setEntry(positionManager, _absPoolsWord(_poolIds(POOL_ID, OTHER_POOL_ID, 0), MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+    _setExit(positionManager, _dynWord(0, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     _setEntry(positionManager, _absWord(MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     _setExit(positionManager, _dynWord(POOL_ID, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     _setSecurityCap(_dynWord(SECURITY_POOL_ID, MULT_1X));
@@ -1758,6 +1832,16 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setAbsPool(1_000e6, 1_000e6);
     _setEntry(positionManager, _absWord(MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     assertEq(facility.maxEnter(address(positionManager), user), 1_800e18, "dynamic security bound");
+  }
+
+  function test_maxEnter_multiPoolWordQuotesTheSum() public {
+    _setAbsPool(300e6, 1_000e6);
+    _setAbsPoolAt(OTHER_POOL_ID, 300e6, 1_000e6);
+    _setEntry(positionManager, _absWord(MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+    assertEq(facility.maxEnter(address(positionManager), user), 600e18, "single pool bound");
+
+    _setEntry(positionManager, _absPoolsWord(_poolIds(POOL_ID, OTHER_POOL_ID, 0), MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
+    assertEq(facility.maxEnter(address(positionManager), user), 1_200e18, "pools should add up");
   }
 
   function test_maxEnter_gateParity() public {

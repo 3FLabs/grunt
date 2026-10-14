@@ -25,7 +25,7 @@ contract LibCapsTest is Test {
   FacilityDynamicCaps dynamicCaps;
 
   address owner = makeAddr("owner");
-  uint32 constant ID = 7;
+  uint16 constant ID = 7;
   int24 constant MULT_1X = 4096;
   int24 constant MULT_2X = 8192;
 

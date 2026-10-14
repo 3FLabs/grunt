@@ -104,8 +104,9 @@ contract InKindFacilityBaseTest is Test {
   uint256 constant MAX_FEE = 1_000;
   uint24 constant DEFAULT_FEE_BPS = 25;
   uint40 constant FAR_EXPIRY = type(uint40).max;
-  uint32 constant POOL_ID = 1;
-  uint32 constant SECURITY_POOL_ID = 2;
+  uint16 constant POOL_ID = 1;
+  uint16 constant SECURITY_POOL_ID = 2;
+  uint16 constant OTHER_POOL_ID = 3;
   int24 constant MULT_1X = 4096; // 1.0 in Q12.12
   int24 constant MULT_NEG_1X = -4096;
   uint256 constant BPS = 10_000;
@@ -315,7 +316,7 @@ contract InKindFacilityBaseTest is Test {
   }
 
   /// @dev Encodes an EXTERNAL cap word.
-  function _externalWord(address caps, uint32 id, int24 multiplier) internal pure returns (uint256) {
+  function _externalWord(address caps, uint64 id, int24 multiplier) internal pure returns (uint256) {
     return LibCaps.encodeExternal(caps, id, multiplier);
   }
 

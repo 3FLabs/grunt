@@ -118,7 +118,7 @@ library LibCaps {
   /// @return amount The maximum consumable amount.
   function available(uint256 self) internal view returns (uint256 amount) {
     if (capType(self) == CapType.EXTERNAL) {
-      (IFacilityCaps caps, uint32 id, int24 multiplier) = decodeExternal(self);
+      (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
       return caps.available(id, multiplier);
     }
     return self;
