@@ -108,6 +108,23 @@ library LibCaps {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           VIEWS                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @notice Returns the amount consume() can absorb right now.
+  /// @dev ABSOLUTE: the word itself. EXTERNAL: the caps contract's quote under the word's
+  ///      multiplier (type(uint256).max when that direction is unbounded). Assumes a validated word.
+  /// @param self The encoded deposit cap word.
+  /// @return amount The maximum consumable amount.
+  function available(uint256 self) internal view returns (uint256 amount) {
+    if (capType(self) == CapType.EXTERNAL) {
+      (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
+      return caps.available(id, multiplier);
+    }
+    return self;
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        VALIDATION                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 

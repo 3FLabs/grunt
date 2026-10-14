@@ -611,16 +611,15 @@ contract FacilityHandler is Test {
   /*                    FACILITATOR ACTIONS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Updates the deposit cap of a DEPOSITING intent.
+  /// @notice Updates the deposit cap of an intent in any state.
   /// @dev Allows setting cap below current totalSupply (which is valid on-chain).
   ///      This exercises the scenario where totalSupply > depositCap after a cap reduction.
   /// @param intentSeed Seed for selecting an intent.
   /// @param capSeed Seed for fuzzing the new deposit cap.
   function act_updateDepositCap(uint256 intentSeed, uint256 capSeed) external {
-    uint256[] memory depositingIds = _getIntentsByState(0);
-    if (depositingIds.length == 0) return;
+    if (intentIds.length == 0) return;
 
-    uint256 id = depositingIds[intentSeed % depositingIds.length];
+    uint256 id = intentIds[intentSeed % intentIds.length];
     uint256 newCap = bound(capSeed, 0, 10_000_000e18);
 
     vm.prank(facilitator);
