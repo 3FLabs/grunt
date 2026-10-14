@@ -38,9 +38,9 @@ enum CapType {
 ///
 ///      Known limitation: with an EXTERNAL word, releases (withdraw, revertDeposit) are
 ///      state-changing calls into the caps contract and revert when it does: pool at its hard
-///      cap, cap drained under a negative multiplier, or consumer role revoked. Once the intent
-///      is resolving the facilitator can no longer change the word, so only the caps manager
-///      can unblock them.
+///      cap, cap drained under a negative multiplier, or consumer role revoked. The facilitator
+///      can change the word in any intent state and the caps manager can adjust the cap, either
+///      of which unblocks them.
 library LibCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
