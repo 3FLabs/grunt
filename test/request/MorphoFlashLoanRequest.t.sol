@@ -965,9 +965,8 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   /*                      J. repay() TESTS                       */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  function test_repay_allowsRepayWhenRawDebtIsZero() public {
-    // Outside flash loan, rawDebt is 0, so the balance check (rawDebt != 0 && balance > rawDebt)
-    // passes trivially
+  function test_repay_revertsWhenRawDebtIsZero() public {
+    // Outside a flash loan rawDebt is 0, so any non-zero repayment exceeds it
     uint256 amount = 100e18;
     debtToken.setBalance(user, amount);
 
@@ -975,9 +974,32 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     debtToken.approve(address(flashLoanRequest), amount);
 
     vm.prank(user);
+    vm.expectRevert(MorphoFlashLoanRequest.BalanceExceedsDebt.selector);
     flashLoanRequest.repay(amount);
 
-    assertEq(debtToken.balanceOf(address(flashLoanRequest)), amount);
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+  }
+
+  function test_repay_facilityCannotRepayIntoHelperBoundOutsideFlashLoan() public {
+    // Repaying into the helper while it is bound outside a flash loan reverts
+    vm.prank(owner);
+    uint256 debtIntentId = facility.createIntent(_intentParamsWithTargetPM());
+    _mintDebt(user, DEFAULT_AMOUNT);
+    vm.prank(user);
+    facility.deposit(debtIntentId, DEFAULT_AMOUNT);
+    vm.warp(block.timestamp + 1 days + 1);
+
+    MorphoFlashLoanRequest.SetRequestParams memory params =
+      _buildSetRequestParams(debtIntentId, block.timestamp + 1 hours);
+    vm.startPrank(facilitator);
+    facility.setRequest(debtIntentId, address(flashLoanRequest), params.deadline, params.signers, params.signatures);
+
+    vm.expectRevert(MorphoFlashLoanRequest.BalanceExceedsDebt.selector);
+    facility.repay(debtIntentId, DEFAULT_AMOUNT);
+    vm.stopPrank();
+
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+    assertEq(debtToken.balanceOf(address(facility)), DEFAULT_AMOUNT);
   }
 
   function test_repay_revertsOnBalanceExceedsDebt() public {
