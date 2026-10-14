@@ -12,7 +12,7 @@ import {MockMorphoAllocator} from "test/mock/request/MockMorphoAllocator.sol";
 import {Offer} from "src/interfaces/request/IOfferReceiver.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
 import {MockERC20} from "test/mock/MockERC20.sol";
-import {Mode, State} from "src/libs/funds/Order.sol";
+import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {IntentProperties, Asset} from "src/libs/facility/LibIntent.sol";
 import {WithdrawalStrategy} from "src/interfaces/manager/base/IPositionManagerAdmin.sol";
 import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
@@ -935,6 +935,137 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     // Facility retains the user's original deposit, no collateral
     assertEq(debtToken.balanceOf(address(facility)), amount);
     assertEq(collateralToken.balanceOf(address(facility)), 0);
+  }
+
+  /// @dev Midas flow: the redeem order is created ahead of time, so SyncWithdrawal must skip create().
+  function testFuzz_execute_syncWithdrawalSkipsCreateWhenOrderExists(bool proportional) public {
+    uint256 morphoBalBefore = debtToken.balanceOf(address(morpho));
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 5_000e18, false);
+
+    uint256 withdrawAmount = 1_000e18;
+    uint256 repayAmount = 500e18;
+    WithdrawalStrategy strategy = proportional ? WithdrawalStrategy.PROPORTIONAL : WithdrawalStrategy.SEQUENTIAL;
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    mockFund.setNextCommitState(State.UNLOCKING);
+    mockFund.setUnlockAmount(withdrawAmount);
+    debtToken.setBalance(address(mockFund), withdrawAmount);
+    vm.prank(facilitator);
+    facility.create(intentId, withdrawAmount, withdrawAmount, Mode.REDEEM);
+
+    vm.prank(executor);
+    flashLoanRequest.execute(
+      repayAmount,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncWithdrawal),
+      abi.encodeCall(
+        SyncWithdrawal.run, (address(facility), intentId, withdrawAmount, repayAmount, false, strategy, withdrawAmount)
+      )
+    );
+
+    assertEq(positionManager.collateralAmount(), 9_000e18);
+    assertEq(positionManager.debtAmount(), 4_500e18);
+    assertEq(collateralToken.balanceOf(address(mockFund)), withdrawAmount);
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+    assertEq(debtToken.balanceOf(address(facility)), 5_500e18);
+    assertEq(debtToken.balanceOf(address(morpho)), morphoBalBefore - 4_500e18);
+    assertEq(debtToken.balanceOf(address(flashLoanRequest)), 0);
+    (, address fund, address request,) = facility.getIntent(intentId);
+    assertEq(fund, address(0));
+    assertEq(request, address(0));
+  }
+
+  /// @dev A canceled order is deleted from the intent, so SyncWithdrawal creates a fresh one.
+  function test_execute_syncWithdrawalCreatesAfterCanceledOrder() public {
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 5_000e18, false);
+
+    uint256 withdrawAmount = 1_000e18;
+    uint256 repayAmount = 500e18;
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    vm.prank(facilitator);
+    facility.create(intentId, 1, 1, Mode.REDEEM);
+    vm.prank(facilitator);
+    facility.cancel(intentId);
+    (Order memory canceled,) = facility.getOrder(intentId);
+    assertEq(canceled.owner, address(0));
+
+    // Cancel also cleared the fund: re-set it (fresh deadline, the first signature digest is used)
+    address[] memory fundSigners = new address[](1);
+    bytes[] memory fundSigs = new bytes[](1);
+    uint256 fundDeadline = block.timestamp + 3 hours;
+    fundSigners[0] = guardian;
+    fundSigs[0] = _signSetFund(intentId, address(mockFund), fundDeadline, GUARDIAN_PK);
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund), fundDeadline, fundSigners, fundSigs);
+    mockFund.setNextCommitState(State.UNLOCKING);
+    mockFund.setUnlockAmount(withdrawAmount);
+    debtToken.setBalance(address(mockFund), withdrawAmount);
+
+    vm.prank(executor);
+    flashLoanRequest.execute(
+      repayAmount,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncWithdrawal),
+      abi.encodeCall(
+        SyncWithdrawal.run,
+        (address(facility), intentId, withdrawAmount, repayAmount, false, WithdrawalStrategy.SEQUENTIAL, 0)
+      )
+    );
+
+    // The fresh order consumed the full withdrawal (the canceled order's input was 1)
+    assertEq(collateralToken.balanceOf(address(mockFund)), withdrawAmount);
+    assertEq(collateralToken.balanceOf(address(facility)), 0);
+    assertEq(debtToken.balanceOf(address(facility)), 5_500e18);
+  }
+
+  /// @dev An existing DEPOSIT order must not be committed as part of a withdrawal.
+  function test_execute_syncWithdrawalRevertsWhenExistingOrderIsDeposit() public {
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 5_000e18, false);
+
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    vm.prank(facilitator);
+    facility.create(intentId, 1_000e18, 1_000e18, Mode.DEPOSIT);
+
+    vm.prank(executor);
+    vm.expectRevert(abi.encodeWithSelector(SyncWithdrawal.NotRedeemOrder.selector, intentId));
+    flashLoanRequest.execute(
+      500e18,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncWithdrawal),
+      abi.encodeCall(
+        SyncWithdrawal.run, (address(facility), intentId, 1_000e18, 500e18, false, WithdrawalStrategy.SEQUENTIAL, 0)
+      )
+    );
+  }
+
+  /// @dev The caller's minAssetsOut must still bind an existing order's output.
+  function test_execute_syncWithdrawalRevertsWhenExistingOrderOutputTooLow() public {
+    vm.prank(facilitator);
+    facility.depositManager(intentId, 0, 5_000e18, false);
+
+    vm.prank(facilitator);
+    _setFund(intentId, address(mockFund));
+    vm.prank(facilitator);
+    facility.create(intentId, 1_000e18, 900e18, Mode.REDEEM);
+
+    vm.prank(executor);
+    vm.expectRevert(
+      abi.encodeWithSelector(SyncWithdrawal.InsufficientOrderOutput.selector, intentId, 900e18, 900e18 + 1)
+    );
+    flashLoanRequest.execute(
+      500e18,
+      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      address(syncWithdrawal),
+      abi.encodeCall(
+        SyncWithdrawal.run,
+        (address(facility), intentId, 1_000e18, 500e18, false, WithdrawalStrategy.SEQUENTIAL, 900e18 + 1)
+      )
+    );
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
