@@ -18,8 +18,12 @@ import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 ///      release refills the asset pool before the shared one. validate() requires id1 set, no
 ///      gap and no repeat.
 ///
-///      Known limitation: pools do not track consumers, so a release may refill pools another
-///      consumer drained.
+///      Known limitations:
+///      - Pools do not track consumers, so a release may refill pools another consumer drained.
+///      - A credit above the headroom reverts HardCapExceeded. On a shared pool anyone can push
+///        it there by crediting capacity they never consumed (a negative word, or a word listing
+///        other pools first), blocking other consumers' releases until setCap or a word change.
+///        Words sharing a pool should list the same pools after it.
 contract FacilityAbsoluteCaps is FacilityCapsBase {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          EVENTS                            */
@@ -93,7 +97,8 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
 
   /// @inheritdoc IFacilityCaps
   /// @dev Quotes the summed room of the pools (see _room). Returns zero for a cap ID with no
-  ///      pool ID, which consume() rejects.
+  ///      pool ID, which consume() rejects. Assumes distinct pool IDs, as validate() enforces:
+  ///      a repeated one is counted twice.
   function available(uint64 id, int24 multiplier) external view returns (uint256 amount) {
     if (id == 0) return 0;
     bool releasing = multiplier < 0;

@@ -15,8 +15,8 @@ interface IFacilityCapsWhitelist {
   function isAllowed(address caps) external view returns (bool);
 
   /// @notice Allows or disallows a caps contract.
-  /// @dev Disallowing only blocks new cap words; intents already pointing at the contract keep
-  ///      consuming it.
+  /// @dev Disallowing only blocks new cap words: stored words keep consuming the contract, but
+  ///      setting one again, even unchanged, reverts CapsNotAllowed.
   /// @param caps The caps contract.
   /// @param allowed Whether cap words may reference it.
   function setAllowed(address caps, bool allowed) external;

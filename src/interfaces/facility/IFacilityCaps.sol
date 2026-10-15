@@ -50,13 +50,14 @@ interface IFacilityCaps {
   /// @param multiplier The signed Q12.12 multiplier.
   function validate(uint64 id, int24 multiplier) external view;
 
-  /// @notice Returns the maximum amount consumable right now: for a positive multiplier the
+  /// @notice Returns an amount consumable right now: for a positive multiplier the maximum
   ///         depositable amount cap / multiplier, for a negative multiplier the releasable amount
-  ///         (hardCap - cap) / |multiplier| on FacilityAbsoluteCaps. FacilityAbsoluteCaps
-  ///         sums the capacities (or headrooms) of its pool IDs.
+  ///         (hardCap - cap) / |multiplier| on FacilityAbsoluteCaps, which can sit up to
+  ///         4096 / |multiplier| units below the maximum since releases round down.
+  ///         FacilityAbsoluteCaps sums the capacities (or headrooms) of its pool IDs.
   /// @param id The cap ID.
   /// @param multiplier The signed Q12.12 multiplier.
-  /// @return amount The maximum consumable amount, type(uint256).max when the direction is
+  /// @return amount The consumable amount, type(uint256).max when the direction is
   ///         unbounded (multiplier == 0, or multiplier < 0 on FacilityDynamicCaps).
   function available(uint64 id, int24 multiplier) external view returns (uint256 amount);
 

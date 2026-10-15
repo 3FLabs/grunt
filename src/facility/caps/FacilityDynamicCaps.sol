@@ -8,7 +8,7 @@ import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 
 /// @title FacilityDynamicCaps
 /// @author 3F Protocol
-/// @notice Time-weighted deposit caps consumed by facilities with DYNAMIC deposit caps.
+/// @notice Time-weighted deposit caps consumed through EXTERNAL deposit cap words.
 /// @dev The capacity of a cap is a line starting at zero on `originTime` and rising by
 ///      `recovery` over `recoveryTime`, then flat at `recovery`. Consuming moves `originTime`
 ///      forward so the line passes through the remaining capacity now: a cap of 1m per 24h
@@ -111,6 +111,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   ///      the origin forward so the capacity now equals the previous capacity minus the
   ///      consumption, rounding the origin so the new capacity never exceeds that difference.
   ///      The origin never moves backwards, so a future origin set by the manager holds.
+  ///      CapConsumed reports the capacity and the move after that rounding.
   function consume(uint64 id, uint256 amount, int24 multiplier) external onlyRoles(CAPS_CONSUMER_ROLE) {
     if (multiplier <= 0) return;
     uint256 consumption = LibCapsMath.consumption(amount, multiplier);
@@ -129,9 +130,11 @@ contract FacilityDynamicCaps is FacilityCapsBase {
     // forge-lint: disable-next-line(unsafe-typecast)
     uint64 originTime = uint64(block.timestamp - shift);
     _storage().caps[id].originTime = originTime;
-    // casting to 'uint128' is safe because left <= recovery, which is a uint128
+    // capacity left at the rounded origin (shift < recoveryTime as left < recovery)
+    uint256 newCap = FixedPointMathLib.mulDiv(data.recovery, shift, data.recoveryTime);
+    // casting to 'uint128' is safe because newCap <= left <= recovery, which is a uint128
     // forge-lint: disable-next-line(unsafe-typecast)
-    emit CapConsumed(id, amount, multiplier, consumption, uint128(left));
+    emit CapConsumed(id, amount, multiplier, current - newCap, uint128(newCap));
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

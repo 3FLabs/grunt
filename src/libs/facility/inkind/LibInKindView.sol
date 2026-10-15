@@ -31,7 +31,8 @@ library LibInKindView {
   ///         floored debt, one per module the deposit touches (each floors its quoted collateral
   ///         on both sides of the flow). A constant rather than a queue length so the check does
   ///         not depend on the PM's module layout; 32 covers any realistic supply queue at a
-  ///         cost of 32 debt-wei of equity.
+  ///         cost of 32 debt-wei of equity. An entry many times the pool's size into a
+  ///         multi-module PM can exceed it; split it.
   uint256 internal constant MINT_ROUNDING_UNITS = 32;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -59,6 +60,15 @@ library LibInKindView {
     totalDebt = pm.debtAmount();
     if (totalCollateral == 0) revert IInKindFacility.EmptyPool(address(pm));
     if (totalDebt == 0 && !allowUnlevered) revert IInKindFacility.UnleveredEntryDisabled(address(pm));
+  }
+
+  /// @dev Whether the pool's quoted LTV is above the PM's target, where PM.deposit cannot place
+  ///      a ratio-matched borrow. PM.deposit rounds per module, so within a few debt units of
+  ///      the target the two can disagree.
+  function aboveTargetLtv(IPositionManager pm, uint256 totalDebt) internal view returns (bool) {
+    if (totalDebt == 0) return false;
+    (uint256 ltv,) = pm.config();
+    return totalDebt * FixedPointMathLib.WAD > pm.collateralAmountQuoted() * ltv;
   }
 
   /// @dev The underlying asset of the PM's wrapped collateral.
@@ -119,9 +129,10 @@ library LibInKindView {
     view
     returns (uint256 expected, uint256 tolerance)
   {
-    uint256 supplyAdj = adjustedSupply(pm);
+    (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtFeeShares, uint256 perfFeeShares) = pm.pendingFees();
+    uint256 supplyAdj = totalSupply_ + mgmtFeeShares + perfFeeShares + pm.virtualShareOffset();
     expected = supplyAdj.mulDiv(amount, totalCollateral);
-    tolerance = supplyAdj.mulDivUp(MINT_ROUNDING_UNITS, pm.totalAssets() + 1) + 1;
+    tolerance = supplyAdj.mulDivUp(MINT_ROUNDING_UNITS, totalAssets_ + 1) + 1;
   }
 
   /// @dev Best-effort share estimate for previews: quoted equity added, converted at the

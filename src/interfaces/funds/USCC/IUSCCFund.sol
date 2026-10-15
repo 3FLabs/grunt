@@ -117,8 +117,8 @@ interface IUSCCFund is IFund {
 
   /// @notice Sets the Superstate address receiving USDC to mint USCC.
   /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
-  /// @param recipient The new recipient address.
-  function setRecipient(address recipient) external;
+  /// @param newRecipient The new recipient address.
+  function setRecipient(address newRecipient) external;
 
   /// @notice Resolves the current order by setting its input and output amounts.
   /// @dev Can only be called by an account with the _OPERATOR_ROLE or the owner.
@@ -147,4 +147,7 @@ interface IUSCCFund is IFund {
 
   /// @notice The wUSCC wrapped token contract address.
   function WUSCC() external view returns (address);
+
+  /// @notice The Superstate address receiving USDC to mint USCC.
+  function recipient() external view returns (address);
 }
