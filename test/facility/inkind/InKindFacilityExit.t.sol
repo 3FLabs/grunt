@@ -378,9 +378,8 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, uint64(POOL_ID)));
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    uint256 max = uint256(EXIT_CAP - pool)
-      .mulDiv(_adjustedSupply(), positionManager.debtAmount())
-      .mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 burnable = uint256(EXIT_CAP - pool).mulDiv(_adjustedSupply(), positionManager.debtAmount());
+    uint256 max = burnable.mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit");
     assertLt(max, shares, "maxExit covers the user");
   }
