@@ -229,12 +229,15 @@ contract LibCapsTest is Test {
     assertEq(uint8(harness.capType(legacy)), uint8(CapType.EXTERNAL), "cap type");
 
     // the low 160 bits are read as the caps address, here address(0)
-    vm.expectRevert(bytes(""));
-    harness.available(legacy);
-    vm.expectRevert(bytes(""));
-    harness.consume(legacy, CAP_ID, 1e18);
-    vm.expectRevert(bytes(""));
-    harness.release(legacy, 1e18);
+    _assertReverts(abi.encodeCall(harness.available, (legacy)));
+    _assertReverts(abi.encodeCall(harness.consume, (legacy, CAP_ID, 1e18)));
+    _assertReverts(abi.encodeCall(harness.release, (legacy, 1e18)));
+  }
+
+  /// @dev The revert data of a call to a codeless address differs across forge versions.
+  function _assertReverts(bytes memory data) internal {
+    (bool ok,) = address(harness).call(data);
+    assertFalse(ok, "call succeeded");
   }
 
   function testFuzz_consume_legacyWordBelowTwoPow249CallsItsLowBits(uint256 high, uint256 amount) public {
