@@ -400,6 +400,54 @@ contract FacilityDynamicCapsTest is Test {
     assertEq(caps.remaining(ID), 0, "One hour of recovery should be consumable");
   }
 
+  function test_consume_atOriginReverts() public {
+    _setCap(RECOVERY, RECOVERY_TIME, uint64(START));
+    assertEq(caps.available(ID, MULT_1X), 0, "Nothing should be quoted at the origin");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, 1, MULT_1X);
+  }
+
+  function test_consume_oneSecondPastOrigin() public {
+    _setCap(RECOVERY, RECOVERY_TIME, uint64(START - 1));
+    // 1e24 / 86400 rounded down
+    uint256 oneSecond = 11_574_074_074_074_074_074;
+    assertEq(caps.remaining(ID), oneSecond, "One second should recover recovery / recoveryTime");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, oneSecond + 1, MULT_1X);
+
+    _consume(oneSecond, MULT_1X);
+    assertEq(_origin(), START, "Origin should be now once empty");
+  }
+
+  function test_consume_atRecoveryTimeTakesFullRecovery() public {
+    _setCap(RECOVERY, RECOVERY_TIME, uint64(START - RECOVERY_TIME));
+    assertEq(caps.remaining(ID), RECOVERY, "Capacity should be full once recoveryTime has elapsed");
+
+    _consume(RECOVERY, MULT_1X);
+    assertEq(_origin(), START, "Origin should be now once empty");
+    assertEq(caps.remaining(ID), 0, "Nothing should remain");
+  }
+
+  function test_consume_oneSecondShortOfRecoveryTimeFallsShort() public {
+    _setCap(RECOVERY, RECOVERY_TIME, uint64(START - RECOVERY_TIME + 1));
+    // 1e24 * 86399 / 86400 rounded down
+    assertEq(caps.remaining(ID), 999_988_425_925_925_925_925_925, "Capacity should be one second short");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, RECOVERY, MULT_1X);
+  }
+
+  function test_consume_revertOnChargeOverflow() public {
+    vm.prank(consumer);
+    vm.expectRevert(FixedPointMathLib.MulDivFailed.selector);
+    caps.consume(ID, type(uint256).max, MULT_2X);
+  }
+
   function test_consume_futureOrigin() public {
     _setCap(RECOVERY, RECOVERY_TIME, uint64(START + 1 hours));
     vm.prank(consumer);
@@ -435,6 +483,42 @@ contract FacilityDynamicCapsTest is Test {
     assertGe(left, 1e18 - 1 - _maxForfeit(1e18, 1 days), "Rounding should forfeit at most one second");
   }
 
+  function test_consume_emitsCapacityAfterOriginRounding() public {
+    // 666_667e18 left rounds the origin to 16h back, worth 666_666.66..e18
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(
+      ID, 333_333e18, MULT_1X, 333_333_333_333_333_333_333_334, 666_666_666_666_666_666_666_666
+    );
+    _consume(333_333e18, MULT_1X);
+
+    assertEq(_origin(), START - 16 hours, "Origin should round down to whole seconds");
+    assertEq(caps.remaining(ID), 666_666_666_666_666_666_666_666, "Event should report the stored capacity");
+  }
+
+  function test_consume_emitsRoundedValuesAcrossConsumptions() public {
+    _setCap(10, 3, 0);
+
+    // 9 left rounds the origin to 2s back, worth 6
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 1, MULT_1X, 4, 6);
+    _consume(1, MULT_1X);
+
+    // 1 at 1.5x consumes 2: 4 left rounds the origin to 1s back, worth 3
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 1, MULT_1_5X, 3, 3);
+    _consume(1, MULT_1_5X);
+
+    // a release does nothing and emits nothing
+    vm.recordLogs();
+    _consume(1, -MULT_1X);
+    assertEq(vm.getRecordedLogs().length, 0, "Release should not emit");
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 3, MULT_1X, 3, 0);
+    _consume(3, MULT_1X);
+    assertEq(_origin(), START, "Origin should be now once empty");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                            FUZZ                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -462,7 +546,7 @@ contract FacilityDynamicCapsTest is Test {
     uint256 amount,
     int24 multiplier
   ) public {
-    recoveryTime = uint64(bound(recoveryTime, 1, 100 * 365 days));
+    recoveryTime = uint64(bound(recoveryTime, 1, type(uint64).max));
     multiplier = int24(bound(multiplier, 1, type(int24).max));
     originShift = uint64(bound(originShift, 0, START));
     _setCap(recovery, recoveryTime, uint64(START - originShift));
@@ -481,13 +565,45 @@ contract FacilityDynamicCapsTest is Test {
     assertGe(_origin(), START - originShift, "Origin should never move backwards");
   }
 
+  function testFuzz_consume_eventMatchesRemaining(
+    uint128 recovery,
+    uint64 recoveryTime,
+    uint64 originShift,
+    uint256 amount,
+    int24 multiplier
+  ) public {
+    recoveryTime = uint64(bound(recoveryTime, 1, type(uint64).max));
+    multiplier = int24(bound(multiplier, 1, type(int24).max));
+    originShift = uint64(bound(originShift, 0, START));
+    _setCap(recovery, recoveryTime, uint64(START - originShift));
+
+    uint256 current = caps.remaining(ID);
+    amount = bound(amount, 0, LibCapsMath.depositable(current, multiplier));
+    uint256 consumption = LibCapsMath.consumption(amount, multiplier);
+
+    vm.recordLogs();
+    _consume(amount, multiplier);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    if (consumption == 0) {
+      assertEq(logs.length, 0, "Zero consumption should not emit");
+      return;
+    }
+
+    uint256 after_ = caps.remaining(ID);
+    assertEq(logs.length, 1, "Consumption should emit once");
+    assertEq(logs[0].topics[0], IFacilityCaps.CapConsumed.selector, "Event should be CapConsumed");
+    assertEq(logs[0].topics[1], bytes32(uint256(ID)), "Event should carry the cap ID");
+    assertEq(logs[0].data, abi.encode(amount, multiplier, current - after_, after_), "Event should match the curve");
+    assertGe(current - after_, consumption, "Move should cover the consumption");
+  }
+
   function testFuzz_consume_quoteIsConsumableAndTight(
     uint128 recovery,
     uint64 recoveryTime,
     uint64 originShift,
     int24 multiplier
   ) public {
-    recoveryTime = uint64(bound(recoveryTime, 1, 100 * 365 days));
+    recoveryTime = uint64(bound(recoveryTime, 1, type(uint64).max));
     multiplier = int24(bound(multiplier, 1, type(int24).max));
     originShift = uint64(bound(originShift, 0, START));
     _setCap(recovery, recoveryTime, uint64(START - originShift));
@@ -516,6 +632,63 @@ contract FacilityDynamicCapsTest is Test {
     assertEq(vm.getRecordedLogs().length, 0, "No-op consumption should not emit");
     assertEq(caps.remaining(ID), before, "No-op consumption should not change the capacity");
     assertEq(_origin(), START - originShift, "No-op consumption should not move the origin");
+  }
+
+  function testFuzz_setCap_packsFields(uint64 id, uint128 recovery, uint64 recoveryTime, uint64 originTime) public {
+    recoveryTime = uint64(bound(recoveryTime, 1, type(uint64).max));
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit FacilityDynamicCaps.CapSet(id, recovery, recoveryTime, originTime);
+    vm.prank(manager);
+    caps.setCap(id, recovery, recoveryTime, originTime);
+
+    (uint128 storedRecovery, uint64 storedRecoveryTime, uint64 storedOrigin) = caps.getCap(id);
+    assertEq(storedRecovery, recovery, "Recovery should be stored");
+    assertEq(storedRecoveryTime, recoveryTime, "Recovery time should be stored");
+    assertEq(storedOrigin, originTime, "Origin should be stored");
+
+    bytes32 slot = keccak256(abi.encode(uint256(id), keccak256("facility.dynamic.caps.storage")));
+    uint256 packed = uint256(recovery) | (uint256(recoveryTime) << 128) | (uint256(originTime) << 192);
+    assertEq(vm.load(address(caps), slot), bytes32(packed), "Fields should not bleed into each other");
+  }
+
+  function testFuzz_consume_futureOriginReverts(
+    uint128 recovery,
+    uint64 recoveryTime,
+    uint64 originTime,
+    uint256 amount,
+    int24 multiplier
+  ) public {
+    recoveryTime = uint64(bound(recoveryTime, 1, type(uint64).max));
+    originTime = uint64(bound(originTime, START, type(uint64).max));
+    multiplier = int24(bound(multiplier, 1, type(int24).max));
+    amount = bound(amount, 1, type(uint128).max);
+    _setCap(recovery, recoveryTime, originTime);
+    assertEq(caps.available(ID, multiplier), 0, "Nothing should be quoted before the origin");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, amount, multiplier);
+  }
+
+  /// @dev IDs one bit apart catch any truncation of the 64-bit key.
+  function testFuzz_consume_idsAreIndependent(uint64 id, uint8 bit) public {
+    uint64 otherId = id ^ (uint64(1) << (bit % 64));
+    vm.startPrank(manager);
+    caps.setCap(id, RECOVERY, RECOVERY_TIME, 0);
+    caps.setCap(otherId, 10e18, 1 hours, uint64(START - 30 minutes));
+    vm.stopPrank();
+
+    vm.prank(consumer);
+    caps.consume(id, RECOVERY, MULT_1X);
+
+    (uint128 recovery, uint64 recoveryTime, uint64 originTime) = caps.getCap(otherId);
+    assertEq(recovery, 10e18, "Other recovery should not change");
+    assertEq(recoveryTime, 1 hours, "Other recovery time should not change");
+    assertEq(originTime, START - 30 minutes, "Other origin should not change");
+    assertEq(caps.remaining(otherId), 5e18, "Other capacity should not change");
+    (,, originTime) = caps.getCap(id);
+    assertEq(originTime, START, "Drained ID should have its origin at now");
   }
 
   /// @dev Total throughput over any window is bounded by the starting capacity plus the recovery
