@@ -157,6 +157,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     depositor_.checkContract();
 
     _usccFundStorage().recipient = recipient_;
+    emit RecipientUpdated(recipient_);
 
     _setOracle(oracle_);
 
@@ -357,10 +358,10 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
-  function setRecipient(address recipient) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
-    recipient.checkNotZero();
-    _usccFundStorage().recipient = recipient;
-    emit RecipientUpdated(recipient);
+  function setRecipient(address newRecipient) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
+    newRecipient.checkNotZero();
+    _usccFundStorage().recipient = newRecipient;
+    emit RecipientUpdated(newRecipient);
   }
 
   /// @inheritdoc IUSCCFund
@@ -419,6 +420,11 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
     return hasAllRoles(account, _DEPOSITOR_ROLE) ? IERC20(WUSCC).balanceOf(account) : 0;
+  }
+
+  /// @inheritdoc IUSCCFund
+  function recipient() external view override returns (address) {
+    return _usccFundStorage().recipient;
   }
 
   /// @inheritdoc IFund

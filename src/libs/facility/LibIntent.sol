@@ -257,8 +257,8 @@ library LibIntent {
   ///      current word, so changing the encoding, the caps contract, the cap ID or the
   ///      multiplier while shares are outstanding credits or debits a cap for deposits it never
   ///      saw. To switch, set the word to zero first, let outstanding shares exit, then set the
-  ///      new word. An ABSOLUTE word is the max total supply and may be set below it, which
-  ///      blocks deposits until enough shares exit.
+  ///      new word and reconcile the old pool with setCap. An ABSOLUTE word is the max total
+  ///      supply and may be set below it, which blocks deposits until enough shares exit.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.

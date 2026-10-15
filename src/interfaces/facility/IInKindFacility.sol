@@ -45,7 +45,8 @@ struct Auth {
 ///        shared by every PM whose collateral wraps it;
 ///      - `auths[asset][user]`: a user allowance consumed before the security cap (spill-over).
 ///      An exit consumes `exits[pm].cap` only; a negative multiplier on a shared absolute pool
-///      gives entry capacity back.
+///      gives entry capacity back. PMs sharing an underlying or a caps pool must borrow the same
+///      debt asset. ABSOLUTE words decrement without an event; read them with the getters.
 ///
 ///      A pool with no debt moves no debt, so every one of those caps reads as zero on it: an
 ///      entry into an unlevered pool is gated by `entries[pm].allowUnlevered` and the offer
@@ -175,14 +176,18 @@ interface IInKindFacility {
   ///         multiplier, which would consume nothing.
   error NonConsumingCap(uint256 word);
 
+  /// @notice Thrown when the receiver of a flow is the facility itself.
+  error InvalidReceiver(address receiver);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ADMIN                             */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Sets the entry offer of a position manager (owner or FACILITATOR).
   /// @dev Reverts with FeeExceedsMax above 10%, InvalidPositionManager when `positionManager`
-  ///      does not expose `assets()` over a wrapped collateral, like LibCaps.validate on the
-  ///      word, and NonConsumingCap on an EXTERNAL word with a non-positive multiplier.
+  ///      does not expose `assets()` over a wrapped collateral (without data when it returns
+  ///      malformed data), like LibCaps.validate on the word, and NonConsumingCap on an
+  ///      EXTERNAL word with a non-positive multiplier.
   ///      Overwrites the remaining capacity of an ABSOLUTE word. `allowUnlevered` opens entries
   ///      into a pool with no debt, which no cap bounds: only set it on PMs whose size is
   ///      acceptable unbounded.
@@ -197,11 +202,15 @@ interface IInKindFacility {
   /// @notice Sets the security cap word of an underlying asset (owner or OPERATOR).
   /// @dev Keyed by `IWrappedAsset(collateral).underlying()` of the served PMs. Validated like
   ///      {setEntry}. An unset asset reads as a zero ABSOLUTE cap: closed to unauthed users.
+  ///      Overwrites the remaining amount: set zero first to lower it without a front-run. Only a
+  ///      trusted multisig should hold this power, and an EXTERNAL word should only reference a
+  ///      caps contract run by trusted multisigs too.
   function setSecurityCap(address asset, uint256 cap) external;
 
   /// @notice Sets the auth of a user on an underlying asset (owner or OPERATOR).
-  /// @dev Overwrites any remaining amount. `expiry = 0` revokes. Auths are read on the caller of
-  ///      {enter}: a user entering through a router needs the auth on the router.
+  /// @dev Overwrites any remaining amount: revoke first to lower it without a front-run.
+  ///      `expiry = 0` revokes. Auths are read on the caller of {enter}: a user entering through
+  ///      a router needs the auth on the router.
   function setAuth(address asset, address user, uint128 amount, uint40 expiry) external;
 
   /// @notice Sets the recipient of the share fees (owner).
@@ -230,8 +239,10 @@ interface IInKindFacility {
   function config() external view returns (address feeRecipient, bool isPaused, uint40 pausedUntil);
 
   /// @notice Previews an entry of `amount` underlying.
-  /// @dev Reverts like {enter} except for the caps and the caller's bounds. `shares` is a
-  ///      best-effort estimate; derive `minSharesOut` from it with a tolerance.
+  /// @dev Reverts like {enter} except for the caps and the caller's bounds, including the PM's
+  ///      InsufficientBorrowCapacity above its target LTV. A dust entry can quote zero shares
+  ///      that {enter} rejects with InsufficientSharesOut. `shares` is a best-effort estimate;
+  ///      derive `minSharesOut` from it with a tolerance. Values follow {enter}'s bounds order.
   /// @return debt The debt the entry borrows.
   /// @return shares The net PM shares the receiver gets.
   /// @return feeShares The PM shares the fee recipient gets.
@@ -241,9 +252,10 @@ interface IInKindFacility {
     returns (uint256 debt, uint256 shares, uint256 feeShares);
 
   /// @notice Previews an exit of `shares` PM shares.
-  /// @dev Reverts like {exit} except for the cap and the caller's bounds. Both debt figures
-  ///      drift up with interest accrual between preview and execution: approve headroom or
-  ///      source `debtRequired` through the callback.
+  /// @dev Reverts like {exit} except for the cap, the caller's bounds and PM-side health
+  ///      checks. Both debt figures drift up with interest accrual between preview and
+  ///      execution: approve headroom or source `debtRequired` through the callback. Values
+  ///      follow {exit}'s bounds order.
   /// @return debtIn The debt the exit is expected to repay (burn's exact mirror).
   /// @return underlyingOut The underlying the receiver gets.
   /// @return feeShares The PM shares the fee recipient gets.
@@ -257,10 +269,11 @@ interface IInKindFacility {
   /// @notice Returns an underlying amount `user` can enter right now under the capacity cap, the
   ///         security cap and the user's auth.
   /// @dev Reverts like {enter} on a disabled offer, pause, bad debt, an empty pool or an
-  ///      unlevered pool the offer does not allow. Rounded down: the bound always fits, a few
-  ///      more wei may fit too. Saturates at type(uint256).max (an ABSOLUTE word near
-  ///      MAX_ABSOLUTE scaled by the pool ratio), and returns it outright on an unlevered pool
-  ///      the offer allows: no cap binds there.
+  ///      unlevered pool the offer does not allow, and is zero above the PM's target LTV.
+  ///      Rounded down: the bound fits, a few more wei may fit too, except at a one-unit budget
+  ///      (DustEntry) or when the capacity and security words share caps state. Saturates at
+  ///      type(uint256).max (an ABSOLUTE word near MAX_ABSOLUTE scaled by the pool ratio), and
+  ///      returns it outright on an unlevered pool the offer allows: no cap binds there.
   function maxEnter(address positionManager, address user) external view returns (uint256 amount);
 
   /// @notice Returns an estimate of the PM shares (fee included) that can exit right now under
@@ -268,7 +281,8 @@ interface IInKindFacility {
   /// @dev An estimate: the pool debt it reads is what the borrow modules quote, which a module
   ///      that does not simulate accrual reports stale until the market is touched, and the
   ///      rounding is down like {maxEnter}. Reverts like {exit} on a disabled offer, pause or
-  ///      bad debt. type(uint256).max when the pool has no debt; saturates otherwise.
+  ///      bad debt, not on PM-side health checks. type(uint256).max when the pool has no debt;
+  ///      saturates otherwise.
   function maxExit(address positionManager) external view returns (uint256 shares);
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -287,7 +301,7 @@ interface IInKindFacility {
   /// @param minDebt The minimum debt to borrow (a flash-funded router needs a floor on the cash leg).
   /// @param maxDebt The maximum debt to borrow.
   /// @param minSharesOut The minimum net PM shares the receiver must get.
-  /// @param receiver The receiver of the debt and the shares.
+  /// @param receiver The receiver of the debt and the shares (not the facility).
   /// @return shares The net PM shares sent to `receiver`.
   /// @return debt The debt sent to `receiver`.
   function enter(
@@ -306,13 +320,14 @@ interface IInKindFacility {
   ///         `receiver`.
   /// @dev The debt pulled up front is burn's mirrored slice (post-accrual supply + virtual
   ///      offset, rounded up) plus a small headroom, final before the callback; the exit cap is
-  ///      consumed with the mirrored slice. A pool that became unlevered stays exitable: a zero
-  ///      slice skips the cap and the pull (the callback still runs when `data` is non-empty).
+  ///      consumed with the mirrored slice. Bad debt is checked again after the callback. A pool
+  ///      that became unlevered stays exitable: a zero slice skips the cap and the pull (the
+  ///      callback still runs when `data` is non-empty).
   /// @param positionManager The position manager to exit.
   /// @param shares The PM shares to pull (fee included).
   /// @param maxDebtIn The maximum debt to pull up front (headroom included).
   /// @param minUnderlyingOut The minimum underlying the receiver must get.
-  /// @param receiver The receiver of the underlying.
+  /// @param receiver The receiver of the underlying (not the facility).
   /// @param data Opaque callback data; empty skips the callback (see IInKindExitCallback).
   /// @return underlyingOut The underlying sent to `receiver`.
   /// @return debtIn The debt repaid, net of the refund.

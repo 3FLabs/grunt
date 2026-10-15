@@ -120,14 +120,6 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     facility.depositManager(intentId, depositAmount, 0, false);
   }
 
-  function test_depositManager_useTargetAsset() public {
-    // This test demonstrates using the target asset (PM) for deposit operations
-    // For this to work, we need collateral in the intent's balance
-    // Skip this test for now - it requires a more complex setup with Fund or Swap operations
-    // to get collateral into an intent where depositAsset is not PM
-    vm.skip(true);
-  }
-
   function test_depositManager_revertWhenPaused() public {
     (uint256 intentId,) = _createResolvingIntentWithCollateral(SMALL_COLLATERAL);
     uint256 depositAmount = SMALL_COLLATERAL / 2;

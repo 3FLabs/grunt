@@ -10,6 +10,11 @@ import {IFacilityCaps} from "../../interfaces/facility/IFacilityCaps.sol";
 /// @author 3F Protocol
 /// @notice Roles and initialization shared by the IFacilityCaps implementations.
 /// @dev Deployed behind minimal proxies: the implementation disables its own initializer.
+///
+///      The caps managers set the caps every word referencing this contract relies on, security
+///      caps included, and consumers can credit capacity back with a negative multiplier. The
+///      owner (who grants the roles) and managers must be trusted multisigs, and consumers the
+///      facilities only.
 abstract contract FacilityCapsBase is Initializable, OwnableRoles, IFacilityCaps {
   using LibChecks for address;
 

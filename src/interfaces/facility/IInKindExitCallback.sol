@@ -13,7 +13,8 @@ pragma solidity ^0.8.22;
 ///      refund; one that raises it beyond the headroom makes burn's pull fail. A flash loan taken
 ///      inside this callback cannot be repaid from the exit proceeds (the underlying is
 ///      delivered after the callback frame ends); flash-funded exits must wrap the whole `exit`
-///      call. Implementations MUST check `msg.sender` is the facility.
+///      call. Bad debt is checked again after it. `debtIn` equals {previewExit}'s `debtRequired`.
+///      Implementations MUST check `msg.sender` is the facility.
 interface IInKindExitCallback {
   /// @notice Sources the debt asset the facility is about to pull.
   /// @param positionManager The position manager being exited.

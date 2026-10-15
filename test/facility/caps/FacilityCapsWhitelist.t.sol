@@ -72,6 +72,74 @@ contract FacilityCapsWhitelistTest is Test {
     whitelist.setAllowed(caps, true);
   }
 
+  function test_setAllowed_reallowEmitsAgain() public {
+    vm.startPrank(owner);
+    whitelist.setAllowed(caps, true);
+    vm.expectEmit(true, true, true, true, address(whitelist));
+    emit IFacilityCapsWhitelist.CapsAllowed(caps, true);
+    whitelist.setAllowed(caps, true);
+    vm.stopPrank();
+    assertTrue(whitelist.isAllowed(caps), "Caps should stay allowed");
+  }
+
+  function test_setAllowed_disallowUnknownEmits() public {
+    vm.expectEmit(true, true, true, true, address(whitelist));
+    emit IFacilityCapsWhitelist.CapsAllowed(caps, false);
+    vm.prank(owner);
+    whitelist.setAllowed(caps, false);
+    assertFalse(whitelist.isAllowed(caps), "Caps should stay disallowed");
+  }
+
+  function test_completeOwnershipHandover_movesControl() public {
+    address newOwner = makeAddr("newOwner");
+    vm.expectEmit(true, true, true, true, address(whitelist));
+    emit Ownable.OwnershipHandoverRequested(newOwner);
+    vm.prank(newOwner);
+    whitelist.requestOwnershipHandover();
+
+    vm.expectEmit(true, true, true, true, address(whitelist));
+    emit Ownable.OwnershipTransferred(owner, newOwner);
+    vm.prank(owner);
+    whitelist.completeOwnershipHandover(newOwner);
+    assertEq(whitelist.owner(), newOwner, "Ownership should move to the requester");
+
+    vm.prank(owner);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    whitelist.setAllowed(caps, true);
+
+    vm.prank(newOwner);
+    whitelist.setAllowed(caps, true);
+    assertTrue(whitelist.isAllowed(caps), "New owner should manage the registry");
+  }
+
+  function test_completeOwnershipHandover_revertOnCanceledRequest() public {
+    address newOwner = makeAddr("newOwner");
+    vm.startPrank(newOwner);
+    whitelist.requestOwnershipHandover();
+    vm.expectEmit(true, true, true, true, address(whitelist));
+    emit Ownable.OwnershipHandoverCanceled(newOwner);
+    whitelist.cancelOwnershipHandover();
+    vm.stopPrank();
+
+    vm.prank(owner);
+    vm.expectRevert(Ownable.NoHandoverRequest.selector);
+    whitelist.completeOwnershipHandover(newOwner);
+    assertEq(whitelist.owner(), owner, "Ownership should not move");
+  }
+
+  function test_renounceOwnership_freezesRegistry() public {
+    vm.startPrank(owner);
+    whitelist.setAllowed(caps, true);
+    vm.expectEmit(true, true, true, true, address(whitelist));
+    emit Ownable.OwnershipTransferred(owner, address(0));
+    whitelist.renounceOwnership();
+
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    whitelist.setAllowed(caps, false);
+    vm.stopPrank();
+    assertTrue(whitelist.isAllowed(caps), "Allowed caps should stay allowed");
+  }
+
   function testFuzz_setAllowed_roundTrip(address target, bool allowed) public {
     vm.assume(target.code.length > 0 || !allowed);
     vm.prank(owner);

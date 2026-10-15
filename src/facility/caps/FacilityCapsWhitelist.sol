@@ -10,6 +10,8 @@ import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhi
 /// @notice Owner-managed registry of the IFacilityCaps contracts facilities may point cap words at.
 /// @dev Referenced by facilities through an immutable, so one registry serves every facility
 ///      built with it. Not upgradeable: replacing it means redeploying the facility implementation.
+///      Its owner must be a trusted multisig, and it should only allow caps contracts whose owner
+///      and managers are trusted multisigs too.
 contract FacilityCapsWhitelist is Ownable, IFacilityCapsWhitelist {
   using LibChecks for address;
 

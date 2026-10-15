@@ -19,7 +19,8 @@ enum CapType {
 /// @dev A deposit cap is a single uint256 word whose top byte selects the cap type:
 ///      - ABSOLUTE (0): the word is a plain amount. Intents read it as their max total supply
 ///        (LibIntent checks it and never writes it), so caps deployed before cap types existed
-///        keep their meaning. consume() reads it as a remaining budget and decrements it.
+///        keep their meaning below 2^248 (reset larger stored words to MAX_ABSOLUTE before
+///        upgrading). consume() reads it as a remaining budget and decrements it.
 ///      - EXTERNAL (1): the word points at a cap in an IFacilityCaps contract that deposits
 ///        consume and releases give back (FacilityAbsoluteCaps) or ignore (FacilityDynamicCaps).
 ///
@@ -33,14 +34,16 @@ enum CapType {
 ///      (typically leverage - 1). Withdrawal-side intents encode a negative multiplier so their
 ///      deposits take the release direction and their withdrawals the consume direction.
 ///
-///      consume() and release() return the new word for the caller to store, so the library
-///      stays free of storage references.
+///      consume() returns the new word for the caller to store, so the library stays free of
+///      storage references.
 ///
 ///      Known limitation: with an EXTERNAL word, releases (withdraw, revertDeposit) are
 ///      state-changing calls into the caps contract and revert when it does: pool at its hard
 ///      cap, cap drained under a negative multiplier, or consumer role revoked. The facilitator
-///      can change the word in any intent state and the caps manager can adjust the cap, either
-///      of which unblocks them.
+///      can change the word in any intent state, the caps owner can re-grant the role and the
+///      caps manager can move the cap (only setCap clears the hard-cap case), any of which
+///      unblocks them.
+///      On a shared pool anyone can cause the hard-cap case (see FacilityAbsoluteCaps).
 library LibCaps {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -68,8 +71,8 @@ library LibCaps {
 
   /// @notice Returns the cap type encoded in the top byte of a cap word.
   /// @dev Assumes a validated word: the raw byte is not range-checked, so only call this on
-  ///      words that went through validate() (unknown type bytes would yield an out-of-range
-  ///      enum value).
+  ///      words that went through validate() (comparing the result for an unknown type byte
+  ///      panics with 0x21).
   /// @param self The encoded deposit cap word.
   /// @return _type The cap type.
   function capType(uint256 self) internal pure returns (CapType _type) {

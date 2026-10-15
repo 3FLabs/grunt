@@ -45,8 +45,9 @@ library LibCapsMath {
     return FixedPointMathLib.mulDiv(cap, MULTIPLIER_ONE, uint256(int256(multiplier)));
   }
 
-  /// @notice Maximum amount releasable against a remaining `headroom` (hard cap minus cap) at a
+  /// @notice An amount releasable against a remaining `headroom` (hard cap minus cap) at a
   ///         negative `multiplier`, i.e. an `amount` with `release(amount, multiplier) <= headroom`.
+  ///         Can be below the largest such amount since release() rounds down.
   /// @dev Rounds down (see the safety invariant above). Only call with `multiplier < 0`.
   function releasable(uint256 headroom, int24 multiplier) internal pure returns (uint256) {
     // casting to 'uint256' is safe because the multiplier is negative per the precondition,
@@ -61,8 +62,8 @@ library LibCapsMath {
     return multiplier < 0 ? release(amount, multiplier) : consumption(amount, multiplier);
   }
 
-  /// @notice Maximum amount whose charge fits in `room` (a cap for a non-negative multiplier,
-  ///         a headroom for a negative one): depositable() or releasable().
+  /// @notice An amount whose charge fits in `room` (a cap for a non-negative multiplier,
+  ///         a headroom for a negative one): depositable() (the maximum) or releasable().
   function quote(uint256 room, int24 multiplier) internal pure returns (uint256) {
     return multiplier < 0 ? releasable(room, multiplier) : depositable(room, multiplier);
   }

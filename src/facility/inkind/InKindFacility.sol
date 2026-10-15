@@ -18,6 +18,7 @@ import {LibInKindView} from "../../libs/facility/inkind/LibInKindView.sol";
 import {LibSaturatingMath} from "../../libs/common/LibSaturatingMath.sol";
 import {LibPause} from "../../libs/common/LibPause.sol";
 import {LibChecks} from "../../libs/common/LibChecks.sol";
+import {LibManagerErrors} from "../../libs/manager/LibManagerErrors.sol";
 import {BPS} from "../../libs/Constants.sol";
 
 /// @title InKindFacility
@@ -47,29 +48,47 @@ import {BPS} from "../../libs/Constants.sol";
 ///      it: those flows are gated by the offers alone (see the known limitations).
 ///
 ///      Trust surface: the facility holds MINTER_ROLE on each PM it serves and is itself
-///      permissionless, so PM flows are publicly reachable through this code. Disabling an offer
-///      does not revoke that role. The facility must hold SENDER_ROLE on the wrapper, pass the
-///      PM's TransferGuard and the underlying's transfer restrictions; so must receivers and the
-///      fee recipient (it holds PM shares).
+///      permissionless, so anyone can reach PM.deposit and PM.burn through it, including from
+///      Morpho or Request callbacks. Disabling an offer does not revoke that role. The facility
+///      needs SENDER_ROLE on the wrapper and the consumer role on every caps contract its words
+///      use, and must pass the PM's TransferGuard and the underlying's transfer restrictions; so
+///      must share receivers and the fee recipient (it holds PM shares). Entry payers are not
+///      guard-checked.
+///
+///      Security caps and auths bound in-kind borrowing against unbacked issuer mints. Whoever
+///      controls them must be a trusted multisig: the owner and OPERATOR here and, for an
+///      EXTERNAL security word, the caps contract's owner and managers, the whitelist owner and
+///      the FACILITATOR of any consumer able to credit its pools with a negative word. Prefer a
+///      dynamic security word.
 ///
 ///      Known limitations:
+///      - Entries need the pool's LTV at or below the PM's target `ltv`, as PM.deposit sizes
+///        every borrow at it: above it they revert and {maxEnter} returns zero. The views read
+///        the quoted LTV, so within a few debt units of the target they can disagree with
+///        PM.deposit. Exits revert while a withdrawal-queue module is above its safeLtv.
 ///      - Multi-module PMs with divergent per-module quotes: the receiving module prices the
 ///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed.
+///        Round trips also shift positions toward the supply-queue head; prefer single-module PMs.
 ///      - The ratio is read from the PM's views. The Morpho borrow position quotes accrued debt
 ///        (expected market balances); a module whose `totalBorrowed` lags the market would let
 ///        flows use a stale ratio. Only serve PMs whose modules quote accrued debt.
 ///      - A module above its liquidation LTV but below 100% is not bad debt. An exit while the
 ///        PM's withdrawal queue excludes that module leaves the penalty on stayers. Serve PMs
 ///        whose withdrawal queue covers every module.
-///      - A dynamic security cap is throughput only: exits do not refund it, so a looper drains
-///        it at the cost of two share fees plus rounding per loop. Size the fees accordingly.
-///      - An exit word on a shared absolute pool with a negative multiplier reverts
-///        `HardCapExceeded` while the pool sits at its hard cap: exits block until entries
-///        consume headroom or the facilitator re-arms the word.
+///      - Exits burn PROPORTIONAL, touching every withdrawal-queue module, so each must repay and
+///        withdraw atomically. A module that cannot has to leave the withdrawal queue, at the
+///        cost above, and exits then need each remaining module at or below the target LTV.
+///      - Exits do not refund the security cap: a dynamic one is throughput only and an ABSOLUTE
+///        one a lifetime budget, so a looper drains it at the cost of two share fees plus
+///        rounding per loop. Size the fees accordingly.
+///      - An exit word on a shared absolute pool with a negative multiplier also credits interest
+///        and shares that never entered, so the pool drifts to its hard cap and exits above the
+///        headroom revert `HardCapExceeded` until entries consume headroom, the facilitator
+///        re-arms the word or setCap raises the hard cap. Leave hard-cap slack.
 ///      - An ABSOLUTE exit word is drainable by enter/exit loops at fee cost, blocking exits for
 ///        everyone until re-armed. Prefer the shared-pool netting (entry +1x, exit -1x).
-///      - Any revert inside the PM's fee accrual (a de-allowlisted PM fee recipient) reverts
-///        every flow.
+///      - Any revert inside the PM's fee accrual (a de-allowlisted PM fee recipient) reverts every
+///        flow. A fee recipient here failing the PM's guard reverts every flow with a nonzero fee.
 ///      - The underlying and the debt asset must be exact-transfer tokens (no fee on transfer,
 ///        no rebasing, no transfer hooks), as required by every fund adapter.
 ///      - An unlevered pool (`D == 0`) is served on the entry side only under the offer's
@@ -80,6 +99,11 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - Gains between NAV prints travel with the collateral, so an exit before a print and a
 ///        re-entry after it skip the PM performance fee on that gain (a loss to the PM fee
 ///        recipient, not to holders). The share fees are the deterrent.
+///      - Anyone can checkpoint the PM's fees with a dust flow: at a quote trough it lowers the
+///        performance reference, at a peak it crystallizes a gain a reversal never refunds.
+///        Serve PMs whose quote does not fall, or with no performance fee.
+///      - On a Retargetter-bound PM, flows move an open operation's principal cap and
+///        settlement bound. Close the offers during ASYNC operations.
 contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransient, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -99,6 +123,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   /// @dev `_ROLE_1` is left free so the bits line up with the Facility family.
   uint256 internal constant COMPLIANCE_ROLE = _ROLE_2;
   /// @notice Role for addresses authorized to set security caps and user auths.
+  /// @dev Only grant it to a trusted multisig (see the security caps note above).
   uint256 internal constant OPERATOR_ROLE = _ROLE_3;
 
   /// @notice Maximum fee on either side: 10% of the shares.
@@ -272,6 +297,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (uint256 totalCollateral, uint256 totalDebt) = pm.entryPoolState(offer.allowUnlevered);
     debt = amount.mulDiv(totalDebt, totalCollateral);
     if (totalDebt > 0 && debt == 0) revert DustEntry(amount);
+    // PM.deposit reverts the same way: it sizes every borrow at the target LTV
+    if (pm.aboveTargetLtv(totalDebt)) revert LibManagerErrors.InsufficientBorrowCapacity();
     (shares, feeShares) = LibInKindView.splitFee(pm.estimateShares(amount, totalCollateral, debt), offer.feeBps);
   }
 
@@ -299,6 +326,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (uint256 totalCollateral, uint256 totalDebt) = pm.entryPoolState(offer.allowUnlevered);
     // an unlevered entry borrows nothing, so no debt-denominated cap bounds it
     if (totalDebt == 0) return type(uint256).max;
+    if (pm.aboveTargetLtv(totalDebt)) return 0;
     uint256 debtMax = s.securityLimit(pm.underlying(), user).min(offer.capacityCap.available());
     return LibSaturatingMath.mulDiv(debtMax, totalCollateral, totalDebt);
   }
@@ -329,7 +357,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     uint256 minSharesOut,
     address receiver
   ) external nonReentrant returns (uint256 shares, uint256 debt) {
-    receiver.checkNotZero();
+    _checkReceiver(receiver);
     amount.checkNotZero();
     InKindStorageData storage s = LibInKindStorage.inKindStorage();
     EntryOffer storage offer = s.getEnabledEntry(positionManager);
@@ -375,7 +403,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     address receiver,
     bytes calldata data
   ) external nonReentrant returns (uint256 underlyingOut, uint256 debtIn) {
-    receiver.checkNotZero();
+    _checkReceiver(receiver);
     shares.checkNotZero();
     ExitOffer storage offer = LibInKindStorage.inKindStorage().getEnabledExit(positionManager);
     IPositionManager pm = IPositionManager(positionManager);
@@ -436,11 +464,11 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     if (shares > 0) entry.positionManager.safeTransfer(entry.receiver, shares);
   }
 
-  /// @dev Pulls `shares` PM shares, runs the exit callback when `data` is non-empty, pulls
-  ///      `debtRequired` debt asset from the caller, repays and burns the shares net of fee,
-  ///      refunds the debt burn left unused, forwards the fee shares to the recipient, then
-  ///      unwraps the collateral straight to `receiver` and emits the exit event. Approvals are
-  ///      exact and reset.
+  /// @dev Pulls `shares` PM shares, runs the exit callback when `data` is non-empty and checks
+  ///      bad debt again after it, pulls `debtRequired` debt asset from the caller, repays and
+  ///      burns the shares net of fee, refunds the debt burn left unused, forwards the fee shares
+  ///      to the recipient, then unwraps the collateral straight to `receiver` and emits the exit
+  ///      event. Approvals are exact and reset.
   function _burnAndUnwrap(Exit memory exit_, bytes calldata data)
     internal
     returns (uint256 collateralOut, uint256 debtPulled)
@@ -450,6 +478,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     // callback reads returns exactly the inputs the mirror math used. Settlement is pull-only.
     if (data.length > 0) {
       IInKindExitCallback(msg.sender).onInKindExit(exit_.positionManager, exit_.shares, exit_.debtRequired, data);
+      // the callback can push a module into bad debt (a Morpho liquidation)
+      IPositionManager(exit_.positionManager).checkNoBadDebt();
     }
     if (exit_.debtRequired > 0) {
       exit_.debtAsset.safeTransferFrom(msg.sender, address(this), exit_.debtRequired);
@@ -484,6 +514,12 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   {
     (burnShares, feeShares) = LibInKindView.splitFee(shares, feeBps);
     if (burnShares == 0) revert NothingToBurn();
+  }
+
+  /// @dev Rejects zero and the facility itself, where tokens would be stuck.
+  function _checkReceiver(address receiver) internal view {
+    receiver.checkNotZero();
+    if (receiver == address(this)) revert InvalidReceiver(receiver);
   }
 
   /// @dev Validates a word that must bound entries: LibCaps.validate, plus an EXTERNAL word must
