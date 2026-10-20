@@ -1496,14 +1496,10 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   function test_setEntryAndSecurityCap_rejectNonConsumingWords() public {
-    // A zero or negative multiplier consumes nothing: no cap at all on the entry side.
-    uint256 zeroWord = _dynWord(POOL_ID, 0);
+    // A negative multiplier consumes nothing on the entry side.
     uint256 negWord = _dynWord(POOL_ID, MULT_NEG_1X);
     uint256 negAbsWord = _absWord(MULT_NEG_1X);
 
-    vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
-    facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
     facility.setEntry(address(positionManager), negWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
@@ -1511,9 +1507,6 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negAbsWord));
     facility.setEntry(address(positionManager), negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
 
-    vm.prank(operator);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
-    facility.setSecurityCap(address(underlyingToken), zeroWord);
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
     facility.setSecurityCap(address(underlyingToken), negWord);
@@ -1526,8 +1519,25 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(facility.getExit(address(positionManager)).cap, negWord, "negative exit word rejected");
     _setExit(positionManager, negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
     assertEq(facility.getExit(address(positionManager)).cap, negAbsWord, "negative absolute exit word rejected");
-    _setExit(positionManager, zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
-    assertEq(facility.getExit(address(positionManager)).cap, zeroWord, "zero exit word rejected");
+  }
+
+  function test_setOffersAndSecurityCap_rejectZeroMultiplier() public {
+    // A zero multiplier caps nothing, so the caps contracts reject it on every word.
+    uint256 zeroWord = _dynWord(POOL_ID, 0);
+    uint256 zeroAbsWord = _absWord(0);
+
+    vm.startPrank(facilitator);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setExit(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setExit(address(positionManager), zeroAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    vm.stopPrank();
+
+    vm.prank(operator);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setSecurityCap(address(underlyingToken), zeroAbsWord);
   }
 
   function test_setEntry_rearmOverwritesRemainingCapacity() public {

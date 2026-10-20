@@ -36,7 +36,8 @@ interface IFacilityCaps {
   /// @param id The cap ID.
   error HardCapExceeded(uint64 id);
 
-  /// @notice Thrown when validating type(int24).min, which has no int24 negation to release with.
+  /// @notice Thrown when validating a zero multiplier, which consumes nothing, or
+  ///         type(int24).min, which has no int24 negation to release with.
   error InvalidMultiplier();
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -45,8 +46,8 @@ interface IFacilityCaps {
 
   /// @notice Reverts if a deposit cap word cannot reference this contract with `id` and
   ///         `multiplier`.
-  /// @dev Called by facilities when such a word is set. Reverts with InvalidMultiplier for
-  ///      type(int24).min, plus any implementation-specific ID check.
+  /// @dev Called by facilities when such a word is set. Reverts with InvalidMultiplier for zero
+  ///      and type(int24).min, plus any implementation-specific ID check.
   /// @param id The cap ID.
   /// @param multiplier The signed Q12.12 multiplier.
   function validate(uint64 id, int24 multiplier) external view;

@@ -82,12 +82,17 @@ contract FacilityDynamicCapsTest is Test {
   function test_validate_acceptsAnyId() public view {
     caps.validate(0, MULT_1X);
     caps.validate(ID, -MULT_1X);
-    caps.validate(type(uint64).max, 0);
+    caps.validate(type(uint64).max, 1);
   }
 
   function test_validate_revertOnMinMultiplier() public {
     vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
     caps.validate(ID, type(int24).min);
+  }
+
+  function test_validate_revertOnZeroMultiplier() public {
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    caps.validate(ID, 0);
   }
 
   function test_initialize_setsOwnerAndRoles() public view {

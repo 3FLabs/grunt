@@ -44,7 +44,7 @@ contract FacilityAbsoluteCapsSymbolicTest is Test {
     bool distinct =
       (p1 == 0 || p1 != p0) && (p2 == 0 || (p2 != p0 && p2 != p1)) && (p3 == 0 || (p3 != p0 && p3 != p1 && p3 != p2));
     (bool ok, bytes memory ret) = address(caps).staticcall(abi.encodeCall(caps.validate, (id, multiplier)));
-    if (multiplier == type(int24).min) {
+    if (multiplier == 0 || multiplier == type(int24).min) {
       assert(!ok);
       assert(keccak256(ret) == keccak256(abi.encodeWithSelector(IFacilityCaps.InvalidMultiplier.selector)));
     } else if (p0 != 0 && contiguous && distinct) {

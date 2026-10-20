@@ -243,18 +243,13 @@ contract FacilitySharedCapsFuzzTest is FacilityBaseTest {
     _roundTrip(p, -multiplier);
   }
 
-  function testFuzz_roundTrip_zeroMultiplierIsUncapped(uint256 amount) public {
-    amount = bound(amount, 1, MAX_AMOUNT);
-    _setPool(POOL_ID, 0, 0);
-    (uint256 intentId,) = _createIntent(POOL_ID, 0);
-
-    vm.recordLogs();
-    _deposit(intentId, user, amount);
-    vm.prank(user);
-    facility.withdraw(intentId, user, user, amount);
-
-    assertEq(debtToken.balanceOf(user), amount, "Depositor should get the full deposit back");
-    assertEq(_capConsumedCount(), 0, "Zero multiplier should not move any pool");
+  function test_createIntent_revertOnZeroMultiplier() public {
+    // a zero multiplier would leave the intent uncapped: MAX_ABSOLUTE is the way to say no cap
+    IntentProperties memory props = _intentParamsWithTargetPM();
+    props.depositCap = LibCaps.encodeExternal(address(caps), POOL_ID, 0);
+    vm.prank(owner);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.createIntent(props);
   }
 
   function test_withdraw_negativeFractional_revertOnRoundingDust() public {
