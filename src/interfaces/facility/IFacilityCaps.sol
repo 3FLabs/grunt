@@ -5,7 +5,8 @@ pragma solidity ^0.8.22;
 /// @author 3F Protocol
 /// @notice Deposit caps consumed by facilities with EXTERNAL deposit caps, implemented by
 ///         FacilityAbsoluteCaps (shared pools) and FacilityDynamicCaps (time-weighted caps).
-///         Multipliers are signed Q12.12 fixed-point values (value = raw / 2^12).
+///         Multipliers are signed Q12.12 fixed-point values (value = raw / 2^12) and facilities
+///         send amounts scaled to 18 decimals (see LibCaps).
 /// @dev The 64-bit cap ID is read by each implementation: FacilityAbsoluteCaps splits it into
 ///      up to four 16-bit pool IDs whose capacities add up, FacilityDynamicCaps uses it as a
 ///      single key.

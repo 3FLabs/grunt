@@ -102,8 +102,10 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
 
   function _setCaps() internal {
     vm.startPrank(capsManager);
-    absoluteCaps.setCap(POOL_ID, SHARED_POOL_CAP, SHARED_POOL_CAP);
-    dynamicCaps.setCap(SECURITY_RATE_ID, SECURITY_RECOVERY, 1 days, uint64(block.timestamp - 1 days));
+    absoluteCaps.setCap(POOL_ID, uint128(_capsUnits(SHARED_POOL_CAP)), uint128(_capsUnits(SHARED_POOL_CAP)));
+    dynamicCaps.setCap(
+      SECURITY_RATE_ID, uint128(_capsUnits(SECURITY_RECOVERY)), 1 days, uint64(block.timestamp - 1 days)
+    );
     vm.stopPrank();
   }
 
@@ -166,7 +168,7 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, user);
     assertEq(debtToken.balanceOf(user), 500e6, "entry debt");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 500e6, "capacity pool");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "security rate");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "security rate");
 
     uint256 shares = positionManager.balanceOf(user);
     (uint256 debtIn, uint256 underlyingOut) = _exitMirror(positionManager, shares, DEFAULT_FEE_BPS);

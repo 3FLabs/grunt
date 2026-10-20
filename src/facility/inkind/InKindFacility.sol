@@ -327,7 +327,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     // an unlevered entry borrows nothing, so no debt-denominated cap bounds it
     if (totalDebt == 0) return type(uint256).max;
     if (pm.aboveTargetLtv(totalDebt)) return 0;
-    uint256 debtMax = s.securityLimit(pm.underlying(), user).min(offer.capacityCap.available());
+    (, address debtAsset) = pm.assets();
+    uint256 debtMax = s.securityLimit(pm.underlying(), user, debtAsset).min(offer.capacityCap.available(debtAsset));
     return LibSaturatingMath.mulDiv(debtMax, totalCollateral, totalDebt);
   }
 
@@ -340,7 +341,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     if (totalDebt == 0) return type(uint256).max;
     // largest burnable amount whose rounded-up debt slice fits the cap, grossed up by the fee
     // (net(gross) <= burnShares holds since the fee rounds up)
-    uint256 burnShares = LibSaturatingMath.mulDiv(offer.cap.available(), pm.adjustedSupply(), totalDebt);
+    (, address debtAsset) = pm.assets();
+    uint256 burnShares = LibSaturatingMath.mulDiv(offer.cap.available(debtAsset), pm.adjustedSupply(), totalDebt);
     return LibSaturatingMath.mulDiv(burnShares, BPS, BPS - offer.feeBps);
   }
 
@@ -384,8 +386,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
 
     // caps absorb the gross debt before any token interaction (CEI)
     if (debt > 0) {
-      offer.capacityCap = offer.capacityCap.consume(LibInKindStorage.capId(positionManager), debt);
-      s.consumeSecurity(entry.underlying, msg.sender, debt);
+      offer.capacityCap = offer.capacityCap.consume(LibInKindStorage.capId(positionManager), debt, entry.debtAsset);
+      s.consumeSecurity(entry.underlying, msg.sender, debt, entry.debtAsset);
     }
 
     entry.underlying.safeTransferFrom(msg.sender, address(this), amount);
@@ -425,7 +427,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
 
     // the cap absorbs the mirrored debt before any token interaction (CEI); a pool that became
     // unlevered stays exitable
-    if (debt > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debt);
+    if (debt > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debt, exit_.debtAsset);
 
     (underlyingOut, debtIn) = _burnAndUnwrap(exit_, data);
   }

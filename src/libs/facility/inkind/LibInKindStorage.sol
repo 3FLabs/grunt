@@ -110,19 +110,22 @@ library LibInKindStorage {
     return available(self.auths[asset][user]);
   }
 
-  /// @dev Debt `user` can borrow against `asset` right now: its auth plus what the asset's
-  ///      security cap can absorb, saturating at type(uint256).max.
-  function securityLimit(InKindStorageData storage self, address asset, address user)
+  /// @dev Debt of `debtAsset` `user` can borrow against `asset` right now: its auth plus what
+  ///      the asset's security cap can absorb, saturating at type(uint256).max.
+  function securityLimit(InKindStorageData storage self, address asset, address user, address debtAsset)
     internal
     view
     returns (uint256 limit)
   {
-    return authAvailable(self, asset, user).saturatingAdd(self.securityCaps[asset].available());
+    return authAvailable(self, asset, user).saturatingAdd(self.securityCaps[asset].available(debtAsset));
   }
 
-  /// @dev Consumes `debt` for a borrow of `user` against `asset`: the auth first, the remainder
-  ///      from the asset's security cap (reverting like LibCaps.consume when it cannot absorb it).
-  function consumeSecurity(InKindStorageData storage self, address asset, address user, uint256 debt) internal {
+  /// @dev Consumes `debt` of `debtAsset` for a borrow of `user` against `asset`: the auth first,
+  ///      the remainder from the asset's security cap (reverting like LibCaps.consume when it
+  ///      cannot absorb it).
+  function consumeSecurity(InKindStorageData storage self, address asset, address user, uint256 debt, address debtAsset)
+    internal
+  {
     Auth memory auth = self.auths[asset][user];
     uint256 fromAuth = available(auth).min(debt);
     if (fromAuth > 0) {
@@ -134,7 +137,7 @@ library LibInKindStorage {
     }
     uint256 fromSecurity = debt - fromAuth;
     if (fromSecurity > 0) {
-      self.securityCaps[asset] = self.securityCaps[asset].consume(capId(asset), fromSecurity);
+      self.securityCaps[asset] = self.securityCaps[asset].consume(capId(asset), fromSecurity, debtAsset);
     }
   }
 }

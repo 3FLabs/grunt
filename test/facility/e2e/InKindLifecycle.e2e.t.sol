@@ -86,8 +86,8 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
 
     vm.startPrank(owner);
     positionManager.setFeeData(pmFeeRecipient, PM_MANAGEMENT_FEE, PM_PERFORMANCE_FEE);
-    absoluteCaps.setCap(POOL_ID, CAPACITY, CAPACITY_HARD_CAP);
-    absoluteCaps.setCap(SECURITY_POOL_ID, SECURITY, SECURITY);
+    absoluteCaps.setCap(POOL_ID, uint128(_capsUnits(CAPACITY)), uint128(_capsUnits(CAPACITY_HARD_CAP)));
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(_capsUnits(SECURITY)), uint128(_capsUnits(SECURITY)));
     vm.stopPrank();
 
     vm.startPrank(facilitator);
@@ -184,7 +184,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, uint64(SECURITY_POOL_ID)));
     facility.enter(address(positionManager), f.amount, 0, type(uint256).max, 0, dave);
     vm.prank(owner);
-    absoluteCaps.setCap(SECURITY_POOL_ID, 1_000e6, 1_000e6);
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(_capsUnits(1_000e6)), uint128(_capsUnits(1_000e6)));
     vm.prank(facilitator);
     facility.setEntry(address(positionManager), _poolWord(POOL_ID, MULT_1X), FAR_EXPIRY, REARMED_ENTRY_FEE_BPS, false);
     assertEq(_poolCap(POOL_ID), CAPACITY - capacityConsumed + capacityReleased, "re-arm touched the shared pool");
@@ -225,8 +225,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     uint256 exitFraction
   ) public {
     vm.startPrank(owner);
-    absoluteCaps.setCap(POOL_ID, type(uint128).max / 2, type(uint128).max);
-    absoluteCaps.setCap(SECURITY_POOL_ID, type(uint128).max / 2, type(uint128).max / 2);
+    // whole debt units, so _poolCap reads them back exactly
+    uint128 half = uint128(_capsUnits(type(uint128).max / 2 / CAPS_SCALE));
+    absoluteCaps.setCap(POOL_ID, half, type(uint128).max);
+    absoluteCaps.setCap(SECURITY_POOL_ID, half, half);
     vm.stopPrank();
     vm.prank(facilitator);
     facility.setExit(address(positionManager), _poolWord(POOL_ID, MULT_NEG_1X), FAR_EXPIRY, EXIT_FEE_BPS);
@@ -258,8 +260,9 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     return LibCaps.encodeExternal(address(absoluteCaps), id, multiplier);
   }
 
-  function _poolCap(uint16 id) internal view returns (uint256 cap) {
-    (cap,) = absoluteCaps.getCap(id);
+  /// @dev Remaining capacity of a pool, in debt units.
+  function _poolCap(uint16 id) internal view returns (uint256) {
+    return _absCap(id);
   }
 
   function _movePrice(uint256 price) internal {
@@ -279,10 +282,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     (,, s.borrowAssets, s.borrowShares) = morpho.expectedMarketBalances(marketParams);
   }
 
-  /// @dev Expects one CapConsumed on the shared absolute caps for a whole-pool charge.
+  /// @dev Expects one CapConsumed on the shared absolute caps for a whole-pool charge, in debt units.
   function _expectPoolCharge(uint16 id, uint256 amount, int24 multiplier, uint256 newCap) internal {
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(id, amount, multiplier, amount, uint128(newCap));
+    emit IFacilityCaps.CapConsumed(id, _capsUnits(amount), multiplier, _capsUnits(amount), uint128(_capsUnits(newCap)));
   }
 
   /// @dev Quotes the entry exactly and funds `who` for it.

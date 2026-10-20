@@ -74,10 +74,10 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     return uint64(id1) | (uint64(id2) << 16) | (uint64(id3) << 32);
   }
 
-  /// @dev Sets an absolute pool as the caps manager (the owner).
+  /// @dev Sets an absolute pool in debt units as the caps manager (the owner).
   function _setAbsPoolAt(uint16 id, uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(id, cap, hardCap);
+    absoluteCaps.setCap(id, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
   /// @dev EXTERNAL word over a dynamic cap.
@@ -85,16 +85,16 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     return _externalWord(address(dynamicCaps), id, multiplier);
   }
 
-  /// @dev Sets the shared absolute pool as the caps manager (the owner).
+  /// @dev Sets the shared absolute pool in debt units as the caps manager (the owner).
   function _setAbsPool(uint128 cap, uint128 hardCap) internal {
-    vm.prank(owner);
-    absoluteCaps.setCap(POOL_ID, cap, hardCap);
+    _setAbsPoolAt(POOL_ID, cap, hardCap);
   }
 
-  /// @dev Sets a dynamic cap fully recovered right now: `recovery` over one day, origin a day ago.
+  /// @dev Sets a dynamic cap fully recovered right now: `recovery` debt units over one day,
+  ///      origin a day ago.
   function _setDynPoolFull(uint64 id, uint128 recovery) internal {
     vm.prank(owner);
-    dynamicCaps.setCap(id, recovery, uint64(1 days), uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), uint64(1 days), uint64(block.timestamp - 1 days));
   }
 
   /// @dev Dynamic cap origin rounding forfeits up to one second of recovery per consumption.
@@ -328,8 +328,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setEntry(positionManager, word, FAR_EXPIRY, DEFAULT_FEE_BPS);
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    (uint128 poolCap,) = absoluteCaps.getCap(POOL_ID);
-    assertEq(poolCap, 600e6 - debt, "pool not decremented by the debt");
+    assertEq(_absCap(POOL_ID), 600e6 - debt, "pool not decremented by the debt");
     // The EXTERNAL word itself is stored unchanged.
     assertEq(facility.getEntry(address(positionManager)).capacityCap, word, "external word mutated");
     _assertFacilityClean();
@@ -342,10 +341,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
     assertGt(debt, 300e6, "debt should exceed the first pool");
-    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
-    (uint128 second,) = absoluteCaps.getCap(OTHER_POOL_ID);
-    assertEq(first, 0, "first pool not drained first");
-    assertEq(second, 1_000e6 - (debt - 300e6), "second pool did not take the rest");
+    assertEq(_absCap(POOL_ID), 0, "first pool not drained first");
+    assertEq(_absCap(OTHER_POOL_ID), 1_000e6 - (debt - 300e6), "second pool did not take the rest");
     _assertFacilityClean();
   }
 
@@ -360,8 +357,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     vm.prank(user);
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ids));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
-    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
-    assertEq(first, 100e6, "first pool moved on a reverted entry");
+    assertEq(_absCap(POOL_ID), 100e6, "first pool moved on a reverted entry");
   }
 
   function test_enter_externalDynamicWordConsumesAndExhausts() public {
@@ -369,7 +365,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setEntry(positionManager, _dynWord(POOL_ID, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertApproxEqAbs(dynamicCaps.remaining(POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic cap not consumed");
+    assertApproxEqAbs(_dynRemaining(POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic cap not consumed");
 
     uint256 amount = 1_000e18;
     _fundEntrant(user, amount);
@@ -665,7 +661,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
     assertApproxEqAbs(
-      dynamicCaps.remaining(SECURITY_POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic security cap not consumed"
+      _dynRemaining(SECURITY_POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic security cap not consumed"
     );
 
     uint256 amount = 1_000e18;
@@ -835,12 +831,12 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     // Entry consumes the shared pool with the gross debt.
     (uint256 shares, uint256 debt) = _enter(user, 1_000e18, user);
-    (uint128 afterEnter,) = absoluteCaps.getCap(POOL_ID);
+    uint256 afterEnter = _absCap(POOL_ID);
     assertEq(afterEnter, 800e6 - debt, "entry did not consume the pool");
 
     // Exit releases debtIn back into the pool (negative multiplier).
     (, uint256 debtIn) = _exit(user, shares, receiver);
-    (uint128 afterExit,) = absoluteCaps.getCap(POOL_ID);
+    uint256 afterExit = _absCap(POOL_ID);
     assertEq(afterExit, afterEnter + debtIn, "exit did not release into the pool");
     // Round trips are lossy (two share fees plus rounding), so the pool lands just below start.
     assertLt(afterExit, 800e6, "round trip created capacity");
@@ -862,10 +858,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // The exit refills the asset pool up to its hard cap, then spills into the shared pool.
     (, uint256 debtIn) = _exit(user, shares, receiver);
     assertGt(debtIn, 300e6, "exit should reach the shared pool");
-    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
-    (uint128 second,) = absoluteCaps.getCap(OTHER_POOL_ID);
-    assertEq(first, 300e6, "asset pool not refilled first");
-    assertEq(second, sharedAfterEnter + (debtIn - 300e6), "shared pool did not take the rest");
+    assertEq(_absCap(POOL_ID), 300e6, "asset pool not refilled first");
+    assertEq(_absCap(OTHER_POOL_ID), sharedAfterEnter + (debtIn - 300e6), "shared pool did not take the rest");
     _assertFacilityClean();
   }
 

@@ -39,7 +39,8 @@ struct Auth {
 ///         the PM collateral's underlying 1:1, supplies it and borrows debt at the pool's live
 ///         debt-per-collateral ratio; an exit repays a proportional debt slice and removes
 ///         proportional collateral. No price enters the economics.
-/// @dev Every cap is denominated in the PM's debt asset (what an entry borrows or an exit repays):
+/// @dev Every cap is denominated in the PM's debt asset (what an entry borrows or an exit repays),
+///      EXTERNAL ones scaled to 18 decimals (see LibCaps):
 ///      - `entries[pm].capacityCap`: the borrowable-liquidity budget of the PM;
 ///      - `securityCaps[asset]`: how much may be borrowed in kind against one underlying asset,
 ///        shared by every PM whose collateral wraps it;

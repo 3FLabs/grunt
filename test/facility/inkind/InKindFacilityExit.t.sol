@@ -99,9 +99,10 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     return _externalWord(address(absoluteCaps), POOL_ID, multiplier);
   }
 
+  /// @dev Sets the shared absolute pool in debt units.
   function _setAbsPool(uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(POOL_ID, cap, hardCap);
+    absoluteCaps.setCap(POOL_ID, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
   function _unleverPool() internal {
@@ -260,7 +261,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.stopPrank();
 
     assertEq(underlyingToken.balanceOf(receiver), out, "receiver underlying");
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP, "pool");
   }
 
@@ -300,11 +301,13 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _fundExit(user, shares, _expectedPull(mirror));
 
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, mirror, MULT_1X, mirror, uint128(EXIT_CAP - mirror));
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, mirror * CAPS_SCALE, MULT_1X, mirror * CAPS_SCALE, uint128((EXIT_CAP - mirror) * CAPS_SCALE)
+    );
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP - mirror, "pool");
     assertEq(facility.getExit(address(positionManager)).cap, word, "word");
   }
@@ -325,7 +328,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, uint64(POOL_ID)));
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(POOL_ID);
+    (uint256 cap, uint256 hardCap) = _absPool(POOL_ID);
     assertEq(cap, pool, "pool");
     assertEq(hardCap, EXIT_CAP, "hard cap");
     assertEq(positionManager.balanceOf(user), shares, "shares");
@@ -355,7 +358,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.prank(user);
     facility.exit(address(positionManager), max, type(uint256).max, 0, receiver, "");
 
-    (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(POOL_ID);
+    (uint256 cap, uint256 hardCap) = _absPool(POOL_ID);
     assertEq(cap, EXIT_CAP - headroom + mirror, "pool credited");
     assertLe(cap, hardCap, "above the hard cap");
   }
@@ -370,7 +373,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
     // the seeder never consumed the pool: its exit up to maxExit takes the headroom
     _exit(seeder, facility.maxExit(address(positionManager)), seeder);
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertLt(EXIT_CAP - pool, mirror, "fixture: headroom left");
     _fundExit(user, shares, _expectedPull(mirror));
 
@@ -414,28 +417,27 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _fundExit(user, shares, _expectedPull(mirror));
     bytes memory blocked = abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, uint64(POOL_ID));
 
-    // adjustCap keeps hardCap - cap, so it moves no headroom either way
+    // adjustCap keeps the consumption, so it moves no release room either way
     vm.prank(owner);
-    absoluteCaps.adjustCap(POOL_ID, int256(mirror));
+    absoluteCaps.adjustCap(POOL_ID, int256(mirror * CAPS_SCALE));
     vm.prank(user);
     vm.expectRevert(blocked);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
     vm.prank(owner);
-    absoluteCaps.adjustCap(POOL_ID, -int256(2 * mirror));
+    absoluteCaps.adjustCap(POOL_ID, -int256(2 * mirror * CAPS_SCALE));
     vm.prank(user);
     vm.expectRevert(blocked);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(POOL_ID);
+    (uint256 cap, uint256 hardCap) = _absPool(POOL_ID);
     assertEq(cap, EXIT_CAP - mirror, "cap");
     assertEq(hardCap, cap, "no headroom");
 
-    vm.prank(owner);
-    absoluteCaps.setCap(POOL_ID, cap, cap + uint128(mirror));
+    _setAbsPool(uint128(cap), uint128(cap + mirror));
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (cap, hardCap) = absoluteCaps.getCap(POOL_ID);
+    (cap, hardCap) = _absPool(POOL_ID);
     assertEq(cap, hardCap, "pool back at its hard cap");
     assertEq(positionManager.balanceOf(user), 0, "shares");
   }
@@ -459,7 +461,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     assertGe(nextDebt, mirror, "fixture: the entry frees the slice");
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP - nextDebt + mirror, "pool after the entry and the exit");
     vm.revertToState(snap);
 
@@ -468,7 +470,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
     assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - mirror, "ABSOLUTE word consumed");
-    (pool,) = absoluteCaps.getCap(POOL_ID);
+    pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP, "pool untouched");
   }
 
@@ -510,14 +512,14 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
   function test_exit_leavesAnExternalSecurityPoolConsumed() public {
     vm.prank(owner);
-    absoluteCaps.setCap(SECURITY_POOL_ID, 1_000e6, 1_000e6);
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(1_000e6 * CAPS_SCALE), uint128(1_000e6 * CAPS_SCALE));
     _setSecurityCap(_externalWord(address(absoluteCaps), SECURITY_POOL_ID, MULT_1X));
     (uint256 shares, uint256 debt) = _enter(user, ENTER_AMOUNT, user);
 
     vm.expectCall(address(absoluteCaps), abi.encodeWithSelector(IFacilityCaps.consume.selector), 0);
     _exit(user, shares, user);
 
-    (uint128 pool,) = absoluteCaps.getCap(SECURITY_POOL_ID);
+    uint256 pool = _absCap(SECURITY_POOL_ID);
     assertEq(pool, 1_000e6 - debt, "security pool refunded");
   }
 

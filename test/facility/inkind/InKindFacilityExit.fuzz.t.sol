@@ -41,14 +41,21 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
       _setExit(positionManager, cap, FAR_EXPIRY, feeBps);
       return (address(0), cap);
     }
+    uint128 capsCap = uint128(_capUnits(kind, cap));
     vm.startPrank(owner);
-    if (kind == 1) absoluteCaps.setCap(POOL_ID, cap, cap);
-    else if (kind == 2) dynamicCaps.setCap(POOL_ID, cap, uint64(1 days), uint64(block.timestamp - 1 days));
-    else absoluteCaps.setCap(POOL_ID, 0, cap);
+    if (kind == 1) absoluteCaps.setCap(POOL_ID, capsCap, capsCap);
+    else if (kind == 2) dynamicCaps.setCap(POOL_ID, capsCap, uint64(1 days), uint64(block.timestamp - 1 days));
+    else absoluteCaps.setCap(POOL_ID, 0, capsCap);
     vm.stopPrank();
     caps = kind == 2 ? address(dynamicCaps) : address(absoluteCaps);
     _setExit(positionManager, _externalWord(caps, POOL_ID, kind == 3 ? -multiplier : multiplier), FAR_EXPIRY, feeBps);
-    available = uint256(cap).mulDiv(MULTIPLIER_ONE, uint256(uint24(multiplier)));
+    available = uint256(capsCap).mulDiv(MULTIPLIER_ONE, uint256(uint24(multiplier))) / CAPS_SCALE;
+  }
+
+  /// @dev A debt-unit `cap` in the units of the word of `kind`: caps contracts count in 18
+  ///      decimals, an ABSOLUTE word in the debt's own.
+  function _capUnits(uint256 kind, uint256 cap) internal pure returns (uint256) {
+    return kind == 0 ? cap : cap * CAPS_SCALE;
   }
 
   /// @dev Capacity left on the exit word of `kind` (release headroom for kind 3).
@@ -67,19 +74,21 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     return cap.mulDiv(left.mulDiv(1 days, cap), 1 days);
   }
 
-  /// @dev What the word of `kind` charges for a mirrored `debt`: consumption rounds up, a
-  ///      release (kind 3) rounds down.
+  /// @dev What the word of `kind` charges for a mirrored `debt`, in its units (see _capUnits):
+  ///      consumption rounds up, a release (kind 3) rounds down.
   function _charge(uint256 kind, uint256 debt, int24 multiplier) internal pure returns (uint256) {
     if (kind == 0) return debt;
     uint256 m = uint256(uint24(multiplier));
+    debt *= CAPS_SCALE;
     return kind == 3 ? debt.mulDiv(m, MULTIPLIER_ONE) : debt.mulDivUp(m, MULTIPLIER_ONE);
   }
 
-  /// @dev Smallest mirrored debt whose charge exceeds `cap` on the word of `kind`.
+  /// @dev Smallest mirrored debt whose charge exceeds the debt-unit `cap` on the word of `kind`.
   function _overflowingDebt(uint256 kind, uint256 cap, int24 multiplier) internal pure returns (uint256) {
     if (kind == 0) return cap + 1;
     uint256 m = uint256(uint24(multiplier));
-    return kind == 3 ? (cap + 1).mulDivUp(MULTIPLIER_ONE, m) : cap.mulDiv(MULTIPLIER_ONE, m) + 1;
+    return
+      kind == 3 ? (cap * CAPS_SCALE + 1).mulDivUp(MULTIPLIER_ONE, m * CAPS_SCALE) : cap.mulDiv(MULTIPLIER_ONE, m) + 1;
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -163,7 +172,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
       uint256 overBurn = _overflowingDebt(kind, cap, multiplier).mulDivUp(supplyAdj, totalDebt);
       uint256 over = overBurn.mulDivUp(BPS, BPS - feeBps) + 1;
       uint256 overMirror = _mirrorDebt(_burnShares(over, feeBps));
-      assertGt(_charge(kind, overMirror, multiplier), cap, "overshoot");
+      assertGt(_charge(kind, overMirror, multiplier), _capUnits(kind, cap), "overshoot");
       vm.prank(user);
       if (kind == 0) {
         vm.expectRevert(
@@ -188,12 +197,12 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
 
     if (kind != 0) {
       int24 wordMultiplier = kind == 3 ? -multiplier : multiplier;
-      vm.expectCall(caps, abi.encodeCall(IFacilityCaps.consume, (POOL_ID, mirror, wordMultiplier)), 1);
+      vm.expectCall(caps, abi.encodeCall(IFacilityCaps.consume, (POOL_ID, mirror * CAPS_SCALE, wordMultiplier)), 1);
     }
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, user, "");
 
-    assertEq(_capLeft(kind), _expectedCapLeft(kind, cap, charge), "cap consumed");
+    assertEq(_capLeft(kind), _expectedCapLeft(kind, _capUnits(kind, cap), charge), "cap consumed");
     assertEq(positionManager.balanceOf(user), userShares - shares, "shares pulled");
     _assertFacilityClean();
   }

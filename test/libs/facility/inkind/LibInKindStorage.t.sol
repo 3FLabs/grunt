@@ -10,10 +10,13 @@ import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
-/// @dev Exposes LibInKindStorage over its own storage struct.
+/// @dev Exposes LibInKindStorage over its own storage struct, with debt in an 18-decimal asset.
 contract LibInKindStorageHarness {
   using LibInKindStorage for InKindStorageData;
+
+  address debtAsset = address(new MockERC20("Debt", "DEBT", 18));
 
   function setEntry(address pm, EntryOffer calldata offer) external {
     LibInKindStorage.inKindStorage().entries[pm] = offer;
@@ -60,11 +63,11 @@ contract LibInKindStorageHarness {
   }
 
   function securityLimit(address asset, address user) external view returns (uint256) {
-    return LibInKindStorage.inKindStorage().securityLimit(asset, user);
+    return LibInKindStorage.inKindStorage().securityLimit(asset, user, debtAsset);
   }
 
   function consumeSecurity(address asset, address user, uint256 debt) external {
-    LibInKindStorage.inKindStorage().consumeSecurity(asset, user, debt);
+    LibInKindStorage.inKindStorage().consumeSecurity(asset, user, debt, debtAsset);
   }
 }
 

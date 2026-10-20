@@ -35,7 +35,7 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
     absoluteCaps.grantRoles(address(facility2), CAPS_CONSUMER_ROLE);
     positionManager2.grantRoles(address(facility2), PM_MINTER_ROLE);
     collateralToken.grantRoles(address(facility2), WA_SENDER_ROLE);
-    absoluteCaps.setCap(SECURITY_POOL_ID, SHARED_SECURITY, SHARED_SECURITY);
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(_capsUnits(SHARED_SECURITY)), uint128(_capsUnits(SHARED_SECURITY)));
     vm.stopPrank();
 
     _seedPool(positionManager, SEED_COLLATERAL, SEED_DEBT);
@@ -178,8 +178,9 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
     return LibCaps.encodeExternal(address(absoluteCaps), SECURITY_POOL_ID, MULT_1X);
   }
 
-  function _securityLeft() internal view returns (uint256 cap) {
-    (cap,) = absoluteCaps.getCap(SECURITY_POOL_ID);
+  /// @dev Remaining shared security, in debt units.
+  function _securityLeft() internal view returns (uint256) {
+    return _absCap(SECURITY_POOL_ID);
   }
 
   /// @dev Opens both sides of `pm` on `f` with unbounded ABSOLUTE words and the shared security word.
@@ -198,7 +199,9 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
 
   function _expectSecurityCharge(uint256 debt, uint256 newCap) internal {
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(SECURITY_POOL_ID, debt, MULT_1X, debt, uint128(newCap));
+    emit IFacilityCaps.CapConsumed(
+      SECURITY_POOL_ID, _capsUnits(debt), MULT_1X, _capsUnits(debt), uint128(_capsUnits(newCap))
+    );
   }
 
   function _fundFor(InKindFacility f, address who, uint256 amount) internal {

@@ -153,6 +153,8 @@ contract InKindExternalCapsHandler is Test {
   uint256 internal constant WORD_DYNAMIC_CREDIT = 4;
 
   uint256 internal constant MAX_FEE = 1_000;
+  /// @dev Caps contracts count in 18 decimals (LibCaps scales EXTERNAL amounts), the debt has 6.
+  uint256 internal constant CAPS_SCALE = 1e12;
   uint256 internal constant BPS = 10_000;
   /// @dev The above-target oracle lane lands 30 to 120 bps above the PM target LTV.
   uint256 internal constant ABOVE_TARGET_MIN_BPS = 30;
@@ -853,7 +855,7 @@ contract InKindExternalCapsHandler is Test {
   /// @dev Grows a pool by `delta` through adjustCap, which keeps its outstanding consumption.
   function _refill(uint256 poolSeed, uint256 deltaSeed) internal {
     uint16 pool = uint16(poolSeed % 4) + POOL_1;
-    uint256 delta = _bound(deltaSeed, 500e6, 5_000e6);
+    uint256 delta = _bound(deltaSeed, 500e6, 5_000e6) * CAPS_SCALE;
     vm.prank(capsManager);
     // forge-lint: disable-next-line(unsafe-typecast)
     absoluteCaps.adjustCap(pool, int256(delta));
@@ -866,7 +868,7 @@ contract InKindExternalCapsHandler is Test {
   ///      credit blocked on HardCapExceeded needs, which adjustCap never adds.
   function _raiseHardCap(uint256 poolSeed, uint256 deltaSeed) internal {
     uint16 pool = uint16(poolSeed % 4) + POOL_1;
-    uint256 delta = _bound(deltaSeed, 1, 1_000e6);
+    uint256 delta = _bound(deltaSeed, 1, 1_000e6) * CAPS_SCALE;
     (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(pool);
     vm.prank(capsManager);
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -960,16 +962,16 @@ contract InKindExternalCapsHandler is Test {
     return pool ? WORD_POOL_DEBIT : WORD_DYNAMIC_DEBIT;
   }
 
-  /// @dev Q12.12 consumption of a positive multiplier, rounded up.
+  /// @dev Q12.12 consumption of a positive multiplier on a debt `amount`, rounded up, in caps units.
   function _consumption(uint256 amount, int24 multiplier) internal pure returns (uint256) {
     // forge-lint: disable-next-line(unsafe-typecast)
-    return (amount * uint256(uint24(multiplier)) + 4095) / 4096;
+    return (amount * CAPS_SCALE * uint256(uint24(multiplier)) + 4095) / 4096;
   }
 
-  /// @dev Q12.12 credit of a negative multiplier, rounded down.
+  /// @dev Q12.12 credit of a negative multiplier on a debt `amount`, rounded down, in caps units.
   function _release(uint256 amount, int24 multiplier) internal pure returns (uint256) {
     // forge-lint: disable-next-line(unsafe-typecast)
-    return amount * uint256(uint24(-multiplier)) / 4096;
+    return amount * CAPS_SCALE * uint256(uint24(-multiplier)) / 4096;
   }
 
   /// @dev Debt per quoted collateral, in WAD.

@@ -46,12 +46,12 @@ contract InKindFacilityExternalCapsInvariantTest is InKindFacilityBaseTest {
     vm.startPrank(owner);
     positionManager.setFeeData(pmFeeRecipient, 100, 1_000);
     positionManager2.setFeeData(pmFeeRecipient, 100, 1_000);
-    absoluteCaps.setCap(POOL_1, OWN_POOL_CAP, OWN_POOL_CAP);
-    absoluteCaps.setCap(POOL_2, OWN_POOL_CAP, OWN_POOL_CAP);
-    absoluteCaps.setCap(SHARED_POOL, SHARED_POOL_CAP, SHARED_POOL_CAP);
-    absoluteCaps.setCap(EXIT_POOL, EXIT_POOL_CAP, EXIT_POOL_CAP);
-    dynamicCaps.setCap(SECURITY_DYN, SECURITY_RECOVERY, 1 days, uint64(block.timestamp - 1 days));
-    dynamicCaps.setCap(EXIT_DYN, EXIT_RECOVERY, 1 days, uint64(block.timestamp - 1 days));
+    absoluteCaps.setCap(POOL_1, _caps(OWN_POOL_CAP), _caps(OWN_POOL_CAP));
+    absoluteCaps.setCap(POOL_2, _caps(OWN_POOL_CAP), _caps(OWN_POOL_CAP));
+    absoluteCaps.setCap(SHARED_POOL, _caps(SHARED_POOL_CAP), _caps(SHARED_POOL_CAP));
+    absoluteCaps.setCap(EXIT_POOL, _caps(EXIT_POOL_CAP), _caps(EXIT_POOL_CAP));
+    dynamicCaps.setCap(SECURITY_DYN, _caps(SECURITY_RECOVERY), 1 days, uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(EXIT_DYN, _caps(EXIT_RECOVERY), 1 days, uint64(block.timestamp - 1 days));
     vm.stopPrank();
 
     InKindExternalCapsHandler.Word[2] memory entryWords;
@@ -318,6 +318,11 @@ contract InKindFacilityExternalCapsInvariantTest is InKindFacilityBaseTest {
   function invariant_stayersKeepTheirValue() public view {
     assertFalse(handler.stayerValueDropped(0), "PM1 stayers lost value to a flow");
     assertFalse(handler.stayerValueDropped(1), "PM2 stayers lost value to a flow");
+  }
+
+  /// @dev A debt amount in caps units.
+  function _caps(uint128 debt) internal pure returns (uint128) {
+    return uint128(debt * CAPS_SCALE);
   }
 
   function invariant_facilityHoldsNothing() public view {

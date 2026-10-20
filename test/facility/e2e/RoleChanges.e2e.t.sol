@@ -108,7 +108,7 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
 
     _enter(user, 1_000e18, receiver);
     assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 1_000e6, "security");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 1_000e6, "security");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 500e6, "capacity");
   }
 
@@ -167,7 +167,7 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     intents.withdraw(intentId, depositor, depositor, 400e6);
 
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 1_100e6, "pool");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 500e6, "security");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 500e6, "security");
   }
 
   function test_delistCaps_resettingAStoredWordRevertsInBothFacilities() public {
@@ -210,7 +210,7 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     (uint256 shares,) = _enter(user, 1_000e18, user);
     (, uint256 debtIn) = _exit(user, shares, receiver);
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 1_500e6 + debtIn, "stored words keep consuming");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 500e6, "security");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 500e6, "security");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

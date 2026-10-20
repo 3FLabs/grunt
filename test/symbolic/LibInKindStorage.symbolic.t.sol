@@ -6,9 +6,12 @@ import {LibInKindStorage, InKindStorageData} from "src/libs/facility/inkind/LibI
 import {Auth} from "src/interfaces/facility/IInKindFacility.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
 contract LibInKindStorageSymbolicHarness {
   using LibInKindStorage for InKindStorageData;
+
+  address debtAsset = address(new MockERC20("Debt", "DEBT", 18));
 
   function setAuth(address asset, address user, uint128 amount, uint40 expiry) external {
     LibInKindStorage.inKindStorage().auths[asset][user] = Auth(amount, expiry);
@@ -19,11 +22,11 @@ contract LibInKindStorageSymbolicHarness {
   }
 
   function consumeSecurity(address asset, address user, uint256 debt) external {
-    LibInKindStorage.inKindStorage().consumeSecurity(asset, user, debt);
+    LibInKindStorage.inKindStorage().consumeSecurity(asset, user, debt, debtAsset);
   }
 
   function securityLimit(address asset, address user) external view returns (uint256) {
-    return LibInKindStorage.inKindStorage().securityLimit(asset, user);
+    return LibInKindStorage.inKindStorage().securityLimit(asset, user, debtAsset);
   }
 
   function auth(address asset, address user) external view returns (uint128, uint40) {
