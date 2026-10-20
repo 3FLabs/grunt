@@ -31,7 +31,8 @@ interface IFacilityCaps {
   /// @param id The cap ID.
   error InsufficientCap(uint64 id);
 
-  /// @notice Thrown when a release would bring a cap above its hard cap (FacilityAbsoluteCaps).
+  /// @notice Thrown when a release would credit back more than the consumption, bringing a cap
+  ///         above its hard cap (FacilityAbsoluteCaps).
   /// @param id The cap ID.
   error HardCapExceeded(uint64 id);
 
@@ -52,9 +53,9 @@ interface IFacilityCaps {
 
   /// @notice Returns an amount consumable right now: for a positive multiplier the maximum
   ///         depositable amount cap / multiplier, for a negative multiplier the releasable amount
-  ///         (hardCap - cap) / |multiplier| on FacilityAbsoluteCaps, which can sit up to
-  ///         4096 / |multiplier| units below the maximum since releases round down.
-  ///         FacilityAbsoluteCaps sums the capacities (or headrooms) of its pool IDs.
+  ///         consumed / |multiplier| on FacilityAbsoluteCaps, which can sit fewer than
+  ///         4096 / |multiplier| + 1 units below the maximum since releases round down.
+  ///         FacilityAbsoluteCaps sums the capacities (or consumptions) of its pool IDs.
   /// @param id The cap ID.
   /// @param multiplier The signed Q12.12 multiplier.
   /// @return amount The consumable amount, type(uint256).max when the direction is
@@ -68,8 +69,8 @@ interface IFacilityCaps {
   /// @notice Consumes amount * multiplier from a cap.
   /// @dev A positive multiplier decreases the cap and reverts with InsufficientCap if it would go
   ///      below zero. A negative multiplier is the release direction: FacilityAbsoluteCaps
-  ///      increases the cap by amount * |multiplier| and reverts with HardCapExceeded above the
-  ///      hard cap, FacilityDynamicCaps does nothing. FacilityAbsoluteCaps spreads it over its
+  ///      credits amount * |multiplier| of consumption back and reverts with HardCapExceeded
+  ///      above it, FacilityDynamicCaps does nothing. FacilityAbsoluteCaps spreads it over its
   ///      pool IDs, first pool first in both directions, and reverts only if they cannot absorb
   ///      it together. Gated by the consumer role.
   /// @param id The cap ID.

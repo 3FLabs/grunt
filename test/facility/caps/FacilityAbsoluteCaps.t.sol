@@ -122,7 +122,8 @@ contract FacilityAbsoluteCapsTest is Test {
 
     bytes32 base = keccak256("facility.caps.storage");
     bytes32 slot = keccak256(abi.encode(uint256(OTHER_ID), base));
-    uint256 packed = uint256(3e18) | (uint256(5e18) << 128);
+    // consumed (hardCap - cap) in the low half, the hard cap in the high half
+    uint256 packed = uint256(2e18) | (uint256(5e18) << 128);
     assertEq(vm.load(address(caps), slot), bytes32(packed), "Cap data should live at the precomputed slot");
   }
 
@@ -454,15 +455,31 @@ contract FacilityAbsoluteCapsTest is Test {
     assertEq(_cap(), 5000e18, "Consumption should stay releasable");
   }
 
-  function test_adjustCap_shrinkPastCapStopsAtZero() public {
+  function test_adjustCap_shrinkPastCapLeavesAShortfall() public {
     _consume(7000e18, MULT_1X);
 
     (uint128 cap, uint128 hardCap) = _adjust(ID, -8000e18);
     assertEq(cap, 0, "Cap should stop at zero");
-    assertEq(hardCap, 7000e18, "Hard cap should not drop below the consumption");
+    assertEq(hardCap, 2000e18, "Hard cap should move by the whole delta");
+    assertEq(caps.available(ID, -MULT_1X), 7000e18, "Consumption should stay releasable");
 
-    _consume(7000e18, -MULT_1X);
-    assertEq(_cap(), 7000e18, "Consumption should stay releasable");
+    // releases pay the 5000e18 shortfall back before any capacity returns
+    _consume(5000e18, -MULT_1X);
+    assertEq(_cap(), 0, "Shortfall should absorb the first releases");
+    _consume(2000e18, -MULT_1X);
+    assertEq(_cap(), 2000e18, "Pool should end at the shrunk hard cap");
+  }
+
+  function test_adjustCap_shrinkHoldsThroughTransientConsumption() public {
+    // auditor's sandwich: drain the pool, the manager shrinks it, the drain is released
+    uint128 remaining = _cap();
+    _consume(remaining, MULT_1X);
+    _adjust(ID, -int256(uint256(remaining)));
+    _consume(remaining, -MULT_1X);
+
+    assertEq(_cap(), 0, "Shrink should hold");
+    (, uint128 hardCap) = caps.getCap(ID);
+    assertEq(hardCap, HARD_CAP - remaining, "Hard cap should keep the shrink");
   }
 
   function test_adjustCap_zeroDeltaKeepsPool() public {
@@ -483,7 +500,8 @@ contract FacilityAbsoluteCapsTest is Test {
 
     (uint128 cap, uint128 hardCap) = _adjust(ID, type(int256).min);
     assertEq(cap, 0, "Cap should stop at zero");
-    assertEq(hardCap, 3000e18, "Hard cap should keep the consumption");
+    assertEq(hardCap, 0, "Hard cap should stop at zero");
+    assertEq(caps.available(ID, -MULT_1X), 3000e18, "Consumption should stay releasable");
   }
 
   function test_adjustCap_revertOnCapOverflow() public {
@@ -493,7 +511,7 @@ contract FacilityAbsoluteCapsTest is Test {
   }
 
   function test_adjustCap_revertOnHardCapOverflow() public {
-    // the new cap fits in 128 bits but the cap plus the kept consumption does not
+    // the hard cap is already at the maximum
     _setCap(0, type(uint128).max);
 
     vm.prank(manager);
@@ -539,9 +557,9 @@ contract FacilityAbsoluteCapsTest is Test {
     _setCap(cap, hardCap);
     uint256 consumed = hardCap - cap;
 
-    int256 target = int256(uint256(cap)) + delta;
-    uint256 expectedCap = target < 0 ? 0 : uint256(target);
-    if (expectedCap + consumed > type(uint128).max) {
+    int256 target = int256(uint256(hardCap)) + delta;
+    uint256 expectedHardCap = target < 0 ? 0 : uint256(target);
+    if (expectedHardCap > type(uint128).max) {
       vm.prank(manager);
       vm.expectRevert(SafeCastLib.Overflow.selector);
       caps.adjustCap(ID, delta);
@@ -549,8 +567,9 @@ contract FacilityAbsoluteCapsTest is Test {
     }
 
     (uint128 newCap, uint128 newHardCap) = _adjust(ID, delta);
-    assertEq(newCap, expectedCap, "Cap should move by the delta, stopping at zero");
-    assertEq(newHardCap - newCap, consumed, "Outstanding consumption should be kept");
+    assertEq(newHardCap, expectedHardCap, "Hard cap should move by the delta, stopping at zero");
+    assertEq(newCap, expectedHardCap > consumed ? expectedHardCap - consumed : 0, "Cap should be what is left");
+    assertEq(caps.available(ID, -MULT_1X), consumed, "Outstanding consumption should be kept");
   }
 
   function test_validate_acceptsContiguousDistinctIds() public view {

@@ -88,7 +88,7 @@ contract FacilityAbsoluteCapsInvariantTest is StdInvariant, Test {
     }
   }
 
-  /// @dev The mirror moves hard caps only on setCap and on adjustCap, which keeps hardCap - cap.
+  /// @dev The mirror moves hard caps only on setCap and on adjustCap, which keeps the consumption.
   function invariant_hardCapsMatchMirror() public view {
     for (uint16 pool = 0; pool <= pools; pool++) {
       (, uint128 hardCap) = caps.getCap(pool);

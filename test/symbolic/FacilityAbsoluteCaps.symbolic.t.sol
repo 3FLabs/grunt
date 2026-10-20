@@ -16,8 +16,9 @@ contract FacilityAbsoluteCapsSymbolicHarness is FacilityAbsoluteCaps {
   }
 }
 
-// forge's engine drops paths of the pool walks below --loop 256
-/// @custom:halmos --loop 256 --solver-timeout-assertion 110000
+// forge's engine drops paths of the pool walks below --loop 256; yices times out on the walks
+// over the consumption model while bitwuzla proves them in seconds (HALMOS_ALLOW_DOWNLOAD=1)
+/// @custom:halmos --loop 256 --solver-timeout-assertion 110000 --solver bitwuzla
 contract FacilityAbsoluteCapsSymbolicTest is Test {
   FacilityAbsoluteCapsSymbolicHarness caps;
 
@@ -61,24 +62,27 @@ contract FacilityAbsoluteCapsSymbolicTest is Test {
   function check_adjustCap_keepsConsumption(uint128 cap, uint128 hardCap, int256 delta) public {
     vm.assume(cap <= hardCap);
     caps.setCap(1, cap, hardCap);
+    uint256 consumed = hardCap - cap;
     (bool ok, bytes memory ret) = address(caps).call(abi.encodeCall(caps.adjustCap, (1, delta)));
-    uint256 expectedCap;
+    uint256 expectedHardCap;
     if (delta < 0) {
       uint256 shrink = uint256(-(delta + 1)) + 1;
-      expectedCap = shrink >= cap ? 0 : cap - shrink;
+      expectedHardCap = shrink >= hardCap ? 0 : hardCap - shrink;
     } else if (uint256(hardCap) + uint256(delta) > type(uint128).max) {
       assert(!ok);
       assert(keccak256(ret) == keccak256(abi.encodeWithSelector(SafeCastLib.Overflow.selector)));
       return;
     } else {
-      expectedCap = cap + uint256(delta);
+      expectedHardCap = hardCap + uint256(delta);
     }
     assert(ok);
     (uint128 newCap, uint128 newHardCap) = abi.decode(ret, (uint128, uint128));
-    assert(newCap == expectedCap);
-    assert(newHardCap == expectedCap + (hardCap - cap));
+    assert(newHardCap == expectedHardCap);
+    assert(newCap == (expectedHardCap > consumed ? expectedHardCap - consumed : 0));
     (uint128 storedCap, uint128 storedHardCap) = caps.getCap(1);
     assert(storedCap == newCap && storedHardCap == newHardCap);
+    // the consumption stays releasable at 1x
+    assert(caps.available(1, -4096) == consumed);
   }
 
   function check_consume_walk1x(Pools memory pools) public {

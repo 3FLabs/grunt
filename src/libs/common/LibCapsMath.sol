@@ -45,7 +45,7 @@ library LibCapsMath {
     return FixedPointMathLib.mulDiv(cap, MULTIPLIER_ONE, uint256(int256(multiplier)));
   }
 
-  /// @notice An amount releasable against a remaining `headroom` (hard cap minus cap) at a
+  /// @notice An amount releasable against a `headroom` (the consumption a pool can credit back) at a
   ///         negative `multiplier`, i.e. an `amount` with `release(amount, multiplier) <= headroom`.
   ///         Can be below the largest such amount since release() rounds down.
   /// @dev Rounds down (see the safety invariant above). Only call with `multiplier < 0`.
