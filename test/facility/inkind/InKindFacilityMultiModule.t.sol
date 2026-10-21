@@ -282,6 +282,22 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     _assertCleanOn(pmMulti);
   }
 
+  function test_enter_aboveTheCombinedTargetSucceedsWhileTheViewsSayNo() public {
+    // Pool at 35% over a 30% target, A at 25% still places the 350e6 borrow.
+    vm.prank(owner);
+    pmMulti.setLtv(0.3e18);
+    assertEq(facility.maxEnter(address(pmMulti), user), 0, "max enter");
+    vm.expectRevert(LibManagerErrors.InsufficientBorrowCapacity.selector);
+    facility.previewEnter(address(pmMulti), ENTER_AMOUNT);
+
+    Position memory positionB = morpho.position(marketParamsB.id(), address(moduleB));
+    (, uint256 debt) = _enter(pmMulti, user, ENTER_AMOUNT, user);
+    assertEq(debt, 350e6, "debt leg");
+    Position memory positionBAfter = morpho.position(marketParamsB.id(), address(moduleB));
+    assertEq(positionBAfter.borrowShares, positionB.borrowShares, "B debt moved");
+    _assertCleanOn(pmMulti);
+  }
+
   function testFuzz_enter_sharedQuoteStaysWithinTheFairFraction(
     uint256 amount,
     uint256 price,

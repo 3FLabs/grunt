@@ -62,10 +62,13 @@ import {BPS} from "../../libs/Constants.sol";
 ///      dynamic security word.
 ///
 ///      Known limitations:
-///      - Entries need the pool's LTV at or below the PM's target `ltv`, as PM.deposit sizes
-///        every borrow at it: above it they revert and {maxEnter} returns zero. The views read
-///        the quoted LTV, so within a few debt units of the target they can disagree with
-///        PM.deposit. Exits revert while a withdrawal-queue module is above its safeLtv.
+///      - Entries need room at the PM's target `ltv`, as PM.deposit sizes every borrow at it. On a
+///        single-module PM that is the pool's LTV at or below the target. A multi-module PM.deposit
+///        can still place the borrow on a module below target while the pool is above it, so
+///        {enter} can succeed where {previewEnter} reverts and {maxEnter} returns zero: the views
+///        are conservative there. They also read the quoted LTV, so within a few debt units of the
+///        target they can disagree with PM.deposit. Exits revert while a withdrawal-queue module
+///        is above its safeLtv.
 ///      - Multi-module PMs with divergent per-module quotes: the receiving module prices the
 ///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed.
 ///        Round trips also shift positions toward the supply-queue head; prefer single-module PMs.
@@ -297,7 +300,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (uint256 totalCollateral, uint256 totalDebt) = pm.entryPoolState(offer.allowUnlevered);
     debt = amount.mulDiv(totalDebt, totalCollateral);
     if (totalDebt > 0 && debt == 0) revert DustEntry(amount);
-    // PM.deposit reverts the same way: it sizes every borrow at the target LTV
+    // PM.deposit reverts the same way on a single-module PM; conservative on a multi-module one
     if (pm.aboveTargetLtv(totalDebt)) revert LibManagerErrors.InsufficientBorrowCapacity();
     (shares, feeShares) = LibInKindView.splitFee(pm.estimateShares(amount, totalCollateral, debt), offer.feeBps);
   }

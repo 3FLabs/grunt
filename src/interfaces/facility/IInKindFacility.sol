@@ -240,9 +240,11 @@ interface IInKindFacility {
 
   /// @notice Previews an entry of `amount` underlying.
   /// @dev Reverts like {enter} except for the caps and the caller's bounds, including the PM's
-  ///      InsufficientBorrowCapacity above its target LTV. A dust entry can quote zero shares
-  ///      that {enter} rejects with InsufficientSharesOut. `shares` is a best-effort estimate;
-  ///      derive `minSharesOut` from it with a tolerance. Values follow {enter}'s bounds order.
+  ///      InsufficientBorrowCapacity above its target LTV, conservative on a multi-module PM
+  ///      where {enter} can still place the borrow on a module below target. A dust entry can
+  ///      quote zero shares that {enter} rejects with InsufficientSharesOut. `shares` is a
+  ///      best-effort estimate; derive `minSharesOut` from it with a tolerance. Values follow
+  ///      {enter}'s bounds order.
   /// @return debt The debt the entry borrows.
   /// @return shares The net PM shares the receiver gets.
   /// @return feeShares The PM shares the fee recipient gets.
@@ -269,7 +271,8 @@ interface IInKindFacility {
   /// @notice Returns an underlying amount `user` can enter right now under the capacity cap, the
   ///         security cap and the user's auth.
   /// @dev Reverts like {enter} on a disabled offer, pause, bad debt, an empty pool or an
-  ///      unlevered pool the offer does not allow, and is zero above the PM's target LTV.
+  ///      unlevered pool the offer does not allow, and is zero above the PM's target LTV (even on
+  ///      a multi-module PM where {enter} could still succeed).
   ///      Rounded down: the bound fits, a few more wei may fit too, except at a one-unit budget
   ///      (DustEntry) or when the capacity and security words share caps state. Saturates at
   ///      type(uint256).max (an ABSOLUTE word near MAX_ABSOLUTE scaled by the pool ratio), and
