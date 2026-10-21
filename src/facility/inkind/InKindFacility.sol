@@ -55,11 +55,18 @@ import {BPS} from "../../libs/Constants.sol";
 ///      must share receivers and the fee recipient (it holds PM shares). Entry payers are not
 ///      guard-checked.
 ///
-///      Security caps and auths bound in-kind borrowing against unbacked issuer mints. Whoever
-///      controls them must be a trusted multisig: the owner and OPERATOR here and, for an
-///      EXTERNAL security word, the caps contract's owner and managers, the whitelist owner and
-///      the FACILITATOR of any consumer able to credit its pools with a negative word. Prefer a
-///      dynamic security word.
+///      Security caps and auths bound in-kind borrowing against collateral worth less than its
+///      quote: unbacked issuer mints, and a quote lagging a known loss (an issuer default the
+///      oracle has not priced yet). Entries borrow at the pool ratio and never read the
+///      collateral's market price, so in that window any holder can borrow against impaired
+///      collateral. PM holders are unaffected (the ratio match keeps their equity per share),
+///      the market's lenders carry the loss once the quote corrects. Whoever controls the caps
+///      must be a trusted multisig: the owner and OPERATOR here and, for an EXTERNAL security
+///      word, the caps contract's owner and managers, the whitelist owner and the FACILITATOR of
+///      any consumer able to credit its pools with a negative word. Prefer a dynamic security
+///      word. For an asset whose quote can lag a known loss (credit tranches, NAV-reported
+///      funds), set the security cap to zero and admit entrants through OPERATOR auths only.
+///      On a credit event, `pauseFor` then `setSecurityCap(asset, 0)`.
 ///
 ///      Known limitations:
 ///      - Entries need the pool's LTV at or below the PM's target `ltv`, as PM.deposit sizes
@@ -69,6 +76,9 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - Multi-module PMs with divergent per-module quotes: the receiving module prices the
 ///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed.
 ///        Round trips also shift positions toward the supply-queue head; prefer single-module PMs.
+///      - No issuer state is read (e.g. a `defaulted()` flag): it would be issuer specific and
+///        still miss the window before the default is recorded. Stale quotes are bounded by the
+///        security cap, auths, the PM capacity cap and the market's free liquidity only.
 ///      - The ratio is read from the PM's views. The Morpho borrow position quotes accrued debt
 ///        (expected market balances); a module whose `totalBorrowed` lags the market would let
 ///        flows use a stale ratio. Only serve PMs whose modules quote accrued debt.
