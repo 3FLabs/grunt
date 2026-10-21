@@ -32,8 +32,9 @@ import {BPS} from "../../libs/Constants.sol";
 ///      are proportional to the quoted equity added, `p * c - d = (c / C)(pC - D)`, so the entrant
 ///      gets the fraction `c / (C + c)` of the pool whatever `p` is. At the next quote `p'` their
 ///      equity is exactly `p' * c - d` and holders' equity per share is unchanged. Exits mirror
-///      `PM.burn`'s native-unit proportional math. Round trips are strictly lossy (rounding plus
-///      the two share fees).
+///      `PM.burn`'s native-unit proportional math. Round trips are lossy up to wei-level rounding
+///      (at most the 32-debt-wei fair-mint tolerance) plus the two share fees: with zero fees one
+///      can come back a few debt-wei ahead.
 ///
 ///      Since a ratio-matched entrant can only ever receive shares, every mint is checked
 ///      against the fraction `S_adj * c / C` and any excess reverts (`NonNeutralMint`). This
@@ -95,7 +96,11 @@ import {BPS} from "../../libs/Constants.sol";
 ///        `allowUnlevered` flag, and on the exit side always (a pool that repays to zero must
 ///        stay exitable). Both borrow and repay nothing, so no cap, auth or per-user gate binds
 ///        them: the flag and the offer expiry are the only levers, and size is unbounded. Set
-///        the flag only on PMs whose in-kind size is acceptable unbounded.
+///        the flag only on PMs whose in-kind size is acceptable unbounded. The flag only gates
+///        `D == 0`: a pool at dust debt (delevered by the REBALANCER or Retargetter, or its debt
+///        repaid by a third party) lets a cap of `B` admit `B * C / D` collateral, practically
+///        unbounded, and a later re-leverage borrows against it. Close the entry offer before
+///        delevering a PM to dust.
 ///      - Gains between NAV prints travel with the collateral, so an exit before a print and a
 ///        re-entry after it skip the PM performance fee on that gain (a loss to the PM fee
 ///        recipient, not to holders). The share fees are the deterrent.
