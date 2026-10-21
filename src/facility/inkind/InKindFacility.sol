@@ -67,8 +67,9 @@ import {BPS} from "../../libs/Constants.sol";
 ///        can still place the borrow on a module below target while the pool is above it, so
 ///        {enter} can succeed where {previewEnter} reverts and {maxEnter} returns zero: the views
 ///        are conservative there. They also read the quoted LTV, so within a few debt units of the
-///        target they can disagree with PM.deposit. Exits revert while a withdrawal-queue module
-///        is above its safeLtv.
+///        target they can disagree with PM.deposit. Entries also need free market liquidity and
+///        supply-queue `maxBorrow` room for the debt, which the views do not check. Exits revert
+///        while a withdrawal-queue module is above its safeLtv.
 ///      - Multi-module PMs with divergent per-module quotes: the receiving module prices the
 ///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed.
 ///        Round trips also shift positions toward the supply-queue head; prefer single-module PMs.
