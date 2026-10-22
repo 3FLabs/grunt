@@ -202,6 +202,15 @@ library LibStorage {
   ///      therefore cannot shed accrued debt carry by exiting and re-entering, and an exit
   ///      does not dump its carry slice on the stayers.
   ///
+  ///      Known limitation: a deficit carry below the post-flow debt (a partial liquidation
+  ///      that leaves no bad debt) takes the standard encoding, which keeps the mark but
+  ///      re-anchors the reference collateral on the post-flow collateral, diluting the
+  ///      reference LTV to about `1 - mark / collat`. The levered basis then stays negative for
+  ///      a while after NAV is back above the mark, so the performance fee resumes later than
+  ///      the mark. Only the fee recipient bears it; holders are never overcharged. The
+  ///      oversized-carry encoding keeps the pre-flow reference LTV, but only for a deficit at
+  ///      or above the remaining debt.
+  ///
   ///      Called after `_accrueFees`, which crystallizes a positive basis except in two held
   ///      states: a NAV-capped basis (seizure loss, see the cap in `_pendingFees`) and a
   ///      performance entitlement that rounds to zero fee assets or shares. Both survive the
@@ -397,6 +406,8 @@ library LibStorage {
     } else {
       // `carry < newDebt` here (or a degenerate zero-NAV reference, whose leftover carry is
       // forgiven through the zero floor as dust): the subtraction cannot reach the sentinel.
+      // A seizure deficit carried here keeps the mark but dilutes the reference LTV (known
+      // limitation, see the header).
       newRefDebt = FixedPointMathLib.zeroFloorSub(newDebt, carry);
       // Good-debt aggregation guarantees newCollat >= newDebt >= newRefDebt.
       newRefTotalAssets = newCollat - newRefDebt;

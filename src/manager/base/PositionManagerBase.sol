@@ -73,7 +73,9 @@ abstract contract PositionManagerBase is OwnableRoles, ERC20, ReentrancyGuardTra
   ///      seizure drawdown into the reference carry (see `LibStorage.rebaseSnapshot`), so the
   ///      suspension survives flows until NAV recovers past the carried mark, even when the
   ///      deficit exceeds the remaining debt (the oversized-carry encoding in `rebaseSnapshot`
-  ///      keeps the mark out of the bootstrap sentinel).
+  ///      keeps the mark out of the bootstrap sentinel). A smaller deficit dilutes the reference
+  ///      LTV, so the fee resumes later than the mark; only the fee recipient bears it (see
+  ///      `LibStorage.rebaseSnapshot`).
   ///
   ///      Reference-advance rule (high-water mark): the performance reference (`lastTotalAssets`,
   ///      `lastDebt`) advances to the current state only when the capped basis is positive
