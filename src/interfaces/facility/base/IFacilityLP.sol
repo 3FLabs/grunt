@@ -42,6 +42,11 @@ interface IFacilityLP {
   /// @notice Claims resolved assets for the intent.
   /// @dev If `from` is not `msg.sender`, the caller must be an operator for `from`.
   ///      Returns the tokens and amounts distributed for verification and integration purposes.
+  ///      Never releases the deposit cap, even when the claim hands back unspent deposit asset
+  ///      (a failed and recovered order): a resolved intent cannot tell an unspent deposit from
+  ///      proceeds in the same asset, and on a negative word a release consumes and could block
+  ///      claims. An EXTERNAL pool stays charged for those deposits until its caps manager
+  ///      reconciles it.
   /// @param id The intent ID.
   /// @param from The address to burn LP tokens from.
   /// @param receiver The address to receive the claimed assets.

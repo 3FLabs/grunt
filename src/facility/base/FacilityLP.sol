@@ -70,7 +70,8 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
 
   /// @inheritdoc IFacilityLP
   /// @dev Distributes tokens held by the intent proportionally to the shares being burned.
-  ///      The intent must be resolved before claims can be made.
+  ///      The intent must be resolved before claims can be made. Does not release the deposit
+  ///      cap (see IFacilityLP.claim).
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
   function claim(uint256 id, address from, address receiver, uint256 shares)
     external
