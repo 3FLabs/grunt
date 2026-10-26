@@ -102,8 +102,14 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - Anyone can checkpoint the PM's fees with a dust flow: at a quote trough it lowers the
 ///        performance reference, at a peak it crystallizes a gain a reversal never refunds.
 ///        Serve PMs whose quote does not fall, or with no performance fee.
-///      - On a Retargetter-bound PM, flows move an open operation's principal cap and
-///        settlement bound. Close the offers during ASYNC operations.
+///      - On a Retargetter-bound PM, flows during an ASYNC operation move its principal cap and
+///        settlement bound and transfer value between holder cohorts. Pricing reads the PM's
+///        current balances only: an entrant mints at a NAV missing the value staged outside the
+///        PM (within the loss limit) and gains about `E * R / (N - R + E)` when the residual `R`
+///        returns, and an exiting fraction `f` skips about `f * Y` of the Request yield `Y` the
+///        PM pays at settlement, both borne by the other holders. The facility does not read the
+///        Retargetter, so nothing enforces it on-chain: close both offers before an ASYNC
+///        operation starts and reopen them after it resolves.
 contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransient, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
