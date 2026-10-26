@@ -81,10 +81,15 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - Exits do not refund the security cap: a dynamic one is throughput only and an ABSOLUTE
 ///        one a lifetime budget, so a looper drains it at the cost of two share fees plus
 ///        rounding per loop. Size the fees accordingly.
-///      - An exit word on a shared absolute pool with a negative multiplier also credits interest
-///        and shares that never entered, so the pool drifts to its hard cap and exits above the
-///        headroom revert `HardCapExceeded` until entries consume headroom, the facilitator
-///        re-arms the word or setCap raises the hard cap. Leave hard-cap slack.
+///      - An exit word on a shared absolute pool with a negative multiplier credits the debt each
+///        exit repays, not what entries consumed: interest, shares that never entered and any
+///        change in debt per share outside in-kind flows (REBALANCER or Retargetter lever-ups
+///        and delevers, liquidations, third-party repays) move the pool. Lever-ups over-credit
+///        it, so it drifts to its hard cap and exits above the headroom revert `HardCapExceeded`
+///        until entries consume headroom, the facilitator re-arms the word or setCap raises the
+///        hard cap. Delevers under-credit it, stranding capacity after the last in-kind holder
+///        leaves until the caps manager reconciles the pool. Leave hard-cap slack and reconcile
+///        the pool after large rebalances.
 ///      - An ABSOLUTE exit word is drainable by enter/exit loops at fee cost, blocking exits for
 ///        everyone until re-armed. Prefer the shared-pool netting (entry +1x, exit -1x).
 ///      - Any revert inside the PM's fee accrual (a de-allowlisted PM fee recipient) reverts every
