@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
 import {IInKindFacility} from "src/interfaces/facility/IInKindFacility.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
@@ -346,11 +347,11 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
     // -2x releases twice the debt: half the headroom in debt
     _setExit(positionManager, _absWord(2 * MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
-    uint256 half = (headroom / 2).mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 half = LibInKindView.grossForNet((headroom / 2).mulDiv(supplyAdj, totalDebt), DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), half, "maxExit at -2x");
 
     _setExit(positionManager, _absWord(MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
-    uint256 max = headroom.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 max = LibInKindView.grossForNet(headroom.mulDiv(supplyAdj, totalDebt), DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit at -1x");
     assertLt(max, shares, "fixture: the headroom binds");
 
@@ -383,7 +384,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
     uint256 burnable = uint256(EXIT_CAP - pool).mulDiv(_adjustedSupply(), positionManager.debtAmount());
-    uint256 max = burnable.mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 max = LibInKindView.grossForNet(burnable, DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit");
     assertLt(max, shares, "maxExit covers the user");
   }
@@ -537,8 +538,9 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     uint256 burnShares = _burnShares(shares, DEFAULT_FEE_BPS);
     uint256 mirror = _mirrorDebt(burnShares);
 
-    uint256 max =
-      uint256(EXIT_CAP).mulDiv(_adjustedSupply(), positionManager.debtAmount()).mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 max = LibInKindView.grossForNet(
+      uint256(EXIT_CAP).mulDiv(_adjustedSupply(), positionManager.debtAmount()), DEFAULT_FEE_BPS
+    );
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit");
     assertGt(max, shares, "fixture: the cap does not bind");
     (uint256 debtIn, uint256 out, uint256 feeShares, uint256 debtRequired) =

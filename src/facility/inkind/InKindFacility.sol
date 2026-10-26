@@ -339,11 +339,11 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     pm.checkNoBadDebt();
     uint256 totalDebt = pm.debtAmount();
     if (totalDebt == 0) return type(uint256).max;
-    // largest burnable amount whose rounded-up debt slice fits the cap, grossed up by the fee
-    // (net(gross) <= burnShares holds since the fee rounds up)
+    // largest burnable amount whose rounded-up debt slice fits the cap, then the largest gross
+    // amount burning at most that after the rounded-up fee
     (, address debtAsset) = pm.assets();
     uint256 burnShares = LibSaturatingMath.mulDiv(offer.cap.available(debtAsset), pm.adjustedSupply(), totalDebt);
-    return LibSaturatingMath.mulDiv(burnShares, BPS, BPS - offer.feeBps);
+    return LibInKindView.grossForNet(burnShares, offer.feeBps);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

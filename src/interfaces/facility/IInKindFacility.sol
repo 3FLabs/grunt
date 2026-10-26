@@ -280,8 +280,10 @@ interface IInKindFacility {
   /// @notice Returns an estimate of the PM shares (fee included) that can exit right now under
   ///         the exit cap.
   /// @dev An estimate: the pool debt it reads is what the borrow modules quote, which a module
-  ///      that does not simulate accrual reports stale until the market is touched, and the
-  ///      rounding is down like {maxEnter}. Reverts like {exit} on a disabled offer, pause or
+  ///      that does not simulate accrual reports stale until the market is touched. The burnable
+  ///      slice is rounded down like {maxEnter}, then grossed up to the largest amount burning
+  ///      exactly that slice after the rounded-up fee (zero when no share fits). Reverts like
+  ///      {exit} on a disabled offer, pause or
   ///      bad debt, not on PM-side health checks. type(uint256).max when the pool has no debt;
   ///      saturates otherwise.
   function maxExit(address positionManager) external view returns (uint256 shares);

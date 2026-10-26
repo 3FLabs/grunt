@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {InKindFacilityExitHelpers} from "./InKindFacilityExit.t.sol";
 import {IInKindFacility} from "src/interfaces/facility/IInKindFacility.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
@@ -167,7 +168,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     uint256 totalDebt = positionManager.debtAmount();
 
     uint256 max = facility.maxExit(address(positionManager));
-    assertEq(max, available.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - feeBps), "maxExit");
+    assertEq(max, LibInKindView.grossForNet(available.mulDiv(supplyAdj, totalDebt), feeBps), "maxExit");
     if (max < userShares) _assertOvershootReverts(kind, cap, multiplier, feeBps, userShares);
     uint256 shares = max.min(userShares);
     if (shares == 0) return;

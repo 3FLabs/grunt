@@ -6,6 +6,7 @@ import {IInKindFacility} from "../../../interfaces/facility/IInKindFacility.sol"
 import {IPositionManager} from "../../../interfaces/manager/IPositionManager.sol";
 import {IWrappedAsset} from "../../../interfaces/funds/IWrappedAsset.sol";
 import {LibView} from "../../manager/LibView.sol";
+import {LibSaturatingMath} from "../../common/LibSaturatingMath.sol";
 import {BPS} from "../../Constants.sol";
 
 /// @title LibInKindView
@@ -113,6 +114,18 @@ library LibInKindView {
   function splitFee(uint256 shares, uint24 feeBps) internal pure returns (uint256 net, uint256 fee) {
     fee = shares.mulDivUp(feeBps, BPS);
     net = shares - fee;
+  }
+
+  /// @dev Largest gross share amount whose net after {splitFee} is at most `net`, zero for a zero
+  ///      `net` (any gross would burn nothing). With a nonzero fee the net is exactly `net`.
+  ///      Saturates at type(uint256).max.
+  function grossForNet(uint256 net, uint24 feeBps) internal pure returns (uint256 gross) {
+    if (net == 0) return 0;
+    gross = LibSaturatingMath.mulDiv(net.saturatingAdd(1), BPS, BPS - feeBps);
+    if (gross == type(uint256).max) return gross;
+    // floor((net + 1) * BPS / (BPS - fee)) nets `net + 1` exactly when the division is exact
+    (uint256 grossNet,) = splitFee(gross, feeBps);
+    if (grossNet > net) gross--;
   }
 
   /// @dev Upper bound on the shares a ratio-matched entry of `amount` may mint. The entrant

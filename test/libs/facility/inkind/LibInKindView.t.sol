@@ -16,6 +16,10 @@ contract LibInKindViewHarness {
     return LibInKindView.exitDebtRequired(debt);
   }
 
+  function grossForNet(uint256 net, uint24 feeBps) external pure returns (uint256) {
+    return LibInKindView.grossForNet(net, feeBps);
+  }
+
   function entryPoolState(address pm, bool allowUnlevered)
     external
     view
@@ -147,6 +151,34 @@ contract LibInKindViewTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       GROSS FOR NET                        */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_grossForNet_oneBurnableShareAtOnePercent() public view {
+    // the auditor's case: grossing 1 up by the fee alone gives 1, whose rounded-up fee burns nothing
+    assertEq(harness.grossForNet(1, 100), 2, "gross 2 pays a 1-share fee and burns 1");
+    _assertNet(2, 100, 1);
+  }
+
+  function test_grossForNet_edges() public view {
+    assertEq(harness.grossForNet(0, 100), 0, "nothing burnable");
+    assertEq(harness.grossForNet(5, 0), 5, "no fee");
+    assertEq(harness.grossForNet(98, 100), 99, "exact division nets one more, so one less");
+    assertEq(harness.grossForNet(type(uint256).max, 100), type(uint256).max, "saturates");
+  }
+
+  function testFuzz_grossForNet_isTheLargestGrossNettingAtMostNet(uint256 net, uint256 feeBps) public view {
+    net = bound(net, 1, type(uint128).max);
+    uint24 bps = uint24(bound(feeBps, 0, 1_000));
+    uint256 gross = harness.grossForNet(net, bps);
+    (uint256 grossNet,) = harness.splitFee(gross, bps);
+    (uint256 nextNet,) = harness.splitFee(gross + 1, bps);
+    assertLe(grossNet, net, "gross burns at most net");
+    assertGt(nextNet, net, "one more burns more than net");
+    if (bps > 0) assertEq(grossNet, net, "a fee makes it exact");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                      ENTRY POOL STATE                      */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -207,6 +239,11 @@ contract LibInKindViewTest is Test {
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          HELPERS                           */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _assertNet(uint256 shares, uint24 bps, uint256 expectedNet) internal view {
+    (uint256 net,) = harness.splitFee(shares, bps);
+    assertEq(net, expectedNet, "net");
+  }
 
   function _assertSplit(uint256 shares, uint24 bps, uint256 expectedNet, uint256 expectedFee) internal view {
     (uint256 net, uint256 fee) = harness.splitFee(shares, bps);

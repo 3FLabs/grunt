@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
 import {Auth} from "src/interfaces/facility/IInKindFacility.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
@@ -495,8 +496,8 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     uint256 totalDebt = positionManager.debtAmount();
     assertEq(
       max,
-      exitCap.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS),
-      "maxExit is the cap's burnable slice grossed up by the fee"
+      LibInKindView.grossForNet(exitCap.mulDiv(supplyAdj, totalDebt), DEFAULT_FEE_BPS),
+      "maxExit is the largest gross burning the cap's burnable slice"
     );
     (uint256 debtInMax,,,) = facility.previewExit(address(positionManager), max);
     assertLe(debtInMax, exitCap, "maxExit's debt slice fits the cap");
