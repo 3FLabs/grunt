@@ -8,6 +8,7 @@ import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
 import {MarketParams, Position} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
@@ -21,7 +22,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///         parity under a shared quote, the NonNeutralMint and zero-mint gates on a divergent
 ///         receiving quote and on an entry many times the pool, exact exit mirroring over the
 ///         full withdrawal queue, the round-trip shift to the supply-queue head, and a
-///         strict-subset queue.
+///         strict-subset queue (exits and the exit views bounded by what the queue holds).
 contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
   using FixedPointMathLib for uint256;
   using MarketParamsLib for MarketParams;
@@ -589,5 +590,44 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     vm.prank(user);
     (, uint256 repaid) = facility.exit(address(pmMulti), shares, required, 0, receiver, "");
     assertEq(repaid, debtIn, "debt in");
+  }
+
+  function test_previewExit_strictSubsetQueueRevertsWhereBurnDoes() public {
+    _setWithdrawalQueue(pmMulti, address(moduleA), address(0));
+    // 60% of the supply repays ~2_100 of debt, above A's 1_500: burn cannot place it
+    uint256 shares = pmMulti.balanceOf(seeder) * 6 / 10;
+    uint256 debtA = moduleA.totalBorrowed();
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    facility.previewExit(address(pmMulti), shares);
+
+    // the debt it would repay, priced on the whole pool, is more than the queue holds
+    uint256 burnShares = shares - shares.mulDivUp(DEFAULT_FEE_BPS, BPS);
+    assertGt(pmMulti.debtAmount().mulDivUp(burnShares, _adjustedSupply(pmMulti)), debtA, "slice above the queue");
+    uint256 required = _required(pmMulti.debtAmount().mulDivUp(burnShares, _adjustedSupply(pmMulti)));
+    debtToken.setBalance(seeder, required);
+    vm.startPrank(seeder);
+    debtToken.approve(address(facility), required);
+    pmMulti.approve(address(facility), shares);
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    facility.exit(address(pmMulti), shares, required, 0, seeder, "");
+    vm.stopPrank();
+  }
+
+  function test_maxExit_strictSubsetQueueIsBoundedByTheQueuedDebt() public {
+    uint256 full = facility.maxExit(address(pmMulti));
+    _setWithdrawalQueue(pmMulti, address(moduleA), address(0));
+    uint256 max = facility.maxExit(address(pmMulti));
+    assertLt(max, full, "the queue binds below the cap");
+
+    // the cap is 1m, so A's debt is the bound: the largest burn whose rounded-up slice fits it
+    uint256 burnable = moduleA.totalBorrowed().mulDiv(_adjustedSupply(pmMulti), pmMulti.debtAmount());
+    assertEq(max, LibInKindView.grossForNet(burnable, DEFAULT_FEE_BPS), "maxExit");
+
+    // the quote previews and executes, and one burnable share more does not preview
+    (uint256 debtIn,,,) = facility.previewExit(address(pmMulti), max);
+    assertLe(debtIn, moduleA.totalBorrowed(), "slice fits A");
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    facility.previewExit(address(pmMulti), LibInKindView.grossForNet(burnable + 1, DEFAULT_FEE_BPS));
+    _exit(pmMulti, seeder, max, seeder);
   }
 }

@@ -321,6 +321,12 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     debtIn = pm.exitDebt(burnShares);
     underlyingOut = pm.exitCollateral(burnShares);
     debtRequired = LibInKindView.exitDebtRequired(debtIn);
+    // a PM.burn whose withdrawal queue misses a module only reaches the queued ones
+    (bool subset, uint256 queueDebt, uint256 queueCollateral) = pm.queueTotals();
+    if (subset) {
+      if (debtIn > queueDebt) revert LibManagerErrors.ExcessDebtRepay();
+      if (underlyingOut > queueCollateral) revert LibManagerErrors.InsufficientAvailableCollateral();
+    }
   }
 
   /// @inheritdoc IInKindFacility
@@ -344,10 +350,18 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     pm.checkNoBadDebt();
     uint256 totalDebt = pm.debtAmount();
     if (totalDebt == 0) return type(uint256).max;
-    // largest burnable amount whose rounded-up debt slice fits the cap, then the largest gross
-    // amount burning at most that after the rounded-up fee
+    // largest burnable amount whose rounded-up debt slice fits the cap (and, on a partial
+    // withdrawal queue, the queued debt, with a rounded-down collateral slice fitting the queued
+    // collateral), then the largest gross amount burning at most that after the rounded-up fee
     (, address debtAsset) = pm.assets();
-    uint256 burnShares = LibSaturatingMath.mulDiv(offer.cap.available(debtAsset), pm.adjustedSupply(), totalDebt);
+    uint256 debtRoom = offer.cap.available(debtAsset);
+    (bool subset, uint256 queueDebt, uint256 queueCollateral) = pm.queueTotals();
+    if (subset) debtRoom = debtRoom.min(queueDebt);
+    uint256 supplyAdj = pm.adjustedSupply();
+    uint256 burnShares = LibSaturatingMath.mulDiv(debtRoom, supplyAdj, totalDebt);
+    if (subset) {
+      burnShares = burnShares.min(LibSaturatingMath.mulDiv(queueCollateral, supplyAdj, pm.collateralAmount()));
+    }
     return LibInKindView.grossForNet(burnShares, offer.feeBps);
   }
 

@@ -254,7 +254,9 @@ interface IInKindFacility {
 
   /// @notice Previews an exit of `shares` PM shares.
   /// @dev Reverts like {exit} except for the cap, the caller's bounds and PM-side health
-  ///      checks. Both debt figures drift up with interest accrual between preview and
+  ///      checks. On a withdrawal queue missing a module it mirrors `PM.burn`'s reach: reverts
+  ///      ExcessDebtRepay or InsufficientAvailableCollateral when the slices exceed what the
+  ///      queued modules hold. Both debt figures drift up with interest accrual between preview and
   ///      execution: approve headroom or source `debtRequired` through the callback. Values
   ///      follow {exit}'s bounds order.
   /// @return debtIn The debt the exit is expected to repay (burn's exact mirror).
@@ -281,10 +283,11 @@ interface IInKindFacility {
   ///         the exit cap.
   /// @dev An estimate: the pool debt it reads is what the borrow modules quote, which a module
   ///      that does not simulate accrual reports stale until the market is touched. The burnable
-  ///      slice is rounded down like {maxEnter}, then grossed up to the largest amount burning
-  ///      exactly that slice after the rounded-up fee (zero when no share fits). Reverts like
-  ///      {exit} on a disabled offer, pause or
-  ///      bad debt, not on PM-side health checks. type(uint256).max when the pool has no debt;
+  ///      slice is bounded by the cap and, on a withdrawal queue missing a module, by the debt
+  ///      and collateral the queue holds (what `PM.burn` reaches), rounded down like {maxEnter},
+  ///      then grossed up to the largest amount burning exactly that slice after the rounded-up
+  ///      fee (zero when no share fits). Reverts like {exit} on a disabled offer, pause or bad
+  ///      debt, not on PM-side health checks. type(uint256).max when the pool has no debt;
   ///      saturates otherwise.
   function maxExit(address positionManager) external view returns (uint256 shares);
 

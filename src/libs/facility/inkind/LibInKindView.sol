@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IInKindFacility} from "../../../interfaces/facility/IInKindFacility.sol";
 import {IPositionManager} from "../../../interfaces/manager/IPositionManager.sol";
+import {IBorrowPosition} from "../../../interfaces/borrow/IBorrowPosition.sol";
 import {IWrappedAsset} from "../../../interfaces/funds/IWrappedAsset.sol";
 import {LibView} from "../../manager/LibView.sol";
 import {LibSaturatingMath} from "../../common/LibSaturatingMath.sol";
@@ -83,6 +84,19 @@ library LibInKindView {
   function adjustedSupply(IPositionManager pm) internal view returns (uint256 supplyAdj) {
     (, uint256 totalSupply_, uint256 mgmtFeeShares, uint256 perfFeeShares) = pm.pendingFees();
     return totalSupply_ + mgmtFeeShares + perfFeeShares + pm.virtualShareOffset();
+  }
+
+  /// @dev The debt and collateral `PM.burn` can reach when its withdrawal queue misses a module
+  ///      (`subset`, burn's own test): the sums over the queue, read like the PM's aggregates.
+  ///      With a full queue burn reaches the whole pool, and the sums are not read.
+  function queueTotals(IPositionManager pm) internal view returns (bool subset, uint256 debt, uint256 collateral) {
+    address[] memory queue = pm.withdrawalQueue();
+    if (queue.length == pm.borrowModules().length) return (false, 0, 0);
+    subset = true;
+    for (uint256 i = 0; i < queue.length; ++i) {
+      debt += IBorrowPosition(queue[i]).totalBorrowed();
+      collateral += IBorrowPosition(queue[i]).totalCollateral();
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
