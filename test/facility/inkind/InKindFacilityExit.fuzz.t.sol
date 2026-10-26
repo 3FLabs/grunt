@@ -136,7 +136,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     r.exit(shares, pull, out, receiver, abi.encode(repay));
 
     assertEq(debtToken.balanceOf(address(r)), pull - pulled, "refund");
-    assertEq(facility.getExit(address(positionManager)).cap, exitCap - mirror, "exit cap");
+    assertEq(facility.getExit(address(positionManager)).cap, exitCap - pulled, "exit cap charged with burn's pull");
     _assertFacilityClean();
     _assertNoAllowances();
   }
@@ -168,27 +168,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
 
     uint256 max = facility.maxExit(address(positionManager));
     assertEq(max, available.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - feeBps), "maxExit");
-    if (max < userShares) {
-      uint256 overBurn = _overflowingDebt(kind, cap, multiplier).mulDivUp(supplyAdj, totalDebt);
-      uint256 over = overBurn.mulDivUp(BPS, BPS - feeBps) + 1;
-      uint256 overMirror = _mirrorDebt(_burnShares(over, feeBps));
-      assertGt(_charge(kind, overMirror, multiplier), _capUnits(kind, cap), "overshoot");
-      vm.prank(user);
-      if (kind == 0) {
-        vm.expectRevert(
-          abi.encodeWithSelector(
-            LibFacilityErrors.CapExceeded.selector, uint256(uint160(address(positionManager))), cap, overMirror
-          )
-        );
-      } else {
-        vm.expectRevert(
-          abi.encodeWithSelector(
-            kind == 3 ? IFacilityCaps.HardCapExceeded.selector : IFacilityCaps.InsufficientCap.selector, uint64(POOL_ID)
-          )
-        );
-      }
-      facility.exit(address(positionManager), over, type(uint256).max, 0, user, "");
-    }
+    if (max < userShares) _assertOvershootReverts(kind, cap, multiplier, feeBps, userShares);
     uint256 shares = max.min(userShares);
     if (shares == 0) return;
     uint256 mirror = _mirrorDebt(_burnShares(shares, feeBps));
@@ -205,5 +185,33 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     assertEq(_capLeft(kind), _expectedCapLeft(kind, _capUnits(kind, cap), charge), "cap consumed");
     assertEq(positionManager.balanceOf(user), userShares - shares, "shares pulled");
     _assertFacilityClean();
+  }
+
+  /// @dev An exit just past the word's room reverts with the word's error. The cap is charged
+  ///      after burn, so the overshoot is funded and skipped when it exceeds the balance.
+  function _assertOvershootReverts(uint256 kind, uint128 cap, int24 multiplier, uint24 feeBps, uint256 userShares)
+    internal
+  {
+    uint256 overBurn = _overflowingDebt(kind, cap, multiplier).mulDivUp(_adjustedSupply(), positionManager.debtAmount());
+    uint256 over = overBurn.mulDivUp(BPS, BPS - feeBps) + 1;
+    if (over > userShares) return;
+    uint256 overMirror = _mirrorDebt(_burnShares(over, feeBps));
+    assertGt(_charge(kind, overMirror, multiplier), _capUnits(kind, cap), "overshoot");
+    _fundExit(user, over, _expectedPull(overMirror));
+    vm.prank(user);
+    if (kind == 0) {
+      vm.expectRevert(
+        abi.encodeWithSelector(
+          LibFacilityErrors.CapExceeded.selector, uint256(uint160(address(positionManager))), cap, overMirror
+        )
+      );
+    } else {
+      vm.expectRevert(
+        abi.encodeWithSelector(
+          kind == 3 ? IFacilityCaps.HardCapExceeded.selector : IFacilityCaps.InsufficientCap.selector, uint64(POOL_ID)
+        )
+      );
+    }
+    facility.exit(address(positionManager), over, type(uint256).max, 0, user, "");
   }
 }

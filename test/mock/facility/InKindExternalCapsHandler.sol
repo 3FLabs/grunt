@@ -120,6 +120,8 @@ contract InKindExternalCapsHandler is Test {
     uint256 required;
     bytes previewReason;
     bool exactBound;
+    // a callback repay lowers burn's pull below the mirror, so a cap the mirror overflows may fit
+    bool capMayFit;
     Expect expect;
     bytes expected;
     uint256 callsBefore;
@@ -623,7 +625,7 @@ contract InKindExternalCapsHandler is Test {
   }
 
   /// @dev Sets the caller's bounds for `lane` and predicts the outcome: the preview's revert, then
-  ///      maxDebtIn (checked before the cap), then the cap, then minUnderlyingOut.
+  ///      maxDebtIn, then minUnderlyingOut, then the cap (charged after burn).
   function _expectExit(ExitCtx memory ctx, uint256 lane) internal {
     if (!ctx.previewOk) {
       _setExpected(ctx, Expect.GATE, ctx.previewReason);
@@ -644,21 +646,23 @@ contract InKindExternalCapsHandler is Test {
       ctx.exactBound = true;
     }
     bytes memory capError = _exitCapError(ctx);
-    if (capError.length > 0) {
-      if (ctx.usesMax) maxExitLied = true;
-      _setExpected(ctx, Expect.CAP, capError);
-      return;
-    }
+    if (capError.length > 0 && ctx.usesMax) maxExitLied = true;
     if (lane == 13 && ctx.kind != KIND_REPAY) {
       ctx.minOut = ctx.previewOut + 1;
       bytes memory bound =
         abi.encodeWithSelector(IInKindFacility.InsufficientUnderlyingOut.selector, ctx.previewOut, ctx.previewOut + 1);
       _setExpected(ctx, Expect.BOUND, bound);
+      return;
+    }
+    if (capError.length > 0) {
+      _setExpected(ctx, Expect.CAP, capError);
+      ctx.capMayFit = ctx.kind == KIND_REPAY;
     }
   }
 
-  /// @dev The exit word absorbs the mirrored debt slice: a negative word credits its pools up to
-  ///      their hard caps (a dynamic cap ignores it), anything past the summed headroom reverts.
+  /// @dev The exit word absorbs the debt burn pulls, the mirrored slice outside a callback repay:
+  ///      a negative word credits its pools up to their hard caps (a dynamic cap ignores it),
+  ///      anything past the summed headroom reverts.
   function _exitCapError(ExitCtx memory ctx) internal view returns (bytes memory) {
     uint256 mirror = ctx.previewDebtIn;
     if (mirror == 0) return "";
@@ -722,7 +726,7 @@ contract InKindExternalCapsHandler is Test {
     if (ctx.kind == KIND_REPAY) exitRepaySuccesses++;
     if (ctx.exactBound) exitBoundedSuccesses++;
     if (ctx.usesMax) maxExitProbeSuccesses++;
-    if (ctx.expect != Expect.SUCCESS) _mismatch(ctx.expect, "");
+    if (ctx.expect != Expect.SUCCESS && !ctx.capMayFit) _mismatch(ctx.expect, "");
 
     // a repay inside the callback moves burn's figures (debt and PM fee shares), nothing else does
     if (ctx.kind != KIND_REPAY && (debtIn != ctx.previewDebtIn || out != ctx.previewOut)) previewDesync = true;
@@ -737,26 +741,31 @@ contract InKindExternalCapsHandler is Test {
       if (ctx.callback && exiter.lastDebtIn() != ctx.required) legBroken = true;
     }
 
-    // the exit word absorbs the mirrored debt, whatever burn then pulled
+    // the exit word absorbs the debt burn pulled
     Word memory word = exitModel[ctx.idx];
     uint256 kind = _wordKind(word);
     exitSuccessesByWord[kind]++;
     if (kind == WORD_ABSOLUTE) {
-      if (ctx.previewDebtIn > ghostExitWord[ctx.idx]) capMirrorBroken = true;
-      else ghostExitWord[ctx.idx] -= ctx.previewDebtIn;
+      if (debtIn > ghostExitWord[ctx.idx]) capMirrorBroken = true;
+      else ghostExitWord[ctx.idx] -= debtIn;
     } else if (kind == WORD_POOL_DEBIT) {
-      _ghostWalk(word.id, _consumption(ctx.previewDebtIn, word.multiplier));
+      _ghostWalk(word.id, _consumption(debtIn, word.multiplier));
     } else if (kind == WORD_DYNAMIC_DEBIT) {
-      _ghostDynamic(word.id, _consumption(ctx.previewDebtIn, word.multiplier));
+      _ghostDynamic(word.id, _consumption(debtIn, word.multiplier));
     } else if (kind == WORD_POOL_CREDIT) {
-      _ghostCredit(word.id, _release(ctx.previewDebtIn, word.multiplier));
+      _ghostCredit(word.id, _release(debtIn, word.multiplier));
     }
 
     if (ctx.expect == Expect.SUCCESS) _checkStayers(ctx.values);
   }
 
   function _onExitFailed(ExitCtx memory ctx, bytes memory reason) internal {
-    if (keccak256(reason) != keccak256(ctx.expected)) _mismatch(ctx.expect, reason);
+    // after a callback repay the cap reverts with the debt burn pulled, not the mirror
+    if (ctx.capMayFit) {
+      if (_selectorOf(reason) != _selectorOf(ctx.expected)) _mismatch(ctx.expect, reason);
+    } else if (keccak256(reason) != keccak256(ctx.expected)) {
+      _mismatch(ctx.expect, reason);
+    }
     if (ctx.expect == Expect.BOUND) exitSlippageReverts++;
     else if (_selectorOf(ctx.expected) == IFacilityCaps.HardCapExceeded.selector) exitHardCapFailures++;
     else if (ctx.expect == Expect.CAP) exitCapFailures++;

@@ -16,7 +16,7 @@ struct EntryOffer {
 }
 
 /// @dev Exit offer of a position manager. Enabled iff `block.timestamp < expiry`.
-/// @param cap LibCaps word consumed with the gross debt every exit repays.
+/// @param cap LibCaps word consumed with the debt every exit repays (what `PM.burn` pulled).
 /// @param expiry Timestamp the offer expires at (0 or past = disabled).
 /// @param feeBps Share of the pulled PM shares sent to the fee recipient, in basis points.
 struct ExitOffer {
@@ -320,10 +320,10 @@ interface IInKindFacility {
   ///         sends the fee shares to the recipient, unwraps and forwards the underlying to
   ///         `receiver`.
   /// @dev The debt pulled up front is burn's mirrored slice (post-accrual supply + virtual
-  ///      offset, rounded up) plus a small headroom, final before the callback; the exit cap is
-  ///      consumed with the mirrored slice. Bad debt is checked again after the callback. A pool
-  ///      that became unlevered stays exitable: a zero slice skips the cap and the pull (the
-  ///      callback still runs when `data` is non-empty).
+  ///      offset, rounded up) plus a small headroom; the exit cap is consumed after burn with
+  ///      the debt burn actually repaid, which the callback can move. Bad debt is checked again
+  ///      after the callback. A pool that became unlevered stays exitable: a zero slice skips
+  ///      the cap and the pull (the callback still runs when `data` is non-empty).
   /// @param positionManager The position manager to exit.
   /// @param shares The PM shares to pull (fee included).
   /// @param maxDebtIn The maximum debt to pull up front (headroom included).

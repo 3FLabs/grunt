@@ -192,16 +192,17 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _assertNoAllowances();
   }
 
-  function test_exit_capConsumesTheMirrorWhenBurnPullsMore() public {
+  function test_exit_capConsumesWhatBurnPullsWhenAboveTheMirror() public {
     _setExit(positionManager, EXIT_CAP, FAR_EXPIRY, DEFAULT_FEE_BPS);
     (uint256 shares,, uint256 mirror, uint256 pulled) = _enterAndDrift(5);
     assertGt(pulled, mirror, "burn pulls above the mirror");
     _fundExit(user, shares, _expectedPull(mirror));
 
     vm.prank(user);
-    facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
+    (, uint256 debtIn) = facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - mirror, "exit cap");
+    assertEq(debtIn, pulled, "burn's pull");
+    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - pulled, "exit cap");
   }
 
   function test_exit_revertsWhenBurnPullsAboveTheHeadroom() public {
@@ -237,7 +238,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
     assertEq(positionManager.debtAmount(), 0, "pool debt");
     assertEq(debtToken.balanceOf(address(r)), pull, "the whole pull is refunded");
-    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - mirror, "exit cap");
+    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP, "burn repaid nothing, so the cap is untouched");
     _assertFacilityClean();
     _assertNoAllowances();
   }

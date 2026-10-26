@@ -501,13 +501,16 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     (uint256 debtInMax,,,) = facility.previewExit(address(positionManager), max);
     assertLe(debtInMax, exitCap, "maxExit's debt slice fits the cap");
 
-    if (max < userShares) {
-      // Two debt units' worth of burnable shares, grossed up by the fee, plus one.
-      uint256 chunk = (supplyAdj.mulDiv(2, totalDebt) + 2).mulDiv(BPS, BPS - DEFAULT_FEE_BPS) + 1;
+    // Two debt units' worth of burnable shares, grossed up by the fee, plus one.
+    uint256 chunk = (supplyAdj.mulDiv(2, totalDebt) + 2).mulDiv(BPS, BPS - DEFAULT_FEE_BPS) + 1;
+    // the cap is charged after burn, so the overshoot must be fundable to reach it
+    if (max + chunk <= userShares) {
       uint256 over = max + chunk;
-      (uint256 overDebt,,,) = facility.previewExit(address(positionManager), over);
+      (uint256 overDebt,,, uint256 overRequired) = facility.previewExit(address(positionManager), over);
       assertGt(overDebt, exitCap, "the overshoot exceeds the cap");
+      debtToken.setBalance(user, overRequired);
       vm.startPrank(user);
+      debtToken.approve(address(facility), overRequired);
       positionManager.approve(address(facility), over);
       vm.expectRevert(_capError(address(positionManager), exitCap, overDebt));
       facility.exit(address(positionManager), over, type(uint256).max, 0, user, "");

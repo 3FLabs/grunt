@@ -418,18 +418,17 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (exit_.collateralAsset, exit_.debtAsset) = pm.assets();
     (exit_.burnShares, exit_.feeShares) = _splitExitShares(shares, offer.feeBps);
 
-    // Mirror of burn's debt math, final before the callback: nothing outside this transaction
-    // can interleave. The pull carries a headroom so a burn that drifts above the mirror still
-    // settles; the unused part is refunded.
-    uint256 debt = pm.exitDebt(exit_.burnShares);
-    exit_.debtRequired = LibInKindView.exitDebtRequired(debt);
+    // Mirror of burn's debt math. The callback can move it (a repay on behalf of a module grows
+    // burn's fee accrual), so the pull carries a headroom and the unused part is refunded.
+    exit_.debtRequired = LibInKindView.exitDebtRequired(pm.exitDebt(exit_.burnShares));
     if (exit_.debtRequired > maxDebtIn) revert ExcessiveDebtIn(exit_.debtRequired, maxDebtIn);
 
-    // the cap absorbs the mirrored debt before any token interaction (CEI); a pool that became
-    // unlevered stays exitable
-    if (debt > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debt, exit_.debtAsset);
-
     (underlyingOut, debtIn) = _burnAndUnwrap(exit_, data);
+
+    // the cap absorbs the debt burn repaid, not the mirror: a credit word must not credit debt
+    // the callback kept burn from repaying. Runs after the token moves, under nonReentrant and
+    // against a whitelisted caps contract; a pool that became unlevered stays exitable.
+    if (debtIn > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debtIn, exit_.debtAsset);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

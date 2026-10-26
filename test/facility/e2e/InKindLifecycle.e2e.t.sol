@@ -350,9 +350,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     vm.stopPrank();
     Balances memory b = _balances(who);
 
-    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
+    // the exit word is charged after burn, so the pool event follows Exited
     vm.expectEmit(true, true, true, true, address(facility));
     emit IInKindFacility.Exited(address(positionManager), who, who, f.out, f.debt, f.shares, f.feeShares);
+    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
     vm.prank(who);
     facility.exit(address(positionManager), shares, f.required, f.out, who, "");
 
@@ -374,11 +375,11 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     uint256 cash = venue.quote(f.out) - f.debt - flashFee;
     Balances memory b = _balances(who);
 
-    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
     vm.expectEmit(true, true, true, true, address(facility));
     emit IInKindFacility.Exited(
       address(positionManager), address(router), address(router), f.out, f.debt, f.shares, f.feeShares
     );
+    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
     vm.prank(who);
     router.exitToDebt(address(positionManager), shares, f.required, cash, who);
 

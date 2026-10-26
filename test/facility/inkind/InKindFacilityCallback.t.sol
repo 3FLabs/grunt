@@ -230,7 +230,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     assertEq(positionManager.balanceOf(address(facility)), 0, "facility holds no shares after the exit");
   }
 
-  function test_callback_exitCapConsumedBeforeCallback() public {
+  function test_callback_exitCapChargedAfterBurn() public {
     _setExit(positionManager, FINITE_EXIT_CAP, FAR_EXPIRY, DEFAULT_FEE_BPS);
     ViewReaderExiter r = _newViewReader();
     uint256 shares = _sharesFor(address(r));
@@ -241,8 +241,9 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
 
     (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, "x");
 
-    // The ABSOLUTE word is decremented by the gross debt before the callback runs (CEI).
-    assertEq(r.snapshot().exitCap, FINITE_EXIT_CAP - debtIn, "exit cap consumed inside the callback");
+    // The ABSOLUTE word is charged after burn with the debt burn repaid: the callback sees it
+    // untouched.
+    assertEq(r.snapshot().exitCap, FINITE_EXIT_CAP, "exit cap untouched inside the callback");
     assertEq(facility.getExit(address(positionManager)).cap, FINITE_EXIT_CAP - debtIn, "exit cap after");
   }
 
@@ -294,6 +295,23 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, abi.encode(repayAssets));
     assertEq(debtIn, pulled, "the exit reports what burn pulled");
     assertEq(debtToken.balanceOf(address(r)), required - pulled, "the refund is the pull minus burn's figure");
+  }
+
+  function test_callback_repayOnBehalfWithPerfFeeChargesTheCapWithBurnsPull() public {
+    _setPmFees(0, 1000);
+    _setExit(positionManager, FINITE_EXIT_CAP, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    RepayOnBehalfExiter r = _newRepayOnBehalf();
+    uint256 shares = _sharesFor(address(r));
+    (uint256 previewDebtIn,,, uint256 required) = facility.previewExit(address(positionManager), shares);
+    uint256 repayAssets = 1_000e6;
+    _fundDebt(address(r), required + repayAssets);
+
+    // The repay lifts NAV, so burn accrues fee shares and pulls below the mirror. The cap only
+    // absorbs what burn repaid: a credit word would otherwise credit debt nobody repaid.
+    (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, abi.encode(repayAssets));
+
+    assertLt(debtIn, previewDebtIn, "burn settled below the mirror");
+    assertEq(facility.getExit(address(positionManager)).cap, FINITE_EXIT_CAP - debtIn, "cap charged with burn's pull");
   }
 
   function _newSupplyCollateral() internal returns (SupplyCollateralExiter r) {
