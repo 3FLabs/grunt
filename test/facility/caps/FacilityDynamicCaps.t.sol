@@ -361,6 +361,36 @@ contract FacilityDynamicCapsTest is Test {
     assertLe(caps.remaining(ID), 8, "Consumption should round up against the cap");
   }
 
+  function test_consume_slowCurveLosesTheFlooredUnit() public {
+    // the auditor's case: 3 per 100s, consuming 1 leaves 2, the origin shift floors to 66s and
+    // the capacity rebuilt from it floors to 1, so one extra unit is gone, not 0.03
+    _setCap(3, 100, 0);
+    _consume(1, MULT_1X);
+    assertEq(_origin(), START - 66, "origin shift floored");
+    assertEq(caps.remaining(ID), 1, "capacity rebuilt rounding down");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, 2, MULT_1X);
+
+    // one second later the curve is back at 2
+    vm.warp(START + 1);
+    _consume(2, MULT_1X);
+  }
+
+  function testFuzz_consume_lossBelowOnePlusRecoveryRate(uint256 recovery, uint256 recoveryTime, uint256 amount)
+    public
+  {
+    recovery = bound(recovery, 1, type(uint64).max);
+    recoveryTime = bound(recoveryTime, 1, 365 days);
+    _setCap(uint128(recovery), uint64(recoveryTime), 0);
+    amount = bound(amount, 1, recovery);
+    _consume(amount, MULT_1X);
+    uint256 loss = recovery - amount - caps.remaining(ID);
+    // loss < 1 + recovery / recoveryTime
+    assertLt(loss * recoveryTime, recoveryTime + recovery, "loss bound");
+  }
+
   function test_consume_allPinsOriginToNow() public {
     _consume(RECOVERY, MULT_1X);
     assertEq(_origin(), START, "Origin should be now once empty");

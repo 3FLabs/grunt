@@ -17,8 +17,11 @@ import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 ///      word, withdrawals and reverted deposits on a negative one (LibCaps negates releases).
 ///
 ///      Known limitations:
-///      - `originTime` has one-second granularity and is rounded in favor of the cap, so each
-///        consumption may forfeit up to one second of recovery (recovery / recoveryTime).
+///      - `originTime` has one-second granularity and both the origin shift and the capacity
+///        rebuilt from it round down, in favor of the cap: each positive consume (and each
+///        adjustCap) forfeits strictly less than `1 + recovery / recoveryTime` raw units, up to
+///        one second of recovery plus one unit. On a slow curve the unit dominates, so a
+///        near-limit operation can revert InsufficientCap until the curve recovers.
 ///      - Capacity never exceeds `recovery`; there is no separate hard cap.
 ///      - Releases never give capacity back. On a positive word, anyone holding
 ///        recovery / multiplier of the deposit asset can therefore keep a cap drained by
