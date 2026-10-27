@@ -66,7 +66,9 @@ import {BPS} from "../../libs/Constants.sol";
 ///      any consumer able to credit its pools with a negative word. Prefer a dynamic security
 ///      word. For an asset whose quote can lag a known loss (credit tranches, NAV-reported
 ///      funds), set the security cap to zero and admit entrants through OPERATOR auths only.
-///      On a credit event, `pauseFor` then `setSecurityCap(asset, 0)`.
+///      On a credit event, `pauseFor`, then zero the security cap and revoke the outstanding
+///      auths: a zero cap does not stop an unexpired auth, and an auth says nothing about the
+///      collateral's solvency.
 ///
 ///      Known limitations:
 ///      - Entries need the pool's LTV at or below the PM's target `ltv`, as PM.deposit sizes
