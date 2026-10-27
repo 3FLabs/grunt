@@ -9,6 +9,7 @@ import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {WrappedAsset} from "src/funds/WrappedAsset.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
@@ -63,7 +64,13 @@ contract InKindFacilityEnterFuzzTest is InKindFacilityBaseTest {
   }
 
   function _deployStack(uint8 collateralDecimals, uint8 debtDecimals) internal returns (Stack memory st) {
-    st.underlying = new MockERC20("Underlying B", "UNDB", collateralDecimals);
+    return _deployStackOn(new MockERC20("Underlying B", "UNDB", collateralDecimals), debtDecimals);
+  }
+
+  /// @dev A fresh single-module stack wrapping `underlying` and borrowing a new debt token.
+  function _deployStackOn(MockERC20 underlying, uint8 debtDecimals) internal returns (Stack memory st) {
+    uint8 collateralDecimals = underlying.decimals();
+    st.underlying = underlying;
     st.debt = new MockERC20("Debt B", "DEBTB", debtDecimals);
     st.wrapper = WrappedAsset(LibClone.deployERC1967(address(new WrappedAsset())));
     st.wrapper.initialize(owner, address(0), address(st.underlying), "wUNDB", "Wrapped UNDB");
@@ -112,7 +119,7 @@ contract InKindFacilityEnterFuzzTest is InKindFacilityBaseTest {
     morpho.supply(params, liquidity, 0, address(this), "");
 
     vm.prank(operator);
-    facility.setSecurityCap(address(st.underlying), LibCaps.MAX_ABSOLUTE);
+    facility.setSecurityCap(address(st.underlying), address(st.debt), LibCaps.MAX_ABSOLUTE);
   }
 
   /// @dev Seeds 1_000 to 50_000 collateral units at a quoted LTV in [10%, MAX_LTV].
@@ -189,6 +196,43 @@ contract InKindFacilityEnterFuzzTest is InKindFacilityBaseTest {
   /// @notice DustEntry iff `floor(a * D / C) == 0`. Otherwise the entry borrows that debt and
   ///         mints within two units of the fair fraction, or the PM mints nothing on a fair
   ///         fraction below `(2 * S_adj + 1) / TA` and it reverts InsufficientSharesOut(0, 0).
+  function test_enter_securityBudgetsAreKeyedByDebtAsset() public {
+    // PM B wraps the base fixture's underlying but borrows an 18-decimal debt token
+    _seedPool(SEED_COLLATERAL, SEED_DEBT);
+    _openOffers();
+    _setSecurityCap(1_000e6);
+    _setAuth(user, 100e6, FAR_EXPIRY);
+    Stack memory b = _deployStackOn(underlyingToken, 18);
+    _setEntry(b.pm, LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    _seed(b, 10_000e18, 0.5e18);
+
+    // the USDC-sized budget and auth do not open PM B: its pair is unset, so closed
+    vm.prank(operator);
+    facility.setSecurityCap(address(underlyingToken), address(b.debt), 0);
+    uint256 amount = 100e18;
+    (uint256 debtB,,) = facility.previewEnter(address(b.pm), amount);
+    assertGt(debtB, 0, "levered");
+    _fundEntrant(user, amount);
+    vm.prank(user);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        LibFacilityErrors.CapExceeded.selector, uint256(uint160(address(underlyingToken))), 0, debtB
+      )
+    );
+    facility.enter(address(b.pm), amount, 0, type(uint256).max, 0, user);
+
+    // a budget on B's pair is spent in B's units and leaves the base pair untouched
+    vm.prank(operator);
+    facility.setSecurityCap(address(underlyingToken), address(b.debt), 1_000e18);
+    (, uint256 borrowed) = _enter(b.pm, user, amount, user);
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(b.debt)), 1_000e18 - borrowed, "B budget consumed"
+    );
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 1_000e6, "base budget untouched");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 100e6, "base auth untouched");
+    assertEq(facility.getAuth(address(underlyingToken), address(b.debt), user).amount, 0, "no auth on B's pair");
+  }
+
   function testFuzz_enter_dustEntryIffRatioDebtFloorsToZero(uint256[7] memory seeds, uint256 amount) public {
     Stack memory st = _leveredStack(seeds);
     uint256 totalCollateral = st.pm.collateralAmount();

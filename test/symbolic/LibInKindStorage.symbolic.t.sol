@@ -14,11 +14,11 @@ contract LibInKindStorageSymbolicHarness {
   address debtAsset = address(new MockERC20("Debt", "DEBT", 18));
 
   function setAuth(address asset, address user, uint128 amount, uint40 expiry) external {
-    LibInKindStorage.inKindStorage().auths[asset][user] = Auth(amount, expiry);
+    LibInKindStorage.inKindStorage().auths[asset][debtAsset][user] = Auth(amount, expiry);
   }
 
   function setSecurityCap(address asset, uint256 word) external {
-    LibInKindStorage.inKindStorage().securityCaps[asset] = word;
+    LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset] = word;
   }
 
   function consumeSecurity(address asset, address user, uint256 debt) external {
@@ -30,12 +30,12 @@ contract LibInKindStorageSymbolicHarness {
   }
 
   function auth(address asset, address user) external view returns (uint128, uint40) {
-    Auth memory a = LibInKindStorage.inKindStorage().auths[asset][user];
+    Auth memory a = LibInKindStorage.inKindStorage().auths[asset][debtAsset][user];
     return (a.amount, a.expiry);
   }
 
   function securityCap(address asset) external view returns (uint256) {
-    return LibInKindStorage.inKindStorage().securityCaps[asset];
+    return LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset];
   }
 }
 

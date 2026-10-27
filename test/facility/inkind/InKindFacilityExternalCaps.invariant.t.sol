@@ -350,13 +350,17 @@ contract InKindFacilityExternalCapsInvariantTest is InKindFacilityBaseTest {
       assertEq(facility.getEntry(address(pm)).capacityCap, handler.ghostEntryWord(i), "entry word != model");
       assertEq(facility.getExit(address(pm)).cap, handler.ghostExitWord(i), "exit word != model");
     }
-    assertEq(facility.getSecurityCap(address(underlyingToken)), handler.ghostSecurityWord(), "security word != model");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      handler.ghostSecurityWord(),
+      "security word != model"
+    );
   }
 
   function invariant_authsMatchTheModel() public view {
     address[] memory users = handler.getUsers();
     for (uint256 u = 0; u < users.length; u++) {
-      Auth memory auth = facility.getAuth(address(underlyingToken), users[u]);
+      Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), users[u]);
       Auth memory ghost = handler.ghostAuth(users[u]);
       assertEq(auth.amount, ghost.amount, "auth amount != model");
       assertEq(auth.expiry, ghost.expiry, "auth expiry != model");

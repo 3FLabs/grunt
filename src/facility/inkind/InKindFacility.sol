@@ -226,22 +226,24 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   }
 
   /// @inheritdoc IInKindFacility
-  function setSecurityCap(address asset, uint256 cap) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function setSecurityCap(address asset, address debtAsset, uint256 cap) external onlyOwnerOrRoles(OPERATOR_ROLE) {
     asset.checkNotZero();
+    debtAsset.checkNotZero();
     _validateConsumingWord(cap);
-    LibInKindStorage.inKindStorage().securityCaps[asset] = cap;
-    emit SecurityCapSet(asset, cap);
+    LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset] = cap;
+    emit SecurityCapSet(asset, debtAsset, cap);
   }
 
   /// @inheritdoc IInKindFacility
-  function setAuth(address asset, address user, uint128 amount, uint40 expiry)
+  function setAuth(address asset, address debtAsset, address user, uint128 amount, uint40 expiry)
     external
     onlyOwnerOrRoles(OPERATOR_ROLE)
   {
     asset.checkNotZero();
+    debtAsset.checkNotZero();
     user.checkNotZero();
-    LibInKindStorage.inKindStorage().auths[asset][user] = Auth({amount: amount, expiry: expiry});
-    emit AuthSet(asset, user, amount, expiry);
+    LibInKindStorage.inKindStorage().auths[asset][debtAsset][user] = Auth({amount: amount, expiry: expiry});
+    emit AuthSet(asset, debtAsset, user, amount, expiry);
   }
 
   /// @inheritdoc IInKindFacility
@@ -273,13 +275,13 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   }
 
   /// @inheritdoc IInKindFacility
-  function getSecurityCap(address asset) external view returns (uint256 cap) {
-    return LibInKindStorage.inKindStorage().securityCaps[asset];
+  function getSecurityCap(address asset, address debtAsset) external view returns (uint256 cap) {
+    return LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset];
   }
 
   /// @inheritdoc IInKindFacility
-  function getAuth(address asset, address user) external view returns (Auth memory auth) {
-    return LibInKindStorage.inKindStorage().auths[asset][user];
+  function getAuth(address asset, address debtAsset, address user) external view returns (Auth memory auth) {
+    return LibInKindStorage.inKindStorage().auths[asset][debtAsset][user];
   }
 
   /// @inheritdoc IInKindFacility

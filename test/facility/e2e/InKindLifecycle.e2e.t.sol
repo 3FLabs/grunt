@@ -98,8 +98,8 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     vm.stopPrank();
 
     vm.startPrank(operator);
-    facility.setSecurityCap(address(underlyingToken), _poolWord(SECURITY_POOL_ID, MULT_1X));
-    facility.setAuth(address(underlyingToken), alice, ALICE_AUTH, FAR_EXPIRY);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), _poolWord(SECURITY_POOL_ID, MULT_1X));
+    facility.setAuth(address(underlyingToken), address(debtToken), alice, ALICE_AUTH, FAR_EXPIRY);
     vm.stopPrank();
 
     lender = new MockFlashLender(debtToken, FLASH_FEE_BPS);
@@ -121,10 +121,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     Flow memory f = _prepareEntry(alice, 1_000e18);
     _expectPoolCharge(POOL_ID, f.debt, MULT_1X, CAPACITY - f.debt);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), alice, ALICE_AUTH, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), alice, ALICE_AUTH, 0);
     _expectPoolCharge(SECURITY_POOL_ID, f.debt - ALICE_AUTH, MULT_1X, SECURITY - (f.debt - ALICE_AUTH));
     _executeEntry(alice, f);
-    assertEq(facility.getAuth(address(underlyingToken), alice).amount, 0, "alice auth left");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), alice).amount, 0, "alice auth left");
     capacityConsumed += f.debt;
     uint256 securityLeft = SECURITY - (f.debt - ALICE_AUTH);
 
@@ -148,12 +148,12 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     // the operator auths carol for the shortfall: auth first, then the pool drains to zero
     uint128 carolAuth = uint128(f.debt - securityLeft);
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), carol, carolAuth, FAR_EXPIRY);
+    facility.setAuth(address(underlyingToken), address(debtToken), carol, carolAuth, FAR_EXPIRY);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), carol, carolAuth, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), carol, carolAuth, 0);
     _expectPoolCharge(SECURITY_POOL_ID, securityLeft, MULT_1X, 0);
     _executeEntry(carol, f);
-    assertEq(facility.getAuth(address(underlyingToken), carol).amount, 0, "carol auth left");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), carol).amount, 0, "carol auth left");
     capacityConsumed += f.debt;
 
     // interest, a NAV up-move and PM fees pending

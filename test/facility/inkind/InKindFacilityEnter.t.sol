@@ -291,7 +291,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
 
     vm.expectCall(address(absoluteCaps), abi.encodeWithSelector(IFacilityCaps.consume.selector), 0);
     _enterAmount(0);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, ARMED_CAP - debt, "auth");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, ARMED_CAP - debt, "auth");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

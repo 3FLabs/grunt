@@ -107,7 +107,7 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
 
     _enter(user, 1_000e18, receiver);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth");
     assertEq(_dynRemaining(SECURITY_RATE_ID), 1_000e6, "security");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 500e6, "capacity");
   }
@@ -127,8 +127,8 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
 
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP, "capacity");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 300e6, "auth");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), LibCaps.MAX_ABSOLUTE, "security");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 300e6, "auth");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), LibCaps.MAX_ABSOLUTE, "security");
     assertEq(underlyingToken.balanceOf(user), 1_000e18, "underlying");
   }
 
@@ -197,14 +197,14 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
 
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(dynamicCaps)));
-    facility.setSecurityCap(address(underlyingToken), securityWord);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), securityWord);
 
     (IntentProperties memory props,,,) = intents.getIntent(intentId);
     assertEq(props.depositCap, entryWord, "intent word");
     assertEq(facility.getEntry(address(positionManager)).capacityCap, entryWord, "entry word");
     assertEq(facility.getExit(address(positionManager)).cap, exitWord, "exit word");
     assertEq(facility.getExit(address(positionManager)).expiry, FAR_EXPIRY, "exit expiry");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), securityWord, "security word");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), securityWord, "security word");
 
     _depositIntent(intentId, depositor, 1_000e6);
     (uint256 shares,) = _enter(user, 1_000e18, user);

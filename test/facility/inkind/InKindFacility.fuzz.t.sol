@@ -418,11 +418,13 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, amount, user);
     uint256 fromAuth = authed.min(debt);
-    Auth memory auth = facility.getAuth(address(underlyingToken), user);
+    Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, authed - fromAuth, "the auth is consumed first");
     assertEq(auth.expiry, FAR_EXPIRY, "the auth expiry is untouched");
     assertEq(
-      facility.getSecurityCap(address(underlyingToken)), securityCap - (debt - fromAuth), "the remainder spills over"
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      securityCap - (debt - fromAuth),
+      "the remainder spills over"
     );
     assertEq(facility.getEntry(address(positionManager)).capacityCap, LibCaps.MAX_ABSOLUTE - debt, "capacity consumed");
 
@@ -430,9 +432,13 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     uint256 authLeft = authed - fromAuth;
     (, uint256 debt2) = _enter(user, amount, user);
     uint256 fromAuth2 = authLeft.min(debt2);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, authLeft - fromAuth2, "the auth keeps draining");
     assertEq(
-      facility.getSecurityCap(address(underlyingToken)),
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount,
+      authLeft - fromAuth2,
+      "the auth keeps draining"
+    );
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
       securityCap - (debt - fromAuth) - (debt2 - fromAuth2),
       "the security cap absorbs both spills"
     );

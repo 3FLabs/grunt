@@ -314,7 +314,7 @@ contract InKindExternalCapsHandler is Test {
       ghostExitWord[i] = facility.getExit(address(pms[i])).cap;
     }
     securityModel = config.securityWord;
-    ghostSecurityWord = facility.getSecurityCap(address(underlyingToken));
+    ghostSecurityWord = facility.getSecurityCap(address(underlyingToken), address(debtToken));
     for (uint16 p = POOL_1; p <= EXIT_POOL; p++) {
       (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(p);
       ghostPoolCap[p] = cap;
@@ -327,7 +327,7 @@ contract InKindExternalCapsHandler is Test {
       ghostOrigin[id] = origin;
     }
     for (uint256 u = 0; u < users.length; u++) {
-      ghostAuths[users[u]] = facility.getAuth(address(underlyingToken), users[u]);
+      ghostAuths[users[u]] = facility.getAuth(address(underlyingToken), address(debtToken), users[u]);
     }
   }
 
@@ -856,7 +856,7 @@ contract InKindExternalCapsHandler is Test {
       ? uint40(block.timestamp - _bound(expirySeed, 0, 1 days))
       : uint40(block.timestamp + _bound(expirySeed, 1 hours, 3 days));
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), who, amount, expiry);
+    facility.setAuth(address(underlyingToken), address(debtToken), who, amount, expiry);
     ghostAuths[who] = Auth({amount: amount, expiry: expiry});
     authRearms++;
   }
@@ -912,7 +912,7 @@ contract InKindExternalCapsHandler is Test {
     Word memory word = Word(address(dynamicCaps), SECURITY_DYN, _multiplier(multiplierSeed));
     uint256 encoded = _encode(word);
     vm.prank(operator);
-    facility.setSecurityCap(address(underlyingToken), encoded);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), encoded);
     ghostSecurityWord = encoded;
     securityModel = word;
     securityRearms++;

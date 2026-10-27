@@ -276,13 +276,13 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
     vm.expectEmit(true, true, false, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, 300e6, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), user, 300e6, 0);
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
     assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "PM entry");
 
     _enter(positionManager2, user, 1_000e18, receiver);
     assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 700e6, "PM2 entry");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 1_000e6, "capacity of both PMs");
   }
 

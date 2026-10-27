@@ -10,15 +10,15 @@ import {LibCommonErrors} from "../../common/LibCommonErrors.sol";
 /// @notice Storage struct containing all persistent state for the InKindFacility contract.
 /// @param entries Entry offer per position manager.
 /// @param exits Exit offer per position manager.
-/// @param securityCaps Security cap word per underlying asset.
-/// @param auths User auths per underlying asset.
+/// @param securityCaps Security cap word per underlying asset and debt asset.
+/// @param auths User auths per underlying asset and debt asset.
 /// @param feeRecipient Recipient of the share fees of both sides.
 /// @param pausedUntil Pause-until timestamp (see LibPause).
 struct InKindStorageData {
   mapping(address positionManager => EntryOffer) entries;
   mapping(address positionManager => ExitOffer) exits;
-  mapping(address asset => uint256) securityCaps;
-  mapping(address asset => mapping(address user => Auth)) auths;
+  mapping(address asset => mapping(address debtAsset => uint256)) securityCaps;
+  mapping(address asset => mapping(address debtAsset => mapping(address user => Auth))) auths;
   address feeRecipient;
   uint40 pausedUntil;
 }
@@ -100,44 +100,36 @@ library LibInKindStorage {
     return auth.amount;
   }
 
-  /// @dev Debt `user` can still borrow under its auth on `asset` right now (zero once expired).
-  ///      One word, loaded once.
-  function authAvailable(InKindStorageData storage self, address asset, address user)
-    internal
-    view
-    returns (uint256 amount)
-  {
-    return available(self.auths[asset][user]);
-  }
-
   /// @dev Debt of `debtAsset` `user` can borrow against `asset` right now: its auth plus what
-  ///      the asset's security cap can absorb, saturating at type(uint256).max.
+  ///      the security cap of the pair can absorb, saturating at type(uint256).max.
   function securityLimit(InKindStorageData storage self, address asset, address user, address debtAsset)
     internal
     view
     returns (uint256 limit)
   {
-    return authAvailable(self, asset, user).saturatingAdd(self.securityCaps[asset].available(debtAsset));
+    return available(self.auths[asset][debtAsset][user])
+      .saturatingAdd(self.securityCaps[asset][debtAsset].available(debtAsset));
   }
 
   /// @dev Consumes `debt` of `debtAsset` for a borrow of `user` against `asset`: the auth first,
-  ///      the remainder from the asset's security cap (reverting like LibCaps.consume when it
+  ///      the remainder from the pair's security cap (reverting like LibCaps.consume when it
   ///      cannot absorb it).
   function consumeSecurity(InKindStorageData storage self, address asset, address user, uint256 debt, address debtAsset)
     internal
   {
-    Auth memory auth = self.auths[asset][user];
+    Auth memory auth = self.auths[asset][debtAsset][user];
     uint256 fromAuth = available(auth).min(debt);
     if (fromAuth > 0) {
       // casting to 'uint128' is safe because fromAuth <= auth.amount, which is a uint128
       // forge-lint: disable-next-line(unsafe-typecast)
       uint128 remaining = uint128(auth.amount - fromAuth);
-      self.auths[asset][user].amount = remaining;
-      emit IInKindFacility.AuthConsumed(asset, user, fromAuth, remaining);
+      self.auths[asset][debtAsset][user].amount = remaining;
+      emit IInKindFacility.AuthConsumed(asset, debtAsset, user, fromAuth, remaining);
     }
     uint256 fromSecurity = debt - fromAuth;
     if (fromSecurity > 0) {
-      self.securityCaps[asset] = self.securityCaps[asset].consume(capId(asset), fromSecurity, debtAsset);
+      self.securityCaps[asset][debtAsset] =
+        self.securityCaps[asset][debtAsset].consume(capId(asset), fromSecurity, debtAsset);
     }
   }
 }

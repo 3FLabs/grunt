@@ -104,7 +104,9 @@ contract InKindFacilityInvariantTest is InKindFacilityBaseTest {
     assertEq(handler.enterSuccesses(), 1, "enter action did not go through");
     handler.act_enter(1, 500e18, 2, 1);
     assertEq(handler.enterSuccesses(), 2, "cross-receiver enter did not go through");
-    assertLt(facility.getAuth(address(underlyingToken), user0).amount, INITIAL_AUTH, "auth not consumed");
+    assertLt(
+      facility.getAuth(address(underlyingToken), address(debtToken), user0).amount, INITIAL_AUTH, "auth not consumed"
+    );
 
     // Entry at exactly the maxEnter quote must not fail on a cap.
     handler.act_enter(2, 0, 2, 0);
@@ -130,7 +132,7 @@ contract InKindFacilityInvariantTest is InKindFacilityBaseTest {
 
     // Cap branch: a zero security cap with no auth left for user1 refuses the entry.
     handler.act_setSecurityCap(1); // mode 1: zero
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 0, "security cap not closed");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 0, "security cap not closed");
     handler.act_enter(1, 100e18, 1, 1);
     assertEq(handler.enterCapFailures(), 1, "entry under a closed security cap should fail on the cap");
 
@@ -202,7 +204,7 @@ contract InKindFacilityInvariantTest is InKindFacilityBaseTest {
     assertFalse(handler.capMirrorBroken(), "INK-3: a word or auth diverged from its ghost after an op");
     uint256 capacity = facility.getEntry(address(positionManager)).capacityCap;
     uint256 exitCap = facility.getExit(address(positionManager)).cap;
-    uint256 security = facility.getSecurityCap(address(underlyingToken));
+    uint256 security = facility.getSecurityCap(address(underlyingToken), address(debtToken));
     assertEq(capacity >> LibCaps.TYPE_OFFSET, 0, "INK-3: capacity word not ABSOLUTE");
     assertEq(exitCap >> LibCaps.TYPE_OFFSET, 0, "INK-3: exit word not ABSOLUTE");
     assertEq(security >> LibCaps.TYPE_OFFSET, 0, "INK-3: security word not ABSOLUTE");
@@ -215,7 +217,7 @@ contract InKindFacilityInvariantTest is InKindFacilityBaseTest {
 
     address[] memory trackedUsers = handler.getUsers();
     for (uint256 u = 0; u < trackedUsers.length; u++) {
-      Auth memory auth = facility.getAuth(address(underlyingToken), trackedUsers[u]);
+      Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), trackedUsers[u]);
       Auth memory ghost = handler.ghostAuth(trackedUsers[u]);
       assertEq(auth.amount, ghost.amount, "INK-3: auth amount != ghost");
       assertEq(auth.expiry, ghost.expiry, "INK-3: auth expiry != ghost");
@@ -233,12 +235,14 @@ contract InKindFacilityInvariantTest is InKindFacilityBaseTest {
     );
     assertLe(facility.getExit(address(positionManager)).cap, handler.trackedExit(), "INK-4: exit cap above tracked");
     assertLe(
-      facility.getSecurityCap(address(underlyingToken)), handler.trackedSecurity(), "INK-4: security above tracked"
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      handler.trackedSecurity(),
+      "INK-4: security above tracked"
     );
     address[] memory trackedUsers = handler.getUsers();
     for (uint256 u = 0; u < trackedUsers.length; u++) {
       assertLe(
-        facility.getAuth(address(underlyingToken), trackedUsers[u]).amount,
+        facility.getAuth(address(underlyingToken), address(debtToken), trackedUsers[u]).amount,
         handler.trackedAuth(trackedUsers[u]),
         "INK-4: auth above tracked"
       );

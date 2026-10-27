@@ -485,19 +485,19 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _setAuth(user, 100e6, FAR_EXPIRY);
     (uint256 shares, uint256 debt) = _enter(user, ENTER_AMOUNT, user);
     assertEq(debt, 500e6, "debt");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth spent");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 600e6, "security spent");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth spent");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 600e6, "security spent");
 
     _exit(user, shares, user);
 
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth refunded");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 600e6, "security refunded");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth refunded");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 600e6, "security refunded");
 
     // a second round trip drains the lifetime budget further
     (shares, debt) = _enter(user, ENTER_AMOUNT, user);
     _exit(user, shares, user);
     uint256 left = 600e6 - debt;
-    assertEq(facility.getSecurityCap(address(underlyingToken)), left, "security after two loops");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), left, "security after two loops");
 
     uint256 nextDebt = ENTER_AMOUNT.mulDiv(positionManager.debtAmount(), positionManager.collateralAmount());
     assertGt(nextDebt, left, "fixture: the budget is gone");

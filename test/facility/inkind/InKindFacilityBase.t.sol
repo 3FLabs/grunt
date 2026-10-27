@@ -293,13 +293,13 @@ contract InKindFacilityBaseTest is Test {
   /// @dev Sets the security cap word of the underlying as the facilitator.
   function _setSecurityCap(uint256 cap) internal {
     vm.prank(operator);
-    facility.setSecurityCap(address(underlyingToken), cap);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), cap);
   }
 
   /// @dev Sets an auth on the underlying as the operator.
   function _setAuth(address who, uint128 amount, uint40 expiry) internal {
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), who, amount, expiry);
+    facility.setAuth(address(underlyingToken), address(debtToken), who, amount, expiry);
   }
 
   /// @dev Opens both sides of the default PM with an effectively unlimited ABSOLUTE cap and the
