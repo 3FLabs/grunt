@@ -116,6 +116,20 @@ import {BPS} from "../../libs/Constants.sol";
 ///        PM pays at settlement, both borne by the other holders. The facility does not read the
 ///        Retargetter, so nothing enforces it on-chain: close both offers before an ASYNC
 ///        operation starts and reopen them after it resolves.
+///
+///      Operations. Offers close with `expiry = 0` (owner or FACILITATOR), security caps and auths
+///      change through the owner or OPERATOR, and `pauseFor` (owner or COMPLIANCE) stops every PM,
+///      exits included. Zeroing caps is no substitute for closing an offer: auths and unlevered
+///      entries skip them.
+///      - ASYNC operation: close both offers before it starts, reopen once it resolves.
+///      - Collateral impairment: close the entry offer, zero the security cap and revoke the
+///        outstanding auths.
+///      - Delevering a PM to dust: close the entry offer first.
+///      - An excluded module carrying a loss the quote misses: close the exit offer.
+///      - Before reopening, check that the quote reflects the collateral, the PM is at or below
+///        its target LTV, the queued modules can repay and withdraw, both fee recipients pass
+///        their guards, the exit word has headroom and the caps manager has reconciled the
+///        pools, then simulate an entry and an exit.
 contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransient, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
