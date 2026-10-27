@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {MidasFund} from "src/funds/midas/MidasFund.sol";
 import {MidasFundFactory} from "src/funds/midas/MidasFundFactory.sol";
 import {BondConfig} from "src/interfaces/funds/midas/IMidasFund.sol";
@@ -148,7 +148,7 @@ contract MidasFundTest is Test {
     assertEq(fund.share(), address(wrappedShare), "share");
     assertEq(fund.mToken(), address(mGlobal), "mToken");
     assertEq(fund.depositVault(), address(depositVault), "deposit vault");
-    // No redemption vault at initialization: Midas deploys a dedicated one per redemption.
+    // No redemption vault at initialization: it is set via setRedemptionVault().
     assertEq(fund.redemptionVault(), address(0), "no redemption vault");
     assertEq(fund.activeRequestId(), 0, "active request id");
     assertEq(fund.referrerId(), bytes32(0), "referrer id");
@@ -291,24 +291,31 @@ contract MidasFundTest is Test {
     assertFalse(fund.instantRedeemUnlocked(), "redeem locked at create");
   }
 
-  function test_Create_ResetsRedemptionVault() public {
-    // A previously configured redemption vault is dropped on create: each redemption settles
-    // through a fresh vault set via setRedemptionVault() while the redeem is live.
+  function test_Create_KeepsRedemptionVault() public {
+    // The redemption vault is kept across orders: create() never touches it, so consecutive
+    // redeems settle through the same vault configured once.
+    _depositAndUnlock(2 * ONE_USDC);
     _setRedemptionVault();
-    assertEq(fund.redemptionVault(), address(redemptionVault), "vault set");
 
-    Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
-    vm.expectEmit(true, true, true, true);
-    emit RedemptionVaultUpdated(address(0), address(this));
-    fund.create(order);
-    assertEq(fund.redemptionVault(), address(0), "vault reset by create");
+    vm.recordLogs();
+    for (uint256 i; i < 2; ++i) {
+      Order memory order = _orderWithSalt(Mode.REDEEM, ONE_MTOKEN, ONE_USDC, keccak256(abi.encode("redeem", i)));
+      fund.create(order);
+      assertEq(fund.redemptionVault(), address(redemptionVault), "vault kept by redeem create");
+      _unlockInstantRedeem(order);
+      _commitRedeem(order);
+      fund.unlock(order);
+    }
+    assertEq(usdc.balanceOf(address(this)), 2 * ONE_USDC, "both redeems settled");
 
-    // Deposit creates reset it too.
-    fund.cancel(order);
-    _setRedemptionVault();
-    Order memory depositOrder = _depositOrder(ONE_USDC, ONE_MTOKEN);
-    fund.create(depositOrder);
-    assertEq(fund.redemptionVault(), address(0), "vault reset by deposit create");
+    // Deposit creates keep it too.
+    fund.create(_orderWithSalt(Mode.DEPOSIT, ONE_USDC, ONE_MTOKEN, keccak256("deposit")));
+    assertEq(fund.redemptionVault(), address(redemptionVault), "vault kept by deposit create");
+
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    for (uint256 i; i < logs.length; ++i) {
+      assertTrue(logs[i].topics[0] != RedemptionVaultUpdated.selector, "no vault update emitted");
+    }
   }
 
   function test_Create_RevertsAmountZero() public {
@@ -403,15 +410,15 @@ contract MidasFundTest is Test {
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.MidasVaultFunctionPaused.selector, SEL_DEPOSIT_REQUEST));
     fund.create(order);
 
-    // Redeem creates are not pre-checked (their vault does not exist yet): still accepted.
+    // Redeem creates are not pre-checked (the vault may change before the redeem leg): still accepted.
     Order memory redeemOrder = _redeemOrder(ONE_MTOKEN, ONE_USDC);
     State state = fund.create(redeemOrder);
     assertEq(uint256(state), uint256(State.ACCEPTED), "redeem accepted");
   }
 
   function test_Create_RedeemNotGatedOnRedemptionVault() public {
-    // Redeems cannot be pre-checked at create: their dedicated vault does not exist yet.
-    // Even a paused previously-configured vault does not block create (it is dropped anyway).
+    // Redeems are not pre-checked at create: the vault may change before their redeem leg.
+    // Even a paused configured vault does not block create (access is re-checked at commit).
     _setRedemptionVault();
     redemptionVault.setPaused(true);
     redemptionVault.setFnPaused(SEL_REDEEM_INSTANT, true);
@@ -419,7 +426,7 @@ contract MidasFundTest is Test {
     Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC);
     State state = fund.create(order);
     assertEq(uint256(state), uint256(State.ACCEPTED), "redeem accepted");
-    assertEq(fund.redemptionVault(), address(0), "stale vault dropped");
+    assertEq(fund.redemptionVault(), address(redemptionVault), "vault kept");
   }
 
   function test_Create_Greenlist_RevertsFundNotGreenlisted() public {
@@ -457,8 +464,8 @@ contract MidasFundTest is Test {
   }
 
   function test_Create_Redeem_OutputNotFeedValidated() public {
-    // Redeem outputs are not oracle-validated at create: the per-redemption vault (and its
-    // redemption-side pricing) does not exist yet. The output is the minimum payout enforced
+    // Redeem outputs are not oracle-validated at create: the redemption vault's pricing may
+    // differ from the external oracle. The output is the minimum payout enforced
     // on-chain by redeemInstant when the redeem leg commits.
     Order memory order = _redeemOrder(ONE_MTOKEN, ONE_USDC / 2);
     State state = fund.create(order);
@@ -739,7 +746,7 @@ contract MidasFundTest is Test {
     fund.create(order);
     _unlockInstantRedeem(order);
 
-    // create() reset the redemption vault and nobody configured this redemption's vault yet.
+    // No redemption vault was ever configured.
     wrappedShare.approve(address(fund), order.input);
     vm.expectRevert(abi.encodeWithSelector(CommonErrors.InvalidContract.selector, address(0)));
     fund.commit(order);
@@ -1767,8 +1774,8 @@ contract MidasFundTest is Test {
   }
 
   function test_SetRedemptionVault_BondPhaseRedeem_Succeeds() public {
-    // The Repay-and-Redeem flow: Midas deploys the dedicated redemption vault only once the
-    // bond is received, so the swap lands between the two legs.
+    // The vault may be swapped between the two legs: the redeem leg settles through the
+    // vault configured when it commits.
     Order memory order = _commitBondedRedeemOrder();
     uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
     uint256 redeemAmount = ONE_MTOKEN - bondAmount;
@@ -2040,7 +2047,7 @@ contract MidasFundTest is Test {
     _commitRedeem(order);
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "bond phase");
 
-    // Midas deploys the per-redemption vault; the fund is pointed at it and re-armed.
+    // The fund is pointed at the redemption vault and re-armed.
     _setRedemptionVault();
     _unlockInstantRedeem(order);
     assertEq(uint256(fund.state(order)), uint256(State.ACCEPTED), "re-accepted");
@@ -2064,7 +2071,7 @@ contract MidasFundTest is Test {
     _approveDepositRequest();
     fund.unlock(deposit1);
 
-    // Cycle 2: instant redeem (bond leg skipped, per-redemption vault set)
+    // Cycle 2: instant redeem (bond leg skipped, redemption vault set)
     Order memory redeem1 = _orderWithSalt(Mode.REDEEM, ONE_MTOKEN, ONE_USDC, keccak256("redeem1"));
     fund.create(redeem1);
     _unlockInstantRedeem(redeem1);
@@ -2532,7 +2539,7 @@ contract MidasFundTest is Test {
     uint256 bondAmount = ONE_MTOKEN * BOND_BPS / BPS;
     uint256 expectedProceeds = (ONE_MTOKEN - bondAmount) / ASSET_SCALE;
 
-    _setRedemptionVault(); // Midas deployed the per-redemption vault after the bond
+    _setRedemptionVault();
     _unlockInstantRedeem(order);
     _commitRedeem(order); // redeem leg
 
@@ -2956,8 +2963,7 @@ contract MidasFundTest is Test {
     fund.commit(order);
   }
 
-  /// @dev Sets the default mock redemption vault as the current redemption's vault (the
-  ///      stored vault is reset to address(0) on every create).
+  /// @dev Sets the default mock redemption vault (kept across orders).
   function _setRedemptionVault() internal {
     vm.prank(vaultManager);
     fund.setRedemptionVault(address(redemptionVault));
