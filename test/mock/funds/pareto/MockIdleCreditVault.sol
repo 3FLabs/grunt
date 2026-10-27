@@ -27,6 +27,10 @@ contract MockIdleCreditVault is IIdleCreditVault {
     return _epochNumber;
   }
 
+  function getApr() external pure returns (uint256) {
+    return 0;
+  }
+
   function totalClaimable(address account) external view returns (uint256) {
     return _withdrawRequests[account] + _apr0Amounts[account];
   }
