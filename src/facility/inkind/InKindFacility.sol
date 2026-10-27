@@ -126,10 +126,14 @@ import {BPS} from "../../libs/Constants.sol";
 ///        outstanding auths.
 ///      - Delevering a PM to dust: close the entry offer first.
 ///      - An excluded module carrying a loss the quote misses: close the exit offer.
-///      - Before reopening, check that the quote reflects the collateral, the PM is at or below
-///        its target LTV, the queued modules can repay and withdraw, both fee recipients pass
-///        their guards, the exit word has headroom and the caps manager has reconciled the
-///        pools, then simulate an entry and an exit.
+///      - A module, market or oracle change: close the entry offer until every module is checked
+///        again for one price feed and quote scale (matching spot answers are not enough); keep
+///        it closed if they differ.
+///      - Before reopening, check that the quote reflects the collateral, every module shares one
+///        price feed and quote scale, the PM is at or below its target LTV, the queued modules
+///        can repay and withdraw, both fee recipients pass their guards, the exit word has
+///        headroom and the caps manager has reconciled the pools, then simulate an entry and an
+///        exit.
 contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransient, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
