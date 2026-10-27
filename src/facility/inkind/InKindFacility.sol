@@ -72,12 +72,18 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - The ratio is read from the PM's views. The Morpho borrow position quotes accrued debt
 ///        (expected market balances); a module whose `totalBorrowed` lags the market would let
 ///        flows use a stale ratio. Only serve PMs whose modules quote accrued debt.
-///      - A module above its liquidation LTV but below 100% is not bad debt. An exit while the
-///        PM's withdrawal queue excludes that module leaves the penalty on stayers. Serve PMs
-///        whose withdrawal queue covers every module.
-///      - Exits burn PROPORTIONAL, touching every withdrawal-queue module, so each must repay and
-///        withdraw atomically. A module that cannot has to leave the withdrawal queue, at the
-///        cost above, and exits then need each remaining module at or below the target LTV.
+///      - Exits burn PROPORTIONAL through the withdrawal queue, so each queued module must repay
+///        and withdraw atomically. The queue need not cover every module: one that cannot (a
+///        term position) stays out. The exit still takes its fraction of the whole pool's debt
+///        and collateral, sourced from the queued modules, so at the quote stayers keep their
+///        equity per share and the pool its LTV. Only the mix moves: queued modules shrink at
+///        the pool ratio, levering up when the excluded modules are less levered, and burn
+///        reverts once a queued module could not release its slice at the target LTV or the
+///        slice exceeds the queued debt or collateral.
+///      - Value the quote misses on an excluded module stays with the stayers, since an exit
+///        leaves before it lands: a pending liquidation penalty (a module above its liquidation
+///        LTV but below 100% is not bad debt) or a discount on a term position. Close the exit
+///        offer while an excluded module carries such a loss.
 ///      - Exits do not refund the security cap: a dynamic one is throughput only and an ABSOLUTE
 ///        one a lifetime budget, so a looper drains it at the cost of two share fees plus
 ///        rounding per loop. Size the fees accordingly.
