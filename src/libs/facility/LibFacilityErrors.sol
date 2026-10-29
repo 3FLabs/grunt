@@ -77,6 +77,11 @@ library LibFacilityErrors {
   /// @param caps The caps contract.
   error CapsNotAllowed(address caps);
 
+  /// @notice Thrown when an EXTERNAL cap is charged in an asset with more than 18 decimals, or
+  ///         one that does not return its decimals.
+  /// @param asset The asset the amount is denominated in.
+  error UnsupportedDecimals(address asset);
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          ASSETS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

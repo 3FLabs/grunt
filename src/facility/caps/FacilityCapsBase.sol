@@ -56,7 +56,7 @@ abstract contract FacilityCapsBase is Initializable, OwnableRoles, IFacilityCaps
 
   /// @inheritdoc IFacilityCaps
   function validate(uint64 id, int24 multiplier) external view {
-    if (multiplier == type(int24).min) revert InvalidMultiplier();
+    if (multiplier == 0 || multiplier == type(int24).min) revert InvalidMultiplier();
     _validateId(id);
   }
 

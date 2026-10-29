@@ -10,11 +10,18 @@ import {FacilityDynamicCaps} from "src/facility/caps/FacilityDynamicCaps.sol";
 import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
 import {IFacilityCapsWhitelist} from "src/interfaces/facility/IFacilityCapsWhitelist.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
-/// @dev Exposes the library's internal functions.
+/// @dev Exposes the library's internal functions, with amounts in `asset` (18 decimals by default).
 contract LibCapsHarness {
+  address public asset = address(new MockERC20("Asset", "AST", 18));
+
+  function setAsset(address asset_) external {
+    asset = asset_;
+  }
+
   function available(uint256 word) external view returns (uint256) {
-    return LibCaps.available(word);
+    return LibCaps.available(word, asset);
   }
 
   function capType(uint256 word) external pure returns (CapType) {
@@ -40,11 +47,15 @@ contract LibCapsHarness {
   }
 
   function consume(uint256 word, uint256 capId, uint256 amount) external returns (uint256) {
-    return LibCaps.consume(word, capId, amount);
+    return LibCaps.consume(word, capId, amount, asset);
+  }
+
+  function consumeExternal(uint256 word, uint256 amount) external {
+    LibCaps.consumeExternal(word, amount, asset);
   }
 
   function release(uint256 word, uint256 amount) external {
-    LibCaps.release(word, amount);
+    LibCaps.release(word, amount, asset);
   }
 }
 
@@ -388,6 +399,74 @@ contract LibCapsTest is Test {
     assertEq(harness.available(wordNeg), 350e18, "releasable headroom (1000 - 300) / 2");
     uint256 wordZero = LibCaps.encodeExternal(address(absoluteCaps), ID, 0);
     assertEq(harness.available(wordZero), type(uint256).max, "zero multiplier is unbounded");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     18-DECIMAL SCALING                     */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_consume_externalScalesTo18Decimals() public {
+    harness.setAsset(address(new MockERC20("USD Coin", "USDC", 6)));
+    uint256 word = LibCaps.encodeExternal(address(recorder), ID, MULT_1X);
+
+    harness.consume(word, CAP_ID, 1e6);
+    _assertRecorded(1, ID, 1e18, MULT_1X);
+    harness.consumeExternal(word, 2e6);
+    _assertRecorded(2, ID, 2e18, MULT_1X);
+    harness.release(word, 3e6);
+    _assertRecorded(3, ID, 3e18, -MULT_1X);
+  }
+
+  function test_available_externalScalesBackRoundingDown() public {
+    harness.setAsset(address(new MockERC20("USD Coin", "USDC", 6)));
+    uint256 word = LibCaps.encodeExternal(address(recorder), ID, MULT_1X);
+
+    recorder.setAvailable(1e18 + 1e12 - 1);
+    assertEq(harness.available(word), 1e6, "rounds down to the asset unit");
+    recorder.setAvailable(type(uint256).max);
+    assertEq(harness.available(word), type(uint256).max, "unbounded stays unbounded");
+  }
+
+  function test_consume_absoluteNeverReadsDecimals() public {
+    harness.setAsset(codeless);
+    uint256 word = _shadowWord();
+    assertEq(harness.available(word), word, "available");
+    assertEq(harness.consume(word, CAP_ID, 1), word - 1, "consume");
+    harness.release(word, 1);
+  }
+
+  function test_consume_revertOnUnsupportedDecimals() public {
+    uint256 word = LibCaps.encodeExternal(address(recorder), ID, MULT_1X);
+    address[2] memory assets = [address(new MockERC20("Wide", "WIDE", 19)), codeless];
+    for (uint256 i = 0; i < assets.length; i++) {
+      harness.setAsset(assets[i]);
+      bytes memory err = abi.encodeWithSelector(LibFacilityErrors.UnsupportedDecimals.selector, assets[i]);
+      vm.expectRevert(err);
+      harness.consume(word, CAP_ID, 1);
+      vm.expectRevert(err);
+      harness.release(word, 1);
+      vm.expectRevert(err);
+      harness.available(word);
+    }
+  }
+
+  function test_consume_assetsOfDifferentDecimalsShareAPool() public {
+    vm.startPrank(owner);
+    absoluteCaps.grantRoles(address(harness), 1 << 1);
+    absoluteCaps.setCap(ID, 1_000e18, 1_000e18);
+    vm.stopPrank();
+    uint256 word = LibCaps.encodeExternal(address(absoluteCaps), ID, MULT_1X);
+
+    harness.setAsset(address(new MockERC20("USD Coin", "USDC", 6)));
+    harness.consume(word, CAP_ID, 400e6);
+    harness.setAsset(address(new MockERC20("Dai", "DAI", 18)));
+    harness.consume(word, CAP_ID, 500e18);
+
+    (uint128 cap,) = absoluteCaps.getCap(ID);
+    assertEq(cap, 100e18, "both charges in 18 decimals");
+    assertEq(harness.available(word), 100e18, "18-decimal quote");
+    harness.setAsset(address(new MockERC20("USD Coin", "USDC", 6)));
+    assertEq(harness.available(word), 100e6, "6-decimal quote");
   }
 
   function test_available_externalDynamicMirrorsPool() public {

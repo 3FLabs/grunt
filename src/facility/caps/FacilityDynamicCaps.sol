@@ -13,13 +13,17 @@ import {FacilityCapsBase} from "./FacilityCapsBase.sol";
 ///      `recovery` over `recoveryTime`, then flat at `recovery`. Consuming moves `originTime`
 ///      forward so the line passes through the remaining capacity now: a cap of 1m per 24h
 ///      with 500k consumed has its origin 12h in the past. Zero and negative multipliers do
-///      nothing, so the cap limits deposit throughput, not outstanding deposits.
+///      nothing, so the cap limits throughput, not outstanding amounts: deposits on a positive
+///      word, withdrawals and reverted deposits on a negative one (LibCaps negates releases).
 ///
 ///      Known limitations:
-///      - `originTime` has one-second granularity and is rounded in favor of the cap, so each
-///        consumption may forfeit up to one second of recovery (recovery / recoveryTime).
+///      - `originTime` has one-second granularity and both the origin shift and the capacity
+///        rebuilt from it round down, in favor of the cap: each positive consume (and each
+///        adjustCap) forfeits strictly less than `1 + recovery / recoveryTime` raw units, up to
+///        one second of recovery plus one unit. On a slow curve the unit dominates, so a
+///        near-limit operation can revert InsufficientCap until the curve recovers.
 ///      - Capacity never exceeds `recovery`; there is no separate hard cap.
-///      - Withdrawals and reverted deposits do not give capacity back. Anyone holding
+///      - Releases never give capacity back. On a positive word, anyone holding
 ///        recovery / multiplier of the deposit asset can therefore keep a cap drained by
 ///        depositing and withdrawing every block, at gas cost only, unless the intents using
 ///        the cap restrict withdrawals.
@@ -60,7 +64,7 @@ contract FacilityDynamicCaps is FacilityCapsBase {
     uint128 recovery;
     /// @notice Seconds needed to recover from zero to `recovery` (non-zero once set).
     uint64 recoveryTime;
-    /// @notice Timestamp at which the capacity is zero. Only consume() and setCap() move it.
+    /// @notice Timestamp at which the capacity is zero. Only consume() and the setters move it.
     uint64 originTime;
   }
 
@@ -144,7 +148,8 @@ contract FacilityDynamicCaps is FacilityCapsBase {
   /// @notice Sets the curve of a cap.
   /// @dev Gated by the manager role. Reverts with InvalidRecoveryTime if recoveryTime is zero.
   ///      A zero recovery closes the cap, as does an unset ID. An origin in the future keeps the
-  ///      cap at zero until then.
+  ///      cap at zero until then. Overwrites consumption landing between reading the cap and
+  ///      this call, see adjustCap for updates on a live cap.
   /// @param id The cap ID.
   /// @param recovery The capacity recovered over `recoveryTime`, also the maximum capacity.
   /// @param recoveryTime The seconds needed to recover from zero to `recovery`.
@@ -154,6 +159,34 @@ contract FacilityDynamicCaps is FacilityCapsBase {
     onlyRoles(CAPS_MANAGER_ROLE)
   {
     if (recoveryTime == 0) revert InvalidRecoveryTime();
+    _storage().caps[id] = CapData(recovery, recoveryTime, originTime);
+    emit CapSet(id, recovery, recoveryTime, originTime);
+  }
+
+  /// @notice Changes the curve of a cap, keeping its remaining capacity.
+  /// @dev Gated by the manager role. Reverts with InvalidRecoveryTime if recoveryTime is zero.
+  ///      Moves the origin so the new curve passes through the current capacity (capped at the
+  ///      new recovery, rounded in favor of the cap), so consumption landing before this call is
+  ///      kept. An origin in the future is kept as is.
+  /// @param id The cap ID.
+  /// @param recovery The capacity recovered over `recoveryTime`, also the maximum capacity.
+  /// @param recoveryTime The seconds needed to recover from zero to `recovery`.
+  /// @return originTime The new origin.
+  function adjustCap(uint64 id, uint128 recovery, uint64 recoveryTime)
+    external
+    onlyRoles(CAPS_MANAGER_ROLE)
+    returns (uint64 originTime)
+  {
+    if (recoveryTime == 0) revert InvalidRecoveryTime();
+    CapData memory data = _storage().caps[id];
+    originTime = data.originTime;
+    if (block.timestamp > originTime) {
+      uint256 left = FixedPointMathLib.min(_remaining(data), recovery);
+      uint256 shift = left == 0 ? 0 : FixedPointMathLib.mulDiv(left, recoveryTime, recovery);
+      // casting to 'uint64' is safe because the result is at most block.timestamp
+      // forge-lint: disable-next-line(unsafe-typecast)
+      originTime = uint64(FixedPointMathLib.zeroFloorSub(block.timestamp, shift));
+    }
     _storage().caps[id] = CapData(recovery, recoveryTime, originTime);
     emit CapSet(id, recovery, recoveryTime, originTime);
   }

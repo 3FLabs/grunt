@@ -35,21 +35,26 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
   function test_sharedPool_depositAndEntryConsumeExactly() public {
     uint256 intentId = _createIntent(_poolWord(POOL_ID, MULT_1_5X));
     uint256 amount = 1_000e6 + 1;
+    // scaled to 18 decimals a 6-decimal amount is a multiple of 2^12: 1.5x charges it exactly
+    uint256 charge = _capsUnits(amount) * 3 / 2;
+    uint256 pool = _capsUnits(SHARED_POOL_CAP);
     _fundDepositor(depositor, amount);
     vm.prank(depositor);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    // 1.5x rounds up: 1_500e6 + 1.5 -> 1_500e6 + 2
-    emit IFacilityCaps.CapConsumed(POOL_ID, amount, MULT_1_5X, 1_500e6 + 2, SHARED_POOL_CAP - 1_500e6 - 2);
+    emit IFacilityCaps.CapConsumed(POOL_ID, _capsUnits(amount), MULT_1_5X, charge, uint128(pool - charge));
     intents.deposit(intentId, amount);
 
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, 500e6, MULT_1X, 500e6, SHARED_POOL_CAP - 2_000e6 - 2);
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, _capsUnits(500e6), MULT_1X, _capsUnits(500e6), uint128(pool - charge - _capsUnits(500e6))
+    );
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
 
     assertEq(debtToken.balanceOf(receiver), 500e6, "entry debt");
-    assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 2_000e6 - 2, "pool");
+    (uint128 cap,) = absoluteCaps.getCap(POOL_ID);
+    assertEq(cap, pool - charge - _capsUnits(500e6), "pool");
   }
 
   function test_sharedPool_withdrawAndRevertDepositReleaseOnlyTheIntentCharge() public {
@@ -57,22 +62,28 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     _depositIntent(intentId, depositor, 1_000e6 + 1);
     _depositIntent(intentId, depositor2, 2_000e6);
     _enter(user, 1_000e18, receiver);
-    uint128 afterFlows = SHARED_POOL_CAP - 5_000e6 - 2;
-    assertEq(_poolCap(POOL_ID), afterFlows, "after deposits and entry");
+    // 6-decimal amounts scale to multiples of 2^12, so the 1.5x charges are exact both ways
+    uint256 charge1 = _capsUnits(1_000e6 + 1) * 3 / 2;
+    uint256 charge2 = _capsUnits(3_000e6);
+    uint256 afterFlows = _capsUnits(SHARED_POOL_CAP - 500e6) - charge1 - charge2;
+    (uint128 cap,) = absoluteCaps.getCap(POOL_ID);
+    assertEq(cap, afterFlows, "after deposits and entry");
 
     vm.prank(depositor);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    // the release rounds down: 1_500e6 + 1.5 -> 1_500e6 + 1
-    emit IFacilityCaps.CapConsumed(POOL_ID, 1_000e6 + 1, -MULT_1_5X, 1_500e6 + 1, afterFlows + 1_500e6 + 1);
+    emit IFacilityCaps.CapConsumed(POOL_ID, _capsUnits(1_000e6 + 1), -MULT_1_5X, charge1, uint128(afterFlows + charge1));
     intents.withdraw(intentId, depositor, depositor, 1_000e6 + 1);
 
     vm.prank(compliance);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, 2_000e6, -MULT_1_5X, 3_000e6, afterFlows + 4_500e6 + 1);
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, _capsUnits(2_000e6), -MULT_1_5X, charge2, uint128(afterFlows + charge1 + charge2)
+    );
     intents.revertDeposit(intentId, depositor2, depositor2);
 
-    // the entry stays charged and the 1.5x round trip kept one unit
-    assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 500e6 - 1, "pool");
+    // the entry stays charged and the round trip gives back exactly what it took
+    (cap,) = absoluteCaps.getCap(POOL_ID);
+    assertEq(cap, _capsUnits(SHARED_POOL_CAP - 500e6), "pool");
   }
 
   function test_sharedPool_positiveExitWordConsumesTheMirroredDebt() public {
@@ -88,7 +99,9 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     _approveExit(positionManager, user, shares, 2 * debtIn);
     vm.prank(user);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, debtIn, MULT_1X, debtIn, uint128(beforeExit - debtIn));
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, _capsUnits(debtIn), MULT_1X, _capsUnits(debtIn), uint128(_capsUnits(beforeExit - debtIn))
+    );
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
     assertEq(_poolCap(POOL_ID), beforeExit - debtIn, "pool");
@@ -106,7 +119,9 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     _approveExit(positionManager, user, shares, 2 * debtIn);
     vm.prank(user);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, debtIn, MULT_NEG_1X, debtIn, uint128(debtIn));
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, _capsUnits(debtIn), MULT_NEG_1X, _capsUnits(debtIn), uint128(_capsUnits(debtIn))
+    );
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
     _fundDepositor(depositor2, debtIn + 1);
@@ -226,9 +241,11 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     _fundDepositor(depositor, 1_500e6);
     vm.prank(depositor);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(INTENT_POOL_ID, 1_500e6, MULT_1X, 1_000e6, 0);
+    emit IFacilityCaps.CapConsumed(INTENT_POOL_ID, _capsUnits(1_500e6), MULT_1X, _capsUnits(1_000e6), 0);
     vm.expectEmit(true, false, false, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, 1_500e6, MULT_1X, 500e6, 1_500e6);
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, _capsUnits(1_500e6), MULT_1X, _capsUnits(500e6), uint128(_capsUnits(1_500e6))
+    );
     intents.deposit(intentId, 1_500e6);
 
     _enter(user, 1_000e18, receiver);
@@ -259,20 +276,20 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
     vm.expectEmit(true, true, false, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, 300e6, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), user, 300e6, 0);
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "PM entry");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "PM entry");
 
     _enter(positionManager2, user, 1_000e18, receiver);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 700e6, "PM2 entry");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 700e6, "PM2 entry");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 1_000e6, "capacity of both PMs");
   }
 
   function test_rateSecurity_recoversOverTimeAndMaxEnterTracksIt() public {
     _useRateSecurity();
     _enter(user, 2_000e18, receiver);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 200e6, "after entry");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 200e6, "after entry");
     // keyed by the underlying: both PMs quote the same room at their own ratio
     assertEq(facility.maxEnter(address(positionManager), user), 400e18, "PM quote");
     assertEq(facility.maxEnter(address(positionManager2), user), 400e18, "PM2 quote");
@@ -283,7 +300,7 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     facility.enter(address(positionManager2), 401e18, 0, type(uint256).max, 0, receiver);
 
     vm.warp(block.timestamp + 6 hours);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 500e6, "after 6h");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 500e6, "after 6h");
     uint256 quote = facility.maxEnter(address(positionManager2), user);
     assertEq(
       quote, uint256(500e6).mulDiv(positionManager2.collateralAmount(), positionManager2.debtAmount()), "quote after 6h"
@@ -292,21 +309,21 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     uint256 debtBefore = debtToken.balanceOf(receiver);
     _enter(positionManager2, user, quote, receiver);
     assertEq(debtToken.balanceOf(receiver) - debtBefore, 500e6 - 1, "quoted debt");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 0, "after quoted entry");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 0, "after quoted entry");
 
     vm.warp(block.timestamp + 1 days);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), SECURITY_RECOVERY, "full recovery");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY, "full recovery");
   }
 
   function test_rateSecurity_negativeExitWordGivesNothingBack() public {
     _useRateSecurity();
     _setExit(positionManager, _rateWord(SECURITY_RATE_ID, MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     _enter(user, 1_000e18, user);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 700e6, "after entry");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 700e6, "after entry");
 
     _exit(user, positionManager.balanceOf(user), receiver);
     assertEq(positionManager.balanceOf(user), 0, "exited");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 700e6, "after exit");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 700e6, "after exit");
   }
 
   function test_rateCap_throughputSharedByIntentAndSecurityWord() public {
@@ -314,11 +331,11 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     uint256 intentId = _createIntent(_rateWord(SECURITY_RATE_ID, MULT_1X));
     _depositIntent(intentId, depositor, 400e6);
     _enter(user, 1_000e18, receiver);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 300e6, "after deposit and entry");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 300e6, "after deposit and entry");
 
     vm.prank(depositor);
     intents.withdraw(intentId, depositor, depositor, 400e6);
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 300e6, "withdrawals give nothing back");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 300e6, "withdrawals give nothing back");
 
     _fundDepositor(depositor2, 300e6 + 1);
     vm.prank(depositor2);

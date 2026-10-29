@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
 import {Auth} from "src/interfaces/facility/IInKindFacility.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
@@ -417,11 +418,13 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, amount, user);
     uint256 fromAuth = authed.min(debt);
-    Auth memory auth = facility.getAuth(address(underlyingToken), user);
+    Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, authed - fromAuth, "the auth is consumed first");
     assertEq(auth.expiry, FAR_EXPIRY, "the auth expiry is untouched");
     assertEq(
-      facility.getSecurityCap(address(underlyingToken)), securityCap - (debt - fromAuth), "the remainder spills over"
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      securityCap - (debt - fromAuth),
+      "the remainder spills over"
     );
     assertEq(facility.getEntry(address(positionManager)).capacityCap, LibCaps.MAX_ABSOLUTE - debt, "capacity consumed");
 
@@ -429,9 +432,13 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     uint256 authLeft = authed - fromAuth;
     (, uint256 debt2) = _enter(user, amount, user);
     uint256 fromAuth2 = authLeft.min(debt2);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, authLeft - fromAuth2, "the auth keeps draining");
     assertEq(
-      facility.getSecurityCap(address(underlyingToken)),
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount,
+      authLeft - fromAuth2,
+      "the auth keeps draining"
+    );
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
       securityCap - (debt - fromAuth) - (debt2 - fromAuth2),
       "the security cap absorbs both spills"
     );
@@ -495,19 +502,22 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     uint256 totalDebt = positionManager.debtAmount();
     assertEq(
       max,
-      exitCap.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS),
-      "maxExit is the cap's burnable slice grossed up by the fee"
+      LibInKindView.grossForNet(exitCap.mulDiv(supplyAdj, totalDebt), DEFAULT_FEE_BPS),
+      "maxExit is the largest gross burning the cap's burnable slice"
     );
     (uint256 debtInMax,,,) = facility.previewExit(address(positionManager), max);
     assertLe(debtInMax, exitCap, "maxExit's debt slice fits the cap");
 
-    if (max < userShares) {
-      // Two debt units' worth of burnable shares, grossed up by the fee, plus one.
-      uint256 chunk = (supplyAdj.mulDiv(2, totalDebt) + 2).mulDiv(BPS, BPS - DEFAULT_FEE_BPS) + 1;
+    // Two debt units' worth of burnable shares, grossed up by the fee, plus one.
+    uint256 chunk = (supplyAdj.mulDiv(2, totalDebt) + 2).mulDiv(BPS, BPS - DEFAULT_FEE_BPS) + 1;
+    // the cap is charged after burn, so the overshoot must be fundable to reach it
+    if (max + chunk <= userShares) {
       uint256 over = max + chunk;
-      (uint256 overDebt,,,) = facility.previewExit(address(positionManager), over);
+      (uint256 overDebt,,, uint256 overRequired) = facility.previewExit(address(positionManager), over);
       assertGt(overDebt, exitCap, "the overshoot exceeds the cap");
+      debtToken.setBalance(user, overRequired);
       vm.startPrank(user);
+      debtToken.approve(address(facility), overRequired);
       positionManager.approve(address(facility), over);
       vm.expectRevert(_capError(address(positionManager), exitCap, overDebt));
       facility.exit(address(positionManager), over, type(uint256).max, 0, user, "");

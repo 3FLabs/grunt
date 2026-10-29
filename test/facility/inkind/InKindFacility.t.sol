@@ -74,10 +74,10 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     return uint64(id1) | (uint64(id2) << 16) | (uint64(id3) << 32);
   }
 
-  /// @dev Sets an absolute pool as the caps manager (the owner).
+  /// @dev Sets an absolute pool in debt units as the caps manager (the owner).
   function _setAbsPoolAt(uint16 id, uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(id, cap, hardCap);
+    absoluteCaps.setCap(id, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
   /// @dev EXTERNAL word over a dynamic cap.
@@ -85,16 +85,16 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     return _externalWord(address(dynamicCaps), id, multiplier);
   }
 
-  /// @dev Sets the shared absolute pool as the caps manager (the owner).
+  /// @dev Sets the shared absolute pool in debt units as the caps manager (the owner).
   function _setAbsPool(uint128 cap, uint128 hardCap) internal {
-    vm.prank(owner);
-    absoluteCaps.setCap(POOL_ID, cap, hardCap);
+    _setAbsPoolAt(POOL_ID, cap, hardCap);
   }
 
-  /// @dev Sets a dynamic cap fully recovered right now: `recovery` over one day, origin a day ago.
+  /// @dev Sets a dynamic cap fully recovered right now: `recovery` debt units over one day,
+  ///      origin a day ago.
   function _setDynPoolFull(uint64 id, uint128 recovery) internal {
     vm.prank(owner);
-    dynamicCaps.setCap(id, recovery, uint64(1 days), uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), uint64(1 days), uint64(block.timestamp - 1 days));
   }
 
   /// @dev Dynamic cap origin rounding forfeits up to one second of recovery per consumption.
@@ -305,7 +305,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     uint256 amount = 1_000e18;
     uint256 nextDebt = _expectedDebt(amount);
-    uint256 securityBefore = facility.getSecurityCap(address(underlyingToken));
+    uint256 securityBefore = facility.getSecurityCap(address(underlyingToken), address(debtToken));
     uint256 supplyBefore = positionManager.totalSupply();
     _fundEntrant(user, amount);
     vm.prank(user);
@@ -317,7 +317,9 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // Nothing moved: the user keeps the underlying, the PM and the security cap are untouched.
     assertEq(underlyingToken.balanceOf(user), amount, "user underlying moved");
     assertEq(positionManager.totalSupply(), supplyBefore, "PM supply moved");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), securityBefore, "security cap moved");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), securityBefore, "security cap moved"
+    );
     assertEq(facility.getEntry(address(positionManager)).capacityCap, cap - 500e6, "capacity moved");
     _assertFacilityClean();
   }
@@ -328,8 +330,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setEntry(positionManager, word, FAR_EXPIRY, DEFAULT_FEE_BPS);
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    (uint128 poolCap,) = absoluteCaps.getCap(POOL_ID);
-    assertEq(poolCap, 600e6 - debt, "pool not decremented by the debt");
+    assertEq(_absCap(POOL_ID), 600e6 - debt, "pool not decremented by the debt");
     // The EXTERNAL word itself is stored unchanged.
     assertEq(facility.getEntry(address(positionManager)).capacityCap, word, "external word mutated");
     _assertFacilityClean();
@@ -342,10 +343,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
     assertGt(debt, 300e6, "debt should exceed the first pool");
-    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
-    (uint128 second,) = absoluteCaps.getCap(OTHER_POOL_ID);
-    assertEq(first, 0, "first pool not drained first");
-    assertEq(second, 1_000e6 - (debt - 300e6), "second pool did not take the rest");
+    assertEq(_absCap(POOL_ID), 0, "first pool not drained first");
+    assertEq(_absCap(OTHER_POOL_ID), 1_000e6 - (debt - 300e6), "second pool did not take the rest");
     _assertFacilityClean();
   }
 
@@ -360,8 +359,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     vm.prank(user);
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ids));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
-    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
-    assertEq(first, 100e6, "first pool moved on a reverted entry");
+    assertEq(_absCap(POOL_ID), 100e6, "first pool moved on a reverted entry");
   }
 
   function test_enter_externalDynamicWordConsumesAndExhausts() public {
@@ -369,7 +367,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setEntry(positionManager, _dynWord(POOL_ID, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertApproxEqAbs(dynamicCaps.remaining(POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic cap not consumed");
+    assertApproxEqAbs(_dynRemaining(POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic cap not consumed");
 
     uint256 amount = 1_000e18;
     _fundEntrant(user, amount);
@@ -512,9 +510,13 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_security_entryWithoutAuthConsumesSecurityCap() public {
     _setSecurityCap(1_000e6);
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6 - debt, "security cap not decremented");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      1_000e6 - debt,
+      "security cap not decremented"
+    );
     // No auth was involved.
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth touched");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth touched");
   }
 
   function test_security_zeroCapRevertsWithAssetId() public {
@@ -533,7 +535,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     fresh.initialize(owner, facilitator, feeRecipient);
     vm.prank(facilitator);
     fresh.setEntry(address(positionManager), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
-    assertEq(fresh.getSecurityCap(address(underlyingToken)), 0, "unset security cap");
+    assertEq(fresh.getSecurityCap(address(underlyingToken), address(debtToken)), 0, "unset security cap");
 
     uint256 amount = 1_000e18;
     uint256 debt = _expectedDebt(amount);
@@ -554,11 +556,11 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, debt, uint128(600e6 - debt));
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), user, debt, uint128(600e6 - debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
 
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6, "security cap touched");
-    Auth memory auth = facility.getAuth(address(underlyingToken), user);
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 1_000e6, "security cap touched");
+    Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, 600e6 - debt, "auth not decremented");
     assertEq(auth.expiry, FAR_EXPIRY, "auth expiry changed");
   }
@@ -573,12 +575,12 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _fundEntrant(user, amount);
     vm.prank(user);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, 200e6, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), user, 200e6, 0);
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
 
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth not drained");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth not drained");
     assertEq(
-      facility.getSecurityCap(address(underlyingToken)),
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
       1_000e6 - (debt - 200e6),
       "security cap took the wrong remainder"
     );
@@ -589,8 +591,12 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setSecurityCap(1_000e6);
     _setAuth(receiver, 600e6, FAR_EXPIRY);
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertEq(facility.getAuth(address(underlyingToken), receiver).amount, 600e6, "receiver auth consumed");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6 - debt, "security cap not consumed");
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), receiver).amount, 600e6, "receiver auth consumed"
+    );
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), 1_000e6 - debt, "security cap not consumed"
+    );
   }
 
   function test_security_expiredAuthIgnored() public {
@@ -599,8 +605,14 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     vm.warp(block.timestamp + 2 hours);
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6 - debt, "security cap did not take all");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 600e6, "expired auth consumed");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      1_000e6 - debt,
+      "security cap did not take all"
+    );
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 600e6, "expired auth consumed"
+    );
   }
 
   function test_security_authExpiryAtTimestampIsExpired() public {
@@ -608,41 +620,55 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // `block.timestamp < expiry` semantics: an auth expiring exactly now is already expired.
     _setAuth(user, 600e6, uint40(block.timestamp));
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6 - debt, "auth at expiry was used");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 600e6, "auth at expiry consumed");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), 1_000e6 - debt, "auth at expiry was used"
+    );
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 600e6, "auth at expiry consumed"
+    );
 
     // One second of validity is enough.
     _setAuth(user, 600e6, uint40(block.timestamp + 1));
     _enter(user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6 - debt, "security cap used over a live auth");
-    assertLt(facility.getAuth(address(underlyingToken), user).amount, 600e6, "live auth not consumed");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      1_000e6 - debt,
+      "security cap used over a live auth"
+    );
+    assertLt(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 600e6, "live auth not consumed"
+    );
   }
 
   function test_setAuth_overwrites() public {
     _setSecurityCap(1_000e6);
     _setAuth(user, 100e6, FAR_EXPIRY);
     _setAuth(user, 700e6, uint40(block.timestamp + 1 days));
-    Auth memory auth = facility.getAuth(address(underlyingToken), user);
+    Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, 700e6, "amount not overwritten");
     assertEq(auth.expiry, uint40(block.timestamp + 1 days), "expiry not overwritten");
 
     // Re-setting after a partial consumption overwrites the remaining amount too.
     _enter(user, 1_000e18, receiver);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 200e6, "auth partially consumed");
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 200e6, "auth partially consumed"
+    );
     _setAuth(user, 700e6, FAR_EXPIRY);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 700e6, "auth not re-armed");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 700e6, "auth not re-armed");
   }
 
   function test_setAuth_expiryZeroRevokes() public {
     _setSecurityCap(1_000e6);
     _setAuth(user, 600e6, FAR_EXPIRY);
     _setAuth(user, 0, 0);
-    Auth memory auth = facility.getAuth(address(underlyingToken), user);
+    Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, 0, "amount not cleared");
     assertEq(auth.expiry, 0, "expiry not cleared");
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 1_000e6 - debt, "revoked auth still used");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), 1_000e6 - debt, "revoked auth still used"
+    );
   }
 
   function test_security_capSharedAcrossPositionManagers() public {
@@ -651,9 +677,15 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setSecurityCap(2_000e6);
 
     (, uint256 debt1) = _enter(positionManager, user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 2_000e6 - debt1, "first PM did not consume");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), 2_000e6 - debt1, "first PM did not consume"
+    );
     (, uint256 debt2) = _enter(positionManager2, user, 1_000e18, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 2_000e6 - debt1 - debt2, "second PM did not consume");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      2_000e6 - debt1 - debt2,
+      "second PM did not consume"
+    );
     assertEq(positionManager2.balanceOf(receiver), positionManager2.balanceOf(receiver), "sanity");
     assertGt(positionManager2.balanceOf(receiver), 0, "PM2 shares");
     _assertFacilityClean();
@@ -665,7 +697,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
     assertApproxEqAbs(
-      dynamicCaps.remaining(SECURITY_POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic security cap not consumed"
+      _dynRemaining(SECURITY_POOL_ID), 600e6 - debt, _dynTolerance(600e6), "dynamic security cap not consumed"
     );
 
     uint256 amount = 1_000e18;
@@ -685,7 +717,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     vm.prank(user);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _pmId(positionManager), 100e6, debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 100e6, "security cap touched");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 100e6, "security cap touched");
     assertEq(facility.getEntry(address(positionManager)).capacityCap, 100e6, "capacity touched");
     assertEq(underlyingToken.balanceOf(user), amount, "tokens moved");
   }
@@ -702,7 +734,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapExceeded.selector, _assetId(), 100e6, debt));
     facility.enter(address(positionManager), amount, 0, type(uint256).max, 0, receiver);
     assertEq(facility.getEntry(address(positionManager)).capacityCap, 1_000e6, "capacity consumption not rolled back");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 100e6, "security cap touched");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 100e6, "security cap touched");
     assertEq(underlyingToken.balanceOf(user), amount, "tokens moved");
   }
 
@@ -835,12 +867,12 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     // Entry consumes the shared pool with the gross debt.
     (uint256 shares, uint256 debt) = _enter(user, 1_000e18, user);
-    (uint128 afterEnter,) = absoluteCaps.getCap(POOL_ID);
+    uint256 afterEnter = _absCap(POOL_ID);
     assertEq(afterEnter, 800e6 - debt, "entry did not consume the pool");
 
     // Exit releases debtIn back into the pool (negative multiplier).
     (, uint256 debtIn) = _exit(user, shares, receiver);
-    (uint128 afterExit,) = absoluteCaps.getCap(POOL_ID);
+    uint256 afterExit = _absCap(POOL_ID);
     assertEq(afterExit, afterEnter + debtIn, "exit did not release into the pool");
     // Round trips are lossy (two share fees plus rounding), so the pool lands just below start.
     assertLt(afterExit, 800e6, "round trip created capacity");
@@ -862,10 +894,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // The exit refills the asset pool up to its hard cap, then spills into the shared pool.
     (, uint256 debtIn) = _exit(user, shares, receiver);
     assertGt(debtIn, 300e6, "exit should reach the shared pool");
-    (uint128 first,) = absoluteCaps.getCap(POOL_ID);
-    (uint128 second,) = absoluteCaps.getCap(OTHER_POOL_ID);
-    assertEq(first, 300e6, "asset pool not refilled first");
-    assertEq(second, sharedAfterEnter + (debtIn - 300e6), "shared pool did not take the rest");
+    assertEq(_absCap(POOL_ID), 300e6, "asset pool not refilled first");
+    assertEq(_absCap(OTHER_POOL_ID), sharedAfterEnter + (debtIn - 300e6), "shared pool did not take the rest");
     _assertFacilityClean();
   }
 
@@ -1112,8 +1142,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertGt(shares, 0, "no shares minted");
     assertEq(debt, 0, "unlevered entry borrowed");
     assertEq(facility.getEntry(address(positionManager)).capacityCap, 0, "capacity word moved");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 0, "security word moved");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth moved");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 0, "security word moved");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth moved");
   }
 
   function test_unlevered_dustEntryStillRevertsInALeveredPool() public {
@@ -1302,43 +1332,43 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_setSecurityCap_roleMatrix() public {
     vm.prank(owner);
-    facility.setSecurityCap(address(underlyingToken), 1e6);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), 1e6);
     vm.prank(operator);
-    facility.setSecurityCap(address(underlyingToken), 2e6);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 2e6, "cap stored");
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), 2e6);
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 2e6, "cap stored");
 
     address[3] memory rejected = [facilitator, compliance, user];
     for (uint256 i = 0; i < rejected.length; ++i) {
       vm.prank(rejected[i]);
       vm.expectRevert(Ownable.Unauthorized.selector);
-      facility.setSecurityCap(address(underlyingToken), 3e6);
+      facility.setSecurityCap(address(underlyingToken), address(debtToken), 3e6);
     }
 
     vm.prank(operator);
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
-    facility.setSecurityCap(address(0), 1e6);
+    facility.setSecurityCap(address(0), address(debtToken), 1e6);
   }
 
   function test_setAuth_roleMatrix() public {
     vm.prank(owner);
-    facility.setAuth(address(underlyingToken), user, 1e6, FAR_EXPIRY);
+    facility.setAuth(address(underlyingToken), address(debtToken), user, 1e6, FAR_EXPIRY);
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), user, 2e6, FAR_EXPIRY);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 2e6, "auth stored");
+    facility.setAuth(address(underlyingToken), address(debtToken), user, 2e6, FAR_EXPIRY);
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 2e6, "auth stored");
 
     address[3] memory rejected = [facilitator, compliance, user];
     for (uint256 i = 0; i < rejected.length; ++i) {
       vm.prank(rejected[i]);
       vm.expectRevert(Ownable.Unauthorized.selector);
-      facility.setAuth(address(underlyingToken), user, 3e6, FAR_EXPIRY);
+      facility.setAuth(address(underlyingToken), address(debtToken), user, 3e6, FAR_EXPIRY);
     }
 
     vm.prank(operator);
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
-    facility.setAuth(address(0), user, 1e6, FAR_EXPIRY);
+    facility.setAuth(address(0), address(debtToken), user, 1e6, FAR_EXPIRY);
     vm.prank(operator);
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
-    facility.setAuth(address(underlyingToken), address(0), 1e6, FAR_EXPIRY);
+    facility.setAuth(address(underlyingToken), address(debtToken), address(0), 1e6, FAR_EXPIRY);
   }
 
   function test_pauseFor_roleMatrix() public {
@@ -1476,7 +1506,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
       facility.setExit(address(positionManager), words[i], FAR_EXPIRY, DEFAULT_FEE_BPS);
       vm.prank(operator);
       vm.expectRevert(errors[i]);
-      facility.setSecurityCap(address(underlyingToken), words[i]);
+      facility.setSecurityCap(address(underlyingToken), address(debtToken), words[i]);
       // Validation is unconditional: a disabled offer (expiry 0) is rejected too.
       vm.prank(facilitator);
       vm.expectRevert(errors[i]);
@@ -1492,18 +1522,18 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setSecurityCap(_dynWord(SECURITY_POOL_ID, MULT_1X));
     assertEq(facility.getEntry(address(positionManager)).capacityCap, _absWord(MULT_1X), "entry word");
     assertEq(facility.getExit(address(positionManager)).cap, _dynWord(POOL_ID, MULT_1X), "exit word");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), _dynWord(SECURITY_POOL_ID, MULT_1X), "security word");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)),
+      _dynWord(SECURITY_POOL_ID, MULT_1X),
+      "security word"
+    );
   }
 
   function test_setEntryAndSecurityCap_rejectNonConsumingWords() public {
-    // A zero or negative multiplier consumes nothing: no cap at all on the entry side.
-    uint256 zeroWord = _dynWord(POOL_ID, 0);
+    // A negative multiplier consumes nothing on the entry side.
     uint256 negWord = _dynWord(POOL_ID, MULT_NEG_1X);
     uint256 negAbsWord = _absWord(MULT_NEG_1X);
 
-    vm.prank(facilitator);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
-    facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
     facility.setEntry(address(positionManager), negWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
@@ -1512,22 +1542,36 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.setEntry(address(positionManager), negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
 
     vm.prank(operator);
-    vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, zeroWord));
-    facility.setSecurityCap(address(underlyingToken), zeroWord);
-    vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negWord));
-    facility.setSecurityCap(address(underlyingToken), negWord);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), negWord);
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, negAbsWord));
-    facility.setSecurityCap(address(underlyingToken), negAbsWord);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), negAbsWord);
 
     // The exit side accepts any multiplier: negative is the netting case.
     _setExit(positionManager, negWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
     assertEq(facility.getExit(address(positionManager)).cap, negWord, "negative exit word rejected");
     _setExit(positionManager, negAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
     assertEq(facility.getExit(address(positionManager)).cap, negAbsWord, "negative absolute exit word rejected");
-    _setExit(positionManager, zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
-    assertEq(facility.getExit(address(positionManager)).cap, zeroWord, "zero exit word rejected");
+  }
+
+  function test_setOffersAndSecurityCap_rejectZeroMultiplier() public {
+    // A zero multiplier caps nothing, so the caps contracts reject it on every word.
+    uint256 zeroWord = _dynWord(POOL_ID, 0);
+    uint256 zeroAbsWord = _absWord(0);
+
+    vm.startPrank(facilitator);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setEntry(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS, false);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setExit(address(positionManager), zeroWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setExit(address(positionManager), zeroAbsWord, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    vm.stopPrank();
+
+    vm.prank(operator);
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), zeroAbsWord);
   }
 
   function test_setEntry_rearmOverwritesRemainingCapacity() public {
@@ -1546,11 +1590,13 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     (uint256 shares,) = _enter(user, 1_000e18, user);
     (, uint256 debtIn) = _exit(user, shares, receiver);
     assertEq(facility.getExit(address(positionManager)).cap, cap - debtIn, "exit cap consumed");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), cap - 500e6, "security cap consumed");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), cap - 500e6, "security cap consumed"
+    );
     _setExit(positionManager, cap, FAR_EXPIRY, DEFAULT_FEE_BPS);
     _setSecurityCap(cap);
     assertEq(facility.getExit(address(positionManager)).cap, cap, "exit cap re-armed");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), cap, "security cap re-armed");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), cap, "security cap re-armed");
   }
 
   function test_setters_emitEvents() public {
@@ -1568,13 +1614,13 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     vm.prank(operator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.SecurityCapSet(address(underlyingToken), 789e6);
-    facility.setSecurityCap(address(underlyingToken), 789e6);
+    emit IInKindFacility.SecurityCapSet(address(underlyingToken), address(debtToken), 789e6);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), 789e6);
 
     vm.prank(operator);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthSet(address(underlyingToken), user, 11e6, expiry);
-    facility.setAuth(address(underlyingToken), user, 11e6, expiry);
+    emit IInKindFacility.AuthSet(address(underlyingToken), address(debtToken), user, 11e6, expiry);
+    facility.setAuth(address(underlyingToken), address(debtToken), user, 11e6, expiry);
 
     address newRecipient = makeAddr("newRecipient");
     vm.prank(owner);
@@ -1604,8 +1650,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(unsetExit.cap, 0, "unset exit cap");
     assertEq(unsetExit.expiry, 0, "unset exit expiry");
     assertEq(unsetExit.feeBps, 0, "unset exit fee");
-    assertEq(facility.getSecurityCap(address(debtToken)), 0, "unset security cap");
-    Auth memory unsetAuth = facility.getAuth(address(underlyingToken), user);
+    assertEq(facility.getSecurityCap(address(debtToken), address(debtToken)), 0, "unset security cap");
+    Auth memory unsetAuth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(unsetAuth.amount, 0, "unset auth amount");
     assertEq(unsetAuth.expiry, 0, "unset auth expiry");
 
@@ -1615,7 +1661,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setExit(positionManager2, 456e6, expiry + 1, 43);
     _setAuth(user, 11e6, expiry + 2);
     vm.prank(operator);
-    facility.setSecurityCap(address(debtToken), 789e6);
+    facility.setSecurityCap(address(debtToken), address(debtToken), 789e6);
 
     EntryOffer memory entry = facility.getEntry(address(positionManager2));
     assertEq(entry.capacityCap, 123e6, "entry cap stored");
@@ -1625,8 +1671,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(exitOffer.cap, 456e6, "exit cap stored");
     assertEq(exitOffer.expiry, expiry + 1, "exit expiry stored");
     assertEq(exitOffer.feeBps, 43, "exit fee stored");
-    assertEq(facility.getSecurityCap(address(debtToken)), 789e6, "security cap stored");
-    Auth memory auth = facility.getAuth(address(underlyingToken), user);
+    assertEq(facility.getSecurityCap(address(debtToken), address(debtToken)), 789e6, "security cap stored");
+    Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, 11e6, "auth amount stored");
     assertEq(auth.expiry, expiry + 2, "auth expiry stored");
 
@@ -1783,12 +1829,20 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     uint256 snap = vm.snapshotState();
     (, uint256 debt) = _enter(user, max, receiver);
     assertEq(debt, 700e6, "max entry did not fill auth + security");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth not drained");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 0, "security cap not drained");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth not drained");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 0, "security cap not drained");
     vm.revertToState(snap);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 300e6, "auth not restored by the snapshot revert");
-    assertEq(facility.getAuth(address(underlyingToken), user).expiry, FAR_EXPIRY, "auth expiry not restored");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 400e6, "security cap not restored");
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount,
+      300e6,
+      "auth not restored by the snapshot revert"
+    );
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).expiry,
+      FAR_EXPIRY,
+      "auth expiry not restored"
+    );
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 400e6, "security cap not restored");
 
     uint256 over = max + 1e18;
     // Computed before the prank: an external call would consume it.
@@ -1979,12 +2033,15 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     _setSecurityCap(789e6);
     _setAuth(user, 11e6, expiry);
 
-    // securityCaps[asset] at keccak256(asset . slot+2).
-    bytes32 securitySlot = keccak256(abi.encode(address(underlyingToken), uint256(IN_KIND_STORAGE_SLOT) + 2));
+    // securityCaps[asset][debtAsset] at keccak256(debtAsset . keccak256(asset . slot+2)).
+    bytes32 securityInner = keccak256(abi.encode(address(underlyingToken), uint256(IN_KIND_STORAGE_SLOT) + 2));
+    bytes32 securitySlot = keccak256(abi.encode(address(debtToken), securityInner));
     assertEq(uint256(vm.load(address(facility), securitySlot)), 789e6, "security cap word");
 
-    // auths[asset][user] at keccak256(user . keccak256(asset . slot+3)): amount | expiry << 128.
-    bytes32 authInner = keccak256(abi.encode(address(underlyingToken), uint256(IN_KIND_STORAGE_SLOT) + 3));
+    // auths[asset][debtAsset][user] at keccak256(user . keccak256(debtAsset . keccak256(asset .
+    // slot+3))): amount | expiry << 128.
+    bytes32 authOuter = keccak256(abi.encode(address(underlyingToken), uint256(IN_KIND_STORAGE_SLOT) + 3));
+    bytes32 authInner = keccak256(abi.encode(address(debtToken), authOuter));
     bytes32 authSlot = keccak256(abi.encode(user, authInner));
     uint256 authWord = uint256(vm.load(address(facility), authSlot));
     assertEq(uint128(authWord), 11e6, "auth amount at bits 0..127");

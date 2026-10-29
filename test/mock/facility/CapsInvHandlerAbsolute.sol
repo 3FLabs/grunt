@@ -26,7 +26,8 @@ contract CapsInvHandlerAbsolute is Test {
   /// @dev consumers[0] keeps the consumer role, the others are granted and revoked.
   address[3] public consumers;
 
-  mapping(uint16 => uint128) public ghostCap;
+  /// @dev Outstanding consumption, above the hard cap after a shrink past the remaining cap.
+  mapping(uint16 => uint128) public ghostConsumed;
   mapping(uint16 => uint128) public ghostHardCap;
   mapping(address => bool) public ghostConsumer;
 
@@ -54,7 +55,8 @@ contract CapsInvHandlerAbsolute is Test {
     stranger = _stranger;
     consumers = _consumers;
     for (uint16 pool = 0; pool <= POOLS; pool++) {
-      (ghostCap[pool], ghostHardCap[pool]) = _caps.getCap(pool);
+      (uint128 cap, uint128 hardCap) = _caps.getCap(pool);
+      (ghostConsumed[pool], ghostHardCap[pool]) = (hardCap - cap, hardCap);
     }
     for (uint256 i = 0; i < 3; i++) {
       ghostConsumer[_consumers[i]] = _caps.hasAnyRole(_consumers[i], CONSUMER_ROLE);
@@ -108,25 +110,26 @@ contract CapsInvHandlerAbsolute is Test {
     vm.recordLogs();
     vm.prank(manager);
     try caps.setCap(pool, cap, hardCap) {
-      _checkCapSet(pool, cap, hardCap, expected);
+      _checkCapSet(pool, cap, hardCap, hardCap - cap, expected);
     } catch (bytes memory reason) {
       _checkAdminError(reason, expected);
     }
   }
 
+  /// @dev adjustCap moves the hard cap by `delta` (stopping at zero) and keeps the consumption.
   function act_adjustCap(uint256 poolSeed, int256 delta) external {
     uint16 pool = _pool(poolSeed);
-    uint128 cap = ghostCap[pool];
+    uint128 consumed = ghostConsumed[pool];
     uint128 hardCap = ghostHardCap[pool];
     uint256 mode = (poolSeed >> 3) % 4;
     if (mode == 1) delta = bound(delta, -2 * int256(TYPICAL), 2 * int256(TYPICAL));
     else if (mode == 2) delta = int256(uint256(type(uint128).max - hardCap)) + (delta & 1);
-    else if (mode == 3) delta = -int256(uint256(cap)) - (delta & 1);
+    else if (mode == 3) delta = -int256(uint256(_capOf(pool))) - (delta & 1);
 
-    uint256 target;
-    if (delta < 0) target = FixedPointMathLib.zeroFloorSub(cap, uint256(-(delta + 1)) + 1);
-    else target = cap + uint256(delta);
-    uint256 newHardCap = target + (hardCap - cap);
+    uint256 newHardCap;
+    if (delta < 0) newHardCap = FixedPointMathLib.zeroFloorSub(hardCap, uint256(-(delta + 1)) + 1);
+    else newHardCap = hardCap + uint256(delta);
+    uint256 target = FixedPointMathLib.zeroFloorSub(newHardCap, consumed);
     bytes memory expected;
     if (pool == 0) expected = abi.encodeWithSelector(FacilityAbsoluteCaps.InvalidCapId.selector);
     else if (newHardCap > type(uint128).max) expected = abi.encodeWithSelector(SafeCastLib.Overflow.selector);
@@ -135,7 +138,7 @@ contract CapsInvHandlerAbsolute is Test {
     vm.prank(manager);
     try caps.adjustCap(pool, delta) returns (uint128 newCap, uint128 returnedHardCap) {
       if (newCap != target || returnedHardCap != newHardCap) outcomeMismatch = true;
-      _checkCapSet(pool, uint128(target), uint128(newHardCap), expected);
+      _checkCapSet(pool, uint128(target), uint128(newHardCap), consumed, expected);
     } catch (bytes memory reason) {
       _checkAdminError(reason, expected);
     }
@@ -195,7 +198,12 @@ contract CapsInvHandlerAbsolute is Test {
     return FixedPointMathLib.mulDiv(roomOf(id, multiplier < 0), ONE, _abs(multiplier));
   }
 
-  /// @notice Summed cap (consuming) or headroom (releasing) of the pools of a cap ID.
+  /// @notice Remaining capacity of a pool: hard cap minus consumption, floored at zero.
+  function ghostCap(uint16 pool) public view returns (uint128) {
+    return _capOf(pool);
+  }
+
+  /// @notice Summed cap (consuming) or consumption (releasing) of the pools of a cap ID.
   function roomOf(uint64 id, bool releasing) public view returns (uint256 room) {
     for (uint256 slot = 0; slot < 4; slot++) {
       uint16 pool = uint16(id >> (slot * 16));
@@ -241,12 +249,12 @@ contract CapsInvHandlerAbsolute is Test {
       for (uint256 slot = 0; slot < 4; slot++) {
         if (moved[slot] == 0) continue;
         uint16 pool = pools[slot];
-        uint128 newCap = releasing ? ghostCap[pool] + uint128(moved[slot]) : ghostCap[pool] - uint128(moved[slot]);
-        bytes memory data = abi.encode(amount, multiplier, moved[slot], newCap);
+        ghostConsumed[pool] =
+          releasing ? ghostConsumed[pool] - uint128(moved[slot]) : ghostConsumed[pool] + uint128(moved[slot]);
+        bytes memory data = abi.encode(amount, multiplier, moved[slot], _capOf(pool));
         if (changed >= logs.length || !_isLog(logs[changed], IFacilityCaps.CapConsumed.selector, pool, data)) {
           eventMismatch = true;
         }
-        ghostCap[pool] = newCap;
         changed++;
       }
       if (changed != logs.length) eventMismatch = true;
@@ -259,7 +267,7 @@ contract CapsInvHandlerAbsolute is Test {
       for (uint256 slot = 0; slot < 4; slot++) {
         if (pools[slot] == 0) continue;
         (uint128 cap, uint128 hardCap) = caps.getCap(pools[slot]);
-        if (cap != ghostCap[pools[slot]] || hardCap != ghostHardCap[pools[slot]]) outcomeMismatch = true;
+        if (cap != _capOf(pools[slot]) || hardCap != ghostHardCap[pools[slot]]) outcomeMismatch = true;
       }
     }
   }
@@ -274,12 +282,12 @@ contract CapsInvHandlerAbsolute is Test {
     return quote;
   }
 
-  function _checkCapSet(uint16 pool, uint128 cap, uint128 hardCap, bytes memory expected) internal {
+  function _checkCapSet(uint16 pool, uint128 cap, uint128 hardCap, uint128 consumed, bytes memory expected) internal {
     Vm.Log[] memory logs = vm.getRecordedLogs();
     if (expected.length != 0) outcomeMismatch = true;
     bytes memory data = abi.encode(cap, hardCap);
     if (logs.length != 1 || !_isLog(logs[0], FacilityAbsoluteCaps.CapSet.selector, pool, data)) eventMismatch = true;
-    ghostCap[pool] = cap;
+    ghostConsumed[pool] = consumed;
     ghostHardCap[pool] = hardCap;
   }
 
@@ -303,7 +311,11 @@ contract CapsInvHandlerAbsolute is Test {
   }
 
   function _room(uint16 pool, bool releasing) internal view returns (uint256) {
-    return releasing ? ghostHardCap[pool] - ghostCap[pool] : ghostCap[pool];
+    return releasing ? ghostConsumed[pool] : _capOf(pool);
+  }
+
+  function _capOf(uint16 pool) internal view returns (uint128) {
+    return uint128(FixedPointMathLib.zeroFloorSub(ghostHardCap[pool], ghostConsumed[pool]));
   }
 
   function _pool(uint256 seed) internal pure returns (uint16) {

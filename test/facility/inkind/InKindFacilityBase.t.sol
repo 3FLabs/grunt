@@ -88,6 +88,8 @@ contract InKindFacilityBaseTest is Test {
   uint256 constant SEED_COLLATERAL = 10_000e18;
   uint256 constant SEED_DEBT = 5_000e6;
   uint256 constant MORPHO_LIQUIDITY = 1_000_000e6;
+  // Caps contracts count in 18 decimals (LibCaps scales EXTERNAL amounts), the debt has 6.
+  uint256 constant CAPS_SCALE = 1e12;
 
   // Solady role bit constants mirrored locally.
   uint256 constant PM_MINTER_ROLE = 1 << 0;
@@ -291,13 +293,13 @@ contract InKindFacilityBaseTest is Test {
   /// @dev Sets the security cap word of the underlying as the facilitator.
   function _setSecurityCap(uint256 cap) internal {
     vm.prank(operator);
-    facility.setSecurityCap(address(underlyingToken), cap);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), cap);
   }
 
   /// @dev Sets an auth on the underlying as the operator.
   function _setAuth(address who, uint128 amount, uint40 expiry) internal {
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), who, amount, expiry);
+    facility.setAuth(address(underlyingToken), address(debtToken), who, amount, expiry);
   }
 
   /// @dev Opens both sides of the default PM with an effectively unlimited ABSOLUTE cap and the
@@ -318,6 +320,27 @@ contract InKindFacilityBaseTest is Test {
   /// @dev Encodes an EXTERNAL cap word.
   function _externalWord(address caps, uint64 id, int24 multiplier) internal pure returns (uint256) {
     return LibCaps.encodeExternal(caps, id, multiplier);
+  }
+
+  /// @dev A debt amount in caps units.
+  function _capsUnits(uint256 debt) internal pure returns (uint256) {
+    return debt * CAPS_SCALE;
+  }
+
+  /// @dev Remaining capacity and hard cap of an absolute pool, in debt units.
+  function _absPool(uint16 id) internal view returns (uint256 cap, uint256 hardCap) {
+    (uint128 rawCap, uint128 rawHardCap) = absoluteCaps.getCap(id);
+    return (rawCap / CAPS_SCALE, rawHardCap / CAPS_SCALE);
+  }
+
+  /// @dev Remaining capacity of an absolute pool, in debt units.
+  function _absCap(uint16 id) internal view returns (uint256 cap) {
+    (cap,) = _absPool(id);
+  }
+
+  /// @dev Remaining capacity of a dynamic cap, in debt units.
+  function _dynRemaining(uint64 id) internal view returns (uint256) {
+    return dynamicCaps.remaining(id) / CAPS_SCALE;
   }
 
   /// @dev Funds `who` with underlying and approves the facility for an entry.

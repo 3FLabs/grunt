@@ -16,7 +16,7 @@ struct EntryOffer {
 }
 
 /// @dev Exit offer of a position manager. Enabled iff `block.timestamp < expiry`.
-/// @param cap LibCaps word consumed with the gross debt every exit repays.
+/// @param cap LibCaps word consumed with the debt every exit repays (what `PM.burn` pulled).
 /// @param expiry Timestamp the offer expires at (0 or past = disabled).
 /// @param feeBps Share of the pulled PM shares sent to the fee recipient, in basis points.
 struct ExitOffer {
@@ -39,14 +39,19 @@ struct Auth {
 ///         the PM collateral's underlying 1:1, supplies it and borrows debt at the pool's live
 ///         debt-per-collateral ratio; an exit repays a proportional debt slice and removes
 ///         proportional collateral. No price enters the economics.
-/// @dev Every cap is denominated in the PM's debt asset (what an entry borrows or an exit repays):
+/// @dev Every cap is denominated in the PM's debt asset (what an entry borrows or an exit repays),
+///      EXTERNAL ones scaled to 18 decimals (see LibCaps):
 ///      - `entries[pm].capacityCap`: the borrowable-liquidity budget of the PM;
-///      - `securityCaps[asset]`: how much may be borrowed in kind against one underlying asset,
-///        shared by every PM whose collateral wraps it;
-///      - `auths[asset][user]`: a user allowance consumed before the security cap (spill-over).
-///      An exit consumes `exits[pm].cap` only; a negative multiplier on a shared absolute pool
-///      gives entry capacity back. PMs sharing an underlying or a caps pool must borrow the same
-///      debt asset. ABSOLUTE words decrement without an event; read them with the getters.
+///      - `securityCaps[asset][debtAsset]`: how much of `debtAsset` may be borrowed in kind
+///        against one underlying asset, shared by every PM whose collateral wraps it and that
+///        borrows `debtAsset`;
+///      - `auths[asset][debtAsset][user]`: a user allowance consumed before the security cap
+///        (spill-over).
+///      Keying by debt asset keeps each budget in one unit: a PM borrowing another debt asset on
+///      the same underlying reads its own budget (unset = closed). An exit consumes
+///      `exits[pm].cap` only; a negative multiplier on a shared absolute pool gives entry capacity
+///      back. PMs sharing a caps pool must borrow the same debt asset. ABSOLUTE words decrement
+///      without an event; read them with the getters.
 ///
 ///      A pool with no debt moves no debt, so every one of those caps reads as zero on it: an
 ///      entry into an unlevered pool is gated by `entries[pm].allowUnlevered` and the offer
@@ -65,18 +70,22 @@ interface IInKindFacility {
   /// @notice Emitted when an exit offer is set (or disabled via `expiry = 0`).
   event ExitSet(address indexed positionManager, uint256 cap, uint40 expiry, uint24 feeBps);
 
-  /// @notice Emitted when the security cap word of an underlying asset is set.
-  event SecurityCapSet(address indexed asset, uint256 cap);
+  /// @notice Emitted when the security cap word of an underlying and debt asset pair is set.
+  event SecurityCapSet(address indexed asset, address indexed debtAsset, uint256 cap);
 
-  /// @notice Emitted when a user auth on an underlying asset is set (or revoked via `expiry = 0`).
-  event AuthSet(address indexed asset, address indexed user, uint128 amount, uint40 expiry);
+  /// @notice Emitted when a user auth on an underlying and debt asset pair is set (or revoked
+  ///         via `expiry = 0`).
+  event AuthSet(address indexed asset, address indexed debtAsset, address indexed user, uint128 amount, uint40 expiry);
 
   /// @notice Emitted when an entry consumes a user auth.
   /// @param asset The underlying asset.
+  /// @param debtAsset The debt asset borrowed.
   /// @param user The authed user.
   /// @param consumed The debt taken from the auth.
   /// @param remaining The auth amount left.
-  event AuthConsumed(address indexed asset, address indexed user, uint256 consumed, uint128 remaining);
+  event AuthConsumed(
+    address indexed asset, address indexed debtAsset, address indexed user, uint256 consumed, uint128 remaining
+  );
 
   /// @notice Emitted when the fee recipient is set.
   event FeeRecipientSet(address indexed feeRecipient);
@@ -199,19 +208,24 @@ interface IInKindFacility {
   ///      pool gives entry capacity back.
   function setExit(address positionManager, uint256 cap, uint40 expiry, uint24 feeBps) external;
 
-  /// @notice Sets the security cap word of an underlying asset (owner or OPERATOR).
-  /// @dev Keyed by `IWrappedAsset(collateral).underlying()` of the served PMs. Validated like
-  ///      {setEntry}. An unset asset reads as a zero ABSOLUTE cap: closed to unauthed users.
+  /// @notice Sets the security cap word of an underlying asset for borrows of `debtAsset`
+  ///         (owner or OPERATOR).
+  /// @dev Keyed by `IWrappedAsset(collateral).underlying()` of the served PMs and their debt
+  ///      asset, so the budget is in `debtAsset` units. Validated like {setEntry}. An unset pair
+  ///      reads as a zero ABSOLUTE cap: closed to unauthed users.
   ///      Overwrites the remaining amount: set zero first to lower it without a front-run. Only a
   ///      trusted multisig should hold this power, and an EXTERNAL word should only reference a
-  ///      caps contract run by trusted multisigs too.
-  function setSecurityCap(address asset, uint256 cap) external;
+  ///      caps contract run by trusted multisigs too. Keep it at zero (auths only) for an asset
+  ///      whose quote can lag a known loss, and zero it on a credit event along with the
+  ///      outstanding auths, which a zero cap does not stop.
+  function setSecurityCap(address asset, address debtAsset, uint256 cap) external;
 
-  /// @notice Sets the auth of a user on an underlying asset (owner or OPERATOR).
+  /// @notice Sets the auth of a user on an underlying asset for borrows of `debtAsset` (owner or
+  ///         OPERATOR).
   /// @dev Overwrites any remaining amount: revoke first to lower it without a front-run.
   ///      `expiry = 0` revokes. Auths are read on the caller of {enter}: a user entering through
   ///      a router needs the auth on the router.
-  function setAuth(address asset, address user, uint128 amount, uint40 expiry) external;
+  function setAuth(address asset, address debtAsset, address user, uint128 amount, uint40 expiry) external;
 
   /// @notice Sets the recipient of the share fees (owner).
   function setFeeRecipient(address feeRecipient) external;
@@ -229,11 +243,11 @@ interface IInKindFacility {
   /// @notice Returns the exit offer of a position manager.
   function getExit(address positionManager) external view returns (ExitOffer memory offer);
 
-  /// @notice Returns the security cap word of an underlying asset.
-  function getSecurityCap(address asset) external view returns (uint256 cap);
+  /// @notice Returns the security cap word of an underlying asset for borrows of `debtAsset`.
+  function getSecurityCap(address asset, address debtAsset) external view returns (uint256 cap);
 
-  /// @notice Returns the auth of a user on an underlying asset.
-  function getAuth(address asset, address user) external view returns (Auth memory auth);
+  /// @notice Returns the auth of a user on an underlying asset for borrows of `debtAsset`.
+  function getAuth(address asset, address debtAsset, address user) external view returns (Auth memory auth);
 
   /// @notice Returns the fee recipient and pause state.
   function config() external view returns (address feeRecipient, bool isPaused, uint40 pausedUntil);
@@ -253,7 +267,9 @@ interface IInKindFacility {
 
   /// @notice Previews an exit of `shares` PM shares.
   /// @dev Reverts like {exit} except for the cap, the caller's bounds and PM-side health
-  ///      checks. Both debt figures drift up with interest accrual between preview and
+  ///      checks. On a withdrawal queue missing a module it mirrors `PM.burn`'s reach: reverts
+  ///      ExcessDebtRepay or InsufficientAvailableCollateral when the slices exceed what the
+  ///      queued modules hold. Both debt figures drift up with interest accrual between preview and
   ///      execution: approve headroom or source `debtRequired` through the callback. Values
   ///      follow {exit}'s bounds order.
   /// @return debtIn The debt the exit is expected to repay (burn's exact mirror).
@@ -279,9 +295,12 @@ interface IInKindFacility {
   /// @notice Returns an estimate of the PM shares (fee included) that can exit right now under
   ///         the exit cap.
   /// @dev An estimate: the pool debt it reads is what the borrow modules quote, which a module
-  ///      that does not simulate accrual reports stale until the market is touched, and the
-  ///      rounding is down like {maxEnter}. Reverts like {exit} on a disabled offer, pause or
-  ///      bad debt, not on PM-side health checks. type(uint256).max when the pool has no debt;
+  ///      that does not simulate accrual reports stale until the market is touched. The burnable
+  ///      slice is bounded by the cap and, on a withdrawal queue missing a module, by the debt
+  ///      and collateral the queue holds (what `PM.burn` reaches), rounded down like {maxEnter},
+  ///      then grossed up to the largest amount burning exactly that slice after the rounded-up
+  ///      fee (zero when no share fits). Reverts like {exit} on a disabled offer, pause or bad
+  ///      debt, not on PM-side health checks. type(uint256).max when the pool has no debt;
   ///      saturates otherwise.
   function maxExit(address positionManager) external view returns (uint256 shares);
 
@@ -319,10 +338,10 @@ interface IInKindFacility {
   ///         sends the fee shares to the recipient, unwraps and forwards the underlying to
   ///         `receiver`.
   /// @dev The debt pulled up front is burn's mirrored slice (post-accrual supply + virtual
-  ///      offset, rounded up) plus a small headroom, final before the callback; the exit cap is
-  ///      consumed with the mirrored slice. Bad debt is checked again after the callback. A pool
-  ///      that became unlevered stays exitable: a zero slice skips the cap and the pull (the
-  ///      callback still runs when `data` is non-empty).
+  ///      offset, rounded up) plus a small headroom; the exit cap is consumed after burn with
+  ///      the debt burn actually repaid, which the callback can move. Bad debt is checked again
+  ///      after the callback. A pool that became unlevered stays exitable: a zero slice skips
+  ///      the cap and the pull (the callback still runs when `data` is non-empty).
   /// @param positionManager The position manager to exit.
   /// @param shares The PM shares to pull (fee included).
   /// @param maxDebtIn The maximum debt to pull up front (headroom included).

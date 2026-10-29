@@ -70,9 +70,10 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
     return _externalWord(address(absoluteCaps), POOL_ID, MULT_1X);
   }
 
+  /// @dev Sets an absolute pool in debt units.
   function _setAbsPoolAt(uint16 id, uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(id, cap, hardCap);
+    absoluteCaps.setCap(id, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
   /// @dev An entry of AMOUNT draws on an EXTERNAL capacity pool, the auth and the security cap.
@@ -263,8 +264,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, max / 2, receiver);
     assertEq(debt, ARMED_CAP / 2, "debt");
-    (uint128 cap,) = absoluteCaps.getCap(POOL_ID);
-    assertEq(cap, 0, "pool");
+    assertEq(_absCap(POOL_ID), 0, "pool");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -291,7 +291,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
 
     vm.expectCall(address(absoluteCaps), abi.encodeWithSelector(IFacilityCaps.consume.selector), 0);
     _enterAmount(0);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, ARMED_CAP - debt, "auth");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, ARMED_CAP - debt, "auth");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -301,7 +301,9 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   function test_enter_unleveredIgnoresExternalWordsOfARevokedConsumer() public {
     _setAbsPoolAt(POOL_ID, ARMED_CAP, ARMED_CAP);
     vm.prank(owner);
-    dynamicCaps.setCap(SECURITY_POOL_ID, ARMED_CAP, uint64(1 days), uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(
+      SECURITY_POOL_ID, uint128(ARMED_CAP * CAPS_SCALE), uint64(1 days), uint64(block.timestamp - 1 days)
+    );
     _setEntry(positionManager, _absWord(), FAR_EXPIRY, DEFAULT_FEE_BPS, true);
     _setSecurityCap(_externalWord(address(dynamicCaps), SECURITY_POOL_ID, MULT_1X));
     _unleverPool();

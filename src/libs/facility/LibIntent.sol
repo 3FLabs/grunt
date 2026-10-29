@@ -144,17 +144,17 @@ library LibIntent {
       if (attemptedTotal > cap) revert LibFacilityErrors.DepositCapExceeded(id, cap, attemptedTotal);
       return;
     }
-    cap.consume(id, amount);
+    cap.consumeExternal(amount, _self.properties.depositAsset.asset);
   }
 
   /// @notice Releases the cap consumption of a deposit being undone.
   /// @dev No-op for absolute caps, which follow totalSupply. External caps consume with the
   ///      opposite multiplier, reversing the direction the deposit took in the caps contract
-  ///      (FacilityDynamicCaps ignores the release direction).
+  ///      (FacilityDynamicCaps charges releases on a negative word and ignores them otherwise).
   /// @param _self The intent storage reference.
   /// @param amount The deposited amount being undone.
   function releaseCap(Intent storage _self, uint256 amount) internal {
-    _self.properties.depositCap.release(amount);
+    _self.properties.depositCap.release(amount, _self.properties.depositAsset.asset);
   }
 
   /// @notice Validates that the intent's associated request has been repaid.

@@ -120,6 +120,8 @@ contract InKindExternalCapsHandler is Test {
     uint256 required;
     bytes previewReason;
     bool exactBound;
+    // a callback repay lowers burn's pull below the mirror, so a cap the mirror overflows may fit
+    bool capMayFit;
     Expect expect;
     bytes expected;
     uint256 callsBefore;
@@ -153,6 +155,8 @@ contract InKindExternalCapsHandler is Test {
   uint256 internal constant WORD_DYNAMIC_CREDIT = 4;
 
   uint256 internal constant MAX_FEE = 1_000;
+  /// @dev Caps contracts count in 18 decimals (LibCaps scales EXTERNAL amounts), the debt has 6.
+  uint256 internal constant CAPS_SCALE = 1e12;
   uint256 internal constant BPS = 10_000;
   /// @dev The above-target oracle lane lands 30 to 120 bps above the PM target LTV.
   uint256 internal constant ABOVE_TARGET_MIN_BPS = 30;
@@ -310,7 +314,7 @@ contract InKindExternalCapsHandler is Test {
       ghostExitWord[i] = facility.getExit(address(pms[i])).cap;
     }
     securityModel = config.securityWord;
-    ghostSecurityWord = facility.getSecurityCap(address(underlyingToken));
+    ghostSecurityWord = facility.getSecurityCap(address(underlyingToken), address(debtToken));
     for (uint16 p = POOL_1; p <= EXIT_POOL; p++) {
       (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(p);
       ghostPoolCap[p] = cap;
@@ -323,7 +327,7 @@ contract InKindExternalCapsHandler is Test {
       ghostOrigin[id] = origin;
     }
     for (uint256 u = 0; u < users.length; u++) {
-      ghostAuths[users[u]] = facility.getAuth(address(underlyingToken), users[u]);
+      ghostAuths[users[u]] = facility.getAuth(address(underlyingToken), address(debtToken), users[u]);
     }
   }
 
@@ -621,7 +625,7 @@ contract InKindExternalCapsHandler is Test {
   }
 
   /// @dev Sets the caller's bounds for `lane` and predicts the outcome: the preview's revert, then
-  ///      maxDebtIn (checked before the cap), then the cap, then minUnderlyingOut.
+  ///      maxDebtIn, then minUnderlyingOut, then the cap (charged after burn).
   function _expectExit(ExitCtx memory ctx, uint256 lane) internal {
     if (!ctx.previewOk) {
       _setExpected(ctx, Expect.GATE, ctx.previewReason);
@@ -642,21 +646,23 @@ contract InKindExternalCapsHandler is Test {
       ctx.exactBound = true;
     }
     bytes memory capError = _exitCapError(ctx);
-    if (capError.length > 0) {
-      if (ctx.usesMax) maxExitLied = true;
-      _setExpected(ctx, Expect.CAP, capError);
-      return;
-    }
+    if (capError.length > 0 && ctx.usesMax) maxExitLied = true;
     if (lane == 13 && ctx.kind != KIND_REPAY) {
       ctx.minOut = ctx.previewOut + 1;
       bytes memory bound =
         abi.encodeWithSelector(IInKindFacility.InsufficientUnderlyingOut.selector, ctx.previewOut, ctx.previewOut + 1);
       _setExpected(ctx, Expect.BOUND, bound);
+      return;
+    }
+    if (capError.length > 0) {
+      _setExpected(ctx, Expect.CAP, capError);
+      ctx.capMayFit = ctx.kind == KIND_REPAY;
     }
   }
 
-  /// @dev The exit word absorbs the mirrored debt slice: a negative word credits its pools up to
-  ///      their hard caps (a dynamic cap ignores it), anything past the summed headroom reverts.
+  /// @dev The exit word absorbs the debt burn pulls, the mirrored slice outside a callback repay:
+  ///      a negative word credits its pools up to their hard caps (a dynamic cap ignores it),
+  ///      anything past the summed headroom reverts.
   function _exitCapError(ExitCtx memory ctx) internal view returns (bytes memory) {
     uint256 mirror = ctx.previewDebtIn;
     if (mirror == 0) return "";
@@ -720,7 +726,7 @@ contract InKindExternalCapsHandler is Test {
     if (ctx.kind == KIND_REPAY) exitRepaySuccesses++;
     if (ctx.exactBound) exitBoundedSuccesses++;
     if (ctx.usesMax) maxExitProbeSuccesses++;
-    if (ctx.expect != Expect.SUCCESS) _mismatch(ctx.expect, "");
+    if (ctx.expect != Expect.SUCCESS && !ctx.capMayFit) _mismatch(ctx.expect, "");
 
     // a repay inside the callback moves burn's figures (debt and PM fee shares), nothing else does
     if (ctx.kind != KIND_REPAY && (debtIn != ctx.previewDebtIn || out != ctx.previewOut)) previewDesync = true;
@@ -735,26 +741,31 @@ contract InKindExternalCapsHandler is Test {
       if (ctx.callback && exiter.lastDebtIn() != ctx.required) legBroken = true;
     }
 
-    // the exit word absorbs the mirrored debt, whatever burn then pulled
+    // the exit word absorbs the debt burn pulled
     Word memory word = exitModel[ctx.idx];
     uint256 kind = _wordKind(word);
     exitSuccessesByWord[kind]++;
     if (kind == WORD_ABSOLUTE) {
-      if (ctx.previewDebtIn > ghostExitWord[ctx.idx]) capMirrorBroken = true;
-      else ghostExitWord[ctx.idx] -= ctx.previewDebtIn;
+      if (debtIn > ghostExitWord[ctx.idx]) capMirrorBroken = true;
+      else ghostExitWord[ctx.idx] -= debtIn;
     } else if (kind == WORD_POOL_DEBIT) {
-      _ghostWalk(word.id, _consumption(ctx.previewDebtIn, word.multiplier));
+      _ghostWalk(word.id, _consumption(debtIn, word.multiplier));
     } else if (kind == WORD_DYNAMIC_DEBIT) {
-      _ghostDynamic(word.id, _consumption(ctx.previewDebtIn, word.multiplier));
+      _ghostDynamic(word.id, _consumption(debtIn, word.multiplier));
     } else if (kind == WORD_POOL_CREDIT) {
-      _ghostCredit(word.id, _release(ctx.previewDebtIn, word.multiplier));
+      _ghostCredit(word.id, _release(debtIn, word.multiplier));
     }
 
     if (ctx.expect == Expect.SUCCESS) _checkStayers(ctx.values);
   }
 
   function _onExitFailed(ExitCtx memory ctx, bytes memory reason) internal {
-    if (keccak256(reason) != keccak256(ctx.expected)) _mismatch(ctx.expect, reason);
+    // after a callback repay the cap reverts with the debt burn pulled, not the mirror
+    if (ctx.capMayFit) {
+      if (_selectorOf(reason) != _selectorOf(ctx.expected)) _mismatch(ctx.expect, reason);
+    } else if (keccak256(reason) != keccak256(ctx.expected)) {
+      _mismatch(ctx.expect, reason);
+    }
     if (ctx.expect == Expect.BOUND) exitSlippageReverts++;
     else if (_selectorOf(ctx.expected) == IFacilityCaps.HardCapExceeded.selector) exitHardCapFailures++;
     else if (ctx.expect == Expect.CAP) exitCapFailures++;
@@ -845,7 +856,7 @@ contract InKindExternalCapsHandler is Test {
       ? uint40(block.timestamp - _bound(expirySeed, 0, 1 days))
       : uint40(block.timestamp + _bound(expirySeed, 1 hours, 3 days));
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), who, amount, expiry);
+    facility.setAuth(address(underlyingToken), address(debtToken), who, amount, expiry);
     ghostAuths[who] = Auth({amount: amount, expiry: expiry});
     authRearms++;
   }
@@ -853,7 +864,7 @@ contract InKindExternalCapsHandler is Test {
   /// @dev Grows a pool by `delta` through adjustCap, which keeps its outstanding consumption.
   function _refill(uint256 poolSeed, uint256 deltaSeed) internal {
     uint16 pool = uint16(poolSeed % 4) + POOL_1;
-    uint256 delta = _bound(deltaSeed, 500e6, 5_000e6);
+    uint256 delta = _bound(deltaSeed, 500e6, 5_000e6) * CAPS_SCALE;
     vm.prank(capsManager);
     // forge-lint: disable-next-line(unsafe-typecast)
     absoluteCaps.adjustCap(pool, int256(delta));
@@ -866,7 +877,7 @@ contract InKindExternalCapsHandler is Test {
   ///      credit blocked on HardCapExceeded needs, which adjustCap never adds.
   function _raiseHardCap(uint256 poolSeed, uint256 deltaSeed) internal {
     uint16 pool = uint16(poolSeed % 4) + POOL_1;
-    uint256 delta = _bound(deltaSeed, 1, 1_000e6);
+    uint256 delta = _bound(deltaSeed, 1, 1_000e6) * CAPS_SCALE;
     (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(pool);
     vm.prank(capsManager);
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -901,7 +912,7 @@ contract InKindExternalCapsHandler is Test {
     Word memory word = Word(address(dynamicCaps), SECURITY_DYN, _multiplier(multiplierSeed));
     uint256 encoded = _encode(word);
     vm.prank(operator);
-    facility.setSecurityCap(address(underlyingToken), encoded);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), encoded);
     ghostSecurityWord = encoded;
     securityModel = word;
     securityRearms++;
@@ -960,16 +971,16 @@ contract InKindExternalCapsHandler is Test {
     return pool ? WORD_POOL_DEBIT : WORD_DYNAMIC_DEBIT;
   }
 
-  /// @dev Q12.12 consumption of a positive multiplier, rounded up.
+  /// @dev Q12.12 consumption of a positive multiplier on a debt `amount`, rounded up, in caps units.
   function _consumption(uint256 amount, int24 multiplier) internal pure returns (uint256) {
     // forge-lint: disable-next-line(unsafe-typecast)
-    return (amount * uint256(uint24(multiplier)) + 4095) / 4096;
+    return (amount * CAPS_SCALE * uint256(uint24(multiplier)) + 4095) / 4096;
   }
 
-  /// @dev Q12.12 credit of a negative multiplier, rounded down.
+  /// @dev Q12.12 credit of a negative multiplier on a debt `amount`, rounded down, in caps units.
   function _release(uint256 amount, int24 multiplier) internal pure returns (uint256) {
     // forge-lint: disable-next-line(unsafe-typecast)
-    return amount * uint256(uint24(-multiplier)) / 4096;
+    return amount * CAPS_SCALE * uint256(uint24(-multiplier)) / 4096;
   }
 
   /// @dev Debt per quoted collateral, in WAD.

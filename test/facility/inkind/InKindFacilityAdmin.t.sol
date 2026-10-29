@@ -79,9 +79,9 @@ contract InKindFacilityAdminTest is InKindFacilityBaseTest {
     vm.expectRevert(Ownable.Unauthorized.selector);
     facility.setExit(address(positionManager), 1e6, FAR_EXPIRY, 0);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    facility.setSecurityCap(address(underlyingToken), 1e6);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), 1e6);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    facility.setAuth(address(underlyingToken), user, 1e6, FAR_EXPIRY);
+    facility.setAuth(address(underlyingToken), address(debtToken), user, 1e6, FAR_EXPIRY);
     vm.expectRevert(Ownable.Unauthorized.selector);
     facility.setFeeRecipient(stranger);
     vm.expectRevert(Ownable.Unauthorized.selector);
@@ -190,8 +190,8 @@ contract InKindFacilityAdminTest is InKindFacilityBaseTest {
 
     assertEq(facility.getEntry(address(positionManager)).capacityCap, 1e6, "entry");
     assertEq(facility.getExit(address(positionManager)).cap, 2e6, "exit");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 3e6, "security cap");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 4e6, "auth");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 3e6, "security cap");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 4e6, "auth");
     (address recipient, bool isPaused,) = facility.config();
     assertEq(recipient, stranger, "fee recipient");
     assertTrue(isPaused, "unpaused by a setter");
@@ -215,13 +215,13 @@ contract InKindFacilityAdminTest is InKindFacilityBaseTest {
     _setSecurityCap(1_000e6);
     (, uint256 first) = _enter(user, 2_000e18, receiver);
     assertEq(first, 1_000e6, "first debt");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 0, "drained");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 0, "drained");
 
     _setSecurityCap(300e6);
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 300e6, "overwritten");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 300e6, "overwritten");
     (, uint256 second) = _enter(user, 600e18, receiver);
     assertEq(second, 300e6, "second debt");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 0, "drained again");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 0, "drained again");
   }
 
   function test_setAuth_overwritesTheRemainingAmount() public {
@@ -229,13 +229,13 @@ contract InKindFacilityAdminTest is InKindFacilityBaseTest {
     _setAuth(user, 600e6, FAR_EXPIRY);
     (, uint256 first) = _enter(user, 1_200e18, receiver);
     assertEq(first, 600e6, "first debt");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "drained");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "drained");
 
     _setAuth(user, 200e6, FAR_EXPIRY);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 200e6, "overwritten");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 200e6, "overwritten");
     (, uint256 second) = _enter(user, 400e18, receiver);
     assertEq(second, 200e6, "second debt");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "drained again");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "drained again");
   }
 
   function test_setEntryAndSecurityCap_multiplierSignBoundary() public {
@@ -245,13 +245,13 @@ contract InKindFacilityAdminTest is InKindFacilityBaseTest {
     _setEntry(positionManager, smallest, FAR_EXPIRY, 0);
     _setSecurityCap(smallest);
     assertEq(facility.getEntry(address(positionManager)).capacityCap, smallest, "entry word");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), smallest, "security word");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), smallest, "security word");
 
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, minusOne));
     facility.setEntry(address(positionManager), minusOne, FAR_EXPIRY, 0, false);
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.NonConsumingCap.selector, minusOne));
-    facility.setSecurityCap(address(underlyingToken), minusOne);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), minusOne);
   }
 }
