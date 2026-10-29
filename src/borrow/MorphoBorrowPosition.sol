@@ -311,10 +311,18 @@ contract MorphoBorrowPosition is IBorrowPosition, IBorrowOffers, Initializable, 
   ///        state-changing entry points there (`deposit`, `withdraw`, `burn`, `cancel`, `commit`,
   ///        `unlock`, `recover`, `pull`, `repay`) are gated by `MINTER_ROLE` / `FACILITATOR_ROLE` plus
   ///        `nonReentrant`.
+  ///      - `InKindFacility` holds `MINTER_ROLE` and serves `enter` / `exit` to eligible public
+  ///        callers, so a liquidator's callback can mint and burn PM shares through it. That flow
+  ///        sees settled state: Morpho has applied the repay and this contract has withdrawn the
+  ///        seized collateral before the liquidator gets control, so every PM view reads the
+  ///        post-liquidation position, as a flow in the next transaction would. The loan tokens
+  ///        owed to Morpho are only pulled and approved after the callback, and a nested module
+  ///        `repay` sets and spends its own exact allowance.
   ///
-  ///      This relies on the assumption that liquidators are external actors and are never granted
-  ///      `MINTER_ROLE` or `FACILITATOR_ROLE`. Any future integration that grants a callback-capable
-  ///      address either of those roles invalidates this analysis and must add a guard here.
+  ///      This relies on liquidators never being granted `MINTER_ROLE` or `FACILITATOR_ROLE`, and on
+  ///      every role holder reachable from a callback (today `InKindFacility`) acting on settled
+  ///      module state only. Any integration breaking either invalidates this analysis and must add
+  ///      a guard here.
   ///
   ///      **Dispatch (after accruing interest, by current LTV):**
   ///      - `LTV > liquidationLtv`: the EXISTING proportional path ({_proportionalPreLiquidate}),

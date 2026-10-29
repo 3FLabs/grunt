@@ -89,12 +89,18 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - The ratio is read from the PM's views. The Morpho borrow position quotes accrued debt
 ///        (expected market balances); a module whose `totalBorrowed` lags the market would let
 ///        flows use a stale ratio. Only serve PMs whose modules quote accrued debt.
-///      - A module above its liquidation LTV but below 100% is not bad debt. An exit while the
-///        PM's withdrawal queue excludes that module leaves the penalty on stayers. Serve PMs
-///        whose withdrawal queue covers every module.
-///      - Exits burn PROPORTIONAL, touching every withdrawal-queue module, so each must repay and
-///        withdraw atomically. A module that cannot has to leave the withdrawal queue, at the
-///        cost above, and exits then need each remaining module at or below the target LTV.
+///      - Exits burn PROPORTIONAL through the withdrawal queue, so each queued module must repay
+///        and withdraw atomically. The queue need not cover every module: one that cannot (a
+///        term position) stays out. The exit still takes its fraction of the whole pool's debt
+///        and collateral, sourced from the queued modules, so at the quote stayers keep their
+///        equity per share and the pool its LTV. Only the mix moves: queued modules shrink at
+///        the pool ratio, levering up when the excluded modules are less levered, and burn
+///        reverts once a queued module could not release its slice at the target LTV or the
+///        slice exceeds the queued debt or collateral.
+///      - Value the quote misses on an excluded module stays with the stayers, since an exit
+///        leaves before it lands: a pending liquidation penalty (a module above its liquidation
+///        LTV but below 100% is not bad debt) or a discount on a term position. Close the exit
+///        offer while an excluded module carries such a loss.
 ///      - Exits do not refund the security cap: a dynamic one is throughput only and an ABSOLUTE
 ///        one a lifetime budget, so a looper drains it at the cost of two share fees plus
 ///        rounding per loop. Size the fees accordingly.
@@ -128,8 +134,32 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - Anyone can checkpoint the PM's fees with a dust flow: at a quote trough it lowers the
 ///        performance reference, at a peak it crystallizes a gain a reversal never refunds.
 ///        Serve PMs whose quote does not fall, or with no performance fee.
-///      - On a Retargetter-bound PM, flows move an open operation's principal cap and
-///        settlement bound. Close the offers during ASYNC operations.
+///      - On a Retargetter-bound PM, flows during an ASYNC operation move its principal cap and
+///        settlement bound and transfer value between holder cohorts. Pricing reads the PM's
+///        current balances only: an entrant mints at a NAV missing the value staged outside the
+///        PM (within the loss limit) and gains about `E * R / (N - R + E)` when the residual `R`
+///        returns, and an exiting fraction `f` skips about `f * Y` of the Request yield `Y` the
+///        PM pays at settlement, both borne by the other holders. The facility does not read the
+///        Retargetter, so nothing enforces it on-chain: close both offers before an ASYNC
+///        operation starts and reopen them after it resolves.
+///
+///      Operations. Offers close with `expiry = 0` (owner or FACILITATOR), security caps and auths
+///      change through the owner or OPERATOR, and `pauseFor` (owner or COMPLIANCE) stops every PM,
+///      exits included. Zeroing caps is no substitute for closing an offer: auths and unlevered
+///      entries skip them.
+///      - ASYNC operation: close both offers before it starts, reopen once it resolves.
+///      - Collateral impairment: close the entry offer, zero the security cap and revoke the
+///        outstanding auths.
+///      - Delevering a PM to dust: close the entry offer first.
+///      - An excluded module carrying a loss the quote misses: close the exit offer.
+///      - A module, market or oracle change: close the entry offer until every module is checked
+///        again for one price feed and quote scale (matching spot answers are not enough); keep
+///        it closed if they differ.
+///      - Before reopening, check that the quote reflects the collateral, every module shares one
+///        price feed and quote scale, the PM is at or below its target LTV, the queued modules
+///        can repay and withdraw, both fee recipients pass their guards, the exit word has
+///        headroom and the caps manager has reconciled the pools, then simulate an entry and an
+///        exit.
 contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransient, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;

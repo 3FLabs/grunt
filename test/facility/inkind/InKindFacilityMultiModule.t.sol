@@ -590,6 +590,42 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     assertApproxEqAbs(seederClaimStaying - _claim(seeder), seederExtra, 2, "stayers' extra loss");
   }
 
+  /// @dev A partial withdrawal queue (a module that cannot repay and withdraw atomically stays
+  ///      out) keeps exits neutral at the quote: the exiter takes its fraction of the whole pool,
+  ///      sourced from the queued module, so stayers keep their equity per share and the pool its
+  ///      LTV. Only the mix moves: the queued module shrinks at the pool ratio, levering up when the
+  ///      excluded module is less levered and down otherwise.
+  function testFuzz_exit_partialQueueKeepsStayersEquityAndPoolLtv(uint256 sharesSeed, bool queueB) public {
+    _enter(pmMulti, user, ENTER_AMOUNT, user);
+    (MorphoBorrowPosition queued, MorphoBorrowPosition excluded) = queueB ? (moduleB, moduleA) : (moduleA, moduleB);
+    _setWithdrawalQueue(pmMulti, address(queued), address(0));
+    // up to a fifth of the supply fits either module's debt, collateral and the target LTV
+    uint256 exitShares = bound(sharesSeed, 1e18, pmMulti.totalSupply() / 5);
+
+    uint256 navBefore = pmMulti.totalAssets();
+    uint256 supplyBefore = _adjustedSupply(pmMulti);
+    uint256 poolLtvBefore = pmMulti.debtAmount().mulDiv(1e30, pmMulti.collateralAmount());
+    uint256 queuedLtvBefore = queued.totalBorrowed().mulDiv(1e30, queued.totalCollateral());
+    uint256 excludedLtv = excluded.totalBorrowed().mulDiv(1e30, excluded.totalCollateral());
+    uint256 excludedDebt = excluded.totalBorrowed();
+    uint256 excludedCollateral = excluded.totalCollateral();
+
+    _exit(pmMulti, seeder, exitShares, seeder);
+
+    uint256 navAfter = pmMulti.totalAssets();
+    uint256 supplyAfter = _adjustedSupply(pmMulti);
+    // NAV / supply never drops for stayers (one NAV unit of quote rounding)
+    assertGe(navAfter * supplyBefore + supplyBefore, navBefore * supplyAfter, "stayers' equity per share");
+    assertApproxEqRel(
+      pmMulti.debtAmount().mulDiv(1e30, pmMulti.collateralAmount()), poolLtvBefore, 1e9, "pool LTV kept"
+    );
+    assertEq(excluded.totalBorrowed(), excludedDebt, "excluded debt untouched");
+    assertEq(excluded.totalCollateral(), excludedCollateral, "excluded collateral untouched");
+    uint256 queuedLtvAfter = queued.totalBorrowed().mulDiv(1e30, queued.totalCollateral());
+    if (excludedLtv < poolLtvBefore) assertGt(queuedLtvAfter, queuedLtvBefore, "queued module levers up");
+    else assertLt(queuedLtvAfter, queuedLtvBefore, "queued module levers down");
+  }
+
   function test_exit_strictSubsetQueueNeedsTheRemainingModuleUnderTheTargetLtv() public {
     (uint256 shares,) = _enter(pmMulti, user, ENTER_AMOUNT, user);
     _setWithdrawalQueue(pmMulti, address(moduleB), address(0));
