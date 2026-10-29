@@ -1217,7 +1217,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     assertEq(debtIn, 0, "exit repaid");
     assertEq(underlyingToken.balanceOf(receiver), out, "receiver underlying");
-    // Strictly lossy: the two share fees plus rounding.
+    // Lossy here: the two share fees outweigh the wei-level rounding.
     assertLt(out, amount, "round trip profited");
     assertApproxEqRel(out, amount, 1e16, "round trip lost more than the fees");
     _assertFacilityClean();

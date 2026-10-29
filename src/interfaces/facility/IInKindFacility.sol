@@ -7,7 +7,8 @@ pragma solidity ^0.8.22;
 /// @param feeBps Share of the minted PM shares sent to the fee recipient, in basis points.
 /// @param allowUnlevered Whether entries are served while the pool carries no debt. Such an
 ///        entry borrows nothing, so it consumes no cap and no auth: the flag and the expiry are
-///        its only gates.
+///        its only gates. It does not cover a pool at dust debt, where the debt-denominated caps
+///        admit practically unbounded size; close the offer before delevering a PM to dust.
 struct EntryOffer {
   uint256 capacityCap;
   uint40 expiry;
