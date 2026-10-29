@@ -48,12 +48,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///        via a single terminal unlock() (possibly zero-amount) that ends the order. A settled
 ///        redeem cannot be recovered (the instant settlement is irreversible): recovery covers
 ///        deposits and unsettled bonded redeems only.
-///      - Each redemption settles through a dedicated redemption vault deployed by Midas once
-///        the bond is received: create() resets the stored redemption vault to address(0), and
-///        setRedemptionVault() — not gated on a live order (the redemption vault carries no
-///        per-order state) — must point the fund at the fresh vault before the redeem leg
-///        commits. Consequently redeem orders are not oracle-validated at create (their minimum
-///        output is enforced on-chain by `redeemInstant` at commit). Deposit validation and
+///      - Redemptions settle through a shared redemption vault kept across orders, set via
+///        setRedemptionVault() (not gated on a live order: the vault carries no per-order
+///        state). Redeem orders are not oracle-validated at create (their minimum output is
+///        enforced on-chain by `redeemInstant` at commit). Deposit validation and
 ///        totalAssets() use the configurable external mToken/USD AggregatorV3 oracle and
 ///        assume the payment asset is worth exactly 1 USD.
 ///      - Once the bond is paid the order cannot be canceled (the bond is forfeited on
@@ -121,9 +119,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @notice Storage struct containing all persistent state for the MidasFund contract.
   /// @dev Uses ERC-7201 namespaced storage pattern for proxy compatibility.
   /// @param depositVault The Midas DepositVault (issuance vault) address.
-  /// @param redemptionVault The Midas RedemptionVault address. Reset to address(0) on every
-  ///        create() (each redemption settles through a dedicated one-shot vault) and set
-  ///        per-redemption via setRedemptionVault().
+  /// @param redemptionVault The Midas RedemptionVault address, kept across orders.
   /// @param mToken The mToken managed by the vaults (e.g. mGLOBAL), 18 decimals.
   /// @param asset The payment token used for deposits and redemptions (e.g. USDC).
   /// @param wrappedShare The WrappedAsset contract that wraps the mToken.
@@ -217,7 +213,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     asset_.checkContract();
 
     // The mToken is derived from the deposit vault. No redemption vault is configured here:
-    // Midas deploys a dedicated one per redemption, set via setRedemptionVault() mid-order.
+    // it is set via setRedemptionVault() and kept across orders.
     address _mToken = IMidasDepositVault(depositVault_).mToken();
 
     // Verify wrappedShare wraps the mToken
@@ -272,8 +268,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     if (_internalState != State.EMPTY && _internalState != State.ENDED) revert LibFundsErrors.PendingOrder();
 
     // Fail early if the deposit vault would reject the commit (paused / fn-paused / not
-    // greenlisted). Redeems cannot be pre-checked: their dedicated redemption vault does not
-    // exist yet (Midas deploys it once the bond is received).
+    // greenlisted). Redeems are not pre-checked: the vault may change before their redeem leg.
     if (order.mode == Mode.DEPOSIT) {
       _checkVaultAccess($.depositVault, $.wrappedShare, _DEPOSIT_REQUEST_SELECTOR);
     }
@@ -289,14 +284,6 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
     $.currentOrderId = _orderId;
     $.internalState = State.ACCEPTED;
     $.hasResolvedAmounts = false;
-
-    // Each redemption settles through a fresh one-shot vault: drop the previous order's vault
-    // so a redeem can never settle through a stale one. setRedemptionVault() re-points the
-    // fund once Midas deploys the vault for this redemption.
-    if ($.redemptionVault != address(0)) {
-      $.redemptionVault = address(0);
-      emit RedemptionVaultUpdated(address(0), msg.sender);
-    }
 
     // Redeems always follow the bond flow: the instant redemption stays locked until the bond
     // receipt is confirmed (or the bond leg is skipped) via unlockInstantRedeem(). Deposits
@@ -349,7 +336,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///        waits in PROCESSING until unlockInstantRedeem() returns it to ACCEPTED for the
   ///        redeem leg.
   ///      - Redeem, redeem leg (instant redemption unlocked): settles the remaining
-  ///        `input - bondPaid` synchronously via `redeemInstant` through the per-redemption
+  ///        `input - bondPaid` synchronously via `redeemInstant` through the redemption
   ///        vault configured via setRedemptionVault(); the proceeds are then claimable via a
   ///        single terminal unlock() that ends the order.
   ///      Both redeem legs return `order.input` as the committed amount (not the per-leg
@@ -840,9 +827,8 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   /// @dev Redeem leg of a redeem commit: burns the WrappedAsset from the depositor (unwraps
   ///      mToken to this contract), then lets the vault burn/pull it (approval covers both the
   ///      escrow pull and the fee transfer). Only settles the remainder: the bond fraction (if
-  ///      any) was already burned by the bond leg. The redemption vault is reset on create()
-  ///      and set per-redemption, so it must have been configured via setRedemptionVault()
-  ///      before this leg commits (reverts with InvalidContract otherwise). The per-redemption
+  ///      any) was already burned by the bond leg. The redemption vault must have been
+  ///      configured via setRedemptionVault() (reverts with InvalidContract otherwise). The
   ///      vault is not blindly trusted to enforce the min-out it is passed: the payment-token
   ///      balance delta is verified against the order's scaled minimum (reverts with
   ///      InsufficientRedeemOutput otherwise).
@@ -904,7 +890,7 @@ contract MidasFund is IMidasFund, OwnableRoles, Initializable {
   ///      asset is worth exactly 1 USD. Reverts if the output deviates negatively by more than
   ///      MAX_OUTPUT_DEVIATION basis points. This is a create-time sanity bound only: the
   ///      actual mint amount is set by the NAV rate at which the Midas admin approves the
-  ///      request. Redeem orders are not oracle-validated because their dedicated vault's
+  ///      request. Redeem orders are not oracle-validated because the redemption vault's
   ///      settlement pricing may differ from the external oracle — the order output is the
   ///      minimum payout enforced on-chain by `redeemInstant` when the redeem leg commits.
   /// @param order The order to validate.

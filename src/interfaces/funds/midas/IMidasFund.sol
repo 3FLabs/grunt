@@ -109,8 +109,6 @@ interface IMidasFund is IFund {
   event DepositVaultUpdated(address indexed depositVault, address indexed operator);
 
   /// @notice Emitted when the redemption vault is updated.
-  /// @dev Also emitted with address(0) when create() drops the previous redemption's vault
-  ///      (each redemption settles through a fresh vault); the operator is then the depositor.
   /// @param redemptionVault The new redemption vault address.
   /// @param operator The address that updated the vault.
   event RedemptionVaultUpdated(address indexed redemptionVault, address indexed operator);
@@ -132,8 +130,8 @@ interface IMidasFund is IFund {
   /// @notice Initializes the MidasFund contract with all required parameters.
   /// @dev Can only be called once due to the `initializer` modifier from Solady's Initializable.
   ///      The mToken is derived from the deposit vault; the wrapped share must reference the
-  ///      same mToken. No redemption vault is configured at initialization: Midas deploys a
-  ///      dedicated one per redemption, set via setRedemptionVault() while the redeem is live.
+  ///      same mToken. No redemption vault is configured at initialization: it is set via
+  ///      setRedemptionVault() and kept across orders.
   /// @param owner_ The address that will own this contract and manage roles.
   /// @param depositor_ The address that will execute orders (must be a contract, receives DEPOSITOR_ROLE).
   /// @param depositVault_ The Midas DepositVault (issuance vault) proxy address.
@@ -238,15 +236,12 @@ interface IMidasFund is IFund {
   /// @param depositVault_ The new deposit vault address.
   function setDepositVault(address depositVault_) external;
 
-  /// @notice Sets the Midas redemption vault for the current redemption.
+  /// @notice Sets the Midas redemption vault, kept across orders.
   /// @dev Can only be called by an account with the VAULT_MANAGER_ROLE or the owner. Callable at
   ///      any time, including while an order is live: the redemption vault carries no per-order
   ///      state (unlike the deposit vault, which tracks the pending mint request), and a live
   ///      redeem settles through the vault configured when its redeem leg commits, with the
-  ///      order's minimum output still enforced on-chain. Each redemption settles through a
-  ///      dedicated vault deployed by Midas once the bond is received: create() resets the
-  ///      stored vault to address(0), so this must be called for every redemption before its
-  ///      redeem leg commits. The new vault must manage the
+  ///      order's minimum output still enforced on-chain. The new vault must manage the
   ///      same mToken, have the payment token registered, not be paused (globally or for the
   ///      commit-time function this fund calls), and (when its greenlist
   ///      is enabled) have both this fund and the wrapped share greenlisted.
@@ -296,9 +291,7 @@ interface IMidasFund is IFund {
   /// @notice The Midas DepositVault (issuance vault) address.
   function depositVault() external view returns (address);
 
-  /// @notice The Midas RedemptionVault address of the current redemption.
-  /// @dev Reset to address(0) on every create(): each redemption settles through a dedicated
-  ///      vault set via setRedemptionVault() while the redeem is live.
+  /// @notice The Midas RedemptionVault address, kept across orders.
   function redemptionVault() external view returns (address);
 
   /// @notice The mToken wrapped by this fund (e.g. mGLOBAL).

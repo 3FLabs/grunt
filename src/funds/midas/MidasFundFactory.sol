@@ -36,8 +36,8 @@ contract MidasFundFactory {
   }
 
   /// @notice Deploys a new MidasFund beacon proxy and initializes it.
-  /// @dev No redemption vault is configured at creation: Midas deploys a dedicated one per
-  ///      redemption, set via `setRedemptionVault` while the redeem is live.
+  /// @dev No redemption vault is configured at creation: it is set via `setRedemptionVault`
+  ///      and kept across orders.
   /// @param owner The owner of the new fund.
   /// @param depositor The depositor contract address (granted DEPOSITOR_ROLE).
   /// @param depositVault The Midas DepositVault (issuance vault) proxy address.

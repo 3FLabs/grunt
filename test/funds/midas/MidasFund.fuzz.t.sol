@@ -176,9 +176,9 @@ contract MidasFundFuzzTest is Test {
 
     Order memory order = _redeemOrder(mTokenAmount, inputUsdc);
     fund.create(order);
-    assertEq(fund.redemptionVault(), address(0), "vault reset by create");
+    assertEq(fund.redemptionVault(), address(0), "no vault configured yet");
 
-    // Skip the bond leg (nothing required) and point the fund at this redemption's vault.
+    // Skip the bond leg (nothing required) and point the fund at the redemption vault.
     vm.prank(owner);
     fund.unlockInstantRedeem(order.toId(address(fund)));
     vm.prank(owner);
@@ -343,15 +343,14 @@ contract MidasFundFuzzTest is Test {
     wrappedShare.approve(address(fund), mTokenAmount);
     fund.commit(order);
 
-    // The Repay-and-Redeem operational flow: Midas deploys the dedicated redemption vault
-    // only once the bond is received, so it is configured during the bond phase.
+    // The redemption vault may be (re)configured during the bond phase.
     MockMidasRedemptionVault newVault =
       new MockMidasRedemptionVault(address(mGlobal), address(redemptionMTokenFeed), address(midasAcl));
     newVault.setTokenConfig(address(usdc), address(redemptionAssetFeed), 0, type(uint256).max, true);
     vm.prank(owner);
     fund.setRedemptionVault(address(newVault));
 
-    // The redeem leg settles through the fresh vault.
+    // The redeem leg settles through the newly configured vault.
     vm.prank(owner);
     fund.unlockInstantRedeem(order.toId(address(fund)));
     wrappedShare.approve(address(fund), mTokenAmount);
@@ -366,7 +365,7 @@ contract MidasFundFuzzTest is Test {
     (State newState, uint256 amount) = fund.unlock(order);
     assertEq(uint256(newState), uint256(State.ENDED), "ended");
     assertEq(amount, expectedProceeds, "proceeds on the remainder");
-    assertEq(usdc.balanceOf(address(this)), expectedProceeds, "usdc received from the fresh vault");
+    assertEq(usdc.balanceOf(address(this)), expectedProceeds, "usdc received from the new vault");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
