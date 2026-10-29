@@ -64,9 +64,10 @@ library LibInKindView {
     if (totalDebt == 0 && !allowUnlevered) revert IInKindFacility.UnleveredEntryDisabled(address(pm));
   }
 
-  /// @dev Whether the pool's quoted LTV is above the PM's target, where PM.deposit cannot place
-  ///      a ratio-matched borrow. PM.deposit rounds per module, so within a few debt units of
-  ///      the target the two can disagree.
+  /// @dev Whether the pool's quoted LTV is above the PM's target, where a single-module
+  ///      PM.deposit cannot place a ratio-matched borrow. A multi-module one can still place it on
+  ///      a module below target. PM.deposit rounds per module, so within a few debt units of the
+  ///      target the two can disagree.
   function aboveTargetLtv(IPositionManager pm, uint256 totalDebt) internal view returns (bool) {
     if (totalDebt == 0) return false;
     (uint256 ltv,) = pm.config();
