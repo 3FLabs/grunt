@@ -56,7 +56,7 @@ contract LibBorrowOffersTest is Test {
   ///         expiry, fully drain, then recycle again. The structure is asserted consistent after
   ///         every step.
   function test_dataStructure_massiveLifecycle() public {
-    uint40 t0 = uint40(block.timestamp);
+    uint40 t0 = uint40(vm.getBlockTimestamp());
     uint40 active = t0 + TIMELOCK;
     uint40 expiry = active + 30 days;
 
@@ -130,7 +130,7 @@ contract LibBorrowOffersTest is Test {
     assertEq(h.liveBits(), 0, "bitmap empty");
 
     // --- Phase 7: after a full drain, inserts start over at id 0 and the structure stays valid. ---
-    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    uint40 active2 = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint8 recycled = h.insert(address(0xD00D), active2, active2 + 1 days, 2e18, 1e18);
     assertEq(recycled, 0, "allocation restarts at the lowest id");
     _assertStructure();
@@ -183,7 +183,7 @@ contract LibBorrowOffersTest is Test {
   }
 
   function test_removeOffer_clearsSlotCompletely() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint8 id = h.insert(address(0xAAAA), active, active + 1 days, 2e18, 1e18);
     h.removeOffer(id);
     assertFalse(h.isLive(id), "bit cleared");
@@ -203,7 +203,7 @@ contract LibBorrowOffersTest is Test {
   ///         order (and slab ids) they were inserted with. Asserted via the OfferConsumed event
   ///         sequence and the exact per-offer fills.
   function test_consume_drainsAscendingPrice() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     // Insert shuffled: collateral (price) per id: id0=1.8, id1=1.2, id2=2.2, id3=1.5 (shares 1e18
     // each, unit price => whole-offer price == collateral). Ascending price: id1, id3, id0, id2.
@@ -249,7 +249,7 @@ contract LibBorrowOffersTest is Test {
   /// @notice A below-floor (but still profitable) offer at the cheap end of the book is skipped,
   ///         not consumed and not pruned, and does NOT block a pricier offer that clears the floor.
   function test_consume_skipsBelowFloor_consumesPricier() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     // Offer A: price 1.005 (0.5% bonus, below the 1% floor). Offer B: price 1.5 (50% bonus).
     // A sorts first (cheapest); the walk must skip it and still consume B.
@@ -272,7 +272,7 @@ contract LibBorrowOffersTest is Test {
   ///         walk: with the walk sorted ascending in price, nothing later can qualify, so pricier
   ///         offers after it are untouched even when the target has room left.
   function test_consume_stopsAtOverPrice_nothingLaterConsumed() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     // Position ratio 4 => strict de-risking admits only prices strictly below ~4. Offers at 2
     // (ok), 5 and 6 (both over). The walk must consume the first and stop at the second.
@@ -330,7 +330,7 @@ contract LibBorrowOffersTest is Test {
   /// @dev Books the two-offer position-clamp scenario (offers active, targets left to the caller)
   ///      and returns the matching consume input.
   function _clampScenario() internal returns (LibBorrowOffers.ConsumeInput memory inp) {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     h.insert(address(0xA0), active, expiry, 48e18, 40e18);
     h.insert(address(0xA1), active, expiry, 48e18, 40e18);
@@ -356,7 +356,7 @@ contract LibBorrowOffersTest is Test {
   ///         more collateral per debt share and can still produce a non-zero fill for the same
   ///         target.
   function test_consume_zeroCollateralFillSkips_laterOfferConsumed() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     // Offer A asks 9.5e14 shares per collateral wei and sorts first (cheapest); for the
     // 9e14-share target its collateral floors to zero (9e14 * 1 / 9.5e14 = 0). Offer B asks
@@ -395,7 +395,7 @@ contract LibBorrowOffersTest is Test {
   ///         sorts first (10 debt shares per collateral unit vs B's 0.8); against a position owing
   ///         only 5 shares the clamp binds on A (10 > 5) and floor(5 * 1 / 10) = 0 collateral.
   function test_consume_clampRescaleToZeroSkips_laterOfferConsumed() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     uint8 a = h.insert(address(0xA0), active, expiry, 1, 10);
     uint8 b = h.insert(address(0xB0), active, expiry, 10, 8);
@@ -426,7 +426,7 @@ contract LibBorrowOffersTest is Test {
   ///         rounded-up share fill prices it a hair below the floor), so partitioning a target
   ///         cannot skip the most owner-favorable admissible offer.
   function test_consume_atFloorOffer_partialFillNotSkipped() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     // 101 collateral for 100 debt shares at unit price and exact share:asset conversion: exactly
     // the 1% floor (excess 1 == ceil(100 * 100 / 10000)).
     uint8 id = h.insert(address(0xA0), active, active + 30 days, 101, 100);
@@ -450,7 +450,7 @@ contract LibBorrowOffersTest is Test {
   ///         (exhausted write-back, slot freed) instead of staying in `liveBits` as a
   ///         live-but-unfillable dust remainder until expiry or a revoke.
   function test_consume_unusableDustRemainder_clearsSlot() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint8 id = h.insert(address(0xA0), active, active + 30 days, 210, 100);
     vm.warp(active + 1);
 
@@ -486,7 +486,7 @@ contract LibBorrowOffersTest is Test {
   ///         reverting {TooManyOffers}, and every pruned slot is fully zeroed with `liveBits` in
   ///         agreement.
   function test_insert_prunesExpiredSlab_insteadOfTooManyOffers() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     for (uint256 i; i < MAX_OFFERS; ++i) {
       h.insert(address(uint160(0xAAAA + i)), active, expiry, uint128(1.1e18 + i * 1e16), 1e18);
@@ -499,7 +499,7 @@ contract LibBorrowOffersTest is Test {
 
     // Past expiry the whole book is dead weight: the next insert prunes it and allocates id 0.
     vm.warp(expiry);
-    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    uint40 active2 = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint8 id = h.insert(address(0xD00D), active2, active2 + 1 days, 2e18, 1e18);
 
     assertEq(id, 0, "lowest pruned id recycled");
@@ -522,7 +522,7 @@ contract LibBorrowOffersTest is Test {
   ///         is left exactly as stored. The allocator's prune condition is expiry, never
   ///         activation; a live, consumable book must not be destroyed by a new proposal.
   function test_insert_fullActiveSlab_revertsWithoutPruning() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 30 days;
     for (uint256 i; i < MAX_OFFERS; ++i) {
       h.insert(address(uint160(0xAAAA + i)), active, expiry, uint128(1.1e18 + i * 1e16), 1e18);
@@ -531,7 +531,7 @@ contract LibBorrowOffersTest is Test {
 
     // Past activation, well before expiry: every offer is merely active, none is prunable.
     vm.warp(active + 1);
-    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    uint40 active2 = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     vm.expectRevert(LibBorrowErrors.TooManyOffers.selector);
     h.insert(address(0xBEEF), active2, active2 + 1 days, 2e18, 1e18);
 
@@ -553,7 +553,7 @@ contract LibBorrowOffersTest is Test {
   ///         next insert prunes and recycles exactly that id (no {TooManyOffers}), the book is
   ///         back at capacity, and the 31 still-live offers are untouched.
   function test_insert_recyclesOnlyExpiredSlot_othersUntouched() public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 longExpiry = active + 30 days;
     uint40 shortExpiry = active + 1 days;
     uint8 shortId = 7;
@@ -565,7 +565,7 @@ contract LibBorrowOffersTest is Test {
 
     // Past the short expiry only: the other offers are live (and merely active, so not prunable).
     vm.warp(shortExpiry);
-    uint40 active2 = uint40(block.timestamp) + TIMELOCK;
+    uint40 active2 = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint8 id = h.insert(address(0xD00D), active2, active2 + 1 days, 2e18, 1e18);
 
     assertEq(id, shortId, "exactly the expired slot recycled");
@@ -592,7 +592,7 @@ contract LibBorrowOffersTest is Test {
   ///         slab in exact agreement, always allocates the lowest free id, and never exceeds the
   ///         cap.
   function testFuzz_allocFreeRecycling(uint256 seed) public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     uint40 expiry = active + 1 days;
     for (uint256 i; i < 80; ++i) {
       seed = uint256(keccak256(abi.encode(seed, i)));
@@ -622,7 +622,7 @@ contract LibBorrowOffersTest is Test {
     bool seizeMode,
     uint256 floorSeed
   ) public {
-    uint40 active = uint40(block.timestamp) + TIMELOCK;
+    uint40 active = uint40(vm.getBlockTimestamp()) + TIMELOCK;
     for (uint256 i; i < collSeeds.length; ++i) {
       uint128 debtShares = uint128(_bound(shareSeeds[i], 1, 1e20));
       uint256 kind = kindSeeds[i] % 5;
@@ -686,10 +686,10 @@ contract LibBorrowOffersTest is Test {
     for (uint8 id; id < MAX_OFFERS; ++id) {
       Offer memory afterOffer = h.slabAt(id);
       if (!liveBefore[id]) continue;
-      if (block.timestamp >= before[id].expiresAt) {
+      if (vm.getBlockTimestamp() >= before[id].expiresAt) {
         // Expired: pruned by the consume write-back.
         assertFalse(h.isLive(id), "expired offer not pruned");
-      } else if (block.timestamp < before[id].activeAt) {
+      } else if (vm.getBlockTimestamp() < before[id].activeAt) {
         // Inactive: untouched.
         assertTrue(h.isLive(id), "inactive offer must stay");
         assertEq(afterOffer.remainingCollateral, before[id].remainingCollateral, "inactive offer mutated");

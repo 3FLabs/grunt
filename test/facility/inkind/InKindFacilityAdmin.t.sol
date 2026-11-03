@@ -179,7 +179,7 @@ contract InKindFacilityAdminTest is InKindFacilityBaseTest {
   function test_pauseFor_settersStayOpenWhilePaused() public {
     vm.prank(owner);
     facility.pauseFor(type(uint256).max);
-    uint40 expiry = uint40(block.timestamp + 1 days);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 1 days);
 
     _setEntry(positionManager, 1e6, expiry, 1);
     _setExit(positionManager, 2e6, expiry, 2);

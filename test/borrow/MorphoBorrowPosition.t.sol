@@ -945,7 +945,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     // Advance time to accrue interest and create a non-trivial share rate
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     uint256 totalBorrowed = borrowPosition.totalBorrowed();
     assertGt(totalBorrowed, LOAN_AMOUNT / 2, "Interest should have accrued");
@@ -974,7 +974,7 @@ contract MorphoBorrowPositionTest is Test {
     vm.stopPrank();
 
     // Advance time to accrue interest
-    vm.warp(block.timestamp + timePassed);
+    vm.warp(vm.getBlockTimestamp() + timePassed);
 
     uint256 totalBorrowed = borrowPosition.totalBorrowed();
 

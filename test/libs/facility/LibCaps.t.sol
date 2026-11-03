@@ -471,7 +471,7 @@ contract LibCapsTest is Test {
 
   function test_available_externalDynamicMirrorsPool() public {
     vm.prank(owner);
-    dynamicCaps.setCap(ID, 1_000e18, 1 days, uint64(block.timestamp - 12 hours));
+    dynamicCaps.setCap(ID, 1_000e18, 1 days, uint64(vm.getBlockTimestamp() - 12 hours));
     uint256 word1x = LibCaps.encodeExternal(address(dynamicCaps), ID, MULT_1X);
     assertEq(harness.available(word1x), 500e18, "half recovered");
     uint256 wordNeg = LibCaps.encodeExternal(address(dynamicCaps), ID, -MULT_1X);

@@ -45,7 +45,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     uint128 capsCap = uint128(_capUnits(kind, cap));
     vm.startPrank(owner);
     if (kind == 1) absoluteCaps.setCap(POOL_ID, capsCap, capsCap);
-    else if (kind == 2) dynamicCaps.setCap(POOL_ID, capsCap, uint64(1 days), uint64(block.timestamp - 1 days));
+    else if (kind == 2) dynamicCaps.setCap(POOL_ID, capsCap, uint64(1 days), uint64(vm.getBlockTimestamp() - 1 days));
     else absoluteCaps.setCap(POOL_ID, 0, capsCap);
     vm.stopPrank();
     caps = kind == 2 ? address(dynamicCaps) : address(absoluteCaps);
@@ -121,7 +121,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     RepayOnBehalfExiter r =
       new RepayOnBehalfExiter(facility, positionManager, debtToken, morpho, marketParams, address(borrowPosition));
     (uint256 userShares,) = _enter(user, ENTER_AMOUNT, address(r));
-    vm.warp(block.timestamp + bound(elapsed, 0, 365 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 365 days));
     uint256 shares = bound(sharesSeed, 2, userShares);
     uint256 repay = bound(repaySeed, 1, positionManager.debtAmount() - 1);
     uint256 burnShares = _burnShares(shares, DEFAULT_FEE_BPS);
@@ -158,7 +158,7 @@ contract InKindFacilityExitFuzzTest is InKindFacilityExitHelpers {
     _openOffers();
     _setPmFees(100, 1000);
     (uint256 userShares,) = _enter(user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + bound(elapsed, 0, 365 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 365 days));
     uint24 feeBps = uint24(bound(feeSeed, 0, MAX_FEE));
     uint256 kind = bound(kindSeed, 0, 3);
     uint128 cap = uint128(bound(capSeed, 1, 1_000e6));

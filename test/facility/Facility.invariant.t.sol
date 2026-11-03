@@ -409,7 +409,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
   function invariant_pauseConsistency() public view {
     (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     if (isPaused) {
-      assertGe(pausedUntil, block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
+      assertGe(pausedUntil, vm.getBlockTimestamp(), "FAC-10: paused but pausedUntil < block.timestamp");
     }
   }
 }

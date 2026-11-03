@@ -59,7 +59,7 @@ contract MidasFundFuzzTest is Test {
     redemptionMTokenFeed = new MockMidasDataFeed();
     redemptionAssetFeed = new MockMidasDataFeed();
     oracle = new MockChainlinkOracle(8);
-    oracle.setRoundData(1, int256(1e8), block.timestamp, 1);
+    oracle.setRoundData(1, int256(1e8), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
@@ -407,7 +407,7 @@ contract MidasFundFuzzTest is Test {
     uint256 supply = wrappedShare.totalSupply();
     assertEq(supply, ONE_MTOKEN, "supply");
 
-    oracle.setRoundData(2, int256(price), block.timestamp, 2);
+    oracle.setRoundData(2, int256(price), vm.getBlockTimestamp(), 2);
     oracle.setLatestRound(2);
     uint256 expected = supply * price / 1e8 / ASSET_SCALE;
     assertEq(fund.totalAssets(), expected, "totalAssets");
@@ -514,7 +514,7 @@ contract MidasFundInvariantTest is StdInvariant, Test {
     redemptionMTokenFeed = new MockMidasDataFeed();
     redemptionAssetFeed = new MockMidasDataFeed();
     oracle = new MockChainlinkOracle(8);
-    oracle.setRoundData(1, int256(1e8), block.timestamp, 1);
+    oracle.setRoundData(1, int256(1e8), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));

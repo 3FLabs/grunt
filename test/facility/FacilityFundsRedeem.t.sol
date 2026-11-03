@@ -33,7 +33,7 @@ contract FacilityFundsRedeemTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(intentId, DEPOSITED);
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
     vm.prank(facilitator);
     _setFund(intentId, address(mockFund));
   }

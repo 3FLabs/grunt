@@ -144,7 +144,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     uint256 initialTimestamp = _lastFeeAccrualTimestamp();
 
     // Advance time
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Rebalance (just supply more collateral)
     uint256 additionalCollateral = 1000e18;
@@ -684,7 +684,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.stopPrank();
 
     // Advance time past cooldown
-    vm.warp(block.timestamp + 1 hours + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 hours + 1);
 
     // Second rebalance should succeed
     ops[0] = RebalancingOperation({
@@ -797,7 +797,7 @@ contract PositionManagerRebalanceTest is PositionManagerBaseTest {
     vm.stopPrank();
 
     // Advance time to exactly 1 second before cooldown expires
-    vm.warp(block.timestamp + 1 hours - 1);
+    vm.warp(vm.getBlockTimestamp() + 1 hours - 1);
 
     // Should still revert
     ops[0] = RebalancingOperation({

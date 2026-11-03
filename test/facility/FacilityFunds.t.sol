@@ -42,7 +42,7 @@ contract FacilityFundsTest is FacilityBaseTest {
     facility.deposit(intentId, depositAmount);
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set fund for the intent
     vm.prank(facilitator);
@@ -172,7 +172,7 @@ contract FacilityFundsTest is FacilityBaseTest {
     // Rebind fund to recover from stale ended order using fresh deadline to avoid SwapDigestUsed.
     vm.prank(facilitator);
     {
-      uint256 deadline = block.timestamp + 2 hours;
+      uint256 deadline = vm.getBlockTimestamp() + 2 hours;
       address[] memory signers = new address[](1);
       bytes[] memory signatures = new bytes[](1);
       signers[0] = guardian;

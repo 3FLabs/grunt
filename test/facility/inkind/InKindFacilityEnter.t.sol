@@ -154,7 +154,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   }
 
   function test_enter_mintAtTheToleranceBoundPasses() public {
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     (uint256 expected, uint256 tolerance) = _fairMint(AMOUNT);
     // an odd rounding term tells the trailing `+ 1` apart from `^ 1`
     assertEq(tolerance % 2, 0, "fixture: rounding term must be odd");
@@ -234,7 +234,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   }
 
   function test_maxEnter_oneUnitBudgetQuotesADustEntry() public {
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     _setEntry(positionManager, 1, FAR_EXPIRY, DEFAULT_FEE_BPS);
     uint256 totalCollateral = positionManager.collateralAmount();
     uint256 totalDebt = positionManager.debtAmount();
@@ -272,7 +272,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_enter_expiredAuthEmitsNoAuthConsumed() public {
-    _setAuth(user, ARMED_AUTH, uint40(block.timestamp));
+    _setAuth(user, ARMED_AUTH, uint40(vm.getBlockTimestamp()));
     _fundEntrant(user, AMOUNT);
 
     vm.recordLogs();
@@ -302,7 +302,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
     _setAbsPoolAt(POOL_ID, ARMED_CAP, ARMED_CAP);
     vm.prank(owner);
     dynamicCaps.setCap(
-      SECURITY_POOL_ID, uint128(ARMED_CAP * CAPS_SCALE), uint64(1 days), uint64(block.timestamp - 1 days)
+      SECURITY_POOL_ID, uint128(ARMED_CAP * CAPS_SCALE), uint64(1 days), uint64(vm.getBlockTimestamp() - 1 days)
     );
     _setEntry(positionManager, _absWord(), FAR_EXPIRY, DEFAULT_FEE_BPS, true);
     _setSecurityCap(_externalWord(address(dynamicCaps), SECURITY_POOL_ID, MULT_1X));
@@ -394,7 +394,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
     _assertPreviewFeedsEnterBounds();
     _setPmFees(200, 2_000);
     oracle.setPrice(1.2e24);
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     _assertPreviewFeedsEnterBounds();
     oracle.setPrice(0.8e24);
     _assertPreviewFeedsEnterBounds();
@@ -403,7 +403,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   function test_previewEnter_exactUnderPendingPmFees() public {
     _setPmFees(200, 2_000);
     oracle.setPrice(1.2e24);
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     assertGt(mgmtShares, 0, "fixture: pending management fee");
     assertGt(perfShares, 0, "fixture: pending performance fee");

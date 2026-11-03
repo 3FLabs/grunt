@@ -226,7 +226,7 @@ contract FacilityDynamicCapsTest is Test {
   }
 
   function test_adjustCap_keepsAFutureOrigin() public {
-    uint64 future = uint64(block.timestamp + 1 hours);
+    uint64 future = uint64(vm.getBlockTimestamp() + 1 hours);
     _setCap(RECOVERY, RECOVERY_TIME, future);
 
     vm.expectEmit(true, true, true, true, address(caps));
@@ -252,7 +252,7 @@ contract FacilityDynamicCapsTest is Test {
     uint64 recoveryTime
   ) public {
     _consume(bound(consumed, 0, RECOVERY), MULT_1X);
-    vm.warp(block.timestamp + bound(elapsed, 0, RECOVERY_TIME));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, RECOVERY_TIME));
     recovery = uint128(bound(recovery, 1, type(uint128).max));
     recoveryTime = uint64(bound(recoveryTime, 1, 365 days));
     uint256 expected = FixedPointMathLib.min(caps.remaining(ID), recovery);
@@ -809,7 +809,7 @@ contract FacilityDynamicCapsTest is Test {
     for (uint256 i = 0; i < 16; i++) {
       uint256 r = uint256(keccak256(abi.encode(seed, i)));
       uint256 wait = r % (2 * uint256(recoveryTime));
-      vm.warp(block.timestamp + wait);
+      vm.warp(vm.getBlockTimestamp() + wait);
       elapsed += wait;
 
       uint256 current = caps.remaining(ID);

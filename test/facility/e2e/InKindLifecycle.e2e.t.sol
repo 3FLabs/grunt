@@ -93,7 +93,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     vm.startPrank(facilitator);
     facility.setEntry(address(positionManager), _poolWord(POOL_ID, MULT_1X), FAR_EXPIRY, ENTRY_FEE_BPS, false);
     facility.setExit(
-      address(positionManager), _poolWord(POOL_ID, MULT_NEG_1X), uint40(block.timestamp + 30 days), EXIT_FEE_BPS
+      address(positionManager), _poolWord(POOL_ID, MULT_NEG_1X), uint40(vm.getBlockTimestamp() + 30 days), EXIT_FEE_BPS
     );
     vm.stopPrank();
 
@@ -157,7 +157,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     capacityConsumed += f.debt;
 
     // interest, a NAV up-move and PM fees pending
-    vm.warp(block.timestamp + 45 days);
+    vm.warp(vm.getBlockTimestamp() + 45 days);
     _movePrice(DEFAULT_ORACLE_PRICE * 104 / 100);
     {
       (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
@@ -194,7 +194,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     capacityConsumed += f.debt;
 
     // more interest and a NAV down-move, then everyone leaves
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     _movePrice(DEFAULT_ORACLE_PRICE * 101 / 100);
     capacityReleased += _exitChecked(alice, positionManager.balanceOf(alice));
     uint256 carolShares = positionManager.balanceOf(carol);
@@ -236,7 +236,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     _executeEntry(alice, _prepareEntry(alice, bound(amountA, 4e12, 20_000e18)));
     _executeEntry(bob, _prepareEntry(bob, bound(amountB, 1e13, 20_000e18)));
 
-    vm.warp(block.timestamp + bound(elapsed, 0, 365 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 365 days));
     _movePrice(DEFAULT_ORACLE_PRICE * bound(priceBps, 9_000, 12_000) / BPS);
 
     uint256 aliceShares = positionManager.balanceOf(alice);

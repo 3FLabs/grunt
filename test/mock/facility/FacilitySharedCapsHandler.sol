@@ -170,7 +170,7 @@ contract FacilitySharedCapsHandler is Test {
       groupBase[g] = int256(groupHeadroom(g));
     }
     dynLevel = dynamicCaps_.remaining(DYN_ID);
-    dynTime = block.timestamp;
+    dynTime = vm.getBlockTimestamp();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -186,7 +186,7 @@ contract FacilitySharedCapsHandler is Test {
       targetAsset: Asset({asset: positionManager, isPositionManager: true}),
       depositCap: word,
       guardKey: positionManager,
-      resolveStart: uint40(block.timestamp + bound(delaySeed, 1 days, 30 days)),
+      resolveStart: uint40(vm.getBlockTimestamp() + bound(delaySeed, 1 days, 30 days)),
       quorum: 1,
       transferableIntent: true
     });
@@ -299,7 +299,7 @@ contract FacilitySharedCapsHandler is Test {
   }
 
   function act_warp(uint256 seed) public {
-    vm.warp(block.timestamp + bound(seed, 1, 3 days));
+    vm.warp(vm.getBlockTimestamp() + bound(seed, 1, 3 days));
     warps++;
   }
 
@@ -354,7 +354,7 @@ contract FacilitySharedCapsHandler is Test {
   ///         rounded down and up.
   function dynamicBounds() external view returns (uint256 lo, uint256 hi) {
     (uint128 recovery, uint64 recoveryTime,) = dynamicCaps.getCap(DYN_ID);
-    uint256 scaled = uint256(recovery) * (block.timestamp - dynTime);
+    uint256 scaled = uint256(recovery) * (vm.getBlockTimestamp() - dynTime);
     lo = _min(dynLevel + scaled / recoveryTime, recovery);
     hi = _min(dynLevel + (scaled + recoveryTime - 1) / recoveryTime, recovery);
   }
@@ -469,7 +469,7 @@ contract FacilitySharedCapsHandler is Test {
       dynamicCapMismatch = true;
     }
     dynLevel = remaining;
-    dynTime = block.timestamp;
+    dynTime = vm.getBlockTimestamp();
     dynamicConsumptions++;
   }
 
@@ -569,7 +569,7 @@ contract FacilitySharedCapsHandler is Test {
 
   function _isDepositing(uint256 id) internal view returns (bool) {
     (IntentProperties memory props,,, bool resolved) = facility.getIntent(id);
-    return !resolved && props.resolveStart > block.timestamp;
+    return !resolved && props.resolveStart > vm.getBlockTimestamp();
   }
 
   function _pick(uint256 seed, bool depositing, bool withSupply) internal view returns (bool found, uint256 id) {

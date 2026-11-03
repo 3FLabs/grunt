@@ -105,7 +105,7 @@ contract MidasFundTest is Test {
     redemptionMTokenFeed = new MockMidasDataFeed();
     redemptionAssetFeed = new MockMidasDataFeed();
     oracle = new MockChainlinkOracle(8);
-    oracle.setRoundData(1, int256(1e8), block.timestamp, 1);
+    oracle.setRoundData(1, int256(1e8), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     depositVault = new MockMidasDepositVault(address(mGlobal), address(depositMTokenFeed), address(midasAcl));
@@ -491,7 +491,7 @@ contract MidasFundTest is Test {
     depositMTokenFeed.setRate(100e18);
     redemptionMTokenFeed.setRate(100e18);
     // Oracle price 2 USD: expected output = 0.5e18 mToken per USDC.
-    oracle.setRoundData(2, int256(2e8), block.timestamp, 2);
+    oracle.setRoundData(2, int256(2e8), vm.getBlockTimestamp(), 2);
     oracle.setLatestRound(2);
 
     Order memory tooLow = _depositOrder(ONE_USDC, 0.4e18);
@@ -529,7 +529,7 @@ contract MidasFundTest is Test {
   }
 
   function test_Create_RevertsChainlinkInvalidAnswer() public {
-    oracle.setRoundData(2, 0, block.timestamp, 2);
+    oracle.setRoundData(2, 0, vm.getBlockTimestamp(), 2);
     oracle.setLatestRound(2);
     vm.expectRevert(LibFundsErrors.ChainlinkInvalidAnswer.selector);
     fund.create(_depositOrder(ONE_USDC, ONE_MTOKEN));
@@ -543,7 +543,7 @@ contract MidasFundTest is Test {
   }
 
   function test_Create_RevertsChainlinkStaleRound() public {
-    oracle.setRoundData(2, int256(1e8), block.timestamp, 1);
+    oracle.setRoundData(2, int256(1e8), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(2);
     vm.expectRevert(LibFundsErrors.ChainlinkStaleRound.selector);
     fund.create(_depositOrder(ONE_USDC, ONE_MTOKEN));
@@ -1905,7 +1905,7 @@ contract MidasFundTest is Test {
 
   function test_SetOracle_OwnerSuccess() public {
     MockChainlinkOracle newOracle = new MockChainlinkOracle(8);
-    newOracle.setRoundData(1, int256(2e8), block.timestamp, 1);
+    newOracle.setRoundData(1, int256(2e8), vm.getBlockTimestamp(), 1);
     newOracle.setLatestRound(1);
 
     vm.prank(owner);
@@ -1971,7 +1971,7 @@ contract MidasFundTest is Test {
     // supply (1e18) * oracle price (1e8) / 1e8 / 1e12 = 1e6
     assertEq(fund.totalAssets(), ONE_USDC, "totalAssets at 1:1");
 
-    oracle.setRoundData(2, int256(1.5e8), block.timestamp, 2);
+    oracle.setRoundData(2, int256(1.5e8), vm.getBlockTimestamp(), 2);
     oracle.setLatestRound(2);
     assertEq(fund.totalAssets(), ONE_USDC * 15 / 10, "totalAssets at 1.5x");
 
@@ -1988,7 +1988,7 @@ contract MidasFundTest is Test {
 
   function test_TotalAssets_RevertsInvalidOracleRound() public {
     _depositAndUnlock(ONE_USDC);
-    oracle.setRoundData(2, -1, block.timestamp, 2);
+    oracle.setRoundData(2, -1, vm.getBlockTimestamp(), 2);
     oracle.setLatestRound(2);
 
     vm.expectRevert(LibFundsErrors.ChainlinkInvalidAnswer.selector);

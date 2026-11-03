@@ -84,7 +84,7 @@ contract RequestMintTimelockPoCTest is Test {
       amount: ptAmount,
       expectedReturn: ytAmount,
       nonce: nonce,
-      expiration: block.timestamp + 1 days,
+      expiration: vm.getBlockTimestamp() + 1 days,
       useCallback: false
     });
     bytes memory sig = _signOffer(reqAddr, offer, wallet);
@@ -106,7 +106,7 @@ contract RequestMintTimelockPoCTest is Test {
       address(asset),
       "Yield Request",
       "YIELD",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       MINT_TIMELOCK
     );
 
@@ -126,7 +126,7 @@ contract RequestMintTimelockPoCTest is Test {
     assertEq(Vault(ytAddr).balanceOf(colludingBF.addr), 9_000_000e6, "Attacker has inflated YT");
 
     // --- Step 4: Facilitator tries to call setRepaid(uint256) atomically — BLOCKED ---
-    uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;
+    uint40 expectedAvailableAt = uint40(vm.getBlockTimestamp()) + MINT_TIMELOCK;
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
     Request(reqAddr).setRepaid(0, type(uint256).max);
@@ -134,7 +134,7 @@ contract RequestMintTimelockPoCTest is Test {
     assertEq(Request(reqAddr).repaidAvailableAt(), expectedAvailableAt, "repaidAvailableAt should match");
 
     // --- Verify: after timelock passes, setRepaid works ---
-    vm.warp(block.timestamp + MINT_TIMELOCK);
+    vm.warp(vm.getBlockTimestamp() + MINT_TIMELOCK);
     vm.prank(owner);
     Request(reqAddr).setRepaid(0, type(uint256).max);
     assertTrue(Request(reqAddr).canWithdraw(), "Withdrawals should be enabled after timelock");
@@ -144,7 +144,7 @@ contract RequestMintTimelockPoCTest is Test {
   function test_poc_setRepaidWorksWithoutMinting() public {
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "No Mint", "NM", uint64(block.timestamp + 90 days), MINT_TIMELOCK
+      owner, puller, consumer, address(asset), "No Mint", "NM", uint64(vm.getBlockTimestamp() + 90 days), MINT_TIMELOCK
     );
 
     vm.prank(owner);
@@ -154,7 +154,7 @@ contract RequestMintTimelockPoCTest is Test {
 
   /// @notice Verifies that deadline-based auto-repay is NOT affected by the mint timelock.
   function test_poc_deadlineAutoRepayNotAffected() public {
-    uint64 deadline = uint64(block.timestamp + 1 days + 1);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 1 days + 1);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline", "DL", deadline, MINT_TIMELOCK);
@@ -181,7 +181,14 @@ contract RequestMintTimelockPoCTest is Test {
   function test_poc_mintFlowAlsoTriggersTimelock() public {
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Mint Flow", "MF", uint64(block.timestamp + 90 days), MINT_TIMELOCK
+      owner,
+      puller,
+      consumer,
+      address(asset),
+      "Mint Flow",
+      "MF",
+      uint64(vm.getBlockTimestamp() + 90 days),
+      MINT_TIMELOCK
     );
 
     // Authorize and mint
@@ -192,7 +199,7 @@ contract RequestMintTimelockPoCTest is Test {
     Request(reqAddr).mint(type(uint128).max, 0);
 
     // setRepaid should revert
-    uint40 expectedAvailableAt = uint40(block.timestamp) + MINT_TIMELOCK;
+    uint40 expectedAvailableAt = uint40(vm.getBlockTimestamp()) + MINT_TIMELOCK;
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
     Request(reqAddr).setRepaid(0, type(uint256).max);

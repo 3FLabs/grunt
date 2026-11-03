@@ -165,7 +165,7 @@ contract TransferGuardInvariantTest is StdInvariant, Test {
         assertFalse(guard.paused(tkns[k]), "TG-5: NOT_PAUSED but paused() returns true");
       }
 
-      if (pausedUntil != 0 && pausedUntil != type(uint40).max && block.timestamp > pausedUntil) {
+      if (pausedUntil != 0 && pausedUntil != type(uint40).max && vm.getBlockTimestamp() > pausedUntil) {
         assertFalse(guard.paused(tkns[k]), "TG-5: past pausedUntil but still paused");
       }
 

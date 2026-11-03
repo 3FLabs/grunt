@@ -116,7 +116,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
     vm.prank(caller);
     facility.pauseFor(1 days);
     (,, uint40 pausedUntil) = facility.config();
-    assertEq(pausedUntil, allowed ? block.timestamp + 1 days : 0, "stored");
+    assertEq(pausedUntil, allowed ? vm.getBlockTimestamp() + 1 days : 0, "stored");
   }
 
   function testFuzz_setFeeRecipient_ownerOnly(uint256 seed, uint256 roleBits, bool asOwner) public {
@@ -286,7 +286,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
   function testFuzz_pauseFor_setsSaturatedPausedUntil(uint256 duration, uint256 time) public {
     vm.warp(bound(time, 1, type(uint40).max));
     uint256 capped = duration < type(uint40).max ? duration : type(uint40).max;
-    uint256 end = block.timestamp + capped;
+    uint256 end = vm.getBlockTimestamp() + capped;
     uint40 expected = duration == 0 ? 0 : uint40(end < type(uint40).max ? end : type(uint40).max);
 
     vm.expectEmit(true, true, true, true, address(facility));
@@ -296,7 +296,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
 
     (, bool isPaused, uint40 pausedUntil) = facility.config();
     assertEq(pausedUntil, expected, "pausedUntil");
-    assertEq(isPaused, block.timestamp < expected, "isPaused");
+    assertEq(isPaused, vm.getBlockTimestamp() < expected, "isPaused");
   }
 
   function testFuzz_pauseFor_gatesEveryFlowUntilItLapses(uint256 duration, uint256 elapsed, bool atLapse) public {
@@ -313,7 +313,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
 
     vm.prank(compliance);
     facility.pauseFor(duration);
-    vm.warp(block.timestamp + elapsed);
+    vm.warp(vm.getBlockTimestamp() + elapsed);
     bool paused = elapsed < duration;
     (, bool isPaused,) = facility.config();
     assertEq(isPaused, paused, "config");

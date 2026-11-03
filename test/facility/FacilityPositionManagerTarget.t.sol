@@ -31,7 +31,7 @@ contract FacilityPositionManagerTargetTest is FacilityBaseTest {
     _mintCollateral(user, COLLATERAL);
     vm.prank(user);
     facility.deposit(intentId, COLLATERAL);
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
   }
 
   /// @notice Target intent holding COLLATERAL - BORROW PM shares and BORROW debt
@@ -123,7 +123,7 @@ contract FacilityPositionManagerTargetTest is FacilityBaseTest {
     props.guardKey = pmAddr;
     vm.prank(owner);
     uint256 intentId = facility.createIntent(props);
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     vm.prank(facilitator);
     vm.expectRevert(LibFacilityErrors.InvalidPositionManagerAssets.selector);

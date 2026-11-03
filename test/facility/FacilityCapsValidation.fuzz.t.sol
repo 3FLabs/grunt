@@ -99,7 +99,7 @@ contract FacilityCapsValidationFuzzTest is FacilityBaseTest {
   function _intentInState(uint256 state) internal returns (uint256 intentId) {
     intentId = _createDefaultIntent();
     state = bound(state, 0, 2);
-    if (state > 0) vm.warp(block.timestamp + 1 days);
+    if (state > 0) vm.warp(vm.getBlockTimestamp() + 1 days);
     if (state == 2) {
       vm.prank(facilitator);
       facility.resolve(intentId);

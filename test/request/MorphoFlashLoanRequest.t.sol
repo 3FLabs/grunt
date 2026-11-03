@@ -188,7 +188,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
   }
 
   function _defaultSetRequestParams() internal view returns (MorphoFlashLoanRequest.SetRequestParams memory) {
-    return _buildSetRequestParams(intentId, block.timestamp + 1 hours);
+    return _buildSetRequestParams(intentId, vm.getBlockTimestamp() + 1 hours);
   }
 
   function _noOpScript() internal view returns (address, bytes memory) {
@@ -543,7 +543,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     // Second execution with fresh proxy (simulating a separate transaction)
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
-    uint256 deadline2 = block.timestamp + 2 hours;
+    uint256 deadline2 = vm.getBlockTimestamp() + 2 hours;
     signers[0] = guardian;
     signatures[0] = _signSetRequest(intentId, proxy2, deadline2, GUARDIAN_PK);
 
@@ -574,7 +574,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     facility.deposit(syncIntentId, depositAmount);
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set the mock fund on the intent (requires facilitator + guardian sig)
     vm.prank(facilitator);
@@ -596,7 +596,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
 
     // Build setRequest params for the new intent
     MorphoFlashLoanRequest.SetRequestParams memory params =
-      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+      _buildSetRequestParams(syncIntentId, vm.getBlockTimestamp() + 1 hours);
 
     // Build SyncDeposit script payload
     // borrowAmount = depositAmount to cover the flash loan repay.
@@ -644,7 +644,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     facility.deposit(syncIntentId, amount);
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set the mock fund on the intent (requires facilitator + guardian sig)
     vm.prank(facilitator);
@@ -684,7 +684,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
 
     MorphoFlashLoanRequest.SetRequestParams memory params =
-      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+      _buildSetRequestParams(syncIntentId, vm.getBlockTimestamp() + 1 hours);
 
     // Empty rebalance: no deallocations, allocation skipped (allocateAdapter == address(0)).
     // pmDepositAmount = borrowAmount = amount.
@@ -733,7 +733,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
 
     MorphoFlashLoanRequest.SetRequestParams memory params =
-      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+      _buildSetRequestParams(syncIntentId, vm.getBlockTimestamp() + 1 hours);
 
     // Non-empty rebalance: proves the calldata array survives delegatecall + encode/decode round-trip.
     IMorphoAllocator.Deallocation[] memory deallocations = new IMorphoAllocator.Deallocation[](1);
@@ -771,7 +771,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
 
     MorphoFlashLoanRequest.SetRequestParams memory params =
-      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+      _buildSetRequestParams(syncIntentId, vm.getBlockTimestamp() + 1 hours);
     bytes memory scriptPayload = _syncAllocatorDepositPayload(syncIntentId, amount);
 
     vm.prank(executor);
@@ -787,7 +787,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     (uint256 syncIntentId, uint256 amount) = _setupSyncAllocatorIntent();
 
     MorphoFlashLoanRequest.SetRequestParams memory params =
-      _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours);
+      _buildSetRequestParams(syncIntentId, vm.getBlockTimestamp() + 1 hours);
     bytes memory scriptPayload = _syncAllocatorDepositPayload(syncIntentId, amount);
 
     vm.prank(executor);
@@ -818,7 +818,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       vm.prank(user);
       facility.deposit(syncIntentId, amount);
 
-      vm.warp(block.timestamp + 1 days + 1);
+      vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
       vm.prank(facilitator);
       _setFund(syncIntentId, address(mockFund));
@@ -833,7 +833,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       vm.prank(executor);
       flashLoanRequest.execute(
         amount,
-        _buildSetRequestParams(syncIntentId, block.timestamp + 1 hours),
+        _buildSetRequestParams(syncIntentId, vm.getBlockTimestamp() + 1 hours),
         address(syncDeposit),
         abi.encodeCall(SyncDeposit.run, (address(facility), syncIntentId, amount, amount, amount, true))
       );
@@ -880,7 +880,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       {
         address[] memory fundSigners = new address[](1);
         bytes[] memory fundSigs = new bytes[](1);
-        uint256 fundDeadline = block.timestamp + 3 hours;
+        uint256 fundDeadline = vm.getBlockTimestamp() + 3 hours;
         fundSigners[0] = guardian;
         fundSigs[0] = _signSetFund(syncIntentId, address(mockFund), fundDeadline, GUARDIAN_PK);
         vm.prank(facilitator);
@@ -900,7 +900,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
       address[] memory signers = new address[](1);
       bytes[] memory sigs = new bytes[](1);
       signers[0] = guardian;
-      sigs[0] = _signSetRequest(syncIntentId, proxy2, block.timestamp + 2 hours, GUARDIAN_PK);
+      sigs[0] = _signSetRequest(syncIntentId, proxy2, vm.getBlockTimestamp() + 2 hours, GUARDIAN_PK);
 
       // Flash loan amount = actualDebtBorrowed (need enough debtToken to repay PM)
       vm.prank(executor);
@@ -908,7 +908,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
         .execute(
           actualDebtBorrowed,
           MorphoFlashLoanRequest.SetRequestParams({
-            intentId: syncIntentId, deadline: block.timestamp + 2 hours, signers: signers, signatures: sigs
+            intentId: syncIntentId, deadline: vm.getBlockTimestamp() + 2 hours, signers: signers, signatures: sigs
           }),
           address(syncWithdrawal),
           withdrawPayload

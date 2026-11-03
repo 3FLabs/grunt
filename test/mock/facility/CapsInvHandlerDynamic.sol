@@ -57,7 +57,7 @@ contract CapsInvHandlerDynamic is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function act_warp(uint256 seed) external {
-    vm.warp(block.timestamp + (seed % 4 == 0 ? bound(seed, 1 days, 400 days) : bound(seed, 1, 6 hours)));
+    vm.warp(vm.getBlockTimestamp() + (seed % 4 == 0 ? bound(seed, 1 days, 400 days) : bound(seed, 1, 6 hours)));
   }
 
   /// @dev Consumes an amount the quote covers on the first ID from the seeded one with capacity.
@@ -97,8 +97,8 @@ contract CapsInvHandlerDynamic is Test {
     uint256 mode = originSeed % 3;
     uint64 originTime = uint64(
       mode == 0
-        ? bound(originSeed, 0, block.timestamp)
-        : mode == 1 ? block.timestamp : block.timestamp + bound(originSeed, 1, 30 days)
+        ? bound(originSeed, 0, vm.getBlockTimestamp())
+        : mode == 1 ? vm.getBlockTimestamp() : vm.getBlockTimestamp() + bound(originSeed, 1, 30 days)
     );
 
     vm.recordLogs();
@@ -129,8 +129,8 @@ contract CapsInvHandlerDynamic is Test {
   ///         rounded down, flat at recovery.
   function remainingOf(uint64 id) public view returns (uint256) {
     Curve memory curve = _ghost[id];
-    if (block.timestamp <= curve.originTime) return 0;
-    uint256 elapsed = block.timestamp - curve.originTime;
+    if (vm.getBlockTimestamp() <= curve.originTime) return 0;
+    uint256 elapsed = vm.getBlockTimestamp() - curve.originTime;
     if (elapsed >= curve.recoveryTime) return curve.recovery;
     return FixedPointMathLib.mulDiv(curve.recovery, elapsed, curve.recoveryTime);
   }
@@ -184,13 +184,13 @@ contract CapsInvHandlerDynamic is Test {
   function _moveOrigin(uint64 id, uint256 left) internal returns (uint256) {
     Curve storage curve = _ghost[id];
     uint256 shift = left == 0 ? 0 : FixedPointMathLib.mulDiv(left, curve.recoveryTime, curve.recovery);
-    curve.originTime = uint64(block.timestamp - shift);
+    curve.originTime = uint64(vm.getBlockTimestamp() - shift);
     return FixedPointMathLib.mulDiv(curve.recovery, shift, curve.recoveryTime);
   }
 
   /// @dev The rounded origin leaves at most `left` now and at least `left` one second later.
   function _checkRounding(uint64 id, uint256 left) internal {
-    uint256 time = block.timestamp;
+    uint256 time = vm.getBlockTimestamp();
     uint256 rounded = caps.remaining(id);
     vm.warp(time + 1);
     uint256 next = caps.remaining(id);
@@ -210,8 +210,8 @@ contract CapsInvHandlerDynamic is Test {
 
   function _record(uint64 id, Curve memory curve) internal {
     _ghost[id] = curve;
-    setTime[id] = block.timestamp;
-    uint256 elapsed = block.timestamp > curve.originTime ? block.timestamp - curve.originTime : 0;
+    setTime[id] = vm.getBlockTimestamp();
+    uint256 elapsed = vm.getBlockTimestamp() > curve.originTime ? vm.getBlockTimestamp() - curve.originTime : 0;
     startCredit[id] = uint256(curve.recovery) * FixedPointMathLib.min(elapsed, curve.recoveryTime);
     consumed[id] = 0;
   }

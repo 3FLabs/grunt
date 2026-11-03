@@ -178,7 +178,7 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     uint256 intentId = _createIntent(_poolWord(POOL_ID, MULT_1X));
     _depositIntent(intentId, depositor, 1_000e6);
 
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     (, uint256 debtIn) = _exit(user, shares, user);
     assertGt(debtIn, debt, "exit credits interest");
     uint256 drift = debtIn - debt;
@@ -299,7 +299,7 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, SECURITY_RATE_ID));
     facility.enter(address(positionManager2), 401e18, 0, type(uint256).max, 0, receiver);
 
-    vm.warp(block.timestamp + 6 hours);
+    vm.warp(vm.getBlockTimestamp() + 6 hours);
     assertEq(_dynRemaining(SECURITY_RATE_ID), 500e6, "after 6h");
     uint256 quote = facility.maxEnter(address(positionManager2), user);
     assertEq(
@@ -311,7 +311,7 @@ contract SharedCapsE2ETest is SharedCapsE2EBaseTest {
     assertEq(debtToken.balanceOf(receiver) - debtBefore, 500e6 - 1, "quoted debt");
     assertEq(_dynRemaining(SECURITY_RATE_ID), 0, "after quoted entry");
 
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY, "full recovery");
   }
 

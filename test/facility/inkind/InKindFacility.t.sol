@@ -94,7 +94,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   ///      origin a day ago.
   function _setDynPoolFull(uint64 id, uint128 recovery) internal {
     vm.prank(owner);
-    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), uint64(1 days), uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), uint64(1 days), uint64(vm.getBlockTimestamp() - 1 days));
   }
 
   /// @dev Dynamic cap origin rounding forfeits up to one second of recovery per consumption.
@@ -207,7 +207,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_enter_ratioDerivedDebt_afterInterestAccrual() public {
     uint256 ratioDebtBefore = _expectedDebt(1_000e18);
-    vm.warp(block.timestamp + 180 days);
+    vm.warp(vm.getBlockTimestamp() + 180 days);
     morpho.accrueInterest(marketParams);
 
     uint256 amount = 1_000e18;
@@ -223,7 +223,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // At the seed state the share price is exactly 1e12 and every mint is a multiple of 400
     // (25 bps = 1/400): accrue interest so the price drifts, then find an amount whose mint
     // is not a multiple of 400 so the fee rounds.
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     morpho.accrueInterest(marketParams);
     uint256 amount;
     uint256 minted;
@@ -377,7 +377,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   function test_enter_revertsOnExpiredOffer() public {
-    uint40 expiry = uint40(block.timestamp + 1 hours);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 1 hours);
     _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
 
     // Enabled strictly before expiry, disabled the second expiry is reached.
@@ -436,7 +436,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_enter_worksAfterPauseExpiry() public {
     vm.prank(owner);
     facility.pauseFor(1 days);
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     (, bool isPaused,) = facility.config();
     assertFalse(isPaused, "still paused at expiry");
 
@@ -601,8 +601,8 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_security_expiredAuthIgnored() public {
     _setSecurityCap(1_000e6);
-    _setAuth(user, 600e6, uint40(block.timestamp + 1 hours));
-    vm.warp(block.timestamp + 2 hours);
+    _setAuth(user, 600e6, uint40(vm.getBlockTimestamp() + 1 hours));
+    vm.warp(vm.getBlockTimestamp() + 2 hours);
 
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
     assertEq(
@@ -618,7 +618,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_security_authExpiryAtTimestampIsExpired() public {
     _setSecurityCap(1_000e6);
     // `block.timestamp < expiry` semantics: an auth expiring exactly now is already expired.
-    _setAuth(user, 600e6, uint40(block.timestamp));
+    _setAuth(user, 600e6, uint40(vm.getBlockTimestamp()));
     (, uint256 debt) = _enter(user, 1_000e18, receiver);
     assertEq(
       facility.getSecurityCap(address(underlyingToken), address(debtToken)), 1_000e6 - debt, "auth at expiry was used"
@@ -628,7 +628,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     );
 
     // One second of validity is enough.
-    _setAuth(user, 600e6, uint40(block.timestamp + 1));
+    _setAuth(user, 600e6, uint40(vm.getBlockTimestamp() + 1));
     _enter(user, 1_000e18, receiver);
     assertEq(
       facility.getSecurityCap(address(underlyingToken), address(debtToken)),
@@ -643,10 +643,10 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_setAuth_overwrites() public {
     _setSecurityCap(1_000e6);
     _setAuth(user, 100e6, FAR_EXPIRY);
-    _setAuth(user, 700e6, uint40(block.timestamp + 1 days));
+    _setAuth(user, 700e6, uint40(vm.getBlockTimestamp() + 1 days));
     Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), user);
     assertEq(auth.amount, 700e6, "amount not overwritten");
-    assertEq(auth.expiry, uint40(block.timestamp + 1 days), "expiry not overwritten");
+    assertEq(auth.expiry, uint40(vm.getBlockTimestamp() + 1 days), "expiry not overwritten");
 
     // Re-setting after a partial consumption overwrites the remaining amount too.
     _enter(user, 1_000e18, receiver);
@@ -764,7 +764,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
   function test_exit_proportionalAmountsMatchMirrorMath() public {
     (uint256 shares,) = _enter(user, 1_000e18, user);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
 
     uint256 half = shares / 2;
     uint256 expectedFee = _feeOn(half);
@@ -972,7 +972,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     (uint256 shares,) = _enter(user, 1_000e18, user);
 
     // Time + an oracle up-print accrue management and performance fee shares.
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
     (, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     assertGt(mgmtShares, 0, "no pending management fee shares");
@@ -1041,14 +1041,14 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
     // Works once the pause lapses.
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     (uint256 out,) = _exit(user, shares, receiver);
     assertGt(out, 0, "exit after pause expiry");
   }
 
   function test_exit_revertsOnExpiredOrNeverSetOffer() public {
     (uint256 shares,) = _enter(user, 1_000e18, user);
-    uint40 expiry = uint40(block.timestamp + 1 hours);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 1 hours);
     _setExit(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
     vm.warp(expiry);
     vm.prank(user);
@@ -1375,11 +1375,11 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     // Compliance pauses.
     vm.prank(compliance);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.InKindFacilityPausedSet(uint40(block.timestamp + 1 days));
+    emit IInKindFacility.InKindFacilityPausedSet(uint40(vm.getBlockTimestamp() + 1 days));
     facility.pauseFor(1 days);
     (, bool isPaused, uint40 pausedUntil) = facility.config();
     assertTrue(isPaused, "paused by compliance");
-    assertEq(pausedUntil, uint40(block.timestamp + 1 days), "pausedUntil");
+    assertEq(pausedUntil, uint40(vm.getBlockTimestamp() + 1 days), "pausedUntil");
 
     // Owner unpauses and re-pauses.
     vm.prank(owner);
@@ -1600,7 +1600,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   function test_setters_emitEvents() public {
-    uint40 expiry = uint40(block.timestamp + 7 days);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 7 days);
 
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true, address(facility));
@@ -1630,7 +1630,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     vm.prank(compliance);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.InKindFacilityPausedSet(uint40(block.timestamp + 3 days));
+    emit IInKindFacility.InKindFacilityPausedSet(uint40(vm.getBlockTimestamp() + 3 days));
     facility.pauseFor(3 days);
 
     // A permanent pause saturates the timestamp.
@@ -1656,7 +1656,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     assertEq(unsetAuth.expiry, 0, "unset auth expiry");
 
     // Set state round-trips.
-    uint40 expiry = uint40(block.timestamp + 7 days);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 7 days);
     _setEntry(positionManager2, 123e6, expiry, 42);
     _setExit(positionManager2, 456e6, expiry + 1, 43);
     _setAuth(user, 11e6, expiry + 2);
@@ -1733,7 +1733,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
 
     // Expired offer.
-    uint40 expiry = uint40(block.timestamp + 1 hours);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 1 hours);
     _setEntry(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
     vm.warp(expiry);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, address(positionManager)));
@@ -1781,7 +1781,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
 
     // Expired offer.
-    uint40 expiry = uint40(block.timestamp + 1 hours);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 1 hours);
     _setExit(positionManager, LibCaps.MAX_ABSOLUTE, expiry, DEFAULT_FEE_BPS);
     vm.warp(expiry);
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, address(positionManager)));
@@ -1857,9 +1857,9 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   function test_maxEnter_expiredAuthIgnored() public {
     _setEntry(positionManager, 5_000e6, FAR_EXPIRY, DEFAULT_FEE_BPS);
     _setSecurityCap(400e6);
-    _setAuth(user, 300e6, uint40(block.timestamp + 1));
+    _setAuth(user, 300e6, uint40(vm.getBlockTimestamp() + 1));
     assertEq(facility.maxEnter(address(positionManager), user), 1_400e18, "live auth counted");
-    vm.warp(block.timestamp + 1);
+    vm.warp(vm.getBlockTimestamp() + 1);
     assertEq(facility.maxEnter(address(positionManager), user), 800e18, "expired auth counted");
   }
 
@@ -1991,7 +1991,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     facility.setFeeRecipient(newRecipient);
     vm.prank(compliance);
     facility.pauseFor(1 days);
-    uint40 pausedUntil = uint40(block.timestamp + 1 days);
+    uint40 pausedUntil = uint40(vm.getBlockTimestamp() + 1 days);
 
     // Slot +4: feeRecipient in the low 160 bits, pausedUntil in the next 40.
     uint256 word = uint256(vm.load(address(facility), bytes32(uint256(IN_KIND_STORAGE_SLOT) + 4)));
@@ -2006,7 +2006,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   function test_slot_entryAndExitOfferLayout() public {
-    uint40 expiry = uint40(block.timestamp + 7 days);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 7 days);
     _setEntry(positionManager, 123e6, expiry, 42, true);
     _setExit(positionManager, 456e6, expiry + 1, 43);
 
@@ -2029,7 +2029,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
   }
 
   function test_slot_securityCapAndAuthLayout() public {
-    uint40 expiry = uint40(block.timestamp + 7 days);
+    uint40 expiry = uint40(vm.getBlockTimestamp() + 7 days);
     _setSecurityCap(789e6);
     _setAuth(user, 11e6, expiry);
 
@@ -2065,7 +2065,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     // 2a. Interest accrues: the exit's debt quote drifts up with the pool's debt.
     (uint256 debtInBefore, uint256 outBefore,,) = facility.previewExit(address(positionManager), shares / 2);
-    vm.warp(block.timestamp + 60 days);
+    vm.warp(vm.getBlockTimestamp() + 60 days);
     morpho.accrueInterest(marketParams);
     {
       (uint256 debtInDrifted, uint256 outDrifted,,) = facility.previewExit(address(positionManager), shares / 2);
@@ -2075,7 +2075,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
 
     // 2b. PM fees accrue (time plus an up-print): pending fee shares dilute every holder.
     _setPmFees(200, 2000);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
     {
       (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
@@ -2157,7 +2157,7 @@ contract InKindFacilityTest is InKindFacilityBaseTest {
     (uint256 shares,) = _enter(user, 1_000e18, user);
 
     elapsed = bound(elapsed, 0, 365 days);
-    vm.warp(block.timestamp + elapsed);
+    vm.warp(vm.getBlockTimestamp() + elapsed);
     // At least two shares so the rounded-up fee leaves something to burn.
     uint256 exitShares = bound(shareFraction, 2, shares);
 

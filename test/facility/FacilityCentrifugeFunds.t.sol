@@ -82,7 +82,7 @@ contract FacilityCentrifugeFundsTest is FacilityBaseTest {
     vm.prank(user);
     facility.deposit(intentId, depositAmount);
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     vm.prank(facilitator);
     _setFund(intentId, address(realFund));
@@ -143,7 +143,7 @@ contract FacilityCentrifugeFundsTest is FacilityBaseTest {
     realFund.forceEnd(order);
 
     // use a fresh deadline so the swap digest has not been consumed
-    uint256 deadline = block.timestamp + 1 hours + 1;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours + 1;
     vm.prank(facilitator);
     {
       address[] memory signers = new address[](1);

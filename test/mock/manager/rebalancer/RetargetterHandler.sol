@@ -264,7 +264,7 @@ contract RetargetterHandler is Test {
       amount: offerAmount,
       expectedReturn: expectedReturn,
       nonce: ++makerNonce,
-      expiration: block.timestamp + 1 days,
+      expiration: vm.getBlockTimestamp() + 1 days,
       useCallback: false
     });
     bytes memory signature = _signOffer(offer, request);
@@ -598,7 +598,7 @@ contract RetargetterHandler is Test {
 
   /// @notice Warps time forward so interest accrues and repayment ticks promote.
   function act_warp(uint256 secondsSeed) external trackStartedAt {
-    vm.warp(block.timestamp + _bound(secondsSeed, 1 hours, 10 days));
+    vm.warp(vm.getBlockTimestamp() + _bound(secondsSeed, 1 hours, 10 days));
   }
 
   /// @notice Drifts the mock fund's share price within a 5% band.

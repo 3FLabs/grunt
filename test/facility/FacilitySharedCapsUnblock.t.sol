@@ -40,7 +40,7 @@ contract FacilitySharedCapsUnblockTest is FacilityBaseTest {
     timeCaps = FacilityDynamicCaps(address(new FacilityDynamicCaps()).clone());
     timeCaps.initialize(owner, managers, consumers);
 
-    vm.warp(block.timestamp + RECOVERY_TIME);
+    vm.warp(vm.getBlockTimestamp() + RECOVERY_TIME);
     vm.startPrank(owner);
     capsWhitelist.setAllowed(address(caps), true);
     capsWhitelist.setAllowed(address(timeCaps), true);

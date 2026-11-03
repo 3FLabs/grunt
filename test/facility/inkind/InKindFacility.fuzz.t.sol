@@ -258,7 +258,7 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     // Oracle gain so a performance fee pends (the entry flow seeded the reference), then
     // elapsed time so interest and the management fee accrue.
     oracle.setPrice(bound(priceSeed, 1.05e24, 2e24));
-    vm.warp(block.timestamp + bound(elapsed, 1 days, 730 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 1 days, 730 days));
     (,, uint256 mgmtFeeShares, uint256 perfFeeShares) = positionManager.pendingFees();
     assertGt(mgmtFeeShares + perfFeeShares, 0, "PM fee shares must be pending for the interesting path");
 
@@ -371,7 +371,7 @@ contract InKindFacilityFuzzTest is InKindFacilityBaseTest {
     _seedFuzzedPool(collateralSeed, ratioSeed);
     _openOffersNoFee();
     // Let Morpho interest drift the ratio: D grows, C is fixed.
-    vm.warp(block.timestamp + bound(elapsed, 0, 365 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 365 days));
     morpho.accrueInterest(marketParams);
     amount = bound(amount, 1e18, 50_000e18);
 

@@ -113,7 +113,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     registry.setOfferTimelock(address(collateralToken), OFFER_TIMELOCK);
     registry.setMinOfferBonus(address(collateralToken), MIN_OFFER_BONUS_BPS);
     vm.stopPrank();
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
 
     factory = new MorphoBorrowPositionFactory(owner, morpho, registry);
     pos = MorphoBorrowPosition(factory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
@@ -196,7 +196,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   /// @dev Proposes an offer (as `proposer`) with the configured timelock and a long lifespan.
   function _propose(uint128 coll, uint128 shares) internal returns (uint8 id) {
     vm.prank(proposer);
-    id = pos.proposeOffer(coll, shares, uint40(block.timestamp + 30 days));
+    id = pos.proposeOffer(coll, shares, uint40(vm.getBlockTimestamp() + 30 days));
   }
 
   /// @dev Proposes an offer at a target whole-offer price (in WAD) for a given debt-share size.
@@ -205,7 +205,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   }
 
   function _warpActive() internal {
-    vm.warp(block.timestamp + OFFER_TIMELOCK + 1);
+    vm.warp(vm.getBlockTimestamp() + OFFER_TIMELOCK + 1);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -225,7 +225,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   function test_proposeOffer_revertsForNonProposer() public {
     vm.prank(makeAddr("rando"));
     vm.expectRevert(Unauthorized.selector);
-    pos.proposeOffer(1e18, 1e18, uint40(block.timestamp + 1 days));
+    pos.proposeOffer(1e18, 1e18, uint40(vm.getBlockTimestamp() + 1 days));
   }
 
   /// @notice The position owner (PositionManager) has NO bypass: offer authorization lives
@@ -233,7 +233,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   function test_proposeOffer_revertsForPositionOwner() public {
     vm.prank(positionManager);
     vm.expectRevert(Unauthorized.selector);
-    pos.proposeOffer(1e18, 1e18, uint40(block.timestamp + 1 days));
+    pos.proposeOffer(1e18, 1e18, uint40(vm.getBlockTimestamp() + 1 days));
   }
 
   /// @notice The registry owner is always authorized (by derivation, without holding a role).
@@ -242,7 +242,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
     vm.prank(registryOwner);
-    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
     assertEq(pos.offer(id).proposer, registryOwner, "registry owner may propose");
   }
 
@@ -261,10 +261,10 @@ contract MorphoBorrowPositionOffersTest is Test {
       MorphoBorrowPosition(bareFactory.createBorrowPosition(marketId, positionManager, SAFE_LTV, LIQ_LTV));
 
     vm.prank(proposer);
-    uint8 id = barePos.proposeOffer(1e18, 1e17, uint40(block.timestamp + 1 days));
+    uint8 id = barePos.proposeOffer(1e18, 1e17, uint40(vm.getBlockTimestamp() + 1 days));
     assertEq(
       uint256(barePos.offer(id).activeAt),
-      block.timestamp + bare.MIN_OFFER_TIMELOCK(),
+      vm.getBlockTimestamp() + bare.MIN_OFFER_TIMELOCK(),
       "unconfigured collateral should use the floored minimum timelock"
     );
   }
@@ -313,7 +313,7 @@ contract MorphoBorrowPositionOffersTest is Test {
 
     vm.prank(proposer);
     vm.expectRevert(Unauthorized.selector);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
   }
 
   /// @notice Mirror of the proposer revocation: dropping the guardian role on the registry
@@ -352,7 +352,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     // The old owner is a stranger to the registry now: no propose, no revoke of others' offers.
     vm.prank(registryOwner);
     vm.expectRevert(Unauthorized.selector);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
     uint8[] memory ids = new uint8[](1);
     ids[0] = standing;
     vm.prank(registryOwner);
@@ -362,7 +362,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     // The new owner holds the full owner powers by derivation: propose, revoke its own offer,
     // and revoke the plain proposer's standing offer.
     vm.prank(newOwner);
-    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
     assertEq(pos.offer(id).proposer, newOwner, "new registry owner may propose");
     ids[0] = id;
     vm.prank(newOwner);
@@ -382,7 +382,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
 
-    uint40 expectedActive = uint40(block.timestamp + OFFER_TIMELOCK);
+    uint40 expectedActive = uint40(vm.getBlockTimestamp() + OFFER_TIMELOCK);
     uint8 id = _propose(coll, uint128(shares));
 
     Offer memory o = pos.offer(id);
@@ -396,7 +396,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   function test_proposeOffer_revertsZeroAmount() public {
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferAmountZero.selector);
-    pos.proposeOffer(0, 1e18, uint40(block.timestamp + 1 days));
+    pos.proposeOffer(0, 1e18, uint40(vm.getBlockTimestamp() + 1 days));
   }
 
   function test_proposeOffer_revertsNotProfitable() public {
@@ -406,7 +406,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint128 coll = _collForPrice(shares, 0.9e18);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferNotProfitable.selector);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 1 days));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 1 days));
   }
 
   function test_proposeOffer_revertsExpiryTooShort() public {
@@ -414,7 +414,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
     // expiresAt == activeAt is not strictly after -> revert.
-    uint40 activeAt = uint40(block.timestamp + OFFER_TIMELOCK);
+    uint40 activeAt = uint40(vm.getBlockTimestamp() + OFFER_TIMELOCK);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferExpiryTooShort.selector);
     pos.proposeOffer(coll, uint128(shares), activeAt);
@@ -426,7 +426,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint128 coll = _collForPrice(shares, 1.2e18);
     // Lifespan is measured from `activeAt` (= now + timelock), not from now. One second past the cap
     // relative to `activeAt` must revert.
-    uint40 activeAt = uint40(block.timestamp + OFFER_TIMELOCK);
+    uint40 activeAt = uint40(vm.getBlockTimestamp() + OFFER_TIMELOCK);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferExpiryTooLong.selector);
     pos.proposeOffer(coll, uint128(shares), activeAt + MAX_OFFER_LIFESPAN + 1);
@@ -436,7 +436,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     _enterBand(0.7e18);
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18);
-    uint40 activeAt = uint40(block.timestamp + OFFER_TIMELOCK);
+    uint40 activeAt = uint40(vm.getBlockTimestamp() + OFFER_TIMELOCK);
     // Exactly MAX_OFFER_LIFESPAN measured from `activeAt` is the boundary and is accepted. Note this
     // expiry sits MAX_OFFER_LIFESPAN + timelock past `now`, so it would be rejected under a
     // measured-from-now rule: the live span (not the veto window) is what the cap bounds.
@@ -456,7 +456,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     assertEq(pos.offerCount(), MAX_OFFERS, "slab full");
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.TooManyOffers.selector);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
   }
 
   /// @notice A book full of EXPIRED offers self-heals: allocation prunes expired offers before
@@ -467,15 +467,15 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint128 coll = _collForPrice(shares, 1.2e18);
     for (uint256 i; i < MAX_OFFERS; ++i) {
       vm.prank(proposer);
-      pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 2 hours));
+      pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 2 hours));
     }
     assertEq(pos.offerCount(), MAX_OFFERS, "slab full");
 
     // All offers expire; the next proposal prunes them and takes a freed slot.
-    vm.warp(block.timestamp + 3 hours);
+    vm.warp(vm.getBlockTimestamp() + 3 hours);
     uint128 collLater = _collForPrice(shares, 1.2e18);
     vm.prank(proposer);
-    uint8 id = pos.proposeOffer(collLater, uint128(shares), uint40(block.timestamp + 30 days));
+    uint8 id = pos.proposeOffer(collLater, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
     assertEq(pos.offerCount(), 1, "expired offers pruned, fresh offer allocated");
     assertEq(pos.offer(id).proposer, proposer, "fresh offer live");
   }
@@ -626,9 +626,9 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
     vm.prank(proposer);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 2 hours));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 2 hours));
     // Warp past expiry: the only offer is expired, so nothing is fillable.
-    vm.warp(block.timestamp + 3 hours);
+    vm.warp(vm.getBlockTimestamp() + 3 hours);
     vm.expectRevert(LibBorrowErrors.NoConsumableOffer.selector);
     pos.preLiquidate(address(pos), 1e18, 0, "");
     // The expired offer is opportunistically pruned during the walk, but because the call reverts
@@ -643,16 +643,16 @@ contract MorphoBorrowPositionOffersTest is Test {
     // Offer A: short-lived (expires in 2h).
     uint128 collA = _collForPrice(shares, 1.2e18);
     vm.prank(proposer);
-    uint8 a = pos.proposeOffer(collA, uint128(shares), uint40(block.timestamp + 2 hours));
+    uint8 a = pos.proposeOffer(collA, uint128(shares), uint40(vm.getBlockTimestamp() + 2 hours));
 
     // 90 min later, propose long-lived offer B.
-    vm.warp(block.timestamp + 90 minutes);
+    vm.warp(vm.getBlockTimestamp() + 90 minutes);
     uint128 collB = _collForPrice(shares, 1.2e18);
     vm.prank(proposer);
-    uint8 b = pos.proposeOffer(collB, uint128(shares), uint40(block.timestamp + 30 days));
+    uint8 b = pos.proposeOffer(collB, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
 
     // 90 more min: A is expired (t0+2h), B is active (t0+2.5h) and live.
-    vm.warp(block.timestamp + 90 minutes);
+    vm.warp(vm.getBlockTimestamp() + 90 minutes);
     Offer memory offerB = pos.offer(b);
     (uint256 seized,) = pos.preLiquidate(address(pos), offerB.remainingCollateral, 0, "");
 
@@ -900,8 +900,8 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint256 shares = _positionShares() / 4;
     uint128 coll = _collForPrice(shares, 1.2e18); // precompute (external calls would consume the prank)
     vm.prank(proposer);
-    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
-    assertEq(pos.offer(id).activeAt, uint40(block.timestamp + OFFER_TIMELOCK), "uses old timelock");
+    uint8 id = pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
+    assertEq(pos.offer(id).activeAt, uint40(vm.getBlockTimestamp() + OFFER_TIMELOCK), "uses old timelock");
   }
 
   function test_activeAt_notRetimedByLaterTimelockChange() public {
@@ -949,19 +949,19 @@ contract MorphoBorrowPositionOffersTest is Test {
     registry.setOfferTimelock(address(collateralB), maxTimelock);
     registry.setMinOfferBonus(address(collateralB), registry.MAX_MIN_OFFER_BONUS_BPS());
     vm.stopPrank();
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
 
     // Position A (collateral A) still runs on its own configuration: the 1 hour timelock.
     _enterBand(0.7e18);
     uint8 idA = _proposeAtPrice(_positionShares() / 4, 1.2e18);
-    assertEq(pos.offer(idA).activeAt, uint40(block.timestamp + OFFER_TIMELOCK), "A keeps its own timelock");
+    assertEq(pos.offer(idA).activeAt, uint40(vm.getBlockTimestamp() + OFFER_TIMELOCK), "A keeps its own timelock");
 
     // Position B (collateral B) picks up the maximum timelock. B's market is empty, so the offer
     // debt is priced through Morpho's virtual shares: a token-sized collateral against a dust
     // debt easily clears B's 10% bonus floor.
     vm.prank(proposer);
-    uint8 idB = posB.proposeOffer(1e18, 1e17, uint40(block.timestamp + maxTimelock + 1 days));
-    assertEq(posB.offer(idB).activeAt, uint40(block.timestamp + maxTimelock), "B uses the maximum timelock");
+    uint8 idB = posB.proposeOffer(1e18, 1e17, uint40(vm.getBlockTimestamp() + maxTimelock + 1 days));
+    assertEq(posB.offer(idB).activeAt, uint40(vm.getBlockTimestamp() + maxTimelock), "B uses the maximum timelock");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -975,7 +975,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint128 coll = _collForPrice(shares, 1.005e18);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
   }
 
   function test_proposeOffer_minBonusExactBoundary() public {
@@ -992,7 +992,7 @@ contract MorphoBorrowPositionOffersTest is Test {
 
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
-    pos.proposeOffer(coll - 1, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(coll - 1, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
 
     uint8 id = _propose(coll, uint128(shares));
     assertEq(pos.offer(id).remainingCollateral, coll, "exact-floor offer accepted");
@@ -1014,7 +1014,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint128 collBreakEven = uint128(debt * SCALE / oracle.price());
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferNotProfitable.selector);
-    pos.proposeOffer(collBreakEven, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(collBreakEven, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
   }
 
   /// @notice Raising the floor above a live offer's bonus does not evict it from the book (a
@@ -1040,7 +1040,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint128 coll = _collForPrice(shares, 1.02e18);
     vm.prank(proposer);
     vm.expectRevert(LibBorrowErrors.OfferBonusTooLow.selector);
-    pos.proposeOffer(coll, uint128(shares), uint40(block.timestamp + 30 days));
+    pos.proposeOffer(coll, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
   }
 
   /// @notice The floor is enforced at CONSUME time: an offer whose realized bonus has drifted below
@@ -1192,7 +1192,7 @@ contract MorphoBorrowPositionOffersTest is Test {
   function test_revokeOffers_proposerCancelsOwnOffer_beforeActive() public {
     _enterBand(0.7e18);
     uint8 id = _proposeAtPrice(_positionShares() / 4, 1.2e18);
-    assertLt(block.timestamp, pos.offer(id).activeAt, "offer still timelocked");
+    assertLt(vm.getBlockTimestamp(), pos.offer(id).activeAt, "offer still timelocked");
 
     uint8[] memory ids = new uint8[](1);
     ids[0] = id;
@@ -1231,7 +1231,7 @@ contract MorphoBorrowPositionOffersTest is Test {
     uint8 own = _proposeAtPrice(shares, 1.2e18);
     uint128 collB = _collForPrice(shares, 1.3e18); // precompute (external calls would consume the prank)
     vm.prank(proposerB);
-    uint8 foreign = pos.proposeOffer(collB, uint128(shares), uint40(block.timestamp + 30 days));
+    uint8 foreign = pos.proposeOffer(collB, uint128(shares), uint40(vm.getBlockTimestamp() + 30 days));
 
     // The foreign offer alone is out of reach.
     uint8[] memory ids = new uint8[](1);

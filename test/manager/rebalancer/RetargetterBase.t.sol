@@ -164,7 +164,7 @@ contract RetargetterBaseTest is PositionManagerBaseTest {
       amount: amount,
       expectedReturn: expectedReturn,
       nonce: ++makerNonce,
-      expiration: block.timestamp + 1 days,
+      expiration: vm.getBlockTimestamp() + 1 days,
       useCallback: false
     });
   }

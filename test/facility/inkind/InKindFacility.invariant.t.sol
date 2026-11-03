@@ -64,7 +64,7 @@ contract InKindFacilityInvariantTest is InKindFacilityBaseTest {
 
     // Handler wiring: initialize, one initial auth, prime the ghosts, register the selectors.
     handler = new InKindFacilityHandler();
-    _setAuth(handler.users(0), INITIAL_AUTH, uint40(block.timestamp + 30 days));
+    _setAuth(handler.users(0), INITIAL_AUTH, uint40(vm.getBlockTimestamp() + 30 days));
     handler.initialize(
       facility, positionManager, collateralToken, underlyingToken, debtToken, facilitator, operator, compliance, seeder
     );

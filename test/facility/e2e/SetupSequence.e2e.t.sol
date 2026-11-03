@@ -104,7 +104,7 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
     vm.startPrank(capsManager);
     absoluteCaps.setCap(POOL_ID, uint128(_capsUnits(SHARED_POOL_CAP)), uint128(_capsUnits(SHARED_POOL_CAP)));
     dynamicCaps.setCap(
-      SECURITY_RATE_ID, uint128(_capsUnits(SECURITY_RECOVERY)), 1 days, uint64(block.timestamp - 1 days)
+      SECURITY_RATE_ID, uint128(_capsUnits(SECURITY_RECOVERY)), 1 days, uint64(vm.getBlockTimestamp() - 1 days)
     );
     vm.stopPrank();
   }
@@ -133,7 +133,7 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
 
   /// @dev Sets the intent's fund with the guardian's signature (quorum 1).
   function _setFundSigned(address fund) internal {
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
     bytes32 domainSeparator = keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),

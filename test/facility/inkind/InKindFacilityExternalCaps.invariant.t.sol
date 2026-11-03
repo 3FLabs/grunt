@@ -50,8 +50,8 @@ contract InKindFacilityExternalCapsInvariantTest is InKindFacilityBaseTest {
     absoluteCaps.setCap(POOL_2, _caps(OWN_POOL_CAP), _caps(OWN_POOL_CAP));
     absoluteCaps.setCap(SHARED_POOL, _caps(SHARED_POOL_CAP), _caps(SHARED_POOL_CAP));
     absoluteCaps.setCap(EXIT_POOL, _caps(EXIT_POOL_CAP), _caps(EXIT_POOL_CAP));
-    dynamicCaps.setCap(SECURITY_DYN, _caps(SECURITY_RECOVERY), 1 days, uint64(block.timestamp - 1 days));
-    dynamicCaps.setCap(EXIT_DYN, _caps(EXIT_RECOVERY), 1 days, uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(SECURITY_DYN, _caps(SECURITY_RECOVERY), 1 days, uint64(vm.getBlockTimestamp() - 1 days));
+    dynamicCaps.setCap(EXIT_DYN, _caps(EXIT_RECOVERY), 1 days, uint64(vm.getBlockTimestamp() - 1 days));
     vm.stopPrank();
 
     InKindExternalCapsHandler.Word[2] memory entryWords;
@@ -68,7 +68,7 @@ contract InKindFacilityExternalCapsInvariantTest is InKindFacilityBaseTest {
     _setSecurityCap(_encode(securityWord));
 
     handler = new InKindExternalCapsHandler();
-    _setAuth(handler.users(0), INITIAL_AUTH, uint40(block.timestamp + 30 days));
+    _setAuth(handler.users(0), INITIAL_AUTH, uint40(vm.getBlockTimestamp() + 30 days));
     PositionManager[2] memory pms = [positionManager, positionManager2];
     for (uint256 i = 0; i < 2; i++) {
       address module = i == 0 ? address(borrowPosition) : address(borrowPosition2);

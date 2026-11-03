@@ -148,7 +148,7 @@ contract InKindFacilityEnterFuzzTest is InKindFacilityBaseTest {
     vm.prank(owner);
     st.pm.setFeeData(pmFeeRecipient, uint24(bound(seeds[1], 0, 200)), uint24(bound(seeds[2], 0, 5_000)));
     _seed(st, seeds[3], seeds[4]);
-    vm.warp(block.timestamp + bound(seeds[5], 0, 365 days));
+    vm.warp(vm.getBlockTimestamp() + bound(seeds[5], 0, 365 days));
   }
 
   /// @dev Reprices `st` so the debt sits `headroomMilli` thousandths of a debt unit below what

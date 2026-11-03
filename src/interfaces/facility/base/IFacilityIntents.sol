@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {IntentProperties, Asset} from "../../../libs/facility/LibIntent.sol";
+import {IntentProperties, Asset} from "../../../libs/facility/IntentTypes.sol";
 
 /// @title IFacilityIntents
 /// @author 3F Protocol

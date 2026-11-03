@@ -193,7 +193,7 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(absoluteCaps)));
-    facility.setExit(address(positionManager), exitWord, uint40(block.timestamp + 1 days), DEFAULT_FEE_BPS);
+    facility.setExit(address(positionManager), exitWord, uint40(vm.getBlockTimestamp() + 1 days), DEFAULT_FEE_BPS);
 
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(dynamicCaps)));

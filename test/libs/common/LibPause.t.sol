@@ -72,37 +72,37 @@ contract LibPauseTest is Test {
   }
 
   function test_paused_FutureTimestampIsPaused() public {
-    uint40 pauseState = uint40(block.timestamp + 1000);
+    uint40 pauseState = uint40(vm.getBlockTimestamp() + 1000);
     assertTrue(pauseState.paused());
   }
 
   function test_paused_CurrentTimestampIsNotPaused() public {
-    uint40 pauseState = uint40(block.timestamp);
+    uint40 pauseState = uint40(vm.getBlockTimestamp());
     assertFalse(pauseState.paused());
   }
 
   function test_paused_PastTimestampIsNotPaused() public {
     vm.warp(1000);
-    uint40 pauseState = uint40(block.timestamp - 1);
+    uint40 pauseState = uint40(vm.getBlockTimestamp() - 1);
     assertFalse(pauseState.paused());
   }
 
   function test_paused_ExpiresAfterTimestamp() public {
-    uint40 pauseState = uint40(block.timestamp + 100);
-    assertTrue(pauseState.paused());
+    uint40 pauseState = uint40(vm.getBlockTimestamp() + 100);
+    assertTrue(wrapper.paused(pauseState));
 
-    vm.warp(block.timestamp + 99);
-    assertTrue(pauseState.paused());
+    vm.warp(vm.getBlockTimestamp() + 99);
+    assertTrue(wrapper.paused(pauseState));
 
-    vm.warp(block.timestamp + 1);
-    assertFalse(pauseState.paused());
+    vm.warp(vm.getBlockTimestamp() + 1);
+    assertFalse(wrapper.paused(pauseState));
   }
 
   function testFuzz_paused_FutureTimestampIsPaused(uint40 delta) public {
     vm.assume(delta > 0);
-    vm.assume(uint256(block.timestamp) + uint256(delta) <= type(uint40).max);
+    vm.assume(uint256(vm.getBlockTimestamp()) + uint256(delta) <= type(uint40).max);
 
-    uint40 pauseState = uint40(block.timestamp + delta);
+    uint40 pauseState = uint40(vm.getBlockTimestamp() + delta);
     assertTrue(pauseState.paused());
   }
 
@@ -126,7 +126,7 @@ contract LibPauseTest is Test {
   function test_pauseFor_ReturnsCorrectTimestamp() public {
     uint256 duration = 1000;
     uint40 result = LibPause.pauseFor(duration);
-    assertEq(result, uint40(block.timestamp + duration));
+    assertEq(result, uint40(vm.getBlockTimestamp() + duration));
   }
 
   function test_pauseFor_ResultIsPaused() public {
@@ -138,27 +138,27 @@ contract LibPauseTest is Test {
     uint256 duration = 1000;
     uint40 pauseState = LibPause.pauseFor(duration);
 
-    assertTrue(pauseState.paused());
+    assertTrue(wrapper.paused(pauseState));
 
-    vm.warp(block.timestamp + duration - 1);
-    assertTrue(pauseState.paused());
+    vm.warp(vm.getBlockTimestamp() + duration - 1);
+    assertTrue(wrapper.paused(pauseState));
 
-    vm.warp(block.timestamp + 1);
-    assertFalse(pauseState.paused());
+    vm.warp(vm.getBlockTimestamp() + 1);
+    assertFalse(wrapper.paused(pauseState));
   }
 
   function test_pauseFor_ExactDuration() public {
-    uint256 startTime = block.timestamp;
+    uint256 startTime = vm.getBlockTimestamp();
     uint256 duration = 3600;
     uint40 pauseState = LibPause.pauseFor(duration);
 
     // Paused at T + duration - 1 (last second of pause)
     vm.warp(startTime + duration - 1);
-    assertTrue(pauseState.paused(), "Should be paused at T + duration - 1");
+    assertTrue(wrapper.paused(pauseState), "Should be paused at T + duration - 1");
 
     // Not paused at T + duration (exactly duration seconds have elapsed)
     vm.warp(startTime + duration);
-    assertFalse(pauseState.paused(), "Should not be paused at T + duration");
+    assertFalse(wrapper.paused(pauseState), "Should not be paused at T + duration");
   }
 
   function test_pauseFor_CapsAtPermanentPause() public {
@@ -176,15 +176,15 @@ contract LibPauseTest is Test {
   }
 
   function testFuzz_pauseFor_ReturnsCorrectTimestamp(uint256 duration) public {
-    duration = bound(duration, 1, type(uint40).max - block.timestamp);
+    duration = bound(duration, 1, type(uint40).max - vm.getBlockTimestamp());
 
     uint40 result = LibPause.pauseFor(duration);
-    assertEq(result, uint40(block.timestamp + duration));
+    assertEq(result, uint40(vm.getBlockTimestamp() + duration));
   }
 
   function testFuzz_pauseFor_CapsAtPermanentPause(uint256 duration) public {
     // Duration must cause overflow of uint40 but not overflow uint256 addition
-    duration = bound(duration, uint256(type(uint40).max) - block.timestamp + 1, type(uint128).max);
+    duration = bound(duration, uint256(type(uint40).max) - vm.getBlockTimestamp() + 1, type(uint128).max);
 
     uint40 result = LibPause.pauseFor(duration);
     assertEq(result, LibPause.PERMANENT_PAUSE);
@@ -206,10 +206,10 @@ contract LibPauseTest is Test {
     timeElapsed = bound(timeElapsed, 0, type(uint40).max);
 
     uint40 pauseState = LibPause.pauseFor(duration);
-    uint256 pauseUntil = block.timestamp + duration;
+    uint256 pauseUntil = vm.getBlockTimestamp() + duration;
 
     if (timeElapsed < duration) {
-      vm.warp(block.timestamp + timeElapsed);
+      vm.warp(vm.getBlockTimestamp() + timeElapsed);
       assertTrue(pauseState.paused(), "Should be paused within duration");
     } else {
       vm.warp(pauseUntil);
@@ -236,7 +236,7 @@ contract LibPauseTest is Test {
 
   function test_edge_MinDuration() public {
     uint40 result = LibPause.pauseFor(1);
-    assertEq(result, uint40(block.timestamp + 1));
+    assertEq(result, uint40(vm.getBlockTimestamp() + 1));
     assertTrue(result.paused());
   }
 
@@ -250,10 +250,10 @@ contract LibPauseTest is Test {
 
     uint40 pauseState = LibPause.pauseFor(100);
     assertEq(pauseState, 100);
-    assertTrue(pauseState.paused());
+    assertTrue(wrapper.paused(pauseState));
 
     vm.warp(100);
-    assertFalse(pauseState.paused());
+    assertFalse(wrapper.paused(pauseState));
   }
 
   function test_edge_TimestampAtMaxUint40() public {
@@ -269,22 +269,22 @@ contract LibPauseTest is Test {
 
     // Start unpaused
     uint40 state = LibPause.NOT_PAUSED;
-    assertFalse(state.paused());
+    assertFalse(wrapper.paused(state));
 
     // Pause permanently
     state = LibPause.PERMANENT_PAUSE;
-    assertTrue(state.paused());
+    assertTrue(wrapper.paused(state));
 
     // Unpause
     state = LibPause.NOT_PAUSED;
-    assertFalse(state.paused());
+    assertFalse(wrapper.paused(state));
 
     // Pause for duration
     state = LibPause.pauseFor(100);
-    assertTrue(state.paused());
+    assertTrue(wrapper.paused(state));
 
     // Wait for expiration
-    vm.warp(block.timestamp + 100);
-    assertFalse(state.paused());
+    vm.warp(vm.getBlockTimestamp() + 100);
+    assertFalse(wrapper.paused(state));
   }
 }

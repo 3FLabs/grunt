@@ -77,7 +77,7 @@ contract BorrowOffersHandler is Test {
     // strictly de-risking against the fixed position (ratio 4).
     uint128 collateral = uint128(_bound(collSeed, uint256(debtShares) + 1, uint256(debtShares) * 3));
 
-    uint40 activeAt = uint40(block.timestamp) + OFFER_TIMELOCK;
+    uint40 activeAt = uint40(vm.getBlockTimestamp()) + OFFER_TIMELOCK;
     uint40 lifespan = uint40(_bound(lifeSeed, 1, 365 days));
     uint40 expiresAt = activeAt + lifespan;
 
@@ -158,7 +158,7 @@ contract BorrowOffersHandler is Test {
   /// @notice Advances time so fresh offers activate and standing offers eventually expire.
   function act_warp(uint256 dtSeed) external {
     uint256 dt = _bound(dtSeed, 1, 30 days);
-    vm.warp(block.timestamp + dt);
+    vm.warp(vm.getBlockTimestamp() + dt);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -116,7 +116,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // Flat month: several accruals while debt grows. Each one must HOLD the reference.
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     assertEq(positionManager.lastDebt(), refDebt, "reference debt held through flat accruals");
@@ -153,7 +153,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    uint256 start = block.timestamp;
+    uint256 start = vm.getBlockTimestamp();
     uint256 snap = vm.snapshotState();
 
     // Variant A: a single accrual mid-period.
@@ -194,7 +194,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // Drawdown: the reference must hold, not reset down to the trough.
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 95 / 100);
-    vm.warp(block.timestamp + 10 days);
+    vm.warp(vm.getBlockTimestamp() + 10 days);
     _accrue();
     assertEq(positionManager.lastDebt(), refDebtAtPeak, "reference held through the drawdown");
     assertEq(positionManager.balanceOf(feeRecipient), feeSharesAtPeak, "no fee in the trough");
@@ -227,7 +227,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertEq(positionManager.balanceOf(feeRecipient), 0, "no fee while underwater");
 
     // Recover to the starting quote: debt has grown, basis still negative, no fee.
-    vm.warp(block.timestamp + 5 days);
+    vm.warp(vm.getBlockTimestamp() + 5 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE);
     _accrue();
     assertEq(positionManager.balanceOf(feeRecipient), 0, "recovery to the reference is not charged");
@@ -411,7 +411,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     // Trough accrual after 10 days: management fee mints on A's collateral (4_500 quoted), the
     // reference stays frozen, and the charge joins the held accumulator.
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 45 / 100);
-    vm.warp(block.timestamp + 10 days);
+    vm.warp(vm.getBlockTimestamp() + 10 days);
     _accrue();
     uint256 mgmtSharesAtTrough = positionManager.balanceOf(feeRecipient);
     assertGt(mgmtSharesAtTrough, 0, "management fee still charged during the window");
@@ -653,7 +653,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     _accrue();
     assertLt(_pendingBasis(), 0, "carry accumulated during the flat stretch");
 
@@ -696,7 +696,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     _accrue();
 
     uint256 snap = vm.snapshotState();
@@ -730,7 +730,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     _accrue();
 
     // Unlevered deposit (LTV below the pool's).
@@ -770,7 +770,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(0, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     _accrue();
 
     int256 basisBefore = _pendingBasis();
@@ -820,14 +820,14 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     // Mid-flat: pending = mgmt only; accrual must mint exactly that.
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
     assertEq(perfPending, 0, "no pending perf fee while the basis is negative");
     _accrue();
     assertEq(positionManager.balanceOf(feeRecipient), mgmtPending, "held-reference accrual matches pendingFees");
 
     // At the step: pending = mgmt + perf; accrual must mint exactly that.
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 103 / 100);
     (,, mgmtPending, perfPending) = positionManager.pendingFees();
     assertGt(perfPending, 0, "perf fee pending at the step");
@@ -873,7 +873,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
-    vm.warp(block.timestamp + 10 days);
+    vm.warp(vm.getBlockTimestamp() + 10 days);
     _accrue();
 
     assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference advanced despite zero perf rate");
@@ -899,7 +899,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 1001 / 1000); // +0.1%: basis ~5e18
-    vm.warp(block.timestamp + 30 days); // mgmt deduction ~16e18 exceeds the basis
+    vm.warp(vm.getBlockTimestamp() + 30 days); // mgmt deduction ~16e18 exceeds the basis
 
     int256 basis = _pendingBasis();
     assertGt(basis, 0, "basis is positive");
@@ -925,7 +925,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // A flat held stretch seeds the deduction before the cap binds.
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -937,7 +937,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     int256 basis = _pendingBasis();
     assertGt(basis, 0, "dust repay flips the basis positive");
     assertLt(uint256(basis), held, "basis is dust next to the pending deduction");
-    vm.warp(block.timestamp + 100 * 365 days);
+    vm.warp(vm.getBlockTimestamp() + 100 * 365 days);
 
     (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
     assertEq(mgmtPending + perfPending, 0, "cap binds: no shares pending");
@@ -957,7 +957,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     uint256 elapsed = 30 days;
-    vm.warp(block.timestamp + elapsed);
+    vm.warp(vm.getBlockTimestamp() + elapsed);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     assertEq(perfShares, 0, "reference held, no perf fee");
@@ -970,7 +970,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     _accrue();
     assertEq(positionManager.balanceOf(feeRecipient), mgmtShares, "management fee minted while held");
-    assertEq(_lastFeeAccrualTimestamp(), block.timestamp, "timestamp advances on every accrual");
+    assertEq(_lastFeeAccrualTimestamp(), vm.getBlockTimestamp(), "timestamp advances on every accrual");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -988,7 +988,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     // charged assets to the held accumulator.
     uint256 expectedHeld;
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       expectedHeld += _expectedMgmtAssets(6 days);
       _accrue();
     }
@@ -996,7 +996,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     assertGt(positionManager.balanceOf(feeRecipient), 0, "management fees still minted while held");
 
     // One more interval, then the oracle steps: the crystallizing fee nets held plus current.
-    vm.warp(block.timestamp + 6 days);
+    vm.warp(vm.getBlockTimestamp() + 6 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 102 / 100);
 
     uint256 mgmtAssets = _expectedMgmtAssets(6 days);
@@ -1036,7 +1036,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    uint256 start = block.timestamp;
+    uint256 start = vm.getBlockTimestamp();
     uint256[3] memory cadences = [uint256(1), 5, 10];
 
     for (uint256 c = 0; c < cadences.length; ++c) {
@@ -1075,7 +1075,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1109,7 +1109,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1149,7 +1149,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     _accrue();
     uint256 heldBefore = _heldManagementFees();
     assertGt(heldBefore, 0, "management fees accumulated while held");
@@ -1179,7 +1179,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1219,7 +1219,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1252,7 +1252,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1290,7 +1290,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     assertGt(_heldManagementFees(), 0, "management fees accumulated while held");
@@ -1329,7 +1329,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1340,7 +1340,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     // Holiday: a held accrual on the no-recipient path charges nothing and keeps the deduction.
     vm.prank(owner);
     positionManager.setFeeData(address(0), 200, PERF_FEE);
-    vm.warp(block.timestamp + 6 days);
+    vm.warp(vm.getBlockTimestamp() + 6 days);
     vm.prank(owner);
     positionManager.setFeeData(address(0), 200, PERF_FEE);
     assertEq(_heldManagementFees(), held, "holiday accrual neither wipes nor grows the deduction");
@@ -1378,7 +1378,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     for (uint256 i = 0; i < 5; ++i) {
-      vm.warp(block.timestamp + 6 days);
+      vm.warp(vm.getBlockTimestamp() + 6 days);
       _accrue();
     }
     uint256 held = _heldManagementFees();
@@ -1387,7 +1387,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // Crash below water; an accrual during the dip mints nothing and keeps the deduction.
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 40 / 100);
-    vm.warp(block.timestamp + 6 days);
+    vm.warp(vm.getBlockTimestamp() + 6 days);
     _accrue();
     assertEq(positionManager.balanceOf(feeRecipient), feeSharesBefore, "no management fee on empty aggregates");
     assertEq(_heldManagementFees(), held, "dip accrual preserves the deduction");
@@ -1414,14 +1414,14 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     // A normal held accrual seeds the accumulator.
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     _accrue();
     uint256 held = _heldManagementFees();
     assertGt(held, 0, "management fees accumulated while held");
 
     // Dormancy long enough for the cap to bind: the accrual mints nothing and must not grow the
     // deduction with a fee that was never charged.
-    vm.warp(block.timestamp + 100 * 365 days);
+    vm.warp(vm.getBlockTimestamp() + 100 * 365 days);
     (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
     assertEq(mgmtPending + perfPending, 0, "cap binds: no shares pending");
     _accrue();
@@ -1444,7 +1444,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _accrue();
     uint256 feeSharesAtPeak = positionManager.balanceOf(feeRecipient);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 95 / 100);
-    vm.warp(block.timestamp + 10 days);
+    vm.warp(vm.getBlockTimestamp() + 10 days);
     assertLt(_pendingBasis(), 0, "carried basis is negative in the trough");
 
     // Owner accepts the loss and resets: the reference re-anchors at the trough.
@@ -1474,7 +1474,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _setFees(200, PERF_FEE);
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 15 days);
+    vm.warp(vm.getBlockTimestamp() + 15 days);
     _accrue();
     assertGt(_heldManagementFees(), 0, "management fees accumulated while held");
 
@@ -1520,7 +1520,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // Drawdown plus elapsed time: the perf basis is negative but a management fee is pending.
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 95 / 100);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     (,, uint256 mgmtPending, uint256 perfPending) = positionManager.pendingFees();
     assertGt(mgmtPending, 0, "management fee pending before the reset");
     assertEq(perfPending, 0, "no perf fee pending in the trough");
@@ -1528,7 +1528,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.resetPerformanceReference();
     assertEq(positionManager.balanceOf(feeRecipient), mgmtPending, "management fee settled through the reset");
-    assertEq(_lastFeeAccrualTimestamp(), block.timestamp, "accrual timestamp advances with the reset");
+    assertEq(_lastFeeAccrualTimestamp(), vm.getBlockTimestamp(), "accrual timestamp advances with the reset");
     assertEq(_lastTotalAssets(), positionManager.totalAssets(), "reference NAV re-anchored");
     assertEq(positionManager.lastDebt(), positionManager.debtAmount(), "reference debt re-anchored");
   }
@@ -1644,7 +1644,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     _leveredDeposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     // Flat month: debt accrues while the quote is flat; the accrual holds the reference.
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     _accrue();
 
     // A supply-changing flow rebases the reference: the carried debt cost folds into the mark.
@@ -1788,7 +1788,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // A flat day first: the accrual holds (zero basis) and the day's management fee seeds the
     // accumulator, so the zero-share hold below must add to a nonzero stored value.
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     _accrue();
     uint256 heldSeed = _heldManagementFees();
     assertGt(heldSeed, 0, "the flat-day management fee seeds the accumulator");
@@ -1801,14 +1801,14 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
     // basis = C/6 - D and m = C * MGMT_FEE * elapsed / denom. Whether a wei-scale entitlement
     // crosses a share boundary also depends on the management fee's own rounding alignment, so
     // scan one-second offsets for an alignment where it does not.
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     uint256 m;
     uint256 mgmtSharesPending;
     uint256 perfSharesPending;
     bool found;
     for (uint256 i = 0; i < 64 && !found; ++i) {
-      vm.warp(block.timestamp + 1);
-      uint256 elapsed = block.timestamp - _lastFeeAccrualTimestamp();
+      vm.warp(vm.getBlockTimestamp() + 1);
+      uint256 elapsed = vm.getBlockTimestamp() - _lastFeeAccrualTimestamp();
       uint256 denom = 10_000 * 365 days;
       uint256 targetCollat = (DEBT_AMOUNT + heldSeed + 20) * 6 * denom / (denom - 6 * uint256(MGMT_FEE) * elapsed);
       oracle.setPrice(targetCollat * ORACLE_PRICE_SCALE / COLLATERAL_AMOUNT);
@@ -2158,7 +2158,7 @@ contract PositionManagerFeeReferenceTest is PositionManagerBaseTest {
 
     // B's debt compounds past its quoted collateral: the window opens. At 1.2x the survivor's
     // NAV sits above the frozen mark, so the flow below reads a large frozen gain.
-    vm.warp(block.timestamp + 4_015 days);
+    vm.warp(vm.getBlockTimestamp() + 4_015 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 12 / 10);
     assertEq(positionManager.totalAssets(), 35_000e18, "visible NAV is the healthy module only");
     uint256 gainBefore = positionManager.totalAssets() - _lastTotalAssets();

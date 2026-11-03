@@ -394,7 +394,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _setEntry(positionManager, _absWord(MULT_1X), FAR_EXPIRY, 0);
     _setExit(positionManager, _absWord(MULT_NEG_1X), FAR_EXPIRY, 0);
     (uint256 shares, uint256 debt) = _enter(user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     uint256 mirror = _mirrorDebt(shares);
     assertGt(mirror, debt, "fixture: interest accrued on the slice");
     _fundExit(user, shares, _expectedPull(mirror));
@@ -571,7 +571,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
   function test_previewExit_valuesFollowExitBoundsOrder() public {
     _setPmFees(100, 1_000);
     (uint256 shares,) = _enter(user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     uint256 burnShares = _burnShares(shares, DEFAULT_FEE_BPS);
     (uint256 debtIn, uint256 underlyingOut, uint256 feeShares, uint256 debtRequired) =
       facility.previewExit(address(positionManager), shares);

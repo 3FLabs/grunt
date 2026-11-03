@@ -163,10 +163,10 @@ contract LibInKindStorageTest is Test {
 
     bytes memory entryErr;
     bytes memory exitErr;
-    if (block.timestamp < pausedUntil) {
+    if (vm.getBlockTimestamp() < pausedUntil) {
       entryErr = abi.encodeWithSelector(LibCommonErrors.Paused.selector);
       exitErr = entryErr;
-    } else if (block.timestamp >= expiry) {
+    } else if (vm.getBlockTimestamp() >= expiry) {
       entryErr = abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, pm);
       exitErr = abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, pm);
     }
@@ -196,7 +196,7 @@ contract LibInKindStorageTest is Test {
   function testFuzz_authAvailable_readsTheCallerAuthOnTheAsset(uint128 amount, uint40 expiry, uint256 time) public {
     harness.setAuth(asset, user, amount, expiry);
     vm.warp(bound(time, NOW, type(uint40).max));
-    assertEq(harness.authAvailable(asset, user), block.timestamp < expiry ? amount : 0, "own auth");
+    assertEq(harness.authAvailable(asset, user), vm.getBlockTimestamp() < expiry ? amount : 0, "own auth");
     assertEq(harness.authAvailable(asset, owner), 0, "other user");
     assertEq(harness.authAvailable(owner, user), 0, "other asset");
   }
@@ -225,7 +225,7 @@ contract LibInKindStorageTest is Test {
     harness.setAuth(asset, user, amount, expiry);
     harness.setSecurityCap(asset, word);
     vm.warp(bound(time, NOW, type(uint40).max));
-    uint256 live = block.timestamp < expiry ? amount : 0;
+    uint256 live = vm.getBlockTimestamp() < expiry ? amount : 0;
     assertEq(harness.securityLimit(asset, user), live + word, "limit");
   }
 
@@ -244,7 +244,7 @@ contract LibInKindStorageTest is Test {
     harness.setAuth(asset, user, amount, expiry);
     harness.setSecurityCap(asset, word);
     vm.warp(bound(time, NOW, type(uint40).max));
-    uint256 live = block.timestamp < expiry ? amount : 0;
+    uint256 live = vm.getBlockTimestamp() < expiry ? amount : 0;
     debt = bound(debt, 0, live + word);
     uint256 fromAuth = debt < live ? debt : live;
 
@@ -276,7 +276,7 @@ contract LibInKindStorageTest is Test {
     word = bound(word, 0, LibCaps.MAX_ABSOLUTE);
     harness.setAuth(asset, user, amount, expiry);
     harness.setSecurityCap(asset, word);
-    uint256 live = block.timestamp < expiry ? amount : 0;
+    uint256 live = vm.getBlockTimestamp() < expiry ? amount : 0;
     debt = bound(debt, live + word + 1, type(uint256).max);
 
     vm.expectRevert(

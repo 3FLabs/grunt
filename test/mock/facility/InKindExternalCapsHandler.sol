@@ -342,8 +342,8 @@ contract InKindExternalCapsHandler is Test {
   /// @notice Capacity of a dynamic cap per the model, at the current timestamp.
   function ghostRemaining(uint64 id) public view returns (uint256) {
     uint256 origin = ghostOrigin[id];
-    if (block.timestamp <= origin) return 0;
-    uint256 elapsed = block.timestamp - origin;
+    if (vm.getBlockTimestamp() <= origin) return 0;
+    uint256 elapsed = vm.getBlockTimestamp() - origin;
     if (elapsed >= dynRecoveryTime[id]) return dynRecovery[id];
     return dynRecovery[id] * elapsed / dynRecoveryTime[id];
   }
@@ -780,7 +780,7 @@ contract InKindExternalCapsHandler is Test {
   ///         interest on odd seeds. Resets the oracle once interest brings a pool to LTV_CEILING.
   function act_warp(uint256 deltaSeed) external {
     uint256 delta = deltaSeed % 8 == 7 ? _bound(deltaSeed, 2 days, 30 days) : _bound(deltaSeed, 1, 2 days);
-    vm.warp(block.timestamp + delta);
+    vm.warp(vm.getBlockTimestamp() + delta);
     if (deltaSeed % 2 == 1) morpho.accrueInterest(marketParams);
     if (oracleNearTarget && _ltv(pms[0]).max(_ltv(pms[1])) >= LTV_CEILING) {
       oracle.setPrice(DEFAULT_PRICE);
@@ -853,8 +853,8 @@ contract InKindExternalCapsHandler is Test {
     address who = users[userSeed % users.length];
     uint128 amount = uint128(_bound(amountSeed, 0, 10_000e6));
     uint40 expiry = expirySeed % 4 == 0
-      ? uint40(block.timestamp - _bound(expirySeed, 0, 1 days))
-      : uint40(block.timestamp + _bound(expirySeed, 1 hours, 3 days));
+      ? uint40(vm.getBlockTimestamp() - _bound(expirySeed, 0, 1 days))
+      : uint40(vm.getBlockTimestamp() + _bound(expirySeed, 1 hours, 3 days));
     vm.prank(operator);
     facility.setAuth(address(underlyingToken), address(debtToken), who, amount, expiry);
     ghostAuths[who] = Auth({amount: amount, expiry: expiry});
@@ -1009,7 +1009,7 @@ contract InKindExternalCapsHandler is Test {
 
   function _ghostAuthAvailable(address who) internal view returns (uint256) {
     Auth memory auth = ghostAuths[who];
-    return block.timestamp < auth.expiry ? auth.amount : 0;
+    return vm.getBlockTimestamp() < auth.expiry ? auth.amount : 0;
   }
 
   /// @dev Summed caps of the pools a FacilityAbsoluteCaps id lists.
@@ -1090,7 +1090,7 @@ contract InKindExternalCapsHandler is Test {
       capMirrorBroken = true;
       return;
     }
-    ghostOrigin[id] = block.timestamp - (current - consumption) * dynRecoveryTime[id] / dynRecovery[id];
+    ghostOrigin[id] = vm.getBlockTimestamp() - (current - consumption) * dynRecoveryTime[id] / dynRecovery[id];
   }
 
   function _setExpected(EnterCtx memory ctx, Expect expect, bytes memory expected) internal pure {

@@ -151,7 +151,7 @@ contract MorphoBalancesLibTest is Test {
     _supplyLiquidity(supplyAmount);
 
     // Advance time
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
 
     // With no borrows, no interest should accrue
     Market memory cachedMarket = morpho.market(marketId);
@@ -173,7 +173,7 @@ contract MorphoBalancesLibTest is Test {
     _setupBorrowPosition(collateralAmount, borrowAmount);
 
     // Advance time to accumulate interest
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
 
     // Get expected balances (view - should include pending interest)
     (uint256 expSupplyAssets,, uint256 expBorrowAssets,) = morpho.expectedMarketBalances(marketParams, marketId);
@@ -204,7 +204,7 @@ contract MorphoBalancesLibTest is Test {
     _setupBorrowPosition(collateralAmount, borrowAmount);
 
     // Advance time
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
 
     // Get expected balances
     (uint256 expSupplyAssets, uint256 expSupplyShares, uint256 expBorrowAssets, uint256 expBorrowShares) =
@@ -228,7 +228,7 @@ contract MorphoBalancesLibTest is Test {
     _supplyLiquidity(supplyAmount);
     _setupBorrowPosition(collateralAmount, borrowAmount);
 
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
 
     uint256 expectedBorrow = morpho.expectedTotalBorrowAssets(marketParams, marketId);
     (,, uint256 expBorrowFromFull,) = morpho.expectedMarketBalances(marketParams, marketId);
@@ -244,7 +244,7 @@ contract MorphoBalancesLibTest is Test {
     _supplyLiquidity(supplyAmount);
     _setupBorrowPosition(collateralAmount, borrowAmount);
 
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
 
     uint256 expectedSupply = morpho.expectedTotalSupplyAssets(marketParams, marketId);
     (uint256 expSupplyFromFull,,,) = morpho.expectedMarketBalances(marketParams, marketId);
@@ -261,7 +261,7 @@ contract MorphoBalancesLibTest is Test {
     _setupBorrowPosition(collateralAmount, borrowAmount);
 
     // Advance time and accrue
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     morpho.accrueInterest(marketParams);
 
     // Immediately after accrual, expected should match cached
@@ -300,7 +300,7 @@ contract MorphoBalancesLibTest is Test {
     _setupBorrowPosition(collateralNeeded, borrowAmount);
 
     // Advance time
-    vm.warp(block.timestamp + timeElapsed);
+    vm.warp(vm.getBlockTimestamp() + timeElapsed);
 
     // Get expected balances via library
     (uint256 expSupplyAssets, uint256 expSupplyShares, uint256 expBorrowAssets, uint256 expBorrowShares) =
@@ -343,7 +343,7 @@ contract MorphoBalancesLibTest is Test {
     _setupBorrowPosition(collateralNeeded, borrowAmount);
 
     // Advance time
-    vm.warp(block.timestamp + timeElapsed);
+    vm.warp(vm.getBlockTimestamp() + timeElapsed);
 
     // Get expected balances via library
     (uint256 expSupplyAssets, uint256 expSupplyShares, uint256 expBorrowAssets, uint256 expBorrowShares) =
@@ -404,7 +404,7 @@ contract MorphoBalancesLibTest is Test {
 
     Market memory before = morpho.market(marketId);
 
-    vm.warp(block.timestamp + timeElapsed);
+    vm.warp(vm.getBlockTimestamp() + timeElapsed);
 
     (uint256 expSupplyAssets,, uint256 expBorrowAssets,) = morpho.expectedMarketBalances(marketParams, marketId);
 
@@ -431,7 +431,7 @@ contract MorphoBalancesLibTest is Test {
 
     Market memory before = morpho.market(marketId);
 
-    vm.warp(block.timestamp + timeElapsed);
+    vm.warp(vm.getBlockTimestamp() + timeElapsed);
 
     (uint256 expSupplyAssets,, uint256 expBorrowAssets,) = morpho.expectedMarketBalances(marketParams, marketId);
 
@@ -460,7 +460,7 @@ contract MorphoBalancesLibTest is Test {
 
     Market memory before = morpho.market(marketId);
 
-    vm.warp(block.timestamp + timeElapsed);
+    vm.warp(vm.getBlockTimestamp() + timeElapsed);
 
     (,,, uint256 expBorrowShares) = morpho.expectedMarketBalances(marketParams, marketId);
 
@@ -489,7 +489,7 @@ contract MorphoBalancesLibTest is Test {
     _setupBorrowPosition(collateralNeeded, borrowAmount);
 
     // First advance
-    vm.warp(block.timestamp + time1);
+    vm.warp(vm.getBlockTimestamp() + time1);
     (uint256 exp1Supply,, uint256 exp1Borrow,) = morpho.expectedMarketBalances(marketParams, marketId);
     morpho.accrueInterest(marketParams);
     Market memory accrued1 = morpho.market(marketId);
@@ -497,7 +497,7 @@ contract MorphoBalancesLibTest is Test {
     assertEq(exp1Supply, accrued1.totalSupplyAssets, "Mismatch after advance 1 (supply)");
 
     // Second advance
-    vm.warp(block.timestamp + time2);
+    vm.warp(vm.getBlockTimestamp() + time2);
     (uint256 exp2Supply,, uint256 exp2Borrow,) = morpho.expectedMarketBalances(marketParams, marketId);
     morpho.accrueInterest(marketParams);
     Market memory accrued2 = morpho.market(marketId);
@@ -505,7 +505,7 @@ contract MorphoBalancesLibTest is Test {
     assertEq(exp2Supply, accrued2.totalSupplyAssets, "Mismatch after advance 2 (supply)");
 
     // Third advance
-    vm.warp(block.timestamp + time3);
+    vm.warp(vm.getBlockTimestamp() + time3);
     (uint256 exp3Supply,, uint256 exp3Borrow,) = morpho.expectedMarketBalances(marketParams, marketId);
     morpho.accrueInterest(marketParams);
     Market memory accrued3 = morpho.market(marketId);

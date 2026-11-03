@@ -78,7 +78,7 @@ abstract contract SharedCapsE2EBaseTest is InKindFacilityBaseTest {
   /// @dev A dynamic cap recovering `recovery` debt units per day, fully recovered now.
   function _setRateFull(uint64 id, uint128 recovery) internal {
     vm.prank(owner);
-    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), 1 days, uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), 1 days, uint64(vm.getBlockTimestamp() - 1 days));
   }
 
   /// @dev A debt-asset deposit intent targeting the PM: its word is in the in-kind debt units.
@@ -88,7 +88,7 @@ abstract contract SharedCapsE2EBaseTest is InKindFacilityBaseTest {
       targetAsset: Asset({asset: address(positionManager), isPositionManager: true}),
       depositCap: word,
       guardKey: address(positionManager),
-      resolveStart: uint40(block.timestamp + RESOLVE_DELAY),
+      resolveStart: uint40(vm.getBlockTimestamp() + RESOLVE_DELAY),
       quorum: 1,
       transferableIntent: true
     });

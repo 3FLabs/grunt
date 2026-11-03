@@ -307,7 +307,7 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
   ) public {
     _setMultiPmFees();
     if (headB) _setSupplyQueue(pmMulti, address(moduleB), address(moduleA));
-    vm.warp(block.timestamp + bound(elapsed, 0, 90 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 90 days));
     oracle.setPrice(bound(price, 0.9e24, 1.5e24));
     amount = bound(amount, pmMulti.collateralAmount().divUp(pmMulti.debtAmount()), pmMulti.collateralAmount());
 
@@ -468,7 +468,7 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
   function test_exit_fullQueueMatchesPreviewToTheWeiAndRefundsExactly() public {
     _setMultiPmFees();
     (uint256 shares,) = _enter(pmMulti, user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     oracle.setPrice(1.1e24);
     uint256 exitShares = shares / 2;
     (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee, uint256 required) =
@@ -507,7 +507,7 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     _setExit(pmMulti, EXIT_CAP, FAR_EXPIRY, feeBps);
     if (queueBFirst) _setWithdrawalQueue(pmMulti, address(moduleB), address(moduleA));
     (uint256 shares,) = _enter(pmMulti, user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + bound(elapsed, 0, 180 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 180 days));
     oracle.setPrice(bound(price, 0.9e24, 2e24));
     exitShares = bound(exitShares, 2, shares);
 
