@@ -294,13 +294,13 @@ contract MorphoFlashLoanRequest is
 
   /// @inheritdoc IRequestInteractions
   /// @dev Called by the facility during repay(). Transfers assets in, decreasing the computed debt.
-  ///      Reverts if the resulting balance would exceed the raw debt.
+  ///      Reverts if the resulting balance would exceed the raw debt, including outside a flash loan
+  ///      where the raw debt is zero.
   function repay(uint256 amount) external {
     MorphoFlashLoanRequestStorage storage $ = _storage();
     $.asset.safeTransferFrom(msg.sender, address(this), amount);
 
-    uint256 rawDebt = _getRawDebt();
-    if (rawDebt != 0 && IERC20($.asset).balanceOf(address(this)) > rawDebt) revert BalanceExceedsDebt();
+    if (IERC20($.asset).balanceOf(address(this)) > _getRawDebt()) revert BalanceExceedsDebt();
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
