@@ -957,7 +957,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.prank(executor);
     flashLoanRequest.execute(
       repayAmount,
-      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      _buildSetRequestParams(intentId, vm.getBlockTimestamp() + 1 hours),
       address(syncWithdrawal),
       abi.encodeCall(
         SyncWithdrawal.run, (address(facility), intentId, withdrawAmount, repayAmount, false, strategy, withdrawAmount)
@@ -995,7 +995,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     // Cancel also cleared the fund: re-set it (fresh deadline, the first signature digest is used)
     address[] memory fundSigners = new address[](1);
     bytes[] memory fundSigs = new bytes[](1);
-    uint256 fundDeadline = block.timestamp + 3 hours;
+    uint256 fundDeadline = vm.getBlockTimestamp() + 3 hours;
     fundSigners[0] = guardian;
     fundSigs[0] = _signSetFund(intentId, address(mockFund), fundDeadline, GUARDIAN_PK);
     vm.prank(facilitator);
@@ -1007,7 +1007,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.prank(executor);
     flashLoanRequest.execute(
       repayAmount,
-      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      _buildSetRequestParams(intentId, vm.getBlockTimestamp() + 1 hours),
       address(syncWithdrawal),
       abi.encodeCall(
         SyncWithdrawal.run,
@@ -1035,7 +1035,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(SyncWithdrawal.NotRedeemOrder.selector, intentId));
     flashLoanRequest.execute(
       500e18,
-      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      _buildSetRequestParams(intentId, vm.getBlockTimestamp() + 1 hours),
       address(syncWithdrawal),
       abi.encodeCall(
         SyncWithdrawal.run, (address(facility), intentId, 1_000e18, 500e18, false, WithdrawalStrategy.SEQUENTIAL, 0)
@@ -1059,7 +1059,7 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     );
     flashLoanRequest.execute(
       500e18,
-      _buildSetRequestParams(intentId, block.timestamp + 1 hours),
+      _buildSetRequestParams(intentId, vm.getBlockTimestamp() + 1 hours),
       address(syncWithdrawal),
       abi.encodeCall(
         SyncWithdrawal.run,
@@ -1118,10 +1118,10 @@ contract MorphoFlashLoanRequestTest is FacilityBaseTest {
     _mintDebt(user, DEFAULT_AMOUNT);
     vm.prank(user);
     facility.deposit(debtIntentId, DEFAULT_AMOUNT);
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     MorphoFlashLoanRequest.SetRequestParams memory params =
-      _buildSetRequestParams(debtIntentId, block.timestamp + 1 hours);
+      _buildSetRequestParams(debtIntentId, vm.getBlockTimestamp() + 1 hours);
     vm.startPrank(facilitator);
     facility.setRequest(debtIntentId, address(flashLoanRequest), params.deadline, params.signers, params.signatures);
 
