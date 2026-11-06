@@ -33,20 +33,21 @@ import {BPS} from "../../libs/Constants.sol";
 ///      gets the fraction `c / (C + c)` of the pool whatever `p` is. At the next quote `p'` their
 ///      equity is exactly `p' * c - d` and holders' equity per share is unchanged. Exits mirror
 ///      `PM.burn`'s native-unit proportional math. Round trips are lossy up to wei-level rounding
-///      (at most the 32-debt-wei fair-mint tolerance) plus the two share fees: with zero fees one
-///      can come back a few debt-wei ahead.
+///      plus the two share fees: at an unchanged quote, a zero-fee round trip can come back ahead
+///      by at most the `NonNeutralMint` tolerance (32 debt-wei of equity plus one share).
 ///
 ///      Since a ratio-matched entrant can only ever receive shares, every mint is checked
 ///      against the fraction `S_adj * c / C` and any excess reverts (`NonNeutralMint`). This
 ///      bounds the over-mint of a multi-module PM whose receiving module quotes above the pool
 ///      average, a bad-debt filtering slip, and unknown PM bugs alike.
 ///
-///      Caps, all in debt units, are consumed before any token moves: the PM's capacity cap, then
-///      the caller's auth on the underlying asset and, for the remainder, the asset's security
-///      cap (shared by every PM wrapping that asset, against unbacked issuer mints). Exits consume
-///      the PM's exit cap; pointing it at the shared absolute pool with a negative multiplier
-///      gives entry capacity back. A pool with no debt moves none, so every cap reads as zero on
-///      it: those flows are gated by the offers alone (see the known limitations).
+///      Entry caps, all in debt units, are consumed before any token moves: the PM's capacity
+///      cap, then the caller's auth on the underlying asset and, for the remainder, the asset's
+///      security cap (shared by every PM wrapping that asset, against unbacked issuer mints).
+///      Exits consume the PM's exit cap after PM.burn, with the debt the burn repaid; pointing it
+///      at the shared absolute pool with a negative multiplier gives entry capacity back. A pool
+///      with no debt moves none, so every cap reads as zero on it: those flows are gated by the
+///      offers alone (see the known limitations).
 ///
 ///      Trust surface: the facility holds MINTER_ROLE on each PM it serves and is itself
 ///      permissionless, so anyone can reach PM.deposit and PM.burn through it, including from
@@ -68,9 +69,8 @@ import {BPS} from "../../libs/Constants.sol";
 ///      any consumer able to credit its pools with a negative word. Prefer a dynamic security
 ///      word. For an asset whose quote can lag a known loss (credit tranches, NAV-reported
 ///      funds), set the security cap to zero and admit entrants through OPERATOR auths only.
-///      On a credit event, `pauseFor`, then zero the security cap and revoke the outstanding
-///      auths: a zero cap does not stop an unexpired auth, and an auth says nothing about the
-///      collateral's solvency.
+///      On a credit event, follow the impairment steps in Operations: a zero cap does not stop an
+///      unexpired auth, and an auth says nothing about the collateral's solvency.
 ///
 ///      Known limitations:
 ///      - Entries need room at the PM's target `ltv`, as PM.deposit sizes every borrow at it. On a
@@ -82,8 +82,9 @@ import {BPS} from "../../libs/Constants.sol";
 ///        supply-queue `maxBorrow` room for the debt, which the views do not check. Exits revert
 ///        while a withdrawal-queue module is above its safeLtv.
 ///      - Multi-module PMs with divergent per-module quotes: the receiving module prices the
-///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed.
-///        Round trips also shift positions toward the supply-queue head; prefer single-module PMs.
+///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed
+///        and quote scale. Round trips also shift positions toward the supply-queue head; prefer
+///        single-module PMs.
 ///      - No issuer state is read (e.g. a `defaulted()` flag): it would be issuer specific and
 ///        still miss the window before the default is recorded. Stale quotes are bounded by the
 ///        security cap, auths, the PM capacity cap and the market's free liquidity only.
@@ -149,8 +150,8 @@ import {BPS} from "../../libs/Constants.sol";
 ///      exits included. Zeroing caps is no substitute for closing an offer: auths and unlevered
 ///      entries skip them.
 ///      - ASYNC operation: close both offers before it starts, reopen once it resolves.
-///      - Collateral impairment: close the entry offer, zero the security cap and revoke the
-///        outstanding auths.
+///      - Collateral impairment: `pauseFor` first if it cannot wait, then close the entry offer,
+///        zero the security cap and revoke the outstanding auths.
 ///      - Delevering a PM to dust: close the entry offer first.
 ///      - An excluded module carrying a loss the quote misses: close the exit offer.
 ///      - A module, market or oracle change: close the entry offer until every module is checked

@@ -37,7 +37,9 @@ enum CapType {
 ///      makes sense when the deposit and the pool share a unit. A withdrawal-side intent may use a
 ///      negative multiplier so its deposits release and its withdrawals consume. On PM shares it
 ///      is a fixed debt-per-share rate that drifts with the share price, so ABSOLUTE words or a
-///      dedicated pool are the default there.
+///      dedicated pool are the default there. A PM-share word on a shared pool needs its
+///      multiplier refreshed periodically and set conservatively: below debt per share on a
+///      credit word, above it on a consume word (see LibIntent.updateDepositCap for the refresh).
 ///
 ///      consume() returns the new word for the caller to store, so the library stays free of
 ///      storage references.

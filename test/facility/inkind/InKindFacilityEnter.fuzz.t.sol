@@ -193,9 +193,6 @@ contract InKindFacilityEnterFuzzTest is InKindFacilityBaseTest {
   /*                           TESTS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice DustEntry iff `floor(a * D / C) == 0`. Otherwise the entry borrows that debt and
-  ///         mints within two units of the fair fraction, or the PM mints nothing on a fair
-  ///         fraction below `(2 * S_adj + 1) / TA` and it reverts InsufficientSharesOut(0, 0).
   function test_enter_securityBudgetsAreKeyedByDebtAsset() public {
     // PM B wraps the base fixture's underlying but borrows an 18-decimal debt token
     _seedPool(SEED_COLLATERAL, SEED_DEBT);
@@ -233,6 +230,9 @@ contract InKindFacilityEnterFuzzTest is InKindFacilityBaseTest {
     assertEq(facility.getAuth(address(underlyingToken), address(b.debt), user).amount, 0, "no auth on B's pair");
   }
 
+  /// @notice DustEntry iff `floor(a * D / C) == 0`. Otherwise the entry borrows that debt and
+  ///         mints within two units of the fair fraction, or the PM mints nothing on a fair
+  ///         fraction below `(2 * S_adj + 1) / TA` and it reverts InsufficientSharesOut(0, 0).
   function testFuzz_enter_dustEntryIffRatioDebtFloorsToZero(uint256[7] memory seeds, uint256 amount) public {
     Stack memory st = _leveredStack(seeds);
     uint256 totalCollateral = st.pm.collateralAmount();
