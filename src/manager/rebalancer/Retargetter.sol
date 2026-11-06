@@ -268,7 +268,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      maker or consumer that also held that role could inflate the position around the
   ///      call and unwind afterwards, stranding the supply above the live cap. No read
   ///      timing defends against that; the position manager's owner must keep its minter
-  ///      role off makers and consumers.
+  ///      role off makers and consumers. InKindFacility holds that role and serves anyone, so
+  ///      close its offers for the whole ASYNC operation (see InKindFacility).
   function consume(Offer calldata offer, bytes calldata signature, uint256 ptAmount)
     external
     onlyOwnerOrRoles(CONSUMER_ROLE)

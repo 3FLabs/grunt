@@ -50,6 +50,9 @@ import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 ///      2. Owner calls `consume()` with the offer, signature, and PT amount to fulfill
 ///      3. The maker's `onRequestConsumed` callback is invoked to prepare funds
 ///      4. Assets are transferred from owner and PT/YT tokens are minted to the maker
+///
+///      Known limitation: PT/YT do not inherit the asset's transfer restrictions. Use a freely
+///      transferable asset.
 contract Request is IRequest, OfferReceiver, VaultController, Initializable, OwnableRoles, ReentrancyGuardTransient {
   using FixedPointMathLib for uint256;
   using SafeTransferLib for address;

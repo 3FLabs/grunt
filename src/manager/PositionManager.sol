@@ -27,6 +27,17 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 /// @notice Aggregates multiple borrow positions into a single vault with share-based accounting.
 /// @dev Uses supply/withdrawal queues for deposit/withdraw operations, implements fee accrual,
 ///      and uses virtual share offset for inflation attack protection.
+///
+///      Known limitations:
+///      - Modules must sit on distinct Morpho markets and share one price feed and quote scale.
+///        Same-market modules round debt independently and their repays move each other's share
+///        price, so proportional burns can revert and rebalances drift by a few atoms. Divergent
+///        quotes misprice NAV for every flow, the Retargetter included.
+///      - Set `ltv` with headroom below every module's safeLtv. At equality, accrual or rounding
+///        makes proportional burns revert at the module's LTV check.
+///      - Burning nearly the whole supply can revert: the module repays in assets, and the Morpho
+///        borrow shares left over can exceed what the remaining collateral backs. Exit slightly
+///        less or repay the residual first.
 contract PositionManager is
   IPositionManager,
   PositionManagerLP,

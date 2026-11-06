@@ -54,7 +54,8 @@ import {BPS} from "../../libs/Constants.sol";
 ///      needs SENDER_ROLE on the wrapper and the consumer role on every caps contract its words
 ///      use, and must pass the PM's TransferGuard and the underlying's transfer restrictions; so
 ///      must share receivers and the fee recipient (it holds PM shares). Entry payers are not
-///      guard-checked.
+///      guard-checked, and exit receivers only face the underlying's restrictions, not the PM's
+///      TransferGuard.
 ///
 ///      Security caps and auths bound in-kind borrowing against collateral worth less than its
 ///      quote: unbacked issuer mints, and a quote lagging a known loss (an issuer default the

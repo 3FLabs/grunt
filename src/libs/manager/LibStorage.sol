@@ -322,7 +322,8 @@ library LibStorage {
     // instead (see `_pendingFees`), so without this clear a post-window depositor would
     // inherit the departed cohort's credit. Unlike a supply-ratio rescale, the terminal clear
     // is not a permissionless lever: only the sole remaining holder can trigger it, and the
-    // only shield it destroys is their own.
+    // only shield it destroys is their own. A held performance gain is forgiven the same way,
+    // since the reference below only carries while supply remains.
     if (newSupply == 0) self.heldManagementFeeAssets = 0;
     uint256 refDebt = self.lastDebt;
     // Hold the reference across any flow that leaves the good-debt universe empty: with no

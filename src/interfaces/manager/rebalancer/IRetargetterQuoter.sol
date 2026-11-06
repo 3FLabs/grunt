@@ -70,6 +70,10 @@ interface IRetargetterQuoter {
   ///      Returns (0, 0) when the position is at or below target once those accruals are
   ///      applied. Reverts with `InvalidParameters` on economically unreasonable rate inputs
   ///      (a non-positive sizing denominator).
+  ///      `collateralToFreeQuoted` uses the continuous yield estimate, while the Request owes
+  ///      tick-quantized yield up to the operation's yield cap: size the redemption against the
+  ///      owed amount at the expected settlement tick. There is no one-trip bound on this side,
+  ///      so keep the yield cap well below `1 / targetLtv - 1`.
   /// @param collateralQuoted The aggregate collateral value in debt-asset units
   /// @param debt The aggregate debt in debt-asset units
   /// @param targetLtv The target loan-to-value ratio (WAD)

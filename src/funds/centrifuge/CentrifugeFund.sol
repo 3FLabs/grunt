@@ -28,6 +28,8 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - Recovery is async: cancelRequest() → wait for Centrifuge → recover().
 ///      - All vault calls use requestId = 0, which is the Centrifuge convention for
 ///        "the current request for this controller" (each controller has at most one active request).
+///        Anyone can name this fund as controller, so a foreign request aggregates into the
+///        active one and its claim is credited to the current order.
 contract CentrifugeFund is ICentrifugeFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;

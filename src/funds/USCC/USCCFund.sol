@@ -29,6 +29,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
 ///        on asset balances to determine state transitions.
+///      - State reads the fund's whole USCC/USDC balance and unlock sweeps it, so a settlement
+///        landing after its order ended, or a direct transfer, is credited to the next order.
+///        Set `order.output` close to the expected amount (or tighten it with resolve()) and
+///        unlock once Superstate confirms settlement.
 contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
