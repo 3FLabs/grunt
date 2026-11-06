@@ -55,6 +55,23 @@ contract MockIdleCDOEpochVariant is IIdleCDOEpochVariant {
     return address(_strategy);
   }
 
+  uint256 public constant trancheAPRSplitRatio = 100_000;
+  uint256 public constant bufferPeriod = 21_600;
+  uint256 public constant managementFee = 0;
+  uint256 public constant unclaimedFees = 0;
+
+  function lastNAVAA() external view returns (uint256) {
+    return _aaTranche.totalSupply() * _virtualPrice / 1e18;
+  }
+
+  function latestHarvestBlock() external view returns (uint256) {
+    return block.timestamp;
+  }
+
+  function strategyToken() external view returns (address) {
+    return _underlying;
+  }
+
   function virtualPrice(address) external view override returns (uint256) {
     return _virtualPrice;
   }
