@@ -92,9 +92,10 @@ interface IFacilityIntents {
   ///      a top byte of 1 references a cap in an IFacilityCaps contract consumed on deposit and
   ///      released on withdrawal (see LibCaps for the exact layout). Releases follow the current
   ///      word, so change the encoding or the referenced cap only after setting the word to zero
-  ///      and letting outstanding shares exit, then reconcile the old pool with setCap. A
-  ///      multiplier change on the same pool (a periodic refresh) can be made in place; the caps
-  ///      manager reconciles the drift with setCap (see LibIntent.updateDepositCap).
+  ///      and letting outstanding shares exit, then reconcile the old pool. A multiplier change on
+  ///      the same pool (a periodic refresh) can be made in place: the pool drifts and its flows
+  ///      can revert until reconciled, with setCap only while every consumer of the pool is
+  ///      paused (see LibIntent.updateDepositCap).
   ///      Callable in any intent state: caps are only consumed while depositing, but releases
   ///      (e.g. reverted deposits while resolving) follow the current word.
   /// @param id The intent ID.

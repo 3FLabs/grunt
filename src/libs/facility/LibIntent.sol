@@ -230,12 +230,15 @@ library LibIntent {
   ///      current word, so changing the encoding, the caps contract, the cap ID or the
   ///      multiplier while shares are outstanding credits or debits a cap for deposits it never
   ///      saw. To switch, set the word to zero first, let outstanding shares exit, then set the
-  ///      new word and reconcile the old pool with setCap. A multiplier change on the same pool,
-  ///      such as a periodic refresh of a PM-share word, can be made in place: releases of shares
-  ///      deposited before it follow the new multiplier, so the pool drifts by the change times
-  ///      the outstanding shares until the caps manager reconciles it with setCap. An ABSOLUTE
-  ///      word is the max total supply and may be set below it, which blocks deposits until
-  ///      enough shares exit.
+  ///      new word and reconcile the old pool. A multiplier change on the same pool, such as a
+  ///      periodic refresh of a PM-share word, can be made in place: releases of shares deposited
+  ///      before it follow the new multiplier, so the pool drifts by the change times the shares
+  ///      outstanding at the refresh, within its hard cap, and its flows can revert
+  ///      InsufficientCap or HardCapExceeded until the caps manager steps in. adjustCap adds room
+  ///      on a live pool. setCap overwrites consumption landing before it executes, so it only
+  ///      reconciles a shared pool while every consumer of the pool is paused. An ABSOLUTE word
+  ///      is the max total supply and may be set below it, which blocks deposits until enough
+  ///      shares exit.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.

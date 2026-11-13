@@ -150,8 +150,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///      exits included. Zeroing caps is no substitute for closing an offer: auths and unlevered
 ///      entries skip them.
 ///      - ASYNC operation: close both offers before it starts, reopen once it resolves.
-///      - Collateral impairment: `pauseFor` first if it cannot wait, then close the entry offer,
-///        zero the security cap and revoke the outstanding auths.
+///      - Collateral impairment: `pauseFor` first if it cannot wait, then close the entry offer of
+///        every PM on the impaired underlying, which alone blocks their entries. Then zero the
+///        security cap and revoke the outstanding auths of every (underlying, debt asset) pair
+///        set for it, so no offer opened or reopened later finds a live budget.
 ///      - Delevering a PM to dust: close the entry offer first.
 ///      - An excluded module carrying a loss the quote misses: close the exit offer.
 ///      - A module, market or oracle change: close the entry offer until every module is checked
