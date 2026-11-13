@@ -158,7 +158,7 @@ contract FacilityAbsoluteCaps is FacilityCapsBase {
   /// @notice Sets the remaining capacity and the hard cap of a pool.
   /// @dev Gated by the manager role. Reverts with InvalidCapId for pool ID 0 and with
   ///      CapAboveHardCap if cap > hardCap. Overwrites consumption landing between reading the
-  ///      pool and this call, see adjustCap for updates on a live pool.
+  ///      pool and this call: on a live pool, pause every consumer first or use adjustCap.
   /// @param id The pool ID.
   /// @param cap The remaining shared capacity.
   /// @param hardCap The constant upper bound for the cap.

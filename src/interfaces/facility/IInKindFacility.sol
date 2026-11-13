@@ -217,8 +217,9 @@ interface IInKindFacility {
   ///      Overwrites the remaining amount: set zero first to lower it without a front-run. Only a
   ///      trusted multisig should hold this power, and an EXTERNAL word should only reference a
   ///      caps contract run by trusted multisigs too. Keep it at zero (auths only) for an asset
-  ///      whose quote can lag a known loss, and zero it on a credit event along with the
-  ///      outstanding auths, which a zero cap does not stop.
+  ///      whose quote can lag a known loss, and on a credit event zero it for every debt asset
+  ///      paired with the underlying, along with the outstanding auths, which a zero cap does
+  ///      not stop.
   function setSecurityCap(address asset, address debtAsset, uint256 cap) external;
 
   /// @notice Sets the auth of a user on an underlying asset for borrows of `debtAsset` (owner or
