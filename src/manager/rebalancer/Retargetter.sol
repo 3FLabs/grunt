@@ -76,6 +76,14 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///      consumed principal, order liveness progress, repaid status) is recomputed fresh at
 ///      every use; only the operation addresses, the loan clock origin, the per-operation
 ///      yield cap and the non-derivable order fields persist (see {LibStorage}).
+///
+///      Known limitations:
+///      - Every bind clears the target LTV override and emits PositionManagerBound, not
+///        TargetLtvOverrideSet. The position manager owner sets it again after a rebind.
+///      - The position manager's ltv is read live and its owner can change it mid-operation.
+///        Lowering it can make the rebalancer's settlement BORROW revert AboveTargetLtv; the
+///        Retargetter owner then settles with a direct rebalance (direction checks skipped)
+///        or forceRepay.
 contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initializable, Multicallable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -553,7 +561,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     // aggregate quantities come from one read of the position, then the value gate is
     // disarmed unless the bridge is outstanding, by parking the snapshot at the sentinel
     // no live value can exceed; see {_bridgeOutstanding} and the post-call check
-    (uint256 target,) = IPositionManager(positionManager).config();
+    uint256 target = _targetLtv(positionManager);
     (uint256 ltvBefore, int256 valueBefore) = _positionSnapshot(positionManager);
     if (!_bridgeOutstanding()) valueBefore = type(int256).max;
     address[] memory modules = IPositionManager(positionManager).borrowModules();
@@ -755,8 +763,25 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      PositionManagerNotBound meanwhile). Every start-gate and principal-cap read trusts
   ///      the bound address, which is why the binding is owner-curated, not caller-supplied.
   function setPositionManager(address positionManager) external onlyOwner nonReentrant {
-    if (LibStorage.operationStorage().fund != address(0)) revert LibRetargetterErrors.OperationActive();
+    _checkIdle();
     _bindPositionManager(positionManager);
+  }
+
+  /// @inheritdoc IRetargetter
+  /// @dev Gated on the owner of the ltv it narrows: the gates behave exactly as if that owner
+  ///      had set the position manager's ltv to the effective target. Idle only, so the
+  ///      override never moves under an operation (SYNC windows included). Reverts while
+  ///      unbound (the owner read on the zero address fails).
+  function setTargetLtvOverride(uint256 targetLtvOverride_) external nonReentrant {
+    RetargetterAssets storage assets_ = LibStorage.assetsStorage();
+    address positionManager = assets_.positionManager;
+    if (msg.sender != OwnableRoles(positionManager).owner()) revert Unauthorized();
+    _checkIdle();
+    if (targetLtvOverride_ > FixedPointMathLib.WAD) revert LibRetargetterErrors.InvalidParameters();
+    // Safe: at most WAD, which fits in uint64
+    // forge-lint: disable-next-line(unsafe-typecast)
+    assets_.targetLtvOverride = uint64(targetLtvOverride_);
+    emit TargetLtvOverrideSet(positionManager, targetLtvOverride_);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -868,6 +893,11 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   }
 
   /// @inheritdoc IRetargetter
+  function targetLtv() external view returns (uint256) {
+    return _targetLtv(LibStorage.assetsStorage().positionManager);
+  }
+
+  /// @inheritdoc IRetargetter
   function quoter() external view returns (address) {
     return _QUOTER;
   }
@@ -914,12 +944,17 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
     view
     returns (address positionManager)
   {
-    if (operation_.fund != address(0)) revert LibRetargetterErrors.OperationActive();
+    _checkIdle();
     if (operation_.orderLive) revert LibRetargetterErrors.OrderActive();
     positionManager = LibStorage.assetsStorage().positionManager;
     if (positionManager == address(0)) revert LibRetargetterErrors.PositionManagerNotBound();
     if (!LibStorage.whitelistsStorage().funds[fund]) revert LibRetargetterErrors.FundNotWhitelisted();
     if (amount > _maxPrincipal(positionManager, yieldCapBps)) revert LibRetargetterErrors.PrincipalCapExceeded();
+  }
+
+  /// @dev Reverts OperationActive while an operation (ASYNC, or a SYNC window) is active.
+  function _checkIdle() internal view {
+    if (LibStorage.operationStorage().fund != address(0)) revert LibRetargetterErrors.OperationActive();
   }
 
   /// @dev Shared preamble of the wrappers acting on the live order: requires an active
@@ -942,7 +977,8 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   ///      assets define the instance's pair on the first bind (while the stored pair is still
   ///      zero) and must match that pair on every later bind, so the pair is write-once and
   ///      immutable. The zero address unbinds the instance and leaves the pair untouched, so a
-  ///      later rebind still has to match it.
+  ///      later rebind still has to match it. Every bind clears the target LTV override, which
+  ///      belongs to the previous binding.
   function _bindPositionManager(address positionManager) internal {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
     if (positionManager != address(0)) {
@@ -956,7 +992,16 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       }
     }
     assets_.positionManager = positionManager;
+    assets_.targetLtvOverride = 0;
     emit PositionManagerBound(positionManager);
+  }
+
+  /// @dev The target LTV of the direction checks and the principal cap: the position
+  ///      manager's live ltv, lowered to the override when one is set below it.
+  function _targetLtv(address positionManager) internal view returns (uint256 target) {
+    (target,) = IPositionManager(positionManager).config();
+    uint256 override_ = LibStorage.assetsStorage().targetLtvOverride;
+    if (override_ != 0 && override_ < target) target = override_;
   }
 
   /// @dev The live principal cap for an operation carrying the given yield cap. Recomputed
@@ -975,7 +1020,7 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
       if (debt == 0) revert LibRetargetterErrors.EmptyPosition();
       revert LibRetargetterErrors.BadDebtPosition(positionManager);
     }
-    (uint256 target,) = IPositionManager(positionManager).config();
+    uint256 target = _targetLtv(positionManager);
     RetargetterConfig storage config_ = LibStorage.configStorage();
     // The estimates pack into a single slot, so one copy into memory beats a storage
     // pointer re-reading the slot for every field passed to the quoter
