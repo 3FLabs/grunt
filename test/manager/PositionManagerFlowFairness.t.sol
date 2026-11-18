@@ -97,7 +97,7 @@ contract PositionManagerFlowFairnessTest is PositionManagerBaseTest {
     // only pushes the basis further negative.
     (,,, uint256 perfShares) = positionManager.pendingFees();
     assertEq(perfShares, 0, "no performance fee pending without a gain");
-    vm.warp(block.timestamp + bound(fees >> 64, 0, 90 days));
+    vm.warp(vm.getBlockTimestamp() + bound(fees >> 64, 0, 90 days));
     (,,, perfShares) = positionManager.pendingFees();
     assertEq(perfShares, 0, "time alone never creates a performance fee on the principal");
   }
@@ -222,7 +222,8 @@ contract PositionManagerFlowFairnessTest is PositionManagerBaseTest {
     // still holds.
     uint256 cMaxQuoted = FixedPointMathLib.zeroFloorSub(
         positionManager.collateralAmountQuoted(), positionManager.debtAmount().mulDiv(100, 65)
-      ).min(_shareValue(positionManager.balanceOf(minter)).mulDiv(90, 100));
+      )
+      .min(_shareValue(positionManager.balanceOf(minter)).mulDiv(90, 100));
     c = bound(c, 1e15, cMaxQuoted.mulDiv(ORACLE_PRICE_SCALE, p));
     uint256 cQuoted = c.mulDiv(p, ORACLE_PRICE_SCALE);
     d = bound(d, 0, cQuoted.mulDiv(64, 100).min(positionManager.debtAmount()));
@@ -245,7 +246,7 @@ contract PositionManagerFlowFairnessTest is PositionManagerBaseTest {
 
     (,,, uint256 perfShares) = positionManager.pendingFees();
     assertEq(perfShares, 0, "no performance fee pending without a gain");
-    vm.warp(block.timestamp + bound(fees >> 64, 0, 90 days));
+    vm.warp(vm.getBlockTimestamp() + bound(fees >> 64, 0, 90 days));
     (,,, perfShares) = positionManager.pendingFees();
     assertEq(perfShares, 0, "time alone never creates a performance fee after the exit");
   }

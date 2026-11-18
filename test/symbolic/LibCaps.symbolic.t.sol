@@ -6,9 +6,11 @@ import {LibCaps, CapType} from "src/libs/facility/LibCaps.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
 import {IFacilityCapsWhitelist} from "src/interfaces/facility/IFacilityCapsWhitelist.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
 contract LibCapsSymbolicHarness {
   uint256 word;
+  address asset = address(new MockERC20("Asset", "AST", 18));
 
   function validate(uint256 word_, IFacilityCapsWhitelist whitelist) external view {
     LibCaps.validate(word_, whitelist);
@@ -19,11 +21,11 @@ contract LibCapsSymbolicHarness {
   }
 
   function consume(uint256 capId, uint256 amount) external returns (uint256) {
-    return LibCaps.consume(word, capId, amount);
+    return LibCaps.consume(word, capId, amount, asset);
   }
 
   function release(uint256 amount) external {
-    LibCaps.release(word, amount);
+    LibCaps.release(word, amount, asset);
   }
 }
 

@@ -32,20 +32,22 @@ import {BPS} from "../../libs/Constants.sol";
 ///      are proportional to the quoted equity added, `p * c - d = (c / C)(pC - D)`, so the entrant
 ///      gets the fraction `c / (C + c)` of the pool whatever `p` is. At the next quote `p'` their
 ///      equity is exactly `p' * c - d` and holders' equity per share is unchanged. Exits mirror
-///      `PM.burn`'s native-unit proportional math. Round trips are strictly lossy (rounding plus
-///      the two share fees).
+///      `PM.burn`'s native-unit proportional math. Round trips are lossy up to wei-level rounding
+///      plus the two share fees: at an unchanged quote, a zero-fee round trip can come back ahead
+///      by at most the `NonNeutralMint` tolerance (32 debt-wei of equity plus one share).
 ///
 ///      Since a ratio-matched entrant can only ever receive shares, every mint is checked
 ///      against the fraction `S_adj * c / C` and any excess reverts (`NonNeutralMint`). This
 ///      bounds the over-mint of a multi-module PM whose receiving module quotes above the pool
 ///      average, a bad-debt filtering slip, and unknown PM bugs alike.
 ///
-///      Caps, all in debt units, are consumed before any token moves: the PM's capacity cap, then
-///      the caller's auth on the underlying asset and, for the remainder, the asset's security
-///      cap (shared by every PM wrapping that asset, against unbacked issuer mints). Exits consume
-///      the PM's exit cap; pointing it at the shared absolute pool with a negative multiplier
-///      gives entry capacity back. A pool with no debt moves none, so every cap reads as zero on
-///      it: those flows are gated by the offers alone (see the known limitations).
+///      Entry caps, all in debt units, are consumed before any token moves: the PM's capacity
+///      cap, then the caller's auth on the underlying asset and, for the remainder, the asset's
+///      security cap (shared by every PM wrapping that asset, against unbacked issuer mints).
+///      Exits consume the PM's exit cap after PM.burn, with the debt the burn repaid; pointing it
+///      at the shared absolute pool with a negative multiplier gives entry capacity back. A pool
+///      with no debt moves none, so every cap reads as zero on it: those flows are gated by the
+///      offers alone (see the known limitations).
 ///
 ///      Trust surface: the facility holds MINTER_ROLE on each PM it serves and is itself
 ///      permissionless, so anyone can reach PM.deposit and PM.burn through it, including from
@@ -53,38 +55,66 @@ import {BPS} from "../../libs/Constants.sol";
 ///      needs SENDER_ROLE on the wrapper and the consumer role on every caps contract its words
 ///      use, and must pass the PM's TransferGuard and the underlying's transfer restrictions; so
 ///      must share receivers and the fee recipient (it holds PM shares). Entry payers are not
-///      guard-checked.
+///      guard-checked, and exit receivers only face the underlying's restrictions, not the PM's
+///      TransferGuard.
 ///
-///      Security caps and auths bound in-kind borrowing against unbacked issuer mints. Whoever
-///      controls them must be a trusted multisig: the owner and OPERATOR here and, for an
-///      EXTERNAL security word, the caps contract's owner and managers, the whitelist owner and
-///      the FACILITATOR of any consumer able to credit its pools with a negative word. Prefer a
-///      dynamic security word.
+///      Security caps and auths bound in-kind borrowing against collateral worth less than its
+///      quote: unbacked issuer mints, and a quote lagging a known loss (an issuer default the
+///      oracle has not priced yet). Entries borrow at the pool ratio and never read the
+///      collateral's market price, so in that window any holder can borrow against impaired
+///      collateral. PM holders are unaffected (the ratio match keeps their equity per share),
+///      the market's lenders carry the loss once the quote corrects. Whoever controls the caps
+///      must be a trusted multisig: the owner and OPERATOR here and, for an EXTERNAL security
+///      word, the caps contract's owner and managers, the whitelist owner and the FACILITATOR of
+///      any consumer able to credit its pools with a negative word. Prefer a dynamic security
+///      word. For an asset whose quote can lag a known loss (credit tranches, NAV-reported
+///      funds), set the security cap to zero and admit entrants through OPERATOR auths only.
+///      On a credit event, follow the impairment steps in Operations: a zero cap does not stop an
+///      unexpired auth, and an auth says nothing about the collateral's solvency.
 ///
 ///      Known limitations:
-///      - Entries need the pool's LTV at or below the PM's target `ltv`, as PM.deposit sizes
-///        every borrow at it: above it they revert and {maxEnter} returns zero. The views read
-///        the quoted LTV, so within a few debt units of the target they can disagree with
-///        PM.deposit. Exits revert while a withdrawal-queue module is above its safeLtv.
+///      - Entries need room at the PM's target `ltv`, as PM.deposit sizes every borrow at it. On a
+///        single-module PM that is the pool's LTV at or below the target. A multi-module PM.deposit
+///        can still place the borrow on a module below target while the pool is above it, so
+///        {enter} can succeed where {previewEnter} reverts and {maxEnter} returns zero: the views
+///        are conservative there. They also read the quoted LTV, so within a few debt units of the
+///        target they can disagree with PM.deposit. Entries also need free market liquidity and
+///        supply-queue `maxBorrow` room for the debt, which the views do not check. Exits revert
+///        while a withdrawal-queue module is above its safeLtv.
 ///      - Multi-module PMs with divergent per-module quotes: the receiving module prices the
-///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed.
-///        Round trips also shift positions toward the supply-queue head; prefer single-module PMs.
+///        deposit while the debt leg is aggregate. Serve PMs whose modules share one price feed
+///        and quote scale. Round trips also shift positions toward the supply-queue head; prefer
+///        single-module PMs.
+///      - No issuer state is read (e.g. a `defaulted()` flag): it would be issuer specific and
+///        still miss the window before the default is recorded. Stale quotes are bounded by the
+///        security cap, auths, the PM capacity cap and the market's free liquidity only.
 ///      - The ratio is read from the PM's views. The Morpho borrow position quotes accrued debt
 ///        (expected market balances); a module whose `totalBorrowed` lags the market would let
 ///        flows use a stale ratio. Only serve PMs whose modules quote accrued debt.
-///      - A module above its liquidation LTV but below 100% is not bad debt. An exit while the
-///        PM's withdrawal queue excludes that module leaves the penalty on stayers. Serve PMs
-///        whose withdrawal queue covers every module.
-///      - Exits burn PROPORTIONAL, touching every withdrawal-queue module, so each must repay and
-///        withdraw atomically. A module that cannot has to leave the withdrawal queue, at the
-///        cost above, and exits then need each remaining module at or below the target LTV.
+///      - Exits burn PROPORTIONAL through the withdrawal queue, so each queued module must repay
+///        and withdraw atomically. The queue need not cover every module: one that cannot (a
+///        term position) stays out. The exit still takes its fraction of the whole pool's debt
+///        and collateral, sourced from the queued modules, so at the quote stayers keep their
+///        equity per share and the pool its LTV. Only the mix moves: queued modules shrink at
+///        the pool ratio, levering up when the excluded modules are less levered, and burn
+///        reverts once a queued module could not release its slice at the target LTV or the
+///        slice exceeds the queued debt or collateral.
+///      - Value the quote misses on an excluded module stays with the stayers, since an exit
+///        leaves before it lands: a pending liquidation penalty (a module above its liquidation
+///        LTV but below 100% is not bad debt) or a discount on a term position. Close the exit
+///        offer while an excluded module carries such a loss.
 ///      - Exits do not refund the security cap: a dynamic one is throughput only and an ABSOLUTE
 ///        one a lifetime budget, so a looper drains it at the cost of two share fees plus
 ///        rounding per loop. Size the fees accordingly.
-///      - An exit word on a shared absolute pool with a negative multiplier also credits interest
-///        and shares that never entered, so the pool drifts to its hard cap and exits above the
-///        headroom revert `HardCapExceeded` until entries consume headroom, the facilitator
-///        re-arms the word or setCap raises the hard cap. Leave hard-cap slack.
+///      - An exit word on a shared absolute pool with a negative multiplier credits the debt each
+///        exit repays, not what entries consumed: interest, shares that never entered and any
+///        change in debt per share outside in-kind flows (REBALANCER or Retargetter lever-ups
+///        and delevers, liquidations, third-party repays) move the pool. Lever-ups over-credit
+///        it, so it drifts to its hard cap and exits above the headroom revert `HardCapExceeded`
+///        until entries consume headroom, the facilitator re-arms the word or setCap raises the
+///        hard cap. Delevers under-credit it, stranding capacity after the last in-kind holder
+///        leaves until the caps manager reconciles the pool. Leave hard-cap slack and reconcile
+///        the pool after large rebalances.
 ///      - An ABSOLUTE exit word is drainable by enter/exit loops at fee cost, blocking exits for
 ///        everyone until re-armed. Prefer the shared-pool netting (entry +1x, exit -1x).
 ///      - Any revert inside the PM's fee accrual (a de-allowlisted PM fee recipient) reverts every
@@ -95,15 +125,45 @@ import {BPS} from "../../libs/Constants.sol";
 ///        `allowUnlevered` flag, and on the exit side always (a pool that repays to zero must
 ///        stay exitable). Both borrow and repay nothing, so no cap, auth or per-user gate binds
 ///        them: the flag and the offer expiry are the only levers, and size is unbounded. Set
-///        the flag only on PMs whose in-kind size is acceptable unbounded.
+///        the flag only on PMs whose in-kind size is acceptable unbounded. The flag only gates
+///        `D == 0`: a pool at dust debt (delevered by the REBALANCER or Retargetter, or its debt
+///        repaid by a third party) lets a cap of `B` admit `B * C / D` collateral, practically
+///        unbounded, and a later re-leverage borrows against it. Close the entry offer before
+///        delevering a PM to dust.
 ///      - Gains between NAV prints travel with the collateral, so an exit before a print and a
 ///        re-entry after it skip the PM performance fee on that gain (a loss to the PM fee
 ///        recipient, not to holders). The share fees are the deterrent.
 ///      - Anyone can checkpoint the PM's fees with a dust flow: at a quote trough it lowers the
 ///        performance reference, at a peak it crystallizes a gain a reversal never refunds.
 ///        Serve PMs whose quote does not fall, or with no performance fee.
-///      - On a Retargetter-bound PM, flows move an open operation's principal cap and
-///        settlement bound. Close the offers during ASYNC operations.
+///      - On a Retargetter-bound PM, flows during an ASYNC operation move its principal cap and
+///        settlement bound and transfer value between holder cohorts. Pricing reads the PM's
+///        current balances only: an entrant mints at a NAV missing the value staged outside the
+///        PM (within the loss limit) and gains about `E * R / (N - R + E)` when the residual `R`
+///        returns, and an exiting fraction `f` skips about `f * Y` of the Request yield `Y` the
+///        PM pays at settlement, both borne by the other holders. The facility does not read the
+///        Retargetter, so nothing enforces it on-chain: close both offers before an ASYNC
+///        operation starts and reopen them after it resolves.
+///
+///      Operations. Offers close with `expiry = 0` (owner or FACILITATOR), security caps and auths
+///      change through the owner or OPERATOR, and `pauseFor` (owner or COMPLIANCE) stops every PM,
+///      exits included. Zeroing caps is no substitute for closing an offer: auths and unlevered
+///      entries skip them.
+///      - ASYNC operation: close both offers before it starts, reopen once it resolves.
+///      - Collateral impairment: `pauseFor` first if it cannot wait, then close the entry offer of
+///        every PM on the impaired underlying, which alone blocks their entries. Then zero the
+///        security cap and revoke the outstanding auths of every (underlying, debt asset) pair
+///        set for it, so no offer opened or reopened later finds a live budget.
+///      - Delevering a PM to dust: close the entry offer first.
+///      - An excluded module carrying a loss the quote misses: close the exit offer.
+///      - A module, market or oracle change: close the entry offer until every module is checked
+///        again for one price feed and quote scale (matching spot answers are not enough); keep
+///        it closed if they differ.
+///      - Before reopening, check that the quote reflects the collateral, every module shares one
+///        price feed and quote scale, the PM is at or below its target LTV, the queued modules
+///        can repay and withdraw, both fee recipients pass their guards, the exit word has
+///        headroom and the caps manager has reconciled the pools, then simulate an entry and an
+///        exit.
 contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransient, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -221,22 +281,24 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   }
 
   /// @inheritdoc IInKindFacility
-  function setSecurityCap(address asset, uint256 cap) external onlyOwnerOrRoles(OPERATOR_ROLE) {
+  function setSecurityCap(address asset, address debtAsset, uint256 cap) external onlyOwnerOrRoles(OPERATOR_ROLE) {
     asset.checkNotZero();
+    debtAsset.checkNotZero();
     _validateConsumingWord(cap);
-    LibInKindStorage.inKindStorage().securityCaps[asset] = cap;
-    emit SecurityCapSet(asset, cap);
+    LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset] = cap;
+    emit SecurityCapSet(asset, debtAsset, cap);
   }
 
   /// @inheritdoc IInKindFacility
-  function setAuth(address asset, address user, uint128 amount, uint40 expiry)
+  function setAuth(address asset, address debtAsset, address user, uint128 amount, uint40 expiry)
     external
     onlyOwnerOrRoles(OPERATOR_ROLE)
   {
     asset.checkNotZero();
+    debtAsset.checkNotZero();
     user.checkNotZero();
-    LibInKindStorage.inKindStorage().auths[asset][user] = Auth({amount: amount, expiry: expiry});
-    emit AuthSet(asset, user, amount, expiry);
+    LibInKindStorage.inKindStorage().auths[asset][debtAsset][user] = Auth({amount: amount, expiry: expiry});
+    emit AuthSet(asset, debtAsset, user, amount, expiry);
   }
 
   /// @inheritdoc IInKindFacility
@@ -268,13 +330,13 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
   }
 
   /// @inheritdoc IInKindFacility
-  function getSecurityCap(address asset) external view returns (uint256 cap) {
-    return LibInKindStorage.inKindStorage().securityCaps[asset];
+  function getSecurityCap(address asset, address debtAsset) external view returns (uint256 cap) {
+    return LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset];
   }
 
   /// @inheritdoc IInKindFacility
-  function getAuth(address asset, address user) external view returns (Auth memory auth) {
-    return LibInKindStorage.inKindStorage().auths[asset][user];
+  function getAuth(address asset, address debtAsset, address user) external view returns (Auth memory auth) {
+    return LibInKindStorage.inKindStorage().auths[asset][debtAsset][user];
   }
 
   /// @inheritdoc IInKindFacility
@@ -297,7 +359,7 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (uint256 totalCollateral, uint256 totalDebt) = pm.entryPoolState(offer.allowUnlevered);
     debt = amount.mulDiv(totalDebt, totalCollateral);
     if (totalDebt > 0 && debt == 0) revert DustEntry(amount);
-    // PM.deposit reverts the same way: it sizes every borrow at the target LTV
+    // PM.deposit reverts the same way on a single-module PM; conservative on a multi-module one
     if (pm.aboveTargetLtv(totalDebt)) revert LibManagerErrors.InsufficientBorrowCapacity();
     (shares, feeShares) = LibInKindView.splitFee(pm.estimateShares(amount, totalCollateral, debt), offer.feeBps);
   }
@@ -316,6 +378,12 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     debtIn = pm.exitDebt(burnShares);
     underlyingOut = pm.exitCollateral(burnShares);
     debtRequired = LibInKindView.exitDebtRequired(debtIn);
+    // a PM.burn whose withdrawal queue misses a module only reaches the queued ones
+    (bool subset, uint256 queueDebt, uint256 queueCollateral) = pm.queueTotals();
+    if (subset) {
+      if (debtIn > queueDebt) revert LibManagerErrors.ExcessDebtRepay();
+      if (underlyingOut > queueCollateral) revert LibManagerErrors.InsufficientAvailableCollateral();
+    }
   }
 
   /// @inheritdoc IInKindFacility
@@ -327,7 +395,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     // an unlevered entry borrows nothing, so no debt-denominated cap bounds it
     if (totalDebt == 0) return type(uint256).max;
     if (pm.aboveTargetLtv(totalDebt)) return 0;
-    uint256 debtMax = s.securityLimit(pm.underlying(), user).min(offer.capacityCap.available());
+    (, address debtAsset) = pm.assets();
+    uint256 debtMax = s.securityLimit(pm.underlying(), user, debtAsset).min(offer.capacityCap.available(debtAsset));
     return LibSaturatingMath.mulDiv(debtMax, totalCollateral, totalDebt);
   }
 
@@ -338,10 +407,19 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     pm.checkNoBadDebt();
     uint256 totalDebt = pm.debtAmount();
     if (totalDebt == 0) return type(uint256).max;
-    // largest burnable amount whose rounded-up debt slice fits the cap, grossed up by the fee
-    // (net(gross) <= burnShares holds since the fee rounds up)
-    uint256 burnShares = LibSaturatingMath.mulDiv(offer.cap.available(), pm.adjustedSupply(), totalDebt);
-    return LibSaturatingMath.mulDiv(burnShares, BPS, BPS - offer.feeBps);
+    // largest burnable amount whose rounded-up debt slice fits the cap (and, on a partial
+    // withdrawal queue, the queued debt, with a rounded-down collateral slice fitting the queued
+    // collateral), then the largest gross amount burning at most that after the rounded-up fee
+    (, address debtAsset) = pm.assets();
+    uint256 debtRoom = offer.cap.available(debtAsset);
+    (bool subset, uint256 queueDebt, uint256 queueCollateral) = pm.queueTotals();
+    if (subset) debtRoom = debtRoom.min(queueDebt);
+    uint256 supplyAdj = pm.adjustedSupply();
+    uint256 burnShares = LibSaturatingMath.mulDiv(debtRoom, supplyAdj, totalDebt);
+    if (subset) {
+      burnShares = burnShares.min(LibSaturatingMath.mulDiv(queueCollateral, supplyAdj, pm.collateralAmount()));
+    }
+    return LibInKindView.grossForNet(burnShares, offer.feeBps);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -384,8 +462,8 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
 
     // caps absorb the gross debt before any token interaction (CEI)
     if (debt > 0) {
-      offer.capacityCap = offer.capacityCap.consume(LibInKindStorage.capId(positionManager), debt);
-      s.consumeSecurity(entry.underlying, msg.sender, debt);
+      offer.capacityCap = offer.capacityCap.consume(LibInKindStorage.capId(positionManager), debt, entry.debtAsset);
+      s.consumeSecurity(entry.underlying, msg.sender, debt, entry.debtAsset);
     }
 
     entry.underlying.safeTransferFrom(msg.sender, address(this), amount);
@@ -416,18 +494,17 @@ contract InKindFacility is IInKindFacility, OwnableRoles, ReentrancyGuardTransie
     (exit_.collateralAsset, exit_.debtAsset) = pm.assets();
     (exit_.burnShares, exit_.feeShares) = _splitExitShares(shares, offer.feeBps);
 
-    // Mirror of burn's debt math, final before the callback: nothing outside this transaction
-    // can interleave. The pull carries a headroom so a burn that drifts above the mirror still
-    // settles; the unused part is refunded.
-    uint256 debt = pm.exitDebt(exit_.burnShares);
-    exit_.debtRequired = LibInKindView.exitDebtRequired(debt);
+    // Mirror of burn's debt math. The callback can move it (a repay on behalf of a module grows
+    // burn's fee accrual), so the pull carries a headroom and the unused part is refunded.
+    exit_.debtRequired = LibInKindView.exitDebtRequired(pm.exitDebt(exit_.burnShares));
     if (exit_.debtRequired > maxDebtIn) revert ExcessiveDebtIn(exit_.debtRequired, maxDebtIn);
 
-    // the cap absorbs the mirrored debt before any token interaction (CEI); a pool that became
-    // unlevered stays exitable
-    if (debt > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debt);
-
     (underlyingOut, debtIn) = _burnAndUnwrap(exit_, data);
+
+    // the cap absorbs the debt burn repaid, not the mirror: a credit word must not credit debt
+    // the callback kept burn from repaying. Runs after the token moves, under nonReentrant and
+    // against a whitelisted caps contract; a pool that became unlevered stays exitable.
+    if (debtIn > 0) offer.cap = offer.cap.consume(LibInKindStorage.capId(positionManager), debtIn, exit_.debtAsset);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

@@ -264,12 +264,12 @@ contract InKindFacilityHandler is Test {
 
     ghostCapacity = facility.getEntry(address(positionManager)).capacityCap;
     ghostExit = facility.getExit(address(positionManager)).cap;
-    ghostSecurity = facility.getSecurityCap(address(underlyingToken));
+    ghostSecurity = facility.getSecurityCap(address(underlyingToken), address(debtToken));
     trackedCapacity = ghostCapacity;
     trackedExit = ghostExit;
     trackedSecurity = ghostSecurity;
     for (uint256 u = 0; u < users.length; u++) {
-      Auth memory auth = facility.getAuth(address(underlyingToken), users[u]);
+      Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), users[u]);
       ghostAuths[users[u]] = auth;
       trackedAuth[users[u]] = auth.amount;
     }
@@ -361,7 +361,7 @@ contract InKindFacilityHandler is Test {
     else ghostCapacity -= debt;
     uint256 fromAuth;
     Auth memory auth = ghostAuths[ctx.who];
-    if (block.timestamp < auth.expiry) {
+    if (vm.getBlockTimestamp() < auth.expiry) {
       fromAuth = debt.min(auth.amount);
       // casting is safe: fromAuth <= auth.amount, a uint128
       // forge-lint: disable-next-line(unsafe-typecast)
@@ -553,7 +553,7 @@ contract InKindFacilityHandler is Test {
   /// @param deltaSeed Seed for fuzzing the warp duration.
   function act_warp(uint256 deltaSeed) external {
     uint256 delta = deltaSeed % 2 == 0 ? _bound(deltaSeed, 1, 6 hours) : _bound(deltaSeed, 1 hours, 30 days);
-    vm.warp(block.timestamp + delta);
+    vm.warp(vm.getBlockTimestamp() + delta);
     _afterOp();
   }
 
@@ -590,7 +590,8 @@ contract InKindFacilityHandler is Test {
   function act_setEntry(uint256 capSeed, uint256 expirySeed, uint256 feeSeed) external {
     uint256 cap = capSeed % 3 == 0 ? LibCaps.MAX_ABSOLUTE : _bound(capSeed, 1_000e6, 50_000e6);
     uint24 feeBps = uint24(_bound(feeSeed, 0, MAX_FEE));
-    uint40 expiry = expirySeed % 16 == 0 ? uint40(block.timestamp + 1) : uint40(block.timestamp + 365 days);
+    uint40 expiry =
+      expirySeed % 16 == 0 ? uint40(vm.getBlockTimestamp() + 1) : uint40(vm.getBlockTimestamp() + 365 days);
 
     vm.prank(facilitator);
     facility.setEntry(address(positionManager), cap, expiry, feeBps, capSeed % 2 == 0);
@@ -609,7 +610,8 @@ contract InKindFacilityHandler is Test {
   function act_setExit(uint256 capSeed, uint256 expirySeed, uint256 feeSeed) external {
     uint256 cap = capSeed % 3 == 0 ? LibCaps.MAX_ABSOLUTE : _bound(capSeed, 1_000e6, 50_000e6);
     uint24 feeBps = uint24(_bound(feeSeed, 0, MAX_FEE));
-    uint40 expiry = expirySeed % 16 == 0 ? uint40(block.timestamp + 1) : uint40(block.timestamp + 365 days);
+    uint40 expiry =
+      expirySeed % 16 == 0 ? uint40(vm.getBlockTimestamp() + 1) : uint40(vm.getBlockTimestamp() + 365 days);
 
     vm.prank(facilitator);
     facility.setExit(address(positionManager), cap, expiry, feeBps);
@@ -630,7 +632,7 @@ contract InKindFacilityHandler is Test {
     uint256 cap = mode == 0 ? LibCaps.MAX_ABSOLUTE : mode == 1 ? 0 : _bound(capSeed, 1_000e6, 50_000e6);
 
     vm.prank(operator);
-    facility.setSecurityCap(address(underlyingToken), cap);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), cap);
     securityRearms++;
 
     ghostSecurity = cap;
@@ -649,11 +651,11 @@ contract InKindFacilityHandler is Test {
     address who = users[userSeed % users.length];
     uint128 amount = uint128(_bound(amountSeed, 0, 20_000e6));
     uint40 expiry = expirySeed % 4 == 0
-      ? uint40(block.timestamp - _bound(expirySeed, 0, 1 days))
-      : uint40(block.timestamp + _bound(expirySeed, 1 hours, 3 days));
+      ? uint40(vm.getBlockTimestamp() - _bound(expirySeed, 0, 1 days))
+      : uint40(vm.getBlockTimestamp() + _bound(expirySeed, 1 hours, 3 days));
 
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), who, amount, expiry);
+    facility.setAuth(address(underlyingToken), address(debtToken), who, amount, expiry);
     authRearms++;
 
     ghostAuths[who] = Auth({amount: amount, expiry: expiry});
@@ -721,7 +723,7 @@ contract InKindFacilityHandler is Test {
 
     uint256 capacity = facility.getEntry(address(positionManager)).capacityCap;
     uint256 exitCap = facility.getExit(address(positionManager)).cap;
-    uint256 security = facility.getSecurityCap(address(underlyingToken));
+    uint256 security = facility.getSecurityCap(address(underlyingToken), address(debtToken));
 
     // INK-3: every word is ABSOLUTE here and matches its exact ghost mirror.
     if (
@@ -738,7 +740,7 @@ contract InKindFacilityHandler is Test {
 
     for (uint256 u = 0; u < users.length; u++) {
       address who = users[u];
-      Auth memory auth = facility.getAuth(address(underlyingToken), who);
+      Auth memory auth = facility.getAuth(address(underlyingToken), address(debtToken), who);
       Auth memory ghost = ghostAuths[who];
       if (auth.amount != ghost.amount || auth.expiry != ghost.expiry) capMirrorBroken = true;
       if (auth.amount > trackedAuth[who]) absoluteCapIncreased = true;

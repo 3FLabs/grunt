@@ -155,7 +155,7 @@ contract InKindFacilityGuardsTest is InKindFacilityBaseTest {
 
   function test_entryViews_aboveTargetLtv() public {
     _seedPool(SEED_COLLATERAL, 7_000e6);
-    vm.warp(block.timestamp + 12);
+    vm.warp(vm.getBlockTimestamp() + 12);
 
     assertEq(facility.maxEnter(address(positionManager), user), 0);
     vm.expectRevert(abi.encodeWithSelector(LibManagerErrors.InsufficientBorrowCapacity.selector));
@@ -169,7 +169,7 @@ contract InKindFacilityGuardsTest is InKindFacilityBaseTest {
 
   function test_entryViews_dustAboveTargetLtvRevertsLikeEnter() public {
     _seedPool(SEED_COLLATERAL, 7_000e6);
-    vm.warp(block.timestamp + 12);
+    vm.warp(vm.getBlockTimestamp() + 12);
     uint256 amount = 1e12;
 
     vm.expectRevert(abi.encodeWithSelector(IInKindFacility.DustEntry.selector, amount));

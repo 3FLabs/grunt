@@ -8,4 +8,8 @@ contract LibPauseWrapper {
   function pauseFor(uint256 duration) external view returns (uint40) {
     return LibPause.pauseFor(duration);
   }
+
+  function paused(uint40 self) external view returns (bool) {
+    return LibPause.paused(self);
+  }
 }

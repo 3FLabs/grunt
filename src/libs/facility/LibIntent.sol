@@ -18,34 +18,7 @@ import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
 import {LibCaps, CapType} from "./LibCaps.sol";
 import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhitelist.sol";
-
-/// @dev Asset configuration for intents and swaps.
-/// @param asset Address of the asset.
-/// @param isPositionManager Whether the asset represents a position manager.
-struct Asset {
-  address asset;
-  bool isPositionManager;
-}
-
-/// @dev Configuration values that define an intent's behavior.
-/// @param depositAsset Asset deposited into the intent.
-/// @param targetAsset Target asset or position manager for the intent.
-/// @param depositCap Encoded deposit cap word: the max total supply of the intent, or a
-///                   reference to a cap in an IFacilityCaps contract (see LibCaps for the layout).
-/// @param guardKey Address of the position manager whose transfer guard authorizes intent transfers.
-///                  Must equal the deposit asset, the target asset, or both (when both are position managers).
-/// @param resolveStart Timestamp at which the deposit phase ends and the resolving phase begins.
-/// @param quorum Quorum threshold required for guard approvals.
-/// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
-struct IntentProperties {
-  Asset depositAsset;
-  Asset targetAsset;
-  uint256 depositCap;
-  address guardKey;
-  uint40 resolveStart;
-  uint8 quorum;
-  bool transferableIntent;
-}
+import {Asset, IntentProperties} from "./IntentTypes.sol";
 
 /// @dev Intent state for a facility request, including configuration and accounting.
 /// @param properties Static configuration for the intent.
@@ -144,17 +117,17 @@ library LibIntent {
       if (attemptedTotal > cap) revert LibFacilityErrors.DepositCapExceeded(id, cap, attemptedTotal);
       return;
     }
-    cap.consume(id, amount);
+    cap.consumeExternal(amount, _self.properties.depositAsset.asset);
   }
 
   /// @notice Releases the cap consumption of a deposit being undone.
   /// @dev No-op for absolute caps, which follow totalSupply. External caps consume with the
   ///      opposite multiplier, reversing the direction the deposit took in the caps contract
-  ///      (FacilityDynamicCaps ignores the release direction).
+  ///      (FacilityDynamicCaps charges releases on a negative word and ignores them otherwise).
   /// @param _self The intent storage reference.
   /// @param amount The deposited amount being undone.
   function releaseCap(Intent storage _self, uint256 amount) internal {
-    _self.properties.depositCap.release(amount);
+    _self.properties.depositCap.release(amount, _self.properties.depositAsset.asset);
   }
 
   /// @notice Validates that the intent's associated request has been repaid.
@@ -257,8 +230,15 @@ library LibIntent {
   ///      current word, so changing the encoding, the caps contract, the cap ID or the
   ///      multiplier while shares are outstanding credits or debits a cap for deposits it never
   ///      saw. To switch, set the word to zero first, let outstanding shares exit, then set the
-  ///      new word and reconcile the old pool with setCap. An ABSOLUTE word is the max total
-  ///      supply and may be set below it, which blocks deposits until enough shares exit.
+  ///      new word and reconcile the old pool. A multiplier change on the same pool, such as a
+  ///      periodic refresh of a PM-share word, can be made in place: releases of shares deposited
+  ///      before it follow the new multiplier, so the pool drifts by the change times the shares
+  ///      outstanding at the refresh, within its hard cap, and its flows can revert
+  ///      InsufficientCap or HardCapExceeded until the caps manager steps in. adjustCap adds room
+  ///      on a live pool. setCap overwrites consumption landing before it executes, so it only
+  ///      reconciles a shared pool while every consumer of the pool is paused. An ABSOLUTE word
+  ///      is the max total supply and may be set below it, which blocks deposits until enough
+  ///      shares exit.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
   /// @param newDepositCap The new encoded deposit cap word.

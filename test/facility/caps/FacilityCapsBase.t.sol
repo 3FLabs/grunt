@@ -249,8 +249,14 @@ contract FacilityCapsBaseTest is Test {
     caps.validate(id, type(int24).min);
   }
 
+  function testFuzz_validate_revertOnZeroMultiplier(uint64 id) public {
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    caps.validate(id, 0);
+  }
+
   function testFuzz_validate_acceptsAnyIdByDefault(uint64 id, int24 multiplier) public view {
     multiplier = int24(bound(multiplier, type(int24).min + 1, type(int24).max));
+    vm.assume(multiplier != 0);
     caps.validate(id, multiplier);
   }
 }

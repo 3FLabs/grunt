@@ -265,7 +265,7 @@ contract TransferGuardTest is Test {
 
   function test_pauseFor_byPauser() public {
     uint256 duration = 1 hours;
-    uint40 expectedPauseUntil = uint40(block.timestamp + duration);
+    uint40 expectedPauseUntil = uint40(vm.getBlockTimestamp() + duration);
 
     vm.expectEmit(true, false, false, true);
     emit TokenPausedSet(token, expectedPauseUntil);
@@ -320,7 +320,7 @@ contract TransferGuardTest is Test {
     vm.prank(pauser);
     guard.pauseFor(token, duration);
 
-    vm.warp(block.timestamp + timeElapsed);
+    vm.warp(vm.getBlockTimestamp() + timeElapsed);
 
     if (timeElapsed < duration) {
       assertTrue(guard.paused(token), "Should be paused within duration");

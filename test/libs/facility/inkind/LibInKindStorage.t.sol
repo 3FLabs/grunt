@@ -10,10 +10,13 @@ import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
 import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+import {MockERC20} from "test/mock/MockERC20.sol";
 
-/// @dev Exposes LibInKindStorage over its own storage struct.
+/// @dev Exposes LibInKindStorage over its own storage struct, with debt in an 18-decimal asset.
 contract LibInKindStorageHarness {
   using LibInKindStorage for InKindStorageData;
+
+  address public debtAsset = address(new MockERC20("Debt", "DEBT", 18));
 
   function setEntry(address pm, EntryOffer calldata offer) external {
     LibInKindStorage.inKindStorage().entries[pm] = offer;
@@ -24,11 +27,11 @@ contract LibInKindStorageHarness {
   }
 
   function setSecurityCap(address asset, uint256 word) external {
-    LibInKindStorage.inKindStorage().securityCaps[asset] = word;
+    LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset] = word;
   }
 
   function setAuth(address asset, address user, uint128 amount, uint40 expiry) external {
-    LibInKindStorage.inKindStorage().auths[asset][user] = Auth({amount: amount, expiry: expiry});
+    LibInKindStorage.inKindStorage().auths[asset][debtAsset][user] = Auth({amount: amount, expiry: expiry});
   }
 
   function setPausedUntil(uint40 pausedUntil) external {
@@ -36,11 +39,11 @@ contract LibInKindStorageHarness {
   }
 
   function securityCap(address asset) external view returns (uint256) {
-    return LibInKindStorage.inKindStorage().securityCaps[asset];
+    return LibInKindStorage.inKindStorage().securityCaps[asset][debtAsset];
   }
 
   function auth(address asset, address user) external view returns (Auth memory) {
-    return LibInKindStorage.inKindStorage().auths[asset][user];
+    return LibInKindStorage.inKindStorage().auths[asset][debtAsset][user];
   }
 
   function getEnabledEntry(address pm) external view returns (EntryOffer memory) {
@@ -56,15 +59,15 @@ contract LibInKindStorageHarness {
   }
 
   function authAvailable(address asset, address user) external view returns (uint256) {
-    return LibInKindStorage.inKindStorage().authAvailable(asset, user);
+    return LibInKindStorage.available(LibInKindStorage.inKindStorage().auths[asset][debtAsset][user]);
   }
 
   function securityLimit(address asset, address user) external view returns (uint256) {
-    return LibInKindStorage.inKindStorage().securityLimit(asset, user);
+    return LibInKindStorage.inKindStorage().securityLimit(asset, user, debtAsset);
   }
 
   function consumeSecurity(address asset, address user, uint256 debt) external {
-    LibInKindStorage.inKindStorage().consumeSecurity(asset, user, debt);
+    LibInKindStorage.inKindStorage().consumeSecurity(asset, user, debt, debtAsset);
   }
 }
 
@@ -160,10 +163,10 @@ contract LibInKindStorageTest is Test {
 
     bytes memory entryErr;
     bytes memory exitErr;
-    if (block.timestamp < pausedUntil) {
+    if (vm.getBlockTimestamp() < pausedUntil) {
       entryErr = abi.encodeWithSelector(LibCommonErrors.Paused.selector);
       exitErr = entryErr;
-    } else if (block.timestamp >= expiry) {
+    } else if (vm.getBlockTimestamp() >= expiry) {
       entryErr = abi.encodeWithSelector(IInKindFacility.UnknownEntry.selector, pm);
       exitErr = abi.encodeWithSelector(IInKindFacility.UnknownExit.selector, pm);
     }
@@ -193,7 +196,7 @@ contract LibInKindStorageTest is Test {
   function testFuzz_authAvailable_readsTheCallerAuthOnTheAsset(uint128 amount, uint40 expiry, uint256 time) public {
     harness.setAuth(asset, user, amount, expiry);
     vm.warp(bound(time, NOW, type(uint40).max));
-    assertEq(harness.authAvailable(asset, user), block.timestamp < expiry ? amount : 0, "own auth");
+    assertEq(harness.authAvailable(asset, user), vm.getBlockTimestamp() < expiry ? amount : 0, "own auth");
     assertEq(harness.authAvailable(asset, owner), 0, "other user");
     assertEq(harness.authAvailable(owner, user), 0, "other asset");
   }
@@ -222,7 +225,7 @@ contract LibInKindStorageTest is Test {
     harness.setAuth(asset, user, amount, expiry);
     harness.setSecurityCap(asset, word);
     vm.warp(bound(time, NOW, type(uint40).max));
-    uint256 live = block.timestamp < expiry ? amount : 0;
+    uint256 live = vm.getBlockTimestamp() < expiry ? amount : 0;
     assertEq(harness.securityLimit(asset, user), live + word, "limit");
   }
 
@@ -241,7 +244,7 @@ contract LibInKindStorageTest is Test {
     harness.setAuth(asset, user, amount, expiry);
     harness.setSecurityCap(asset, word);
     vm.warp(bound(time, NOW, type(uint40).max));
-    uint256 live = block.timestamp < expiry ? amount : 0;
+    uint256 live = vm.getBlockTimestamp() < expiry ? amount : 0;
     debt = bound(debt, 0, live + word);
     uint256 fromAuth = debt < live ? debt : live;
 
@@ -258,7 +261,8 @@ contract LibInKindStorageTest is Test {
       assertEq(logs[0].emitter, address(harness), "emitter");
       assertEq(logs[0].topics[0], IInKindFacility.AuthConsumed.selector, "event");
       assertEq(logs[0].topics[1], bytes32(uint256(uint160(asset))), "asset topic");
-      assertEq(logs[0].topics[2], bytes32(uint256(uint160(user))), "user topic");
+      assertEq(logs[0].topics[2], bytes32(uint256(uint160(harness.debtAsset()))), "debt asset topic");
+      assertEq(logs[0].topics[3], bytes32(uint256(uint160(user))), "user topic");
       assertEq(logs[0].data, abi.encode(fromAuth, amount - fromAuth), "consumed and remaining");
     }
   }
@@ -272,7 +276,7 @@ contract LibInKindStorageTest is Test {
     word = bound(word, 0, LibCaps.MAX_ABSOLUTE);
     harness.setAuth(asset, user, amount, expiry);
     harness.setSecurityCap(asset, word);
-    uint256 live = block.timestamp < expiry ? amount : 0;
+    uint256 live = vm.getBlockTimestamp() < expiry ? amount : 0;
     debt = bound(debt, live + word + 1, type(uint256).max);
 
     vm.expectRevert(
@@ -313,7 +317,7 @@ contract LibInKindStorageTest is Test {
 
     vm.expectCall(address(absoluteCaps), abi.encodeWithSelector(IFacilityCaps.consume.selector), 0);
     vm.expectEmit(true, true, true, true, address(harness));
-    emit IInKindFacility.AuthConsumed(asset, user, 600e6, 0);
+    emit IInKindFacility.AuthConsumed(asset, harness.debtAsset(), user, 600e6, 0);
     harness.consumeSecurity(asset, user, 600e6);
 
     (uint128 cap,) = absoluteCaps.getCap(POOL_ID);
@@ -327,7 +331,7 @@ contract LibInKindStorageTest is Test {
 
     vm.expectCall(address(absoluteCaps), abi.encodeCall(IFacilityCaps.consume, (POOL_ID, 300e6, MULT_1X)), 1);
     vm.expectEmit(true, true, true, true, address(harness));
-    emit IInKindFacility.AuthConsumed(asset, user, 200e6, 0);
+    emit IInKindFacility.AuthConsumed(asset, harness.debtAsset(), user, 200e6, 0);
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
     emit IFacilityCaps.CapConsumed(POOL_ID, 300e6, MULT_1X, 300e6, 700e6);
     harness.consumeSecurity(asset, user, 500e6);
@@ -340,7 +344,7 @@ contract LibInKindStorageTest is Test {
     harness.setSecurityCap(asset, 5);
 
     vm.expectEmit(true, true, true, true, address(harness));
-    emit IInKindFacility.AuthConsumed(asset, user, type(uint128).max, 0);
+    emit IInKindFacility.AuthConsumed(asset, harness.debtAsset(), user, type(uint128).max, 0);
     harness.consumeSecurity(asset, user, uint256(type(uint128).max) + 5);
 
     Auth memory after_ = harness.auth(asset, user);

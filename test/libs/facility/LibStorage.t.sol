@@ -85,14 +85,14 @@ contract LibFacilityStorageTest is Test {
   }
 
   function test_checkNotPaused_successWhenExpired() public {
-    harness.setPausedUntil(uint40(block.timestamp - 1));
+    harness.setPausedUntil(uint40(vm.getBlockTimestamp() - 1));
 
     harness.checkNotPaused(); // Should not revert
   }
 
   function testFuzz_checkNotPaused_revertWhenPaused(uint40 pauseOffset) public {
-    pauseOffset = uint40(bound(pauseOffset, 1, type(uint40).max - block.timestamp));
-    harness.setPausedUntil(uint40(block.timestamp) + pauseOffset);
+    pauseOffset = uint40(bound(pauseOffset, 1, type(uint40).max - vm.getBlockTimestamp()));
+    harness.setPausedUntil(uint40(vm.getBlockTimestamp()) + pauseOffset);
 
     vm.expectRevert(LibCommonErrors.Paused.selector);
     harness.checkNotPaused();

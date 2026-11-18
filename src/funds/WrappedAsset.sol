@@ -17,6 +17,12 @@ import {LibChecks} from "../libs/common/LibChecks.sol";
 ///      Multiple issuers (e.g., USCCFund instances) can mint via ISSUER_ROLE.
 ///      Transfers require the token `from` address to have SENDER_ROLE (burns and mints are excluded).
 ///      The underlying asset is held centrally in this contract.
+///
+///      Known limitations:
+///      - isAllowed returns true for everyone. Wrap a restricted underlying with its restricted
+///        wrapper (e.g. SuperstateRestrictedWrappedAsset), or a PM guard's collateral check does nothing.
+///      - burn sends the underlying to any `to`: only the underlying's own transfer rules apply
+///        to that receiver, whoever held the wrapper.
 contract WrappedAsset is ERC20, IWrappedAsset, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using LibChecks for address;

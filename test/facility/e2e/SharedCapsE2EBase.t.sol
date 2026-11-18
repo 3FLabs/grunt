@@ -40,7 +40,7 @@ abstract contract SharedCapsE2EBaseTest is InKindFacilityBaseTest {
     intents.grantRoles(compliance, FACILITY_COMPLIANCE_ROLE);
     absoluteCaps.grantRoles(address(intents), CAPS_CONSUMER_ROLE);
     dynamicCaps.grantRoles(address(intents), CAPS_CONSUMER_ROLE);
-    absoluteCaps.setCap(POOL_ID, SHARED_POOL_CAP, SHARED_POOL_CAP);
+    absoluteCaps.setCap(POOL_ID, uint128(SHARED_POOL_CAP * CAPS_SCALE), uint128(SHARED_POOL_CAP * CAPS_SCALE));
     vm.stopPrank();
 
     _seedPool(positionManager, SEED_COLLATERAL, SEED_DEBT);
@@ -64,19 +64,21 @@ abstract contract SharedCapsE2EBaseTest is InKindFacilityBaseTest {
     return LibCaps.encodeExternal(address(dynamicCaps), id, multiplier);
   }
 
-  function _poolCap(uint16 id) internal view returns (uint128 cap) {
-    (cap,) = absoluteCaps.getCap(id);
+  /// @dev Remaining capacity of a pool, in debt units.
+  function _poolCap(uint16 id) internal view returns (uint128) {
+    return uint128(_absCap(id));
   }
 
+  /// @dev Sets a pool in debt units.
   function _setPool(uint16 id, uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(id, cap, hardCap);
+    absoluteCaps.setCap(id, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
-  /// @dev A dynamic cap recovering `recovery` per day, fully recovered now.
+  /// @dev A dynamic cap recovering `recovery` debt units per day, fully recovered now.
   function _setRateFull(uint64 id, uint128 recovery) internal {
     vm.prank(owner);
-    dynamicCaps.setCap(id, recovery, 1 days, uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(id, uint128(recovery * CAPS_SCALE), 1 days, uint64(vm.getBlockTimestamp() - 1 days));
   }
 
   /// @dev A debt-asset deposit intent targeting the PM: its word is in the in-kind debt units.
@@ -86,7 +88,7 @@ abstract contract SharedCapsE2EBaseTest is InKindFacilityBaseTest {
       targetAsset: Asset({asset: address(positionManager), isPositionManager: true}),
       depositCap: word,
       guardKey: address(positionManager),
-      resolveStart: uint40(block.timestamp + RESOLVE_DELAY),
+      resolveStart: uint40(vm.getBlockTimestamp() + RESOLVE_DELAY),
       quorum: 1,
       transferableIntent: true
     });

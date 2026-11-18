@@ -4,8 +4,10 @@ pragma solidity ^0.8.22;
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IInKindFacility} from "../../../interfaces/facility/IInKindFacility.sol";
 import {IPositionManager} from "../../../interfaces/manager/IPositionManager.sol";
+import {IBorrowPosition} from "../../../interfaces/borrow/IBorrowPosition.sol";
 import {IWrappedAsset} from "../../../interfaces/funds/IWrappedAsset.sol";
 import {LibView} from "../../manager/LibView.sol";
+import {LibSaturatingMath} from "../../common/LibSaturatingMath.sol";
 import {BPS} from "../../Constants.sol";
 
 /// @title LibInKindView
@@ -62,9 +64,10 @@ library LibInKindView {
     if (totalDebt == 0 && !allowUnlevered) revert IInKindFacility.UnleveredEntryDisabled(address(pm));
   }
 
-  /// @dev Whether the pool's quoted LTV is above the PM's target, where PM.deposit cannot place
-  ///      a ratio-matched borrow. PM.deposit rounds per module, so within a few debt units of
-  ///      the target the two can disagree.
+  /// @dev Whether the pool's quoted LTV is above the PM's target, where a single-module
+  ///      PM.deposit cannot place a ratio-matched borrow. A multi-module one can still place it on
+  ///      a module below target. PM.deposit rounds per module, so within a few debt units of the
+  ///      target the two can disagree.
   function aboveTargetLtv(IPositionManager pm, uint256 totalDebt) internal view returns (bool) {
     if (totalDebt == 0) return false;
     (uint256 ltv,) = pm.config();
@@ -82,6 +85,19 @@ library LibInKindView {
   function adjustedSupply(IPositionManager pm) internal view returns (uint256 supplyAdj) {
     (, uint256 totalSupply_, uint256 mgmtFeeShares, uint256 perfFeeShares) = pm.pendingFees();
     return totalSupply_ + mgmtFeeShares + perfFeeShares + pm.virtualShareOffset();
+  }
+
+  /// @dev The debt and collateral `PM.burn` can reach when its withdrawal queue misses a module
+  ///      (`subset`, burn's own test): the sums over the queue, read like the PM's aggregates.
+  ///      With a full queue burn reaches the whole pool, and the sums are not read.
+  function queueTotals(IPositionManager pm) internal view returns (bool subset, uint256 debt, uint256 collateral) {
+    address[] memory queue = pm.withdrawalQueue();
+    if (queue.length == pm.borrowModules().length) return (false, 0, 0);
+    subset = true;
+    for (uint256 i = 0; i < queue.length; ++i) {
+      debt += IBorrowPosition(queue[i]).totalBorrowed();
+      collateral += IBorrowPosition(queue[i]).totalCollateral();
+    }
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -113,6 +129,18 @@ library LibInKindView {
   function splitFee(uint256 shares, uint24 feeBps) internal pure returns (uint256 net, uint256 fee) {
     fee = shares.mulDivUp(feeBps, BPS);
     net = shares - fee;
+  }
+
+  /// @dev Largest gross share amount whose net after {splitFee} is at most `net`, zero for a zero
+  ///      `net` (any gross would burn nothing). With a nonzero fee the net is exactly `net`.
+  ///      Saturates at type(uint256).max.
+  function grossForNet(uint256 net, uint24 feeBps) internal pure returns (uint256 gross) {
+    if (net == 0) return 0;
+    gross = LibSaturatingMath.mulDiv(net.saturatingAdd(1), BPS, BPS - feeBps);
+    if (gross == type(uint256).max) return gross;
+    // floor((net + 1) * BPS / (BPS - fee)) nets `net + 1` exactly when the division is exact
+    (uint256 grossNet,) = splitFee(gross, feeBps);
+    if (grossNet > net) gross--;
   }
 
   /// @dev Upper bound on the shares a ratio-matched entry of `amount` may mint. The entrant

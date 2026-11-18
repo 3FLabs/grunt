@@ -86,20 +86,20 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
 
     vm.startPrank(owner);
     positionManager.setFeeData(pmFeeRecipient, PM_MANAGEMENT_FEE, PM_PERFORMANCE_FEE);
-    absoluteCaps.setCap(POOL_ID, CAPACITY, CAPACITY_HARD_CAP);
-    absoluteCaps.setCap(SECURITY_POOL_ID, SECURITY, SECURITY);
+    absoluteCaps.setCap(POOL_ID, uint128(_capsUnits(CAPACITY)), uint128(_capsUnits(CAPACITY_HARD_CAP)));
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(_capsUnits(SECURITY)), uint128(_capsUnits(SECURITY)));
     vm.stopPrank();
 
     vm.startPrank(facilitator);
     facility.setEntry(address(positionManager), _poolWord(POOL_ID, MULT_1X), FAR_EXPIRY, ENTRY_FEE_BPS, false);
     facility.setExit(
-      address(positionManager), _poolWord(POOL_ID, MULT_NEG_1X), uint40(block.timestamp + 30 days), EXIT_FEE_BPS
+      address(positionManager), _poolWord(POOL_ID, MULT_NEG_1X), uint40(vm.getBlockTimestamp() + 30 days), EXIT_FEE_BPS
     );
     vm.stopPrank();
 
     vm.startPrank(operator);
-    facility.setSecurityCap(address(underlyingToken), _poolWord(SECURITY_POOL_ID, MULT_1X));
-    facility.setAuth(address(underlyingToken), alice, ALICE_AUTH, FAR_EXPIRY);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), _poolWord(SECURITY_POOL_ID, MULT_1X));
+    facility.setAuth(address(underlyingToken), address(debtToken), alice, ALICE_AUTH, FAR_EXPIRY);
     vm.stopPrank();
 
     lender = new MockFlashLender(debtToken, FLASH_FEE_BPS);
@@ -121,10 +121,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     Flow memory f = _prepareEntry(alice, 1_000e18);
     _expectPoolCharge(POOL_ID, f.debt, MULT_1X, CAPACITY - f.debt);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), alice, ALICE_AUTH, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), alice, ALICE_AUTH, 0);
     _expectPoolCharge(SECURITY_POOL_ID, f.debt - ALICE_AUTH, MULT_1X, SECURITY - (f.debt - ALICE_AUTH));
     _executeEntry(alice, f);
-    assertEq(facility.getAuth(address(underlyingToken), alice).amount, 0, "alice auth left");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), alice).amount, 0, "alice auth left");
     capacityConsumed += f.debt;
     uint256 securityLeft = SECURITY - (f.debt - ALICE_AUTH);
 
@@ -148,16 +148,16 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     // the operator auths carol for the shortfall: auth first, then the pool drains to zero
     uint128 carolAuth = uint128(f.debt - securityLeft);
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), carol, carolAuth, FAR_EXPIRY);
+    facility.setAuth(address(underlyingToken), address(debtToken), carol, carolAuth, FAR_EXPIRY);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), carol, carolAuth, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), carol, carolAuth, 0);
     _expectPoolCharge(SECURITY_POOL_ID, securityLeft, MULT_1X, 0);
     _executeEntry(carol, f);
-    assertEq(facility.getAuth(address(underlyingToken), carol).amount, 0, "carol auth left");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), carol).amount, 0, "carol auth left");
     capacityConsumed += f.debt;
 
     // interest, a NAV up-move and PM fees pending
-    vm.warp(block.timestamp + 45 days);
+    vm.warp(vm.getBlockTimestamp() + 45 days);
     _movePrice(DEFAULT_ORACLE_PRICE * 104 / 100);
     {
       (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
@@ -184,7 +184,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, uint64(SECURITY_POOL_ID)));
     facility.enter(address(positionManager), f.amount, 0, type(uint256).max, 0, dave);
     vm.prank(owner);
-    absoluteCaps.setCap(SECURITY_POOL_ID, 1_000e6, 1_000e6);
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(_capsUnits(1_000e6)), uint128(_capsUnits(1_000e6)));
     vm.prank(facilitator);
     facility.setEntry(address(positionManager), _poolWord(POOL_ID, MULT_1X), FAR_EXPIRY, REARMED_ENTRY_FEE_BPS, false);
     assertEq(_poolCap(POOL_ID), CAPACITY - capacityConsumed + capacityReleased, "re-arm touched the shared pool");
@@ -194,7 +194,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     capacityConsumed += f.debt;
 
     // more interest and a NAV down-move, then everyone leaves
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     _movePrice(DEFAULT_ORACLE_PRICE * 101 / 100);
     capacityReleased += _exitChecked(alice, positionManager.balanceOf(alice));
     uint256 carolShares = positionManager.balanceOf(carol);
@@ -225,8 +225,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     uint256 exitFraction
   ) public {
     vm.startPrank(owner);
-    absoluteCaps.setCap(POOL_ID, type(uint128).max / 2, type(uint128).max);
-    absoluteCaps.setCap(SECURITY_POOL_ID, type(uint128).max / 2, type(uint128).max / 2);
+    // whole debt units, so _poolCap reads them back exactly
+    uint128 half = uint128(_capsUnits(type(uint128).max / 2 / CAPS_SCALE));
+    absoluteCaps.setCap(POOL_ID, half, type(uint128).max);
+    absoluteCaps.setCap(SECURITY_POOL_ID, half, half);
     vm.stopPrank();
     vm.prank(facilitator);
     facility.setExit(address(positionManager), _poolWord(POOL_ID, MULT_NEG_1X), FAR_EXPIRY, EXIT_FEE_BPS);
@@ -234,7 +236,7 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     _executeEntry(alice, _prepareEntry(alice, bound(amountA, 4e12, 20_000e18)));
     _executeEntry(bob, _prepareEntry(bob, bound(amountB, 1e13, 20_000e18)));
 
-    vm.warp(block.timestamp + bound(elapsed, 0, 365 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 365 days));
     _movePrice(DEFAULT_ORACLE_PRICE * bound(priceBps, 9_000, 12_000) / BPS);
 
     uint256 aliceShares = positionManager.balanceOf(alice);
@@ -258,8 +260,9 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     return LibCaps.encodeExternal(address(absoluteCaps), id, multiplier);
   }
 
-  function _poolCap(uint16 id) internal view returns (uint256 cap) {
-    (cap,) = absoluteCaps.getCap(id);
+  /// @dev Remaining capacity of a pool, in debt units.
+  function _poolCap(uint16 id) internal view returns (uint256) {
+    return _absCap(id);
   }
 
   function _movePrice(uint256 price) internal {
@@ -279,10 +282,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     (,, s.borrowAssets, s.borrowShares) = morpho.expectedMarketBalances(marketParams);
   }
 
-  /// @dev Expects one CapConsumed on the shared absolute caps for a whole-pool charge.
+  /// @dev Expects one CapConsumed on the shared absolute caps for a whole-pool charge, in debt units.
   function _expectPoolCharge(uint16 id, uint256 amount, int24 multiplier, uint256 newCap) internal {
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(id, amount, multiplier, amount, uint128(newCap));
+    emit IFacilityCaps.CapConsumed(id, _capsUnits(amount), multiplier, _capsUnits(amount), uint128(_capsUnits(newCap)));
   }
 
   /// @dev Quotes the entry exactly and funds `who` for it.
@@ -347,9 +350,10 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     vm.stopPrank();
     Balances memory b = _balances(who);
 
-    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
+    // the exit word is charged after burn, so the pool event follows Exited
     vm.expectEmit(true, true, true, true, address(facility));
     emit IInKindFacility.Exited(address(positionManager), who, who, f.out, f.debt, f.shares, f.feeShares);
+    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
     vm.prank(who);
     facility.exit(address(positionManager), shares, f.required, f.out, who, "");
 
@@ -371,11 +375,11 @@ contract InKindLifecycleE2ETest is InKindFacilityBaseTest {
     uint256 cash = venue.quote(f.out) - f.debt - flashFee;
     Balances memory b = _balances(who);
 
-    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
     vm.expectEmit(true, true, true, true, address(facility));
     emit IInKindFacility.Exited(
       address(positionManager), address(router), address(router), f.out, f.debt, f.shares, f.feeShares
     );
+    _expectPoolCharge(POOL_ID, f.debt, MULT_NEG_1X, b.poolCap + f.debt);
     vm.prank(who);
     router.exitToDebt(address(positionManager), shares, f.required, cash, who);
 

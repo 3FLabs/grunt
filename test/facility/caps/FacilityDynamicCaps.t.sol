@@ -82,12 +82,17 @@ contract FacilityDynamicCapsTest is Test {
   function test_validate_acceptsAnyId() public view {
     caps.validate(0, MULT_1X);
     caps.validate(ID, -MULT_1X);
-    caps.validate(type(uint64).max, 0);
+    caps.validate(type(uint64).max, 1);
   }
 
   function test_validate_revertOnMinMultiplier() public {
     vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
     caps.validate(ID, type(int24).min);
+  }
+
+  function test_validate_revertOnZeroMultiplier() public {
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    caps.validate(ID, 0);
   }
 
   function test_initialize_setsOwnerAndRoles() public view {
@@ -188,6 +193,77 @@ contract FacilityDynamicCapsTest is Test {
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         ADJUST CAP                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _adjust(uint128 recovery, uint64 recoveryTime) internal returns (uint64) {
+    vm.prank(manager);
+    return caps.adjustCap(ID, recovery, recoveryTime);
+  }
+
+  function test_adjustCap_keepsAConsumptionThatLandedFirst() public {
+    // the manager reads the origin to lower the recovery, and a consume lands first
+    uint64 staleOrigin = _origin();
+    _consume(800_000e18, MULT_1X);
+    uint256 snap = vm.snapshotState();
+
+    // setCap with the stale origin hands the consumed capacity back
+    _setCap(RECOVERY / 2, RECOVERY_TIME, staleOrigin);
+    assertEq(caps.remaining(ID), RECOVERY / 2, "setCap should overwrite the consumption");
+    vm.revertToState(snap);
+
+    // adjustCap reads the origin on chain and keeps it
+    _adjust(RECOVERY / 2, RECOVERY_TIME);
+    assertEq(caps.remaining(ID), 200_000e18, "adjustCap should keep the remaining capacity");
+    (uint128 recovery, uint64 recoveryTime,) = caps.getCap(ID);
+    assertEq(recovery, RECOVERY / 2, "Recovery should be set");
+    assertEq(recoveryTime, RECOVERY_TIME, "Recovery time should be set");
+  }
+
+  function test_adjustCap_capsTheRemainingAtTheNewRecovery() public {
+    _adjust(RECOVERY / 4, RECOVERY_TIME);
+    assertEq(caps.remaining(ID), RECOVERY / 4, "Remaining should be capped at the new recovery");
+  }
+
+  function test_adjustCap_keepsAFutureOrigin() public {
+    uint64 future = uint64(vm.getBlockTimestamp() + 1 hours);
+    _setCap(RECOVERY, RECOVERY_TIME, future);
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit FacilityDynamicCaps.CapSet(ID, RECOVERY / 2, RECOVERY_TIME / 2, future);
+    assertEq(_adjust(RECOVERY / 2, RECOVERY_TIME / 2), future, "Future origin should hold");
+    assertEq(caps.remaining(ID), 0, "Cap should stay closed until the origin");
+  }
+
+  function test_adjustCap_reverts() public {
+    vm.prank(manager);
+    vm.expectRevert(FacilityDynamicCaps.InvalidRecoveryTime.selector);
+    caps.adjustCap(ID, RECOVERY, 0);
+
+    vm.prank(consumer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.adjustCap(ID, RECOVERY, RECOVERY_TIME);
+  }
+
+  function testFuzz_adjustCap_keepsTheRemainingCapacity(
+    uint256 consumed,
+    uint256 elapsed,
+    uint128 recovery,
+    uint64 recoveryTime
+  ) public {
+    _consume(bound(consumed, 0, RECOVERY), MULT_1X);
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, RECOVERY_TIME));
+    recovery = uint128(bound(recovery, 1, type(uint128).max));
+    recoveryTime = uint64(bound(recoveryTime, 1, 365 days));
+    uint256 expected = FixedPointMathLib.min(caps.remaining(ID), recovery);
+
+    _adjust(recovery, recoveryTime);
+    uint256 remaining = caps.remaining(ID);
+    assertLe(remaining, expected, "Adjusting should never add capacity");
+    assertGe(remaining + _maxForfeit(recovery, recoveryTime), expected, "Rounding should forfeit at most one second");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                          REMAINING                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
@@ -283,6 +359,36 @@ contract FacilityDynamicCapsTest is Test {
     // 1 wei at 1.5x rounds up to 2
     _consume(1, MULT_1_5X);
     assertLe(caps.remaining(ID), 8, "Consumption should round up against the cap");
+  }
+
+  function test_consume_slowCurveLosesTheFlooredUnit() public {
+    // the auditor's case: 3 per 100s, consuming 1 leaves 2, the origin shift floors to 66s and
+    // the capacity rebuilt from it floors to 1, so one extra unit is gone, not 0.03
+    _setCap(3, 100, 0);
+    _consume(1, MULT_1X);
+    assertEq(_origin(), START - 66, "origin shift floored");
+    assertEq(caps.remaining(ID), 1, "capacity rebuilt rounding down");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, 2, MULT_1X);
+
+    // one second later the curve is back at 2
+    vm.warp(START + 1);
+    _consume(2, MULT_1X);
+  }
+
+  function testFuzz_consume_lossBelowOnePlusRecoveryRate(uint256 recovery, uint256 recoveryTime, uint256 amount)
+    public
+  {
+    recovery = bound(recovery, 1, type(uint64).max);
+    recoveryTime = bound(recoveryTime, 1, 365 days);
+    _setCap(uint128(recovery), uint64(recoveryTime), 0);
+    amount = bound(amount, 1, recovery);
+    _consume(amount, MULT_1X);
+    uint256 loss = recovery - amount - caps.remaining(ID);
+    // loss < 1 + recovery / recoveryTime
+    assertLt(loss * recoveryTime, recoveryTime + recovery, "loss bound");
   }
 
   function test_consume_allPinsOriginToNow() public {
@@ -703,7 +809,7 @@ contract FacilityDynamicCapsTest is Test {
     for (uint256 i = 0; i < 16; i++) {
       uint256 r = uint256(keccak256(abi.encode(seed, i)));
       uint256 wait = r % (2 * uint256(recoveryTime));
-      vm.warp(block.timestamp + wait);
+      vm.warp(vm.getBlockTimestamp() + wait);
       elapsed += wait;
 
       uint256 current = caps.remaining(ID);

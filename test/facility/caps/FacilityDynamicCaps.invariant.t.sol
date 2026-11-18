@@ -105,7 +105,7 @@ contract FacilityDynamicCapsInvariantTest is StdInvariant, Test {
   function invariant_throughputBounded() public view {
     for (uint256 i = 0; i < ids.length; i++) {
       (uint128 recovery, uint64 recoveryTime,) = caps.getCap(ids[i]);
-      uint256 accrued = uint256(recovery) * (block.timestamp - handler.setTime(ids[i]));
+      uint256 accrued = uint256(recovery) * (vm.getBlockTimestamp() - handler.setTime(ids[i]));
       assertLe(
         handler.consumed(ids[i]) * recoveryTime, handler.startCredit(ids[i]) + accrued, "throughput above recovery"
       );

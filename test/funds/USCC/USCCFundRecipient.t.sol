@@ -56,7 +56,7 @@ contract USCCFundRecipientTest is Test {
     usdc = new MockERC20("USD Coin", "USDC", 6);
     uscc = new MockSuperstateToken("USCC", "USCC", address(allowlist), address(usdc));
     oracle = new MockChainlinkOracle(6);
-    oracle.setRoundData(1, int256(1e6), block.timestamp, 1);
+    oracle.setRoundData(1, int256(1e6), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     wuscc = WrappedAsset(LibClone.deployERC1967(address(new WrappedAsset())));

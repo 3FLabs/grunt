@@ -56,7 +56,7 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
-    assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match duration");
+    assertEq(pausedUntil, uint40(vm.getBlockTimestamp() + duration), "PausedUntil should match duration");
   }
 
   function test_pauseFor_byPauser() public {
@@ -67,12 +67,12 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
-    assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match");
+    assertEq(pausedUntil, uint40(vm.getBlockTimestamp() + duration), "PausedUntil should match");
   }
 
   function test_pauseFor_emitsEvent() public {
     uint256 duration = 1 hours;
-    uint40 expectedPausedUntil = uint40(block.timestamp + duration);
+    uint40 expectedPausedUntil = uint40(vm.getBlockTimestamp() + duration);
 
     vm.prank(owner);
     vm.expectEmit(false, false, false, true);
@@ -221,7 +221,7 @@ contract FacilityPauseTest is FacilityBaseTest {
 
     (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     assertTrue(isPaused, "Should be paused");
-    assertEq(pausedUntil, uint40(block.timestamp + duration), "PausedUntil should match");
+    assertEq(pausedUntil, uint40(vm.getBlockTimestamp() + duration), "PausedUntil should match");
   }
 
   function testFuzz_pauseFor_expiresCorrectly(uint256 duration, uint256 timePassed) public {
@@ -231,7 +231,7 @@ contract FacilityPauseTest is FacilityBaseTest {
     vm.prank(owner);
     facility.pauseFor(duration);
 
-    vm.warp(block.timestamp + timePassed);
+    vm.warp(vm.getBlockTimestamp() + timePassed);
 
     (bool isPaused,) = facility.facilityConfig();
 

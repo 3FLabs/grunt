@@ -47,7 +47,7 @@ contract USCCFundFuzzTest is Test {
     uscc = new MockSuperstateToken("USCC", "USCC", address(allowlist), address(usdc));
 
     oracle = new MockChainlinkOracle(6);
-    oracle.setRoundData(1, int256(ONE_USDC), block.timestamp, 1);
+    oracle.setRoundData(1, int256(ONE_USDC), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     WrappedAsset implementation = new WrappedAsset();
@@ -691,7 +691,7 @@ contract USCCFundInvariantTest is StdInvariant, Test {
     uscc = new MockSuperstateToken("USCC", "USCC", address(allowlist), address(usdc));
 
     oracle = new MockChainlinkOracle(6);
-    oracle.setRoundData(1, int256(ONE_USDC), block.timestamp, 1);
+    oracle.setRoundData(1, int256(ONE_USDC), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     WrappedAsset implementation = new WrappedAsset();

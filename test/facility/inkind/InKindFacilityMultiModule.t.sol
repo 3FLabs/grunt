@@ -8,6 +8,7 @@ import {SupplyQueueEntry} from "src/interfaces/manager/IPositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {MorphoBorrowPosition} from "src/borrow/MorphoBorrowPosition.sol";
 import {LibCaps} from "src/libs/facility/LibCaps.sol";
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {LibManagerErrors} from "src/libs/manager/LibManagerErrors.sol";
 import {MarketParams, Position} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "lib/morpho-blue/src/libraries/MarketParamsLib.sol";
@@ -21,7 +22,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 ///         parity under a shared quote, the NonNeutralMint and zero-mint gates on a divergent
 ///         receiving quote and on an entry many times the pool, exact exit mirroring over the
 ///         full withdrawal queue, the round-trip shift to the supply-queue head, and a
-///         strict-subset queue.
+///         strict-subset queue (exits and the exit views bounded by what the queue holds).
 contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
   using FixedPointMathLib for uint256;
   using MarketParamsLib for MarketParams;
@@ -282,6 +283,22 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     _assertCleanOn(pmMulti);
   }
 
+  function test_enter_aboveTheCombinedTargetSucceedsWhileTheViewsSayNo() public {
+    // Pool at 35% over a 30% target, A at 25% still places the 350e6 borrow.
+    vm.prank(owner);
+    pmMulti.setLtv(0.3e18);
+    assertEq(facility.maxEnter(address(pmMulti), user), 0, "max enter");
+    vm.expectRevert(LibManagerErrors.InsufficientBorrowCapacity.selector);
+    facility.previewEnter(address(pmMulti), ENTER_AMOUNT);
+
+    Position memory positionB = morpho.position(marketParamsB.id(), address(moduleB));
+    (, uint256 debt) = _enter(pmMulti, user, ENTER_AMOUNT, user);
+    assertEq(debt, 350e6, "debt leg");
+    Position memory positionBAfter = morpho.position(marketParamsB.id(), address(moduleB));
+    assertEq(positionBAfter.borrowShares, positionB.borrowShares, "B debt moved");
+    _assertCleanOn(pmMulti);
+  }
+
   function testFuzz_enter_sharedQuoteStaysWithinTheFairFraction(
     uint256 amount,
     uint256 price,
@@ -290,7 +307,7 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
   ) public {
     _setMultiPmFees();
     if (headB) _setSupplyQueue(pmMulti, address(moduleB), address(moduleA));
-    vm.warp(block.timestamp + bound(elapsed, 0, 90 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 90 days));
     oracle.setPrice(bound(price, 0.9e24, 1.5e24));
     amount = bound(amount, pmMulti.collateralAmount().divUp(pmMulti.debtAmount()), pmMulti.collateralAmount());
 
@@ -451,7 +468,7 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
   function test_exit_fullQueueMatchesPreviewToTheWeiAndRefundsExactly() public {
     _setMultiPmFees();
     (uint256 shares,) = _enter(pmMulti, user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     oracle.setPrice(1.1e24);
     uint256 exitShares = shares / 2;
     (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee, uint256 required) =
@@ -490,7 +507,7 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     _setExit(pmMulti, EXIT_CAP, FAR_EXPIRY, feeBps);
     if (queueBFirst) _setWithdrawalQueue(pmMulti, address(moduleB), address(moduleA));
     (uint256 shares,) = _enter(pmMulti, user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + bound(elapsed, 0, 180 days));
+    vm.warp(vm.getBlockTimestamp() + bound(elapsed, 0, 180 days));
     oracle.setPrice(bound(price, 0.9e24, 2e24));
     exitShares = bound(exitShares, 2, shares);
 
@@ -573,6 +590,42 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     assertApproxEqAbs(seederClaimStaying - _claim(seeder), seederExtra, 2, "stayers' extra loss");
   }
 
+  /// @dev A partial withdrawal queue (a module that cannot repay and withdraw atomically stays
+  ///      out) keeps exits neutral at the quote: the exiter takes its fraction of the whole pool,
+  ///      sourced from the queued module, so stayers keep their equity per share and the pool its
+  ///      LTV. Only the mix moves: the queued module shrinks at the pool ratio, levering up when the
+  ///      excluded module is less levered and down otherwise.
+  function testFuzz_exit_partialQueueKeepsStayersEquityAndPoolLtv(uint256 sharesSeed, bool queueB) public {
+    _enter(pmMulti, user, ENTER_AMOUNT, user);
+    (MorphoBorrowPosition queued, MorphoBorrowPosition excluded) = queueB ? (moduleB, moduleA) : (moduleA, moduleB);
+    _setWithdrawalQueue(pmMulti, address(queued), address(0));
+    // up to a fifth of the supply fits either module's debt, collateral and the target LTV
+    uint256 exitShares = bound(sharesSeed, 1e18, pmMulti.totalSupply() / 5);
+
+    uint256 navBefore = pmMulti.totalAssets();
+    uint256 supplyBefore = _adjustedSupply(pmMulti);
+    uint256 poolLtvBefore = pmMulti.debtAmount().mulDiv(1e30, pmMulti.collateralAmount());
+    uint256 queuedLtvBefore = queued.totalBorrowed().mulDiv(1e30, queued.totalCollateral());
+    uint256 excludedLtv = excluded.totalBorrowed().mulDiv(1e30, excluded.totalCollateral());
+    uint256 excludedDebt = excluded.totalBorrowed();
+    uint256 excludedCollateral = excluded.totalCollateral();
+
+    _exit(pmMulti, seeder, exitShares, seeder);
+
+    uint256 navAfter = pmMulti.totalAssets();
+    uint256 supplyAfter = _adjustedSupply(pmMulti);
+    // NAV / supply never drops for stayers (one NAV unit of quote rounding)
+    assertGe(navAfter * supplyBefore + supplyBefore, navBefore * supplyAfter, "stayers' equity per share");
+    assertApproxEqRel(
+      pmMulti.debtAmount().mulDiv(1e30, pmMulti.collateralAmount()), poolLtvBefore, 1e9, "pool LTV kept"
+    );
+    assertEq(excluded.totalBorrowed(), excludedDebt, "excluded debt untouched");
+    assertEq(excluded.totalCollateral(), excludedCollateral, "excluded collateral untouched");
+    uint256 queuedLtvAfter = queued.totalBorrowed().mulDiv(1e30, queued.totalCollateral());
+    if (excludedLtv < poolLtvBefore) assertGt(queuedLtvAfter, queuedLtvBefore, "queued module levers up");
+    else assertLt(queuedLtvAfter, queuedLtvBefore, "queued module levers down");
+  }
+
   function test_exit_strictSubsetQueueNeedsTheRemainingModuleUnderTheTargetLtv() public {
     (uint256 shares,) = _enter(pmMulti, user, ENTER_AMOUNT, user);
     _setWithdrawalQueue(pmMulti, address(moduleB), address(0));
@@ -589,5 +642,44 @@ contract InKindFacilityMultiModuleTest is InKindFacilityBaseTest {
     vm.prank(user);
     (, uint256 repaid) = facility.exit(address(pmMulti), shares, required, 0, receiver, "");
     assertEq(repaid, debtIn, "debt in");
+  }
+
+  function test_previewExit_strictSubsetQueueRevertsWhereBurnDoes() public {
+    _setWithdrawalQueue(pmMulti, address(moduleA), address(0));
+    // 60% of the supply repays ~2_100 of debt, above A's 1_500: burn cannot place it
+    uint256 shares = pmMulti.balanceOf(seeder) * 6 / 10;
+    uint256 debtA = moduleA.totalBorrowed();
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    facility.previewExit(address(pmMulti), shares);
+
+    // the debt it would repay, priced on the whole pool, is more than the queue holds
+    uint256 burnShares = shares - shares.mulDivUp(DEFAULT_FEE_BPS, BPS);
+    assertGt(pmMulti.debtAmount().mulDivUp(burnShares, _adjustedSupply(pmMulti)), debtA, "slice above the queue");
+    uint256 required = _required(pmMulti.debtAmount().mulDivUp(burnShares, _adjustedSupply(pmMulti)));
+    debtToken.setBalance(seeder, required);
+    vm.startPrank(seeder);
+    debtToken.approve(address(facility), required);
+    pmMulti.approve(address(facility), shares);
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    facility.exit(address(pmMulti), shares, required, 0, seeder, "");
+    vm.stopPrank();
+  }
+
+  function test_maxExit_strictSubsetQueueIsBoundedByTheQueuedDebt() public {
+    uint256 full = facility.maxExit(address(pmMulti));
+    _setWithdrawalQueue(pmMulti, address(moduleA), address(0));
+    uint256 max = facility.maxExit(address(pmMulti));
+    assertLt(max, full, "the queue binds below the cap");
+
+    // the cap is 1m, so A's debt is the bound: the largest burn whose rounded-up slice fits it
+    uint256 burnable = moduleA.totalBorrowed().mulDiv(_adjustedSupply(pmMulti), pmMulti.debtAmount());
+    assertEq(max, LibInKindView.grossForNet(burnable, DEFAULT_FEE_BPS), "maxExit");
+
+    // the quote previews and executes, and one burnable share more does not preview
+    (uint256 debtIn,,,) = facility.previewExit(address(pmMulti), max);
+    assertLe(debtIn, moduleA.totalBorrowed(), "slice fits A");
+    vm.expectRevert(LibManagerErrors.ExcessDebtRepay.selector);
+    facility.previewExit(address(pmMulti), LibInKindView.grossForNet(burnable + 1, DEFAULT_FEE_BPS));
+    _exit(pmMulti, seeder, max, seeder);
   }
 }

@@ -138,12 +138,12 @@ contract TransferGuardHandler is Test {
   /// @param seconds_ Raw warp value, bounded to [1, 365 days].
   function act_warpTime(uint256 seconds_) external {
     seconds_ = _bound(seconds_, 1, 365 days);
-    vm.warp(block.timestamp + seconds_);
+    vm.warp(vm.getBlockTimestamp() + seconds_);
 
     // Reconcile ghost pause state: any timed pause that has expired should be marked unpaused.
     for (uint256 i = 0; i < tokens.length; i++) {
       (uint40 pausedUntil,,) = guard.tokenConfig(tokens[i]);
-      if (pausedUntil != 0 && pausedUntil != type(uint40).max && block.timestamp > pausedUntil) {
+      if (pausedUntil != 0 && pausedUntil != type(uint40).max && vm.getBlockTimestamp() > pausedUntil) {
         ghostPaused[tokens[i]] = false;
       }
     }
@@ -193,7 +193,7 @@ contract TransferGuardHandler is Test {
     (uint40 pausedUntil, TokenMode currentMode,) = guard.tokenConfig(token);
 
     // Determine if currently paused for setTokenConfig's bool param
-    bool isPaused = pausedUntil != 0 && (pausedUntil == type(uint40).max || block.timestamp <= pausedUntil);
+    bool isPaused = pausedUntil != 0 && (pausedUntil == type(uint40).max || vm.getBlockTimestamp() <= pausedUntil);
 
     // Cycle to next mode
     TokenMode nextMode = TokenMode((uint8(currentMode) + 1) % 4);

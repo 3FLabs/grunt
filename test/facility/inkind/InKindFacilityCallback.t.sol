@@ -124,7 +124,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     (uint256 stalePreview,,,) = facility.previewExit(address(positionManager), shares);
 
     // Interest accrues on the Morpho market: the live figure drifts above the stale preview.
-    vm.warp(block.timestamp + 200 days);
+    vm.warp(vm.getBlockTimestamp() + 200 days);
     (uint256 livePreview,,,) = facility.previewExit(address(positionManager), shares);
     assertGt(livePreview, stalePreview, "interest must have accrued");
 
@@ -151,7 +151,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     // Time accrues Morpho interest and PM management fee shares; the up-print accrues
     // performance fee shares. The pending fee shares dilute the exiter's slice, so the live
     // figure is not monotone in time here; the callback still receives the exact final figure.
-    vm.warp(block.timestamp + 200 days);
+    vm.warp(vm.getBlockTimestamp() + 200 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 110 / 100);
     (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     assertGt(mgmtShares, 0, "no pending management fee shares");
@@ -179,7 +179,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     _setPmFees(100, 1000);
     ViewReaderExiter r = _newViewReader();
     uint256 shares = _sharesFor(address(r));
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 105 / 100);
 
     // Pre-call values of every view the callback snapshots.
@@ -230,7 +230,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     assertEq(positionManager.balanceOf(address(facility)), 0, "facility holds no shares after the exit");
   }
 
-  function test_callback_exitCapConsumedBeforeCallback() public {
+  function test_callback_exitCapChargedAfterBurn() public {
     _setExit(positionManager, FINITE_EXIT_CAP, FAR_EXPIRY, DEFAULT_FEE_BPS);
     ViewReaderExiter r = _newViewReader();
     uint256 shares = _sharesFor(address(r));
@@ -241,8 +241,9 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
 
     (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, "x");
 
-    // The ABSOLUTE word is decremented by the gross debt before the callback runs (CEI).
-    assertEq(r.snapshot().exitCap, FINITE_EXIT_CAP - debtIn, "exit cap consumed inside the callback");
+    // The ABSOLUTE word is charged after burn with the debt burn repaid: the callback sees it
+    // untouched.
+    assertEq(r.snapshot().exitCap, FINITE_EXIT_CAP, "exit cap untouched inside the callback");
     assertEq(facility.getExit(address(positionManager)).cap, FINITE_EXIT_CAP - debtIn, "exit cap after");
   }
 
@@ -294,6 +295,23 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, abi.encode(repayAssets));
     assertEq(debtIn, pulled, "the exit reports what burn pulled");
     assertEq(debtToken.balanceOf(address(r)), required - pulled, "the refund is the pull minus burn's figure");
+  }
+
+  function test_callback_repayOnBehalfWithPerfFeeChargesTheCapWithBurnsPull() public {
+    _setPmFees(0, 1000);
+    _setExit(positionManager, FINITE_EXIT_CAP, FAR_EXPIRY, DEFAULT_FEE_BPS);
+    RepayOnBehalfExiter r = _newRepayOnBehalf();
+    uint256 shares = _sharesFor(address(r));
+    (uint256 previewDebtIn,,, uint256 required) = facility.previewExit(address(positionManager), shares);
+    uint256 repayAssets = 1_000e6;
+    _fundDebt(address(r), required + repayAssets);
+
+    // The repay lifts NAV, so burn accrues fee shares and pulls below the mirror. The cap only
+    // absorbs what burn repaid: a credit word would otherwise credit debt nobody repaid.
+    (, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, abi.encode(repayAssets));
+
+    assertLt(debtIn, previewDebtIn, "burn settled below the mirror");
+    assertEq(facility.getExit(address(positionManager)).cap, FINITE_EXIT_CAP - debtIn, "cap charged with burn's pull");
   }
 
   function _newSupplyCollateral() internal returns (SupplyCollateralExiter r) {
@@ -363,8 +381,8 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
 
     // Pending (unmaterialized) interest: the mirror prices it through the module's expected
     // borrow assets; materializing it inside the callback changes nothing burn reads.
-    vm.warp(block.timestamp + 200 days);
-    assertLt(morpho.market(marketId).lastUpdate, block.timestamp, "interest must be pending");
+    vm.warp(vm.getBlockTimestamp() + 200 days);
+    assertLt(morpho.market(marketId).lastUpdate, vm.getBlockTimestamp(), "interest must be pending");
     (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), shares);
     _fundDebt(address(r), _required(previewDebtIn));
@@ -372,7 +390,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     (uint256 out, uint256 debtIn) = r.exit(shares, type(uint256).max, 0, receiver, "x");
 
     assertEq(r.callCount(), 1, "callback count");
-    assertEq(morpho.market(marketId).lastUpdate, block.timestamp, "interest materialized by the callback");
+    assertEq(morpho.market(marketId).lastUpdate, vm.getBlockTimestamp(), "interest materialized by the callback");
     assertEq(debtIn, previewDebtIn, "debtIn matches the pre-accrual preview");
     assertEq(r.lastDebtIn(), _required(debtIn), "callback debtIn");
     assertEq(out, previewOut, "underlying out matches preview");
@@ -389,7 +407,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
     FlashWrappedExiter r =
       new FlashWrappedExiter(facility, positionManager, debtToken, morpho, marketParams, address(borrowPosition));
     uint256 shares = _sharesFor(address(r));
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     (uint256 previewDebtIn, uint256 previewOut,,) = facility.previewExit(address(positionManager), shares);
     uint256 headroom = previewDebtIn / 10 + 1;
     uint256 loan = previewDebtIn + headroom;
@@ -672,7 +690,7 @@ contract InKindFacilityCallbackTest is InKindFacilityBaseTest {
   function test_callback_emitsExitedWithCallbackAmounts() public {
     ApproveExactExiter r = _newApproveExact();
     uint256 shares = _sharesFor(address(r));
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     (uint256 previewDebtIn, uint256 previewOut, uint256 previewFee,) =
       facility.previewExit(address(positionManager), shares);
     _fundDebt(address(r), _required(previewDebtIn));

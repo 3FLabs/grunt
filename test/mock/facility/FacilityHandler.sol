@@ -201,7 +201,7 @@ contract FacilityHandler is Test {
 
   /// @notice Sets request through facilitator + guardian signature path.
   function _setRequest(uint256 id, address newRequest) external {
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
     signers[0] = guardian;
@@ -273,7 +273,7 @@ contract FacilityHandler is Test {
       targetAsset: targetAsset,
       depositCap: depositCap,
       guardKey: address(positionManager),
-      resolveStart: uint40(block.timestamp + resolveDelay),
+      resolveStart: uint40(vm.getBlockTimestamp() + resolveDelay),
       quorum: 1,
       transferableIntent: true
     });
@@ -440,7 +440,7 @@ contract FacilityHandler is Test {
     (IntentProperties memory props,,,) = facility.getIntent(id);
 
     // Warp to just past resolveStart
-    if (block.timestamp < props.resolveStart) {
+    if (vm.getBlockTimestamp() < props.resolveStart) {
       vm.warp(props.resolveStart + 1);
     }
 
@@ -716,7 +716,7 @@ contract FacilityHandler is Test {
       token2: address(debtToken),
       amount1: bound(amountSeed, 1, pmSharesAvailable),
       amount2: bound(amountSeed, 1, debtTokenAvailable),
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
   }
 

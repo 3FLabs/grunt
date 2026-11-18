@@ -143,6 +143,24 @@ contract LibCapsMathTest is Test {
     assertLe(harness.release(amount, multiplier), headroom, "quote fits the headroom");
   }
 
+  function test_releasable_gapCanExceedOneOverMultiplier() public view {
+    // headroom 2 at -3000: the quote is 2 but 4 still fits, a gap above 4096 / 3000
+    assertEq(harness.releasable(2, -3000), 2, "quote");
+    assertEq(harness.release(4, -3000), 2, "4 fits");
+    assertEq(harness.release(5, -3000), 3, "5 does not");
+  }
+
+  function testFuzz_releasable_gapBelowOneOverMultiplierPlusOne(uint256 headroom, int24 multiplier) public view {
+    multiplier = int24(bound(multiplier, MULT_MIN, -1));
+    headroom = bound(headroom, 0, MAX / ONE - 1);
+    uint256 m = uint256(-int256(multiplier));
+    // largest amount whose release still fits: amount * m < (headroom + 1) * 4096
+    uint256 largest = ((headroom + 1) * ONE - 1) / m;
+
+    assertLe(harness.release(largest, multiplier), headroom, "largest fits");
+    assertLt((largest - harness.releasable(headroom, multiplier)) * m, ONE + m, "gap < 4096 / |m| + 1");
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                   CHARGE AND QUOTE TESTS                    */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

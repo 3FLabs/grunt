@@ -24,7 +24,8 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
     super.setUp();
 
     // Aggregate LTV 0.5 against the 0.7 target: the campaign starts in the LTV-up direction;
-    // warps (interest accrual) and act_setTargetLtv expose the LTV-down direction too
+    // warps (interest accrual), act_setTargetLtv and act_setTargetLtvOverride expose the
+    // LTV-down direction too
     _seedPosition(10_000e18, 5_000e18);
 
     handler = new RetargetterHandler();
@@ -43,7 +44,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
 
     targetContract(address(handler));
 
-    bytes4[] memory selectors = new bytes4[](20);
+    bytes4[] memory selectors = new bytes4[](21);
     selectors[0] = RetargetterHandler.act_startAsync.selector;
     selectors[1] = RetargetterHandler.act_consume.selector;
     selectors[2] = RetargetterHandler.act_pull.selector;
@@ -64,6 +65,7 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
     selectors[17] = RetargetterHandler.act_setTargetLtv.selector;
     selectors[18] = RetargetterHandler.act_authorizeMinting.selector;
     selectors[19] = RetargetterHandler.act_mintAuthorized.selector;
+    selectors[20] = RetargetterHandler.act_setTargetLtvOverride.selector;
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
 
     vm.label(address(handler), "RetargetterHandler");
@@ -169,5 +171,10 @@ contract RetargetterInvariantTest is RetargetterBaseTest {
     assertFalse(
       handler.valueConservationViolated(), "RT-11: rebalance grew totalAssets while the bridge was outstanding"
     );
+  }
+
+  /// @notice RT-12: The target LTV override never moves while an operation is active.
+  function invariant_overrideFrozenWhileActive() public view {
+    assertFalse(handler.overrideMovedWhileActive(), "RT-12: target LTV override moved during an operation");
   }
 }

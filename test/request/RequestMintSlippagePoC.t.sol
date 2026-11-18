@@ -51,7 +51,7 @@ contract RequestMintSlippagePoCTest is Test {
 
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
 
     request = Request(reqAddr);

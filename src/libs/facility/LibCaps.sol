@@ -21,8 +21,9 @@ enum CapType {
 ///        (LibIntent checks it and never writes it), so caps deployed before cap types existed
 ///        keep their meaning below 2^248 (reset larger stored words to MAX_ABSOLUTE before
 ///        upgrading). consume() reads it as a remaining budget and decrements it.
-///      - EXTERNAL (1): the word points at a cap in an IFacilityCaps contract that deposits
-///        consume and releases give back (FacilityAbsoluteCaps) or ignore (FacilityDynamicCaps).
+///      - EXTERNAL (1): the word points at a cap in an IFacilityCaps contract, charged with the
+///        word's multiplier on deposits and its negation on releases. FacilityDynamicCaps only
+///        charges positive multipliers: deposits on a positive word, releases on a negative one.
 ///
 ///      EXTERNAL word layout (msb -> lsb):
 ///      | 8 bits type | 24 bits multiplier | 64 bits id | 160 bits caps address |
@@ -31,8 +32,14 @@ enum CapType {
 ///      own way (FacilityAbsoluteCaps splits it into four 16-bit pool IDs) and validates it.
 ///
 ///      The multiplier is a signed Q12.12 fixed-point value applied to deposited amounts
-///      (typically leverage - 1). Withdrawal-side intents encode a negative multiplier so their
-///      deposits take the release direction and their withdrawals the consume direction.
+///      (typically leverage - 1). Amounts are scaled to 18 decimals first, so caps contracts count
+///      in 18 decimals and assets above 18 decimals revert. No price is applied: a multiplier only
+///      makes sense when the deposit and the pool share a unit. A withdrawal-side intent may use a
+///      negative multiplier so its deposits release and its withdrawals consume. On PM shares it
+///      is a fixed debt-per-share rate that drifts with the share price, so ABSOLUTE words or a
+///      dedicated pool are the default there. A PM-share word on a shared pool needs its
+///      multiplier refreshed periodically and set conservatively: below debt per share on a
+///      credit word, above it on a consume word (see LibIntent.updateDepositCap for the refresh).
 ///
 ///      consume() returns the new word for the caller to store, so the library stays free of
 ///      storage references.
@@ -64,6 +71,8 @@ library LibCaps {
   uint256 internal constant ADDRESS_MASK = (1 << 160) - 1;
   /// @notice Maximum value of an ABSOLUTE cap (all bits below the type byte).
   uint256 internal constant MAX_ABSOLUTE = (1 << TYPE_OFFSET) - 1;
+  /// @notice Decimals EXTERNAL amounts are scaled to before reaching the caps contract.
+  uint8 internal constant CAPS_DECIMALS = 18;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         ENCODING                           */
@@ -114,15 +123,18 @@ library LibCaps {
   /*                           VIEWS                            */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Returns the amount consume() can absorb right now.
+  /// @notice Returns the amount of `asset` consume() can absorb right now.
   /// @dev ABSOLUTE: the word itself. EXTERNAL: the caps contract's quote under the word's
-  ///      multiplier (type(uint256).max when that direction is unbounded). Assumes a validated word.
+  ///      multiplier, scaled back to `asset` decimals rounding down (type(uint256).max when that
+  ///      direction is unbounded). Assumes a validated word.
   /// @param self The encoded deposit cap word.
+  /// @param asset The asset the amount is denominated in.
   /// @return amount The maximum consumable amount.
-  function available(uint256 self) internal view returns (uint256 amount) {
+  function available(uint256 self, address asset) internal view returns (uint256 amount) {
     if (capType(self) == CapType.EXTERNAL) {
       (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
-      return caps.available(id, multiplier);
+      amount = caps.available(id, multiplier);
+      return amount == type(uint256).max ? amount : amount / _scale(asset);
     }
     return self;
   }
@@ -156,19 +168,30 @@ library LibCaps {
 
   /// @notice Consumes the deposit cap for a deposit of `amount`.
   /// @dev ABSOLUTE: reverts with CapExceeded if the amount exceeds the remaining budget, and
-  ///      returns the decremented word. EXTERNAL: consumes amount x multiplier
-  ///      from the caps contract (a negative multiplier takes the release direction instead)
-  ///      and returns the word unchanged.
+  ///      returns the decremented word. EXTERNAL: consumes amount x multiplier (amount scaled to
+  ///      18 decimals) from the caps contract (a negative multiplier takes the release direction
+  ///      instead) and returns the word unchanged.
   /// @param self The encoded deposit cap word.
   /// @param capId The consumer's cap ID (used for error reporting).
   /// @param amount The amount being deposited.
+  /// @param asset The asset the amount is denominated in.
   /// @return newCap The new cap word to store.
-  function consume(uint256 self, uint256 capId, uint256 amount) internal returns (uint256 newCap) {
-    if (capType(self) == CapType.EXTERNAL) return _poolConsume(self, amount, false);
+  function consume(uint256 self, uint256 capId, uint256 amount, address asset) internal returns (uint256 newCap) {
+    if (capType(self) == CapType.EXTERNAL) return _poolConsume(self, amount, asset, false);
     if (amount > self) revert LibFacilityErrors.CapExceeded(capId, self, amount);
     unchecked {
       return self - amount;
     }
+  }
+
+  /// @notice Consumes an EXTERNAL word for a deposit of `amount`, like consume().
+  /// @dev For callers that read ABSOLUTE words their own way (LibIntent). Only call with an
+  ///      EXTERNAL word.
+  /// @param self The encoded EXTERNAL deposit cap word.
+  /// @param amount The amount being deposited.
+  /// @param asset The asset the amount is denominated in.
+  function consumeExternal(uint256 self, uint256 amount, address asset) internal {
+    _poolConsume(self, amount, asset, false);
   }
 
   /// @notice Releases the cap consumption of a deposit of `amount` being undone.
@@ -177,8 +200,9 @@ library LibCaps {
   ///      never changes, so there is nothing to store.
   /// @param self The encoded deposit cap word.
   /// @param amount The deposited amount being undone.
-  function release(uint256 self, uint256 amount) internal {
-    if (capType(self) == CapType.EXTERNAL) _poolConsume(self, amount, true);
+  /// @param asset The asset the amount is denominated in.
+  function release(uint256 self, uint256 amount, address asset) internal {
+    if (capType(self) == CapType.EXTERNAL) _poolConsume(self, amount, asset, true);
   }
 
   /// @dev Consumes `amount` from a EXTERNAL word's caps contract with the word's multiplier
@@ -186,14 +210,32 @@ library LibCaps {
   ///      site for both directions keeps the external-call encoding out of every consumer twice.
   /// @param self The encoded EXTERNAL deposit cap word.
   /// @param amount The amount being consumed or released.
+  /// @param asset The asset the amount is denominated in.
   /// @param negate Whether to flip the multiplier's direction.
   /// @return The word, unchanged (cap state lives in the caps contract).
-  function _poolConsume(uint256 self, uint256 amount, bool negate) private returns (uint256) {
+  function _poolConsume(uint256 self, uint256 amount, address asset, bool negate) private returns (uint256) {
     (IFacilityCaps caps, uint64 id, int24 multiplier) = decodeExternal(self);
+    amount *= _scale(asset);
     // validate() rejects type(int24).min, so the negation cannot overflow
     unchecked {
       caps.consume(id, amount, negate ? -multiplier : multiplier);
     }
     return self;
+  }
+
+  /// @dev Factor scaling an `asset` amount to CAPS_DECIMALS. Reverts with UnsupportedDecimals
+  ///      if `asset` has more decimals or does not return them.
+  function _scale(address asset) private view returns (uint256) {
+    uint256 decimals;
+    bool success;
+    assembly ("memory-safe") {
+      mstore(0x00, 0x313ce567) // `decimals()`
+      success := and(gt(returndatasize(), 0x1f), staticcall(gas(), asset, 0x1c, 0x04, 0x00, 0x20))
+      decimals := mload(0x00)
+    }
+    if (!success || decimals > CAPS_DECIMALS) revert LibFacilityErrors.UnsupportedDecimals(asset);
+    unchecked {
+      return 10 ** (CAPS_DECIMALS - decimals);
+    }
   }
 }

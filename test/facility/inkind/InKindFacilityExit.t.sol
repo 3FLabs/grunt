@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
+import {LibInKindView} from "src/libs/facility/inkind/LibInKindView.sol";
 import {InKindFacilityBaseTest} from "./InKindFacilityBase.t.sol";
 import {IInKindFacility} from "src/interfaces/facility/IInKindFacility.sol";
 import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
@@ -99,9 +100,10 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     return _externalWord(address(absoluteCaps), POOL_ID, multiplier);
   }
 
+  /// @dev Sets the shared absolute pool in debt units.
   function _setAbsPool(uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(POOL_ID, cap, hardCap);
+    absoluteCaps.setCap(POOL_ID, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
   function _unleverPool() internal {
@@ -191,16 +193,17 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _assertNoAllowances();
   }
 
-  function test_exit_capConsumesTheMirrorWhenBurnPullsMore() public {
+  function test_exit_capConsumesWhatBurnPullsWhenAboveTheMirror() public {
     _setExit(positionManager, EXIT_CAP, FAR_EXPIRY, DEFAULT_FEE_BPS);
     (uint256 shares,, uint256 mirror, uint256 pulled) = _enterAndDrift(5);
     assertGt(pulled, mirror, "burn pulls above the mirror");
     _fundExit(user, shares, _expectedPull(mirror));
 
     vm.prank(user);
-    facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
+    (, uint256 debtIn) = facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - mirror, "exit cap");
+    assertEq(debtIn, pulled, "burn's pull");
+    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - pulled, "exit cap");
   }
 
   function test_exit_revertsWhenBurnPullsAboveTheHeadroom() public {
@@ -236,7 +239,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
     assertEq(positionManager.debtAmount(), 0, "pool debt");
     assertEq(debtToken.balanceOf(address(r)), pull, "the whole pull is refunded");
-    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - mirror, "exit cap");
+    assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP, "burn repaid nothing, so the cap is untouched");
     _assertFacilityClean();
     _assertNoAllowances();
   }
@@ -260,7 +263,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.stopPrank();
 
     assertEq(underlyingToken.balanceOf(receiver), out, "receiver underlying");
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP, "pool");
   }
 
@@ -300,11 +303,13 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _fundExit(user, shares, _expectedPull(mirror));
 
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(POOL_ID, mirror, MULT_1X, mirror, uint128(EXIT_CAP - mirror));
+    emit IFacilityCaps.CapConsumed(
+      POOL_ID, mirror * CAPS_SCALE, MULT_1X, mirror * CAPS_SCALE, uint128((EXIT_CAP - mirror) * CAPS_SCALE)
+    );
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP - mirror, "pool");
     assertEq(facility.getExit(address(positionManager)).cap, word, "word");
   }
@@ -325,7 +330,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, uint64(POOL_ID)));
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(POOL_ID);
+    (uint256 cap, uint256 hardCap) = _absPool(POOL_ID);
     assertEq(cap, pool, "pool");
     assertEq(hardCap, EXIT_CAP, "hard cap");
     assertEq(positionManager.balanceOf(user), shares, "shares");
@@ -342,11 +347,11 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
     // -2x releases twice the debt: half the headroom in debt
     _setExit(positionManager, _absWord(2 * MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
-    uint256 half = (headroom / 2).mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 half = LibInKindView.grossForNet((headroom / 2).mulDiv(supplyAdj, totalDebt), DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), half, "maxExit at -2x");
 
     _setExit(positionManager, _absWord(MULT_NEG_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
-    uint256 max = headroom.mulDiv(supplyAdj, totalDebt).mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 max = LibInKindView.grossForNet(headroom.mulDiv(supplyAdj, totalDebt), DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit at -1x");
     assertLt(max, shares, "fixture: the headroom binds");
 
@@ -355,7 +360,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.prank(user);
     facility.exit(address(positionManager), max, type(uint256).max, 0, receiver, "");
 
-    (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(POOL_ID);
+    (uint256 cap, uint256 hardCap) = _absPool(POOL_ID);
     assertEq(cap, EXIT_CAP - headroom + mirror, "pool credited");
     assertLe(cap, hardCap, "above the hard cap");
   }
@@ -370,7 +375,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
     // the seeder never consumed the pool: its exit up to maxExit takes the headroom
     _exit(seeder, facility.maxExit(address(positionManager)), seeder);
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertLt(EXIT_CAP - pool, mirror, "fixture: headroom left");
     _fundExit(user, shares, _expectedPull(mirror));
 
@@ -379,7 +384,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
     uint256 burnable = uint256(EXIT_CAP - pool).mulDiv(_adjustedSupply(), positionManager.debtAmount());
-    uint256 max = burnable.mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 max = LibInKindView.grossForNet(burnable, DEFAULT_FEE_BPS);
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit");
     assertLt(max, shares, "maxExit covers the user");
   }
@@ -389,7 +394,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _setEntry(positionManager, _absWord(MULT_1X), FAR_EXPIRY, 0);
     _setExit(positionManager, _absWord(MULT_NEG_1X), FAR_EXPIRY, 0);
     (uint256 shares, uint256 debt) = _enter(user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     uint256 mirror = _mirrorDebt(shares);
     assertGt(mirror, debt, "fixture: interest accrued on the slice");
     _fundExit(user, shares, _expectedPull(mirror));
@@ -414,28 +419,27 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _fundExit(user, shares, _expectedPull(mirror));
     bytes memory blocked = abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, uint64(POOL_ID));
 
-    // adjustCap keeps hardCap - cap, so it moves no headroom either way
+    // adjustCap keeps the consumption, so it moves no release room either way
     vm.prank(owner);
-    absoluteCaps.adjustCap(POOL_ID, int256(mirror));
+    absoluteCaps.adjustCap(POOL_ID, int256(mirror * CAPS_SCALE));
     vm.prank(user);
     vm.expectRevert(blocked);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
     vm.prank(owner);
-    absoluteCaps.adjustCap(POOL_ID, -int256(2 * mirror));
+    absoluteCaps.adjustCap(POOL_ID, -int256(2 * mirror * CAPS_SCALE));
     vm.prank(user);
     vm.expectRevert(blocked);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (uint128 cap, uint128 hardCap) = absoluteCaps.getCap(POOL_ID);
+    (uint256 cap, uint256 hardCap) = _absPool(POOL_ID);
     assertEq(cap, EXIT_CAP - mirror, "cap");
     assertEq(hardCap, cap, "no headroom");
 
-    vm.prank(owner);
-    absoluteCaps.setCap(POOL_ID, cap, cap + uint128(mirror));
+    _setAbsPool(uint128(cap), uint128(cap + mirror));
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
 
-    (cap, hardCap) = absoluteCaps.getCap(POOL_ID);
+    (cap, hardCap) = _absPool(POOL_ID);
     assertEq(cap, hardCap, "pool back at its hard cap");
     assertEq(positionManager.balanceOf(user), 0, "shares");
   }
@@ -459,7 +463,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     assertGe(nextDebt, mirror, "fixture: the entry frees the slice");
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
-    (uint128 pool,) = absoluteCaps.getCap(POOL_ID);
+    uint256 pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP - nextDebt + mirror, "pool after the entry and the exit");
     vm.revertToState(snap);
 
@@ -468,7 +472,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     vm.prank(user);
     facility.exit(address(positionManager), shares, type(uint256).max, 0, receiver, "");
     assertEq(facility.getExit(address(positionManager)).cap, EXIT_CAP - mirror, "ABSOLUTE word consumed");
-    (pool,) = absoluteCaps.getCap(POOL_ID);
+    pool = _absCap(POOL_ID);
     assertEq(pool, EXIT_CAP, "pool untouched");
   }
 
@@ -481,19 +485,19 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     _setAuth(user, 100e6, FAR_EXPIRY);
     (uint256 shares, uint256 debt) = _enter(user, ENTER_AMOUNT, user);
     assertEq(debt, 500e6, "debt");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth spent");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 600e6, "security spent");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth spent");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 600e6, "security spent");
 
     _exit(user, shares, user);
 
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth refunded");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), 600e6, "security refunded");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth refunded");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), 600e6, "security refunded");
 
     // a second round trip drains the lifetime budget further
     (shares, debt) = _enter(user, ENTER_AMOUNT, user);
     _exit(user, shares, user);
     uint256 left = 600e6 - debt;
-    assertEq(facility.getSecurityCap(address(underlyingToken)), left, "security after two loops");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), left, "security after two loops");
 
     uint256 nextDebt = ENTER_AMOUNT.mulDiv(positionManager.debtAmount(), positionManager.collateralAmount());
     assertGt(nextDebt, left, "fixture: the budget is gone");
@@ -510,14 +514,14 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
 
   function test_exit_leavesAnExternalSecurityPoolConsumed() public {
     vm.prank(owner);
-    absoluteCaps.setCap(SECURITY_POOL_ID, 1_000e6, 1_000e6);
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(1_000e6 * CAPS_SCALE), uint128(1_000e6 * CAPS_SCALE));
     _setSecurityCap(_externalWord(address(absoluteCaps), SECURITY_POOL_ID, MULT_1X));
     (uint256 shares, uint256 debt) = _enter(user, ENTER_AMOUNT, user);
 
     vm.expectCall(address(absoluteCaps), abi.encodeWithSelector(IFacilityCaps.consume.selector), 0);
     _exit(user, shares, user);
 
-    (uint128 pool,) = absoluteCaps.getCap(SECURITY_POOL_ID);
+    uint256 pool = _absCap(SECURITY_POOL_ID);
     assertEq(pool, 1_000e6 - debt, "security pool refunded");
   }
 
@@ -534,8 +538,9 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
     uint256 burnShares = _burnShares(shares, DEFAULT_FEE_BPS);
     uint256 mirror = _mirrorDebt(burnShares);
 
-    uint256 max =
-      uint256(EXIT_CAP).mulDiv(_adjustedSupply(), positionManager.debtAmount()).mulDiv(BPS, BPS - DEFAULT_FEE_BPS);
+    uint256 max = LibInKindView.grossForNet(
+      uint256(EXIT_CAP).mulDiv(_adjustedSupply(), positionManager.debtAmount()), DEFAULT_FEE_BPS
+    );
     assertEq(facility.maxExit(address(positionManager)), max, "maxExit");
     assertGt(max, shares, "fixture: the cap does not bind");
     (uint256 debtIn, uint256 out, uint256 feeShares, uint256 debtRequired) =
@@ -566,7 +571,7 @@ contract InKindFacilityExitTest is InKindFacilityExitHelpers {
   function test_previewExit_valuesFollowExitBoundsOrder() public {
     _setPmFees(100, 1_000);
     (uint256 shares,) = _enter(user, ENTER_AMOUNT, user);
-    vm.warp(block.timestamp + 30 days);
+    vm.warp(vm.getBlockTimestamp() + 30 days);
     uint256 burnShares = _burnShares(shares, DEFAULT_FEE_BPS);
     (uint256 debtIn, uint256 underlyingOut, uint256 feeShares, uint256 debtRequired) =
       facility.previewExit(address(positionManager), shares);

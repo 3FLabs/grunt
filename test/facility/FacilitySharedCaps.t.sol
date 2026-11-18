@@ -55,7 +55,7 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
 
     _setPool(POOL_CAP, POOL_CAP);
     // the fixture starts near timestamp zero, move past one recovery period so a zero origin is fully recovered
-    vm.warp(block.timestamp + RECOVERY_TIME);
+    vm.warp(vm.getBlockTimestamp() + RECOVERY_TIME);
     vm.prank(owner);
     timeCaps.setCap(POOL_ID, RECOVERY, RECOVERY_TIME, 0);
   }
@@ -251,7 +251,7 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     facility.deposit(intentId, 300_000e18);
 
     // half a day recovers 500k, capped at 1m
-    vm.warp(block.timestamp + 12 hours);
+    vm.warp(vm.getBlockTimestamp() + 12 hours);
     assertEq(timeCaps.remaining(POOL_ID), 900_000e18, "Capacity should recover over time");
     _deposit(intentId, user2, 300_000e18);
     assertEq(timeCaps.remaining(POOL_ID), 450_000e18, "Recovered capacity should be consumable");
@@ -312,7 +312,7 @@ contract FacilitySharedCapsTest is FacilityBaseTest {
     facility.withdraw(intentId, user, user, RECOVERY);
     assertEq(timeCaps.remaining(POOL_ID), 0, "Withdrawal should consume the cap");
 
-    vm.warp(block.timestamp + 6 hours);
+    vm.warp(vm.getBlockTimestamp() + 6 hours);
     vm.prank(user);
     facility.withdraw(intentId, user, user, RECOVERY / 4);
     assertEq(timeCaps.remaining(POOL_ID), 0, "Recovered capacity should be withdrawable");

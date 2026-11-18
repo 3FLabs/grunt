@@ -103,7 +103,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.stopPrank();
     assertEq(debtToken.allowance(address(retargetter), address(fund)), 0, "commit approval scrubbed");
 
-    vm.warp(block.timestamp + 2 days);
+    vm.warp(vm.getBlockTimestamp() + 2 days);
     fund.settle();
 
     vm.expectEmit(address(retargetter));
@@ -195,7 +195,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.stopPrank();
     assertEq(collateralToken.allowance(address(retargetter), address(fund)), 0, "commit approval scrubbed");
 
-    vm.warp(block.timestamp + 3 days);
+    vm.warp(vm.getBlockTimestamp() + 3 days);
     fund.settle();
     vm.prank(rebalancer);
     uint256 proceeds = retargetter.unlock();
@@ -242,15 +242,15 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), 0, "clock unset before the first consume");
 
-    vm.warp(block.timestamp + 5 days);
+    vm.warp(vm.getBlockTimestamp() + 5 days);
     _consume(request, 3_000e18, 30e18, 3_000e18);
     (,,, startedAt,,,,,,,) = retargetter.operation();
-    assertEq(uint256(startedAt), block.timestamp, "first consume starts the clock");
+    assertEq(uint256(startedAt), vm.getBlockTimestamp(), "first consume starts the clock");
     uint256 clockOrigin = uint256(startedAt);
 
     // A second consume inside the consumption window grows the supplies but does not reset
     // the clock
-    vm.warp(block.timestamp + 5 hours);
+    vm.warp(vm.getBlockTimestamp() + 5 hours);
     _consume(request, 1_000e18, 10e18, 1_000e18);
     (,,, startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), clockOrigin, "second consume keeps the origin");
@@ -278,7 +278,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    uint256 origin = block.timestamp;
+    uint256 origin = vm.getBlockTimestamp();
 
     // Still open exactly at the threshold boundary
     vm.warp(origin + DEFAULT_TICK_THRESHOLD);
@@ -306,11 +306,11 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     address request = _startAsync(6_000e18, 100);
 
     // Days between start and the first consume: fine, the window is not running yet
-    vm.warp(block.timestamp + 3 days);
+    vm.warp(vm.getBlockTimestamp() + 3 days);
     _consume(request, 1_000e18, 10e18, 1_000e18);
 
     // And from that first consume the threshold applies
-    vm.warp(block.timestamp + DEFAULT_TICK_THRESHOLD + 1);
+    vm.warp(vm.getBlockTimestamp() + DEFAULT_TICK_THRESHOLD + 1);
     Offer memory offer = _createOffer(1_000e18, 10e18);
     vm.prank(consumer);
     vm.expectRevert(LibRetargetterErrors.ConsumptionWindowClosed.selector);
@@ -324,7 +324,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_consume_clockStartAtDeadlineBufferBoundary() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
-    uint256 operationStart = block.timestamp;
+    uint256 operationStart = vm.getBlockTimestamp();
 
     // Exactly 80 days remain before the deadline: the clock may still start
     vm.warp(operationStart + 10 days);
@@ -341,7 +341,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _startAsync(6_000e18, 100);
 
     // The gate fires before the Request is ever called, so the offer needs no signature
-    vm.warp(block.timestamp + 10 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 10 days + 1);
     Offer memory offer = _createOffer(1_000e18, 10e18);
     vm.prank(consumer);
     vm.expectRevert(LibRetargetterErrors.DeadlineTooClose.selector);
@@ -375,7 +375,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     retargetter.authorizeMinting(broker, 2_000e18, 20e18);
 
     (,,, startedAt,,,,,,,) = retargetter.operation();
-    assertEq(uint256(startedAt), block.timestamp, "authorization starts the loan clock");
+    assertEq(uint256(startedAt), vm.getBlockTimestamp(), "authorization starts the loan clock");
     assertEq(_outstandingAuthorizedPt(request), 2_000e18, "outstanding authorized principal");
     (uint128 ptAuth, uint128 ytAuth) = IRequest(request).mintAuthorization(broker);
     assertEq(uint256(ptAuth), 2_000e18, "request-side principal authorization");
@@ -503,7 +503,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     address request = _startAsync(4_000e18, 100);
 
     _authorize(broker, 1_000e18, 10e18);
-    uint256 firstOrigin = block.timestamp;
+    uint256 firstOrigin = vm.getBlockTimestamp();
     (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
     assertEq(uint256(startedAt), firstOrigin, "clock started");
 
@@ -518,7 +518,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     // The window reopened: a fresh commitment starts a fresh clock
     _authorize(broker, 500e18, 5e18);
     (,,, startedAt,,,,,,,) = retargetter.operation();
-    assertEq(uint256(startedAt), block.timestamp, "fresh origin");
+    assertEq(uint256(startedAt), vm.getBlockTimestamp(), "fresh origin");
   }
 
   /// @notice The clock survives a revocation while the operation still carries PT supply:
@@ -526,7 +526,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_authorizeMinting_revocationKeepsClockWithSupply() public {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(4_000e18, 100);
-    uint256 origin = block.timestamp;
+    uint256 origin = vm.getBlockTimestamp();
 
     _consume(request, 1_000e18, 10e18, 1_000e18);
     _authorize(broker, 500e18, 5e18);
@@ -540,7 +540,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
   function test_authorizeMinting_revocationKeepsClockWithPendingAuthorization() public {
     _seedPosition(10_000e18, 5_000e18);
     _startAsync(4_000e18, 100);
-    uint256 origin = block.timestamp;
+    uint256 origin = vm.getBlockTimestamp();
     address secondBroker = makeAddr("secondBroker");
 
     _authorize(broker, 500e18, 5e18);
@@ -619,7 +619,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     address secondRequest = _startAsync(1_000e18, 100);
     _consume(secondRequest, 100e18, 1e18, 100e18);
     (,,, uint40 startedAt,,,,,,,) = retargetter.operation();
-    assertEq(uint256(startedAt), block.timestamp, "fresh loan clock on the next operation");
+    assertEq(uint256(startedAt), vm.getBlockTimestamp(), "fresh loan clock on the next operation");
   }
 
   /// @notice The full-balance sentinel pulls the Request's whole balance and the emitted
@@ -644,7 +644,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(6_000e18, 100);
     _authorize(broker, 2_000e18, 20e18);
-    uint256 origin = block.timestamp;
+    uint256 origin = vm.getBlockTimestamp();
 
     // Still open exactly at the threshold boundary
     vm.warp(origin + DEFAULT_TICK_THRESHOLD);
@@ -684,7 +684,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(1_000e18, 100);
 
-    vm.warp(block.timestamp + 10 days);
+    vm.warp(vm.getBlockTimestamp() + 10 days);
     vm.expectEmit(address(retargetter));
     emit IRetargetter.RequestRepaid(request, 0, 0);
     vm.prank(rebalancer);
@@ -1107,7 +1107,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.stopPrank();
 
     // The share price drops one percent before settlement: proceeds no longer cover the owed
-    vm.warp(block.timestamp + 3 days);
+    vm.warp(vm.getBlockTimestamp() + 3 days);
     fund.setSharePrice(0.99e18);
     fund.settle();
     vm.prank(rebalancer);
@@ -1173,7 +1173,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.prank(rebalancer);
     retargetter.pullRequestFunds(2_000e18);
 
-    vm.warp(block.timestamp + 91 days);
+    vm.warp(vm.getBlockTimestamp() + 91 days);
     vm.prank(rebalancer);
     vm.expectRevert(LibRequestErrors.AlreadyRepaid.selector);
     retargetter.repay();
@@ -1221,7 +1221,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     _consume(request, 3_000e18, 30e18, 3_000e18);
     vm.prank(rebalancer);
     retargetter.pullRequestFunds(2_000e18);
-    vm.warp(block.timestamp + 91 days);
+    vm.warp(vm.getBlockTimestamp() + 91 days);
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.InsufficientBalance.selector, 1_000e18, 3_000e18));
@@ -1353,7 +1353,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
       amount: 12_000e18,
       expectedReturn: 120e18,
       nonce: 1,
-      expiration: block.timestamp + 1 days,
+      expiration: vm.getBlockTimestamp() + 1 days,
       useCallback: true
     });
 
@@ -1396,7 +1396,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     vm.stopPrank();
 
     // A few ticks in, the owed amount is the deployed principal plus its prorated yield
-    vm.warp(block.timestamp + 2 days);
+    vm.warp(vm.getBlockTimestamp() + 2 days);
     uint256 owedAmount = retargetter.owed();
 
     // One trip: supply the settled shares, borrow the owed amount back. The rebalancer is a
@@ -1430,7 +1430,7 @@ contract RetargetterAsyncTest is RetargetterBaseTest {
     retargetter.create(_order(Mode.DEPOSIT, 6_000e18, 6_000e18, bytes32(uint256(42))));
     retargetter.commit();
     vm.stopPrank();
-    vm.warp(block.timestamp + 2 days);
+    vm.warp(vm.getBlockTimestamp() + 2 days);
     fund.settle();
     vm.prank(rebalancer);
     retargetter.unlock();

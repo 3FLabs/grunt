@@ -52,7 +52,7 @@ contract RequestReentrancyTest is Test {
       address(asset),
       "Test Request",
       "REQ",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       0
     );
 
@@ -119,7 +119,7 @@ contract RequestReentrancyTest is Test {
     maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.SET_REPAID);
 
     Offer memory offer =
-      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, vm.getBlockTimestamp() + 1 days);
     bytes memory signature = _signOffer(offer);
     asset.mint(address(maliciousCallback), offerAmount);
 
@@ -154,7 +154,7 @@ contract RequestReentrancyTest is Test {
     maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.MINT);
 
     Offer memory offer =
-      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, vm.getBlockTimestamp() + 1 days);
     bytes memory signature = _signOffer(offer);
     asset.mint(address(maliciousCallback), offerAmount + mintAuthPt);
 
@@ -185,7 +185,7 @@ contract RequestReentrancyTest is Test {
     maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.PULL_FUNDS);
 
     Offer memory offer =
-      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, vm.getBlockTimestamp() + 1 days);
     bytes memory signature = _signOffer(offer);
     asset.mint(address(maliciousCallback), offerAmount);
 
@@ -210,7 +210,7 @@ contract RequestReentrancyTest is Test {
     maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.AUTHORIZE_MINTING);
 
     Offer memory offer =
-      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, vm.getBlockTimestamp() + 1 days);
     bytes memory signature = _signOffer(offer);
     asset.mint(address(maliciousCallback), offerAmount);
 
@@ -286,7 +286,7 @@ contract RequestReentrancyTest is Test {
     maliciousCallback.setAttackType(MaliciousRequestCallback.AttackType.NONE);
 
     Offer memory offer =
-      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, block.timestamp + 1 days);
+      _createOffer(address(maliciousCallback), offerAmount, expectedReturn, 1, vm.getBlockTimestamp() + 1 days);
     bytes memory signature = _signOffer(offer);
     asset.mint(address(maliciousCallback), offerAmount);
 

@@ -35,7 +35,7 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
     absoluteCaps.grantRoles(address(facility2), CAPS_CONSUMER_ROLE);
     positionManager2.grantRoles(address(facility2), PM_MINTER_ROLE);
     collateralToken.grantRoles(address(facility2), WA_SENDER_ROLE);
-    absoluteCaps.setCap(SECURITY_POOL_ID, SHARED_SECURITY, SHARED_SECURITY);
+    absoluteCaps.setCap(SECURITY_POOL_ID, uint128(_capsUnits(SHARED_SECURITY)), uint128(_capsUnits(SHARED_SECURITY)));
     vm.stopPrank();
 
     _seedPool(positionManager, SEED_COLLATERAL, SEED_DEBT);
@@ -56,8 +56,12 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
     _enterFunded(facility2, positionManager2, user, 1_000e18);
 
     assertEq(_securityLeft(), SHARED_SECURITY - debt1 - debt2, "pool not charged by both clones");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), _securityWord(), "clone 1 word rewritten");
-    assertEq(facility2.getSecurityCap(address(underlyingToken)), _securityWord(), "clone 2 word rewritten");
+    assertEq(
+      facility.getSecurityCap(address(underlyingToken), address(debtToken)), _securityWord(), "clone 1 word rewritten"
+    );
+    assertEq(
+      facility2.getSecurityCap(address(underlyingToken), address(debtToken)), _securityWord(), "clone 2 word rewritten"
+    );
     _assertClonesClean();
   }
 
@@ -103,7 +107,7 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
 
   function test_sharedSecurity_authsStayPerClone() public {
     vm.prank(operator);
-    facility.setAuth(address(underlyingToken), user, 400e6, FAR_EXPIRY);
+    facility.setAuth(address(underlyingToken), address(debtToken), user, 400e6, FAR_EXPIRY);
 
     uint256 debt2 = _debtFor(positionManager2, 1_000e18);
     _fundFor(facility2, user, 1_000e18);
@@ -117,13 +121,15 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
         "clone 2 consumed an auth"
       );
     }
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 400e6, "clone 2 spent clone 1's auth");
-    assertEq(facility2.getAuth(address(underlyingToken), user).amount, 0, "clone 2 auth");
+    assertEq(
+      facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 400e6, "clone 2 spent clone 1's auth"
+    );
+    assertEq(facility2.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "clone 2 auth");
 
     uint256 debt1 = _debtFor(positionManager, 1_000e18);
     _fundFor(facility, user, 1_000e18);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, 400e6, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), user, 400e6, 0);
     _expectSecurityCharge(debt1 - 400e6, SHARED_SECURITY - debt2 - (debt1 - 400e6));
     _enterFunded(facility, positionManager, user, 1_000e18);
   }
@@ -178,8 +184,9 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
     return LibCaps.encodeExternal(address(absoluteCaps), SECURITY_POOL_ID, MULT_1X);
   }
 
-  function _securityLeft() internal view returns (uint256 cap) {
-    (cap,) = absoluteCaps.getCap(SECURITY_POOL_ID);
+  /// @dev Remaining shared security, in debt units.
+  function _securityLeft() internal view returns (uint256) {
+    return _absCap(SECURITY_POOL_ID);
   }
 
   /// @dev Opens both sides of `pm` on `f` with unbounded ABSOLUTE words and the shared security word.
@@ -189,7 +196,7 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
     f.setExit(address(pm), LibCaps.MAX_ABSOLUTE, FAR_EXPIRY, DEFAULT_FEE_BPS);
     vm.stopPrank();
     vm.prank(operator);
-    f.setSecurityCap(address(underlyingToken), _securityWord());
+    f.setSecurityCap(address(underlyingToken), address(debtToken), _securityWord());
   }
 
   function _debtFor(PositionManager pm, uint256 amount) internal view returns (uint256) {
@@ -198,7 +205,9 @@ contract MultiFacilitySecurityE2ETest is InKindFacilityBaseTest {
 
   function _expectSecurityCharge(uint256 debt, uint256 newCap) internal {
     vm.expectEmit(true, true, true, true, address(absoluteCaps));
-    emit IFacilityCaps.CapConsumed(SECURITY_POOL_ID, debt, MULT_1X, debt, uint128(newCap));
+    emit IFacilityCaps.CapConsumed(
+      SECURITY_POOL_ID, _capsUnits(debt), MULT_1X, _capsUnits(debt), uint128(_capsUnits(newCap))
+    );
   }
 
   function _fundFor(InKindFacility f, address who, uint256 amount) internal {

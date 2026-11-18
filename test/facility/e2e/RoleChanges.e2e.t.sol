@@ -107,8 +107,8 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
 
     _enter(user, 1_000e18, receiver);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 0, "auth");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 1_000e6, "security");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 0, "auth");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 1_000e6, "security");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 500e6, "capacity");
   }
 
@@ -127,8 +127,8 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
 
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP, "capacity");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, 300e6, "auth");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), LibCaps.MAX_ABSOLUTE, "security");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, 300e6, "auth");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), LibCaps.MAX_ABSOLUTE, "security");
     assertEq(underlyingToken.balanceOf(user), 1_000e18, "underlying");
   }
 
@@ -167,7 +167,7 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
     intents.withdraw(intentId, depositor, depositor, 400e6);
 
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 1_100e6, "pool");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 500e6, "security");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 500e6, "security");
   }
 
   function test_delistCaps_resettingAStoredWordRevertsInBothFacilities() public {
@@ -193,24 +193,24 @@ contract RoleChangesE2ETest is SharedCapsE2EBaseTest {
 
     vm.prank(facilitator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(absoluteCaps)));
-    facility.setExit(address(positionManager), exitWord, uint40(block.timestamp + 1 days), DEFAULT_FEE_BPS);
+    facility.setExit(address(positionManager), exitWord, uint40(vm.getBlockTimestamp() + 1 days), DEFAULT_FEE_BPS);
 
     vm.prank(operator);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, address(dynamicCaps)));
-    facility.setSecurityCap(address(underlyingToken), securityWord);
+    facility.setSecurityCap(address(underlyingToken), address(debtToken), securityWord);
 
     (IntentProperties memory props,,,) = intents.getIntent(intentId);
     assertEq(props.depositCap, entryWord, "intent word");
     assertEq(facility.getEntry(address(positionManager)).capacityCap, entryWord, "entry word");
     assertEq(facility.getExit(address(positionManager)).cap, exitWord, "exit word");
     assertEq(facility.getExit(address(positionManager)).expiry, FAR_EXPIRY, "exit expiry");
-    assertEq(facility.getSecurityCap(address(underlyingToken)), securityWord, "security word");
+    assertEq(facility.getSecurityCap(address(underlyingToken), address(debtToken)), securityWord, "security word");
 
     _depositIntent(intentId, depositor, 1_000e6);
     (uint256 shares,) = _enter(user, 1_000e18, user);
     (, uint256 debtIn) = _exit(user, shares, receiver);
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 1_500e6 + debtIn, "stored words keep consuming");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), 500e6, "security");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), 500e6, "security");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

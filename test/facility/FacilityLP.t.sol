@@ -63,7 +63,7 @@ contract FacilityLPTest is FacilityBaseTest {
     _depositToPM(user, DEFAULT_AMOUNT);
 
     // Move past resolveStart
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Should revert - intent is now in resolving phase
     vm.prank(user);
@@ -189,7 +189,7 @@ contract FacilityLPTest is FacilityBaseTest {
     facility.deposit(intentId, DEFAULT_AMOUNT);
 
     // Move past resolveStart
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     vm.prank(user);
     vm.expectRevert(abi.encodeWithSelector(LibFacilityErrors.NotDepositing.selector, intentId));
@@ -397,7 +397,7 @@ contract FacilityLPTest is FacilityBaseTest {
 
     // Move to RESOLVING phase and resolve
     // After warp, intent is already RESOLVING (no lock needed)
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
     vm.prank(facilitator);
     facility.resolve(intentId);
 
@@ -607,7 +607,7 @@ contract FacilityLPTest is FacilityBaseTest {
     facility.deposit(intentId2, 1000e18);
 
     // Warp past resolveStart for both intents
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Swap: 1 wei PM from intent1 ↔ 1 wei debtToken from intent2
     // After swap, intent1 holds: (1000e18 - 1) PM and 1 debtToken
@@ -618,7 +618,7 @@ contract FacilityLPTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: 1,
       amount2: 1,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     address[] memory signers = new address[](1);

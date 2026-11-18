@@ -265,7 +265,7 @@ contract BorrowOffersRegistryTest is Test {
     vm.stopPrank();
 
     // First sets are delayed by the floored (minimum) current timelock
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
     (uint40 timelockA,) = registry.offerConfig(collateralA);
     (uint40 timelockB,) = registry.offerConfig(collateralB);
     assertEq(timelockA, registry.MIN_OFFER_TIMELOCK(), "min bound should be accepted");
@@ -276,7 +276,7 @@ contract BorrowOffersRegistryTest is Test {
     // A never-configured collateral reads the floored minimum timelock, and the change delay is
     // re-based on that same floor: even the first set waits out MIN_OFFER_TIMELOCK
     uint40 floorTimelock = registry.MIN_OFFER_TIMELOCK();
-    uint40 expectedEffectiveAt = uint40(block.timestamp + floorTimelock);
+    uint40 expectedEffectiveAt = uint40(vm.getBlockTimestamp() + floorTimelock);
     vm.expectEmit(true, false, false, true, address(registry));
     emit IBorrowOffersRegistry.OfferTimelockScheduled(collateralA, 1 hours, expectedEffectiveAt);
     vm.prank(owner);
@@ -295,10 +295,10 @@ contract BorrowOffersRegistryTest is Test {
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 1 hours);
     // Let the first set (delayed by the floor) land before scheduling the change under test
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
 
     // Schedule a change: it must wait out the current 1 hour timelock
-    uint40 expectedEffectiveAt = uint40(block.timestamp + 1 hours);
+    uint40 expectedEffectiveAt = uint40(vm.getBlockTimestamp() + 1 hours);
     vm.expectEmit(true, false, false, true, address(registry));
     emit IBorrowOffersRegistry.OfferTimelockScheduled(collateralA, 2 hours, expectedEffectiveAt);
     vm.prank(owner);
@@ -325,22 +325,24 @@ contract BorrowOffersRegistryTest is Test {
     // reduction through
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 7 days);
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 15 minutes);
 
     (, uint40 firstAt) = registry.pendingOfferTimelock(collateralA);
-    assertEq(firstAt, uint40(block.timestamp + 7 days), "reduction should wait out the full current timelock");
+    assertEq(firstAt, uint40(vm.getBlockTimestamp() + 7 days), "reduction should wait out the full current timelock");
 
     // Re-scheduling before the pending change lands re-bases from the CURRENT
     // effective timelock (still 7 days), so the reduction cannot be accelerated
-    vm.warp(block.timestamp + 6 days);
+    vm.warp(vm.getBlockTimestamp() + 6 days);
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 15 minutes);
 
     (uint40 pendingValue, uint40 pendingAt) = registry.pendingOfferTimelock(collateralA);
     assertEq(pendingValue, 15 minutes, "pending value should be the re-scheduled timelock");
-    assertEq(pendingAt, uint40(block.timestamp + 7 days), "re-scheduling should re-base from the current timelock");
+    assertEq(
+      pendingAt, uint40(vm.getBlockTimestamp() + 7 days), "re-scheduling should re-base from the current timelock"
+    );
 
     (uint40 timelock,) = registry.offerConfig(collateralA);
     assertEq(timelock, 7 days, "current timelock should be unchanged until the pending change lands");
@@ -351,17 +353,17 @@ contract BorrowOffersRegistryTest is Test {
     // is based on the just-landed value rather than the stale stored one
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 1 hours);
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK()); // the 1 hour config lands
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK()); // the 1 hour config lands
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 2 hours);
 
-    vm.warp(block.timestamp + 1 hours); // the 2 hours change is now due
+    vm.warp(vm.getBlockTimestamp() + 1 hours); // the 2 hours change is now due
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 3 hours);
 
     (uint40 pendingValue, uint40 pendingAt) = registry.pendingOfferTimelock(collateralA);
     assertEq(pendingValue, 3 hours, "pending value should be the newly scheduled timelock");
-    assertEq(pendingAt, uint40(block.timestamp + 2 hours), "schedule should be based on the promoted timelock");
+    assertEq(pendingAt, uint40(vm.getBlockTimestamp() + 2 hours), "schedule should be based on the promoted timelock");
 
     (uint40 timelock,) = registry.offerConfig(collateralA);
     assertEq(timelock, 2 hours, "promoted timelock should be effective");
@@ -371,10 +373,10 @@ contract BorrowOffersRegistryTest is Test {
     // Let the floor-delayed first set land so the change under test has a clean baseline
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 1 hours);
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
 
     // Schedule a change: the still-future pending pair is reported
-    uint40 expectedEffectiveAt = uint40(block.timestamp + 1 hours);
+    uint40 expectedEffectiveAt = uint40(vm.getBlockTimestamp() + 1 hours);
     vm.prank(owner);
     registry.setOfferTimelock(collateralA, 2 hours);
     (uint40 pendingValue, uint40 pendingAt) = registry.pendingOfferTimelock(collateralA);
@@ -478,7 +480,7 @@ contract BorrowOffersRegistryTest is Test {
     registry.setOfferTimelock(collateralA, 1 hours);
     registry.setMinOfferBonus(collateralA, 300);
     vm.stopPrank();
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK()); // the timelock config lands
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK()); // the timelock config lands
 
     (uint40 timelockA, uint16 minBonusA) = registry.offerConfig(collateralA);
     assertEq(timelockA, 1 hours, "collateral A timelock should be configured");
@@ -535,7 +537,7 @@ contract BorrowOffersRegistryTest is Test {
     // The new owner administers the registry (the first set lands after the floor delay)
     vm.prank(newOwner);
     registry.setOfferTimelock(collateralA, 1 hours);
-    vm.warp(block.timestamp + registry.MIN_OFFER_TIMELOCK());
+    vm.warp(vm.getBlockTimestamp() + registry.MIN_OFFER_TIMELOCK());
     (uint40 timelock,) = registry.offerConfig(collateralA);
     assertEq(timelock, 1 hours, "new owner should be able to configure collaterals");
   }

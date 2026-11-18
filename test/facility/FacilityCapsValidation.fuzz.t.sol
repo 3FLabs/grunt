@@ -99,7 +99,7 @@ contract FacilityCapsValidationFuzzTest is FacilityBaseTest {
   function _intentInState(uint256 state) internal returns (uint256 intentId) {
     intentId = _createDefaultIntent();
     state = bound(state, 0, 2);
-    if (state > 0) vm.warp(block.timestamp + 1 days);
+    if (state > 0) vm.warp(vm.getBlockTimestamp() + 1 days);
     if (state == 2) {
       vm.prank(facilitator);
       facility.resolve(intentId);
@@ -136,7 +136,9 @@ contract FacilityCapsValidationFuzzTest is FacilityBaseTest {
     int24 multiplier = int24(uint24(word >> 224));
     bool listed = !delisted && (target == address(caps) || target == address(timeCaps));
     if (!listed) return abi.encodeWithSelector(LibFacilityErrors.CapsNotAllowed.selector, target);
-    if (multiplier == type(int24).min) return abi.encodeWithSelector(IFacilityCaps.InvalidMultiplier.selector);
+    if (multiplier == 0 || multiplier == type(int24).min) {
+      return abi.encodeWithSelector(IFacilityCaps.InvalidMultiplier.selector);
+    }
     if (target == address(caps) && !_validPoolIds(id)) {
       return abi.encodeWithSelector(FacilityAbsoluteCaps.InvalidCapId.selector);
     }

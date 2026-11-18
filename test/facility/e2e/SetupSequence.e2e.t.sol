@@ -102,8 +102,10 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
 
   function _setCaps() internal {
     vm.startPrank(capsManager);
-    absoluteCaps.setCap(POOL_ID, SHARED_POOL_CAP, SHARED_POOL_CAP);
-    dynamicCaps.setCap(SECURITY_RATE_ID, SECURITY_RECOVERY, 1 days, uint64(block.timestamp - 1 days));
+    absoluteCaps.setCap(POOL_ID, uint128(_capsUnits(SHARED_POOL_CAP)), uint128(_capsUnits(SHARED_POOL_CAP)));
+    dynamicCaps.setCap(
+      SECURITY_RATE_ID, uint128(_capsUnits(SECURITY_RECOVERY)), 1 days, uint64(vm.getBlockTimestamp() - 1 days)
+    );
     vm.stopPrank();
   }
 
@@ -113,7 +115,7 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
     _setEntry(positionManager, _poolWord(POOL_ID, MULT_1X), FAR_EXPIRY, DEFAULT_FEE_BPS);
     _setExit(positionManager, EXIT_BUDGET, FAR_EXPIRY, DEFAULT_FEE_BPS);
     vm.prank(operator);
-    facility.setSecurityCap(securityKey, _rateWord(SECURITY_RATE_ID, MULT_1X));
+    facility.setSecurityCap(securityKey, address(debtToken), _rateWord(SECURITY_RATE_ID, MULT_1X));
     _setAuth(user, AUTH_AMOUNT, FAR_EXPIRY);
     intentId = _createIntent(_poolWord(POOL_ID, MULT_1X));
   }
@@ -131,7 +133,7 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
 
   /// @dev Sets the intent's fund with the guardian's signature (quorum 1).
   function _setFundSigned(address fund) internal {
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
     bytes32 domainSeparator = keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -162,11 +164,11 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
     _fundEntrant(user, 1_000e18);
     vm.prank(user);
     vm.expectEmit(true, true, false, true, address(facility));
-    emit IInKindFacility.AuthConsumed(address(underlyingToken), user, AUTH_AMOUNT, 0);
+    emit IInKindFacility.AuthConsumed(address(underlyingToken), address(debtToken), user, AUTH_AMOUNT, 0);
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, user);
     assertEq(debtToken.balanceOf(user), 500e6, "entry debt");
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP - 500e6, "capacity pool");
-    assertEq(dynamicCaps.remaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "security rate");
+    assertEq(_dynRemaining(SECURITY_RATE_ID), SECURITY_RECOVERY - 200e6, "security rate");
 
     uint256 shares = positionManager.balanceOf(user);
     (uint256 debtIn, uint256 underlyingOut) = _exitMirror(positionManager, shares, DEFAULT_FEE_BPS);
@@ -314,6 +316,6 @@ contract SetupSequenceE2ETest is SharedCapsE2EBaseTest {
     vm.expectRevert(SafeTransferLib.TransferFromFailed.selector);
     facility.enter(address(positionManager), 1_000e18, 0, type(uint256).max, 0, receiver);
     assertEq(_poolCap(POOL_ID), SHARED_POOL_CAP, "capacity");
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, AUTH_AMOUNT, "auth");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, AUTH_AMOUNT, "auth");
   }
 }

@@ -70,9 +70,10 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
     return _externalWord(address(absoluteCaps), POOL_ID, MULT_1X);
   }
 
+  /// @dev Sets an absolute pool in debt units.
   function _setAbsPoolAt(uint16 id, uint128 cap, uint128 hardCap) internal {
     vm.prank(owner);
-    absoluteCaps.setCap(id, cap, hardCap);
+    absoluteCaps.setCap(id, uint128(cap * CAPS_SCALE), uint128(hardCap * CAPS_SCALE));
   }
 
   /// @dev An entry of AMOUNT draws on an EXTERNAL capacity pool, the auth and the security cap.
@@ -153,7 +154,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   }
 
   function test_enter_mintAtTheToleranceBoundPasses() public {
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     (uint256 expected, uint256 tolerance) = _fairMint(AMOUNT);
     // an odd rounding term tells the trailing `+ 1` apart from `^ 1`
     assertEq(tolerance % 2, 0, "fixture: rounding term must be odd");
@@ -233,7 +234,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   }
 
   function test_maxEnter_oneUnitBudgetQuotesADustEntry() public {
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     _setEntry(positionManager, 1, FAR_EXPIRY, DEFAULT_FEE_BPS);
     uint256 totalCollateral = positionManager.collateralAmount();
     uint256 totalDebt = positionManager.debtAmount();
@@ -263,8 +264,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
 
     (, uint256 debt) = _enter(user, max / 2, receiver);
     assertEq(debt, ARMED_CAP / 2, "debt");
-    (uint128 cap,) = absoluteCaps.getCap(POOL_ID);
-    assertEq(cap, 0, "pool");
+    assertEq(_absCap(POOL_ID), 0, "pool");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -272,7 +272,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_enter_expiredAuthEmitsNoAuthConsumed() public {
-    _setAuth(user, ARMED_AUTH, uint40(block.timestamp));
+    _setAuth(user, ARMED_AUTH, uint40(vm.getBlockTimestamp()));
     _fundEntrant(user, AMOUNT);
 
     vm.recordLogs();
@@ -291,7 +291,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
 
     vm.expectCall(address(absoluteCaps), abi.encodeWithSelector(IFacilityCaps.consume.selector), 0);
     _enterAmount(0);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, ARMED_CAP - debt, "auth");
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, ARMED_CAP - debt, "auth");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -301,7 +301,9 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   function test_enter_unleveredIgnoresExternalWordsOfARevokedConsumer() public {
     _setAbsPoolAt(POOL_ID, ARMED_CAP, ARMED_CAP);
     vm.prank(owner);
-    dynamicCaps.setCap(SECURITY_POOL_ID, ARMED_CAP, uint64(1 days), uint64(block.timestamp - 1 days));
+    dynamicCaps.setCap(
+      SECURITY_POOL_ID, uint128(ARMED_CAP * CAPS_SCALE), uint64(1 days), uint64(vm.getBlockTimestamp() - 1 days)
+    );
     _setEntry(positionManager, _absWord(), FAR_EXPIRY, DEFAULT_FEE_BPS, true);
     _setSecurityCap(_externalWord(address(dynamicCaps), SECURITY_POOL_ID, MULT_1X));
     _unleverPool();
@@ -392,7 +394,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
     _assertPreviewFeedsEnterBounds();
     _setPmFees(200, 2_000);
     oracle.setPrice(1.2e24);
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     _assertPreviewFeedsEnterBounds();
     oracle.setPrice(0.8e24);
     _assertPreviewFeedsEnterBounds();
@@ -401,7 +403,7 @@ contract InKindFacilityEnterTest is InKindFacilityBaseTest {
   function test_previewEnter_exactUnderPendingPmFees() public {
     _setPmFees(200, 2_000);
     oracle.setPrice(1.2e24);
-    vm.warp(block.timestamp + 90 days);
+    vm.warp(vm.getBlockTimestamp() + 90 days);
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     assertGt(mgmtShares, 0, "fixture: pending management fee");
     assertGt(perfShares, 0, "fixture: pending performance fee");

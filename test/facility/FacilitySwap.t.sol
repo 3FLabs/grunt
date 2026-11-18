@@ -39,7 +39,7 @@ contract FacilitySwapTest is FacilityBaseTest {
 
     // Warp time again to make the second intent resolving too
     // (the second intent was created after the first warp, so it has a later resolveStart)
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
   }
 
   /// @notice Helper to get EIP-712 domain separator
@@ -81,7 +81,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: amount1,
       amount2: amount2,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
   }
 
@@ -139,7 +139,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     facility.deposit(id2, 1000e18);
     vm.stopPrank();
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
@@ -148,7 +148,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     // Need 2 signatures (max quorum)
@@ -197,7 +197,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     facility.deposit(id2, 1000e18);
     vm.stopPrank();
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
@@ -206,7 +206,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     // No signatures needed with 0 quorum
@@ -259,7 +259,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: 100e18,
       amount2: 95e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     address[] memory signers = new address[](1);
@@ -274,7 +274,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     (uint256 id1, uint256 id2) = _createTwoResolvingIntents();
 
     SwapParams memory params = _createSwapParams(id1, id2, 100e18, 95e18);
-    params.deadline = block.timestamp - 1; // Expired
+    params.deadline = vm.getBlockTimestamp() - 1; // Expired
 
     bytes memory sig = _signSwap(params, GUARDIAN_PK);
     address[] memory signers = new address[](1);
@@ -348,7 +348,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     vm.prank(user2);
     facility.deposit(id2, 1000e18);
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Attempt same-token swap (should revert regardless of amounts)
     SwapParams memory params = SwapParams({
@@ -358,7 +358,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(positionManager), // Same token
       amount1: 100e18,
       amount2: 100e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     address[] memory signers = new address[](0);
@@ -402,7 +402,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     facility.deposit(id2, 1000e18);
     vm.stopPrank();
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
@@ -411,7 +411,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     // Only 1 signature when quorum is 2
@@ -444,7 +444,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     facility.deposit(id2, 1000e18);
     vm.stopPrank();
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: id1,
@@ -453,7 +453,7 @@ contract FacilitySwapTest is FacilityBaseTest {
       token2: address(debtToken),
       amount1: 100e18,
       amount2: 100e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     // Signers not in ascending order
@@ -572,7 +572,7 @@ contract FacilitySwapTest is FacilityBaseTest {
     (uint256 id1, uint256 id2) = _createTwoResolvingIntents();
 
     SwapParams memory params = _createSwapParams(id1, id2, 100e18, 95e18);
-    params.deadline = block.timestamp + deadlineOffset;
+    params.deadline = vm.getBlockTimestamp() + deadlineOffset;
 
     bytes memory sig = _signSwap(params, GUARDIAN_PK);
     address[] memory signers = new address[](1);

@@ -96,8 +96,8 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
     bool allowed = asOwner || (roleBits & FACILITY_OPERATOR_ROLE) != 0;
     if (!allowed) vm.expectRevert(Ownable.Unauthorized.selector);
     vm.prank(caller);
-    facility.setSecurityCap(address(debtToken), 123e6);
-    assertEq(facility.getSecurityCap(address(debtToken)), allowed ? 123e6 : 0, "stored");
+    facility.setSecurityCap(address(debtToken), address(debtToken), 123e6);
+    assertEq(facility.getSecurityCap(address(debtToken), address(debtToken)), allowed ? 123e6 : 0, "stored");
   }
 
   function testFuzz_setAuth_ownerOrOperator(uint256 seed, uint256 roleBits, bool asOwner) public {
@@ -105,8 +105,8 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
     bool allowed = asOwner || (roleBits & FACILITY_OPERATOR_ROLE) != 0;
     if (!allowed) vm.expectRevert(Ownable.Unauthorized.selector);
     vm.prank(caller);
-    facility.setAuth(address(underlyingToken), user, 123e6, FAR_EXPIRY);
-    assertEq(facility.getAuth(address(underlyingToken), user).amount, allowed ? 123e6 : 0, "stored");
+    facility.setAuth(address(underlyingToken), address(debtToken), user, 123e6, FAR_EXPIRY);
+    assertEq(facility.getAuth(address(underlyingToken), address(debtToken), user).amount, allowed ? 123e6 : 0, "stored");
   }
 
   function testFuzz_pauseFor_ownerOrCompliance(uint256 seed, uint256 roleBits, bool asOwner) public {
@@ -116,7 +116,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
     vm.prank(caller);
     facility.pauseFor(1 days);
     (,, uint40 pausedUntil) = facility.config();
-    assertEq(pausedUntil, allowed ? block.timestamp + 1 days : 0, "stored");
+    assertEq(pausedUntil, allowed ? vm.getBlockTimestamp() + 1 days : 0, "stored");
   }
 
   function testFuzz_setFeeRecipient_ownerOnly(uint256 seed, uint256 roleBits, bool asOwner) public {
@@ -166,11 +166,11 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
       vm.expectRevert(err);
     } else {
       vm.expectEmit(true, true, true, true, address(facility));
-      emit IInKindFacility.SecurityCapSet(address(debtToken), word);
+      emit IInKindFacility.SecurityCapSet(address(debtToken), address(debtToken), word);
     }
     vm.prank(operator);
-    facility.setSecurityCap(address(debtToken), word);
-    assertEq(facility.getSecurityCap(address(debtToken)), err.length > 0 ? 0 : word, "stored");
+    facility.setSecurityCap(address(debtToken), address(debtToken), word);
+    assertEq(facility.getSecurityCap(address(debtToken), address(debtToken)), err.length > 0 ? 0 : word, "stored");
   }
 
   function testFuzz_setExit_acceptsExactlyValidWords(
@@ -252,14 +252,14 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
     asset = address(uint160(bound(uint160(asset), 1, type(uint160).max)));
     cap = bound(cap, 0, LibCaps.MAX_ABSOLUTE);
     address other = address(uint160(asset) ^ 1);
-    uint256 otherCap = facility.getSecurityCap(other);
+    uint256 otherCap = facility.getSecurityCap(other, address(debtToken));
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.SecurityCapSet(asset, cap);
+    emit IInKindFacility.SecurityCapSet(asset, address(debtToken), cap);
     vm.prank(operator);
-    facility.setSecurityCap(asset, cap);
+    facility.setSecurityCap(asset, address(debtToken), cap);
 
-    assertEq(facility.getSecurityCap(asset), cap, "cap");
-    assertEq(facility.getSecurityCap(other), otherCap, "other asset written");
+    assertEq(facility.getSecurityCap(asset, address(debtToken)), cap, "cap");
+    assertEq(facility.getSecurityCap(other, address(debtToken)), otherCap, "other asset written");
   }
 
   function testFuzz_setAuth_storesAndEmitsExactFields(address asset, address who, uint128 amount, uint40 expiry)
@@ -269,14 +269,14 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
     who = address(uint160(bound(uint160(who), 1, type(uint160).max)));
     address otherUser = address(uint160(who) ^ 1);
     vm.expectEmit(true, true, true, true, address(facility));
-    emit IInKindFacility.AuthSet(asset, who, amount, expiry);
+    emit IInKindFacility.AuthSet(asset, address(debtToken), who, amount, expiry);
     vm.prank(operator);
-    facility.setAuth(asset, who, amount, expiry);
+    facility.setAuth(asset, address(debtToken), who, amount, expiry);
 
-    Auth memory auth = facility.getAuth(asset, who);
+    Auth memory auth = facility.getAuth(asset, address(debtToken), who);
     assertEq(auth.amount, amount, "amount");
     assertEq(auth.expiry, expiry, "expiry");
-    assertEq(facility.getAuth(asset, otherUser).amount, 0, "other user written");
+    assertEq(facility.getAuth(asset, address(debtToken), otherUser).amount, 0, "other user written");
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -286,7 +286,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
   function testFuzz_pauseFor_setsSaturatedPausedUntil(uint256 duration, uint256 time) public {
     vm.warp(bound(time, 1, type(uint40).max));
     uint256 capped = duration < type(uint40).max ? duration : type(uint40).max;
-    uint256 end = block.timestamp + capped;
+    uint256 end = vm.getBlockTimestamp() + capped;
     uint40 expected = duration == 0 ? 0 : uint40(end < type(uint40).max ? end : type(uint40).max);
 
     vm.expectEmit(true, true, true, true, address(facility));
@@ -296,7 +296,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
 
     (, bool isPaused, uint40 pausedUntil) = facility.config();
     assertEq(pausedUntil, expected, "pausedUntil");
-    assertEq(isPaused, block.timestamp < expected, "isPaused");
+    assertEq(isPaused, vm.getBlockTimestamp() < expected, "isPaused");
   }
 
   function testFuzz_pauseFor_gatesEveryFlowUntilItLapses(uint256 duration, uint256 elapsed, bool atLapse) public {
@@ -313,7 +313,7 @@ contract InKindFacilityAdminFuzzTest is InKindFacilityBaseTest {
 
     vm.prank(compliance);
     facility.pauseFor(duration);
-    vm.warp(block.timestamp + elapsed);
+    vm.warp(vm.getBlockTimestamp() + elapsed);
     bool paused = elapsed < duration;
     (, bool isPaused,) = facility.config();
     assertEq(isPaused, paused, "config");

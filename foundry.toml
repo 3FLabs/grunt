@@ -22,6 +22,10 @@ optimizer_runs = 150
 # Run fork tests in CI (ETH_RPC_URL secret required)
 no_match_test = "^invariant"
 
+[profile.solar]
+# Experimental: compile with Solar (forge build/test --profile solar). solc stays the default.
+solc_version = "solar"
+
 [profile.full]
 # Run all tests including invariant tests: FOUNDRY_PROFILE=full forge test
 no_match_test = "^$"
