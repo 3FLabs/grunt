@@ -16,33 +16,9 @@ import {IRequest} from "../../interfaces/request/IRequest.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibStorage, FacilityStorageData} from "./LibStorage.sol";
 import {IFund} from "../../interfaces/funds/IFund.sol";
-
-/// @dev Asset configuration for intents and swaps.
-/// @param asset Address of the asset.
-/// @param isPositionManager Whether the asset represents a position manager.
-struct Asset {
-  address asset;
-  bool isPositionManager;
-}
-
-/// @dev Configuration values that define an intent's behavior.
-/// @param depositAsset Asset deposited into the intent.
-/// @param targetAsset Target asset or position manager for the intent.
-/// @param depositCap Maximum amount that can be deposited into the intent.
-/// @param guardKey Address of the position manager whose transfer guard authorizes intent transfers.
-///                  Must equal the deposit asset, the target asset, or both (when both are position managers).
-/// @param resolveStart Timestamp at which the deposit phase ends and the resolving phase begins.
-/// @param quorum Quorum threshold required for guard approvals.
-/// @param transferableIntent If false, intent token transfers are disabled (mint/burn unaffected).
-struct IntentProperties {
-  Asset depositAsset;
-  Asset targetAsset;
-  uint256 depositCap;
-  address guardKey;
-  uint40 resolveStart;
-  uint8 quorum;
-  bool transferableIntent;
-}
+import {LibCaps, CapType} from "./LibCaps.sol";
+import {IFacilityCapsWhitelist} from "../../interfaces/facility/IFacilityCapsWhitelist.sol";
+import {Asset, IntentProperties} from "./IntentTypes.sol";
 
 /// @dev Intent state for a facility request, including configuration and accounting.
 /// @param properties Static configuration for the intent.
@@ -83,6 +59,7 @@ library LibIntent {
   using LibAddress for address;
   using SafeTransferLib for address;
   using LibStorage for FacilityStorageData;
+  using LibCaps for uint256;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        STATE CHECKS                        */
@@ -124,16 +101,33 @@ library LibIntent {
   /*                         VALIDATION                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Validates that a deposit amount does not exceed the intent's deposit cap.
-  /// @dev Reverts with DepositCapExceeded if the total supply after deposit would exceed the cap.
+  /// @notice Consumes the intent's deposit cap for a deposit.
+  /// @dev Absolute caps are the max total supply, as before cap types existed: reverts with
+  ///      DepositCapExceeded if the total supply after deposit would exceed the cap, and the
+  ///      word is never written. External caps consume amount x multiplier from their caps
+  ///      contract (state-changing external call, reverting when the cap cannot absorb it).
+  ///      Must run before the shares are minted.
   /// @param _self The intent storage reference.
   /// @param id The intent ID (used for error reporting).
   /// @param amount The amount being deposited.
-  function checkCap(Intent storage _self, uint256 id, uint256 amount) internal view {
-    uint256 attemptedTotal = _self.totalSupply + amount;
-    if (attemptedTotal > _self.properties.depositCap) {
-      revert LibFacilityErrors.DepositCapExceeded(id, _self.properties.depositCap, attemptedTotal);
+  function consumeCap(Intent storage _self, uint256 id, uint256 amount) internal {
+    uint256 cap = _self.properties.depositCap;
+    if (cap.capType() == CapType.ABSOLUTE) {
+      uint256 attemptedTotal = _self.totalSupply + amount;
+      if (attemptedTotal > cap) revert LibFacilityErrors.DepositCapExceeded(id, cap, attemptedTotal);
+      return;
     }
+    cap.consumeExternal(amount, _self.properties.depositAsset.asset);
+  }
+
+  /// @notice Releases the cap consumption of a deposit being undone.
+  /// @dev No-op for absolute caps, which follow totalSupply. External caps consume with the
+  ///      opposite multiplier, reversing the direction the deposit took in the caps contract
+  ///      (FacilityDynamicCaps charges releases on a negative word and ignores them otherwise).
+  /// @param _self The intent storage reference.
+  /// @param amount The deposited amount being undone.
+  function releaseCap(Intent storage _self, uint256 amount) internal {
+    _self.properties.depositCap.release(amount, _self.properties.depositAsset.asset);
   }
 
   /// @notice Validates that the intent's associated request has been repaid.
@@ -231,11 +225,28 @@ library LibIntent {
   }
 
   /// @notice Updates the deposit cap for an intent.
-  /// @dev Emits DepositCapUpdated on success.
+  /// @dev Validates the cap encoding (see LibCaps.validate) and emits DepositCapUpdated on
+  ///      success. Outstanding shares are not tracked per word: a release always follows the
+  ///      current word, so changing the encoding, the caps contract, the cap ID or the
+  ///      multiplier while shares are outstanding credits or debits a cap for deposits it never
+  ///      saw. To switch, set the word to zero first, let outstanding shares exit, then set the
+  ///      new word and reconcile the old pool. A multiplier change on the same pool, such as a
+  ///      periodic refresh of a PM-share word, can be made in place: releases of shares deposited
+  ///      before it follow the new multiplier, so the pool drifts by the change times the shares
+  ///      outstanding at the refresh, within its hard cap, and its flows can revert
+  ///      InsufficientCap or HardCapExceeded until the caps manager steps in. adjustCap adds room
+  ///      on a live pool. setCap overwrites consumption landing before it executes, so it only
+  ///      reconciles a shared pool while every consumer of the pool is paused. An ABSOLUTE word
+  ///      is the max total supply and may be set below it, which blocks deposits until enough
+  ///      shares exit.
   /// @param _self The intent storage reference.
   /// @param id The intent ID.
-  /// @param newDepositCap The new maximum deposit amount.
-  function updateDepositCap(Intent storage _self, uint256 id, uint256 newDepositCap) internal {
+  /// @param newDepositCap The new encoded deposit cap word.
+  /// @param whitelist The registry of allowed caps contracts.
+  function updateDepositCap(Intent storage _self, uint256 id, uint256 newDepositCap, IFacilityCapsWhitelist whitelist)
+    internal
+  {
+    newDepositCap.validate(whitelist);
     _self.properties.depositCap = newDepositCap;
     emit IFacilityIntents.DepositCapUpdated(id, newDepositCap);
   }

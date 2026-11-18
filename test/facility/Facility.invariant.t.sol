@@ -6,6 +6,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 // Core contracts
 import {Facility} from "src/facility/Facility.sol";
+import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
@@ -230,7 +231,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
     vm.label(address(descriptor), "IntentDescriptor");
 
     // ----- 11. Deploy Facility, initialize(owner, facilitator, descriptor) -----
-    facility = Facility(address(new Facility()).clone());
+    facility = Facility(address(new Facility(address(new FacilityCapsWhitelist(owner)))).clone());
     facility.initialize(owner, facilitator, address(descriptor));
     vm.label(address(facility), "Facility");
 
@@ -322,9 +323,20 @@ contract FacilityInvariantTest is StdInvariant, Test {
   /// @notice FAC-4: Deposit cap cannot be exceeded by a new deposit.
   /// @dev The deposit cap is only enforced at deposit time. Reducing the cap below the current
   ///      totalSupply is allowed, so totalSupply may temporarily exceed depositCap.
-  ///      Checked per-action in the handler. This invariant verifies the ghost flag.
+  ///      Checked per-action in the handler: a deposit above the cap must revert with
+  ///      DepositCapExceeded(id, cap, attemptedTotal). This invariant verifies the ghost flag.
   function invariant_depositCapNotExceeded() public view {
     assertFalse(handler.depositExceededCap(), "FAC-4: deposit pushed totalSupply above depositCap");
+  }
+
+  /// @notice FAC-4a: An absolute cap word only changes through createIntent and setDepositCap.
+  /// @dev Deposits, withdrawals, reverted deposits and claims never write it, in any state.
+  function invariant_absoluteCapOnlySetByFacilitator() public view {
+    uint256[] memory ids = handler.getIntentIds();
+    for (uint256 i = 0; i < ids.length; i++) {
+      (IntentProperties memory props,,,) = facility.getIntent(ids[i]);
+      assertEq(props.depositCap, handler.lastSetCap(ids[i]), "FAC-4a: absolute cap word changed outside setDepositCap");
+    }
   }
 
   /// @notice FAC-5: The sum of tracked token amounts across all intents does not exceed the
@@ -397,7 +409,7 @@ contract FacilityInvariantTest is StdInvariant, Test {
   function invariant_pauseConsistency() public view {
     (bool isPaused, uint40 pausedUntil) = facility.facilityConfig();
     if (isPaused) {
-      assertGe(pausedUntil, block.timestamp, "FAC-10: paused but pausedUntil < block.timestamp");
+      assertGe(pausedUntil, vm.getBlockTimestamp(), "FAC-10: paused but pausedUntil < block.timestamp");
     }
   }
 }

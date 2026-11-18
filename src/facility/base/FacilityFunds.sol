@@ -92,19 +92,9 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   ///      Transfers the input tokens to the fund and calls commit on it.
   ///      The intent must have an active order.
   function commit(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
-    LibStorage.checkNotPaused();
-    Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
-
-    // ensure the intent has an active order
-    _intent.checkActiveOrder(id);
-
-    // get the order and token to deposit
-    Order memory _order = _intent.order;
-    address _fund = _intent.fund;
-    address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_fund).asset() : IFund(_fund).share();
-
-    // take snapshot before the operation
-    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_tokenIn);
+    // the input token of the order (asset for a deposit, share for a redeem) is committed
+    (Intent storage _intent, address _fund, Order memory _order, address _tokenIn, BalanceSnapshot memory snapshot) =
+      _activeOrderContext(id, true);
 
     // commit the funds
     _tokenIn.safeApproveWithRetry(_fund, _order.input);
@@ -124,30 +114,14 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   ///      Receives the output tokens from the fund after successful processing.
   ///      Deletes the order if the state reaches ENDED.
   function unlock(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
-    LibStorage.checkNotPaused();
-    Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
-
-    // ensure the intent has an active order
-    _intent.checkActiveOrder(id);
-
-    Order memory _order = _intent.order;
-    address _fund = _intent.fund;
     // If this is the deposit, an unlock gives shares, otherwise it gives assets
-    address _tokenOut = _order.mode == Mode.DEPOSIT ? IFund(_fund).share() : IFund(_fund).asset();
-
-    // take snapshot before the operation
-    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_tokenOut);
+    (Intent storage _intent, address _fund, Order memory _order,, BalanceSnapshot memory snapshot) =
+      _activeOrderContext(id, false);
 
     // unlock the funds
     (State _state,) = IFund(_fund).unlock(_order);
 
-    // commit snapshot to record the balance change
-    _intent.commitBalanceSnapshot(id, snapshot, _fund);
-
-    if (_state == State.ENDED) {
-      // if the order is ended, delete the order
-      _intent.removeOrderAndFund(id);
-    }
+    _settleOrder(_intent, id, snapshot, _fund, _state);
   }
 
   /// @inheritdoc IFacilityFunds
@@ -155,27 +129,52 @@ abstract contract FacilityFunds is IFacilityFunds, ReentrancyGuardTransient, Fac
   ///      Receives the input tokens back from the fund.
   ///      Deletes the order if the state reaches ENDED.
   function recover(uint256 id) external override onlyRoles(FACILITATOR_ROLE) nonReentrant {
-    LibStorage.checkNotPaused();
-    Intent storage _intent = LibStorage.facilityStorage().getResolvingIntent(id);
-
-    // ensure the intent has an active order
-    _intent.checkActiveOrder(id);
-
-    Order memory _order = _intent.order;
-    address _fund = _intent.fund;
     // If this is the deposit, a recover gives assets back, otherwise it gives shares back
-    address _tokenIn = _order.mode == Mode.DEPOSIT ? IFund(_fund).asset() : IFund(_fund).share();
-
-    // take snapshot before the operation
-    BalanceSnapshot memory snapshot = LibIntent.takeBalanceSnapshot(_tokenIn);
+    (Intent storage _intent, address _fund, Order memory _order,, BalanceSnapshot memory snapshot) =
+      _activeOrderContext(id, true);
 
     // recover the funds
     (State _state,) = IFund(_fund).recover(_order);
 
-    // commit snapshot to record the balance change
-    _intent.commitBalanceSnapshot(id, snapshot, _fund);
+    _settleOrder(_intent, id, snapshot, _fund, _state);
+  }
 
-    if (_state == State.ENDED) {
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         INTERNALS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Shared prologue of the active-order operations: pause check, resolving intent with an
+  ///      active order, the order and fund, the token the operation moves and its pre-operation
+  ///      snapshot. `inputSide` selects the order's input token (asset for a deposit, share for a
+  ///      redeem); otherwise its output token.
+  function _activeOrderContext(uint256 id, bool inputSide)
+    private
+    view
+    returns (Intent storage _intent, address fund, Order memory order, address token, BalanceSnapshot memory snapshot)
+  {
+    LibStorage.checkNotPaused();
+    _intent = LibStorage.facilityStorage().getResolvingIntent(id);
+
+    // ensure the intent has an active order
+    _intent.checkActiveOrder(id);
+
+    order = _intent.order;
+    fund = _intent.fund;
+    token = (order.mode == Mode.DEPOSIT) == inputSide ? IFund(fund).asset() : IFund(fund).share();
+
+    // take snapshot before the operation
+    snapshot = LibIntent.takeBalanceSnapshot(token);
+  }
+
+  /// @dev Shared epilogue of unlock/recover: records the balance change and deletes the order
+  ///      once the fund reports it ended.
+  function _settleOrder(Intent storage _intent, uint256 id, BalanceSnapshot memory snapshot, address fund, State state)
+    private
+  {
+    // commit snapshot to record the balance change
+    _intent.commitBalanceSnapshot(id, snapshot, fund);
+
+    if (state == State.ENDED) {
       // if the order is ended, delete the order
       _intent.removeOrderAndFund(id);
     }

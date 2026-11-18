@@ -28,6 +28,9 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function queries the CDO
 ///        to determine state transitions (e.g., PROCESSING → UNLOCKING when withdrawal is claimable).
+///      - Redeems need the strategy's `epochNumber()` above zero: a request at epoch 0 leaves
+///        `lastWithdrawRequest` at zero and commit reverts InstantWithdrawDetected. Onboard a CDO
+///        after its first epoch.
 contract ParetoFund is IParetoFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;

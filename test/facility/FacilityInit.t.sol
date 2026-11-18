@@ -31,20 +31,31 @@ contract FacilityInitTest is FacilityBaseTest {
     assertEq(intentName, "3F facility intent #1", "Descriptor should be set");
   }
 
+  function test_constructor_revertOnZeroWhitelist() public {
+    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, address(0)));
+    new Facility(address(0));
+  }
+
+  function test_constructor_revertOnEOAWhitelist() public {
+    address notContract = makeAddr("notContract");
+    vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, notContract));
+    new Facility(notContract);
+  }
+
   function test_initialize_revertOnZeroOwner() public {
-    Facility newFacility = Facility(address(new Facility()).clone());
+    Facility newFacility = Facility(address(new Facility(address(capsWhitelist))).clone());
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
     newFacility.initialize(address(0), facilitator, address(descriptor));
   }
 
   function test_initialize_revertOnZeroDescriptor() public {
-    Facility newFacility = Facility(address(new Facility()).clone());
+    Facility newFacility = Facility(address(new Facility(address(capsWhitelist))).clone());
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, address(0)));
     newFacility.initialize(owner, facilitator, address(0));
   }
 
   function test_initialize_revertOnEOADescriptor() public {
-    Facility newFacility = Facility(address(new Facility()).clone());
+    Facility newFacility = Facility(address(new Facility(address(capsWhitelist))).clone());
     address notContract = makeAddr("notContract");
     vm.expectRevert(abi.encodeWithSelector(LibCommonErrors.InvalidContract.selector, notContract));
     newFacility.initialize(owner, facilitator, notContract);
@@ -163,14 +174,14 @@ contract FacilityInitTest is FacilityBaseTest {
   function testFuzz_initialize_withDifferentOwners(address newOwner) public {
     vm.assume(newOwner != address(0));
 
-    Facility newFacility = Facility(address(new Facility()).clone());
+    Facility newFacility = Facility(address(new Facility(address(capsWhitelist))).clone());
     newFacility.initialize(newOwner, facilitator, address(descriptor));
 
     assertEq(newFacility.owner(), newOwner, "Owner should be set correctly");
   }
 
   function testFuzz_initialize_withDifferentFacilitators(address newFacilitator) public {
-    Facility newFacility = Facility(address(new Facility()).clone());
+    Facility newFacility = Facility(address(new Facility(address(capsWhitelist))).clone());
     newFacility.initialize(owner, newFacilitator, address(descriptor));
 
     assertTrue(newFacility.hasAllRoles(newFacilitator, FACILITATOR_ROLE), "Facilitator should have role");

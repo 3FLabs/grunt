@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 // Core contracts
 import {Facility} from "src/facility/Facility.sol";
+import {FacilityCapsWhitelist} from "src/facility/caps/FacilityCapsWhitelist.sol";
 import {IntentDescriptor} from "src/facility/IntentDescriptor.sol";
 import {PositionManager} from "src/manager/PositionManager.sol";
 import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
@@ -148,7 +149,7 @@ contract FacilityReentrancyTest is Test {
 
     // Deploy Facility
     IntentDescriptor descriptor = new IntentDescriptor();
-    facility = Facility(address(new Facility()).clone());
+    facility = Facility(address(new Facility(address(new FacilityCapsWhitelist(owner)))).clone());
     facility.initialize(owner, facilitator, address(descriptor));
 
     // Roles
@@ -182,7 +183,7 @@ contract FacilityReentrancyTest is Test {
         targetAsset: Asset({asset: address(callbackDebt), isPositionManager: false}),
         depositCap: DEFAULT_DEPOSIT_CAP,
         guardKey: address(positionManager),
-        resolveStart: uint40(block.timestamp + 1 days),
+        resolveStart: uint40(vm.getBlockTimestamp() + 1 days),
         quorum: 1,
         transferableIntent: true
       })
@@ -202,7 +203,7 @@ contract FacilityReentrancyTest is Test {
         targetAsset: Asset({asset: address(positionManager), isPositionManager: true}),
         depositCap: DEFAULT_DEPOSIT_CAP,
         guardKey: address(positionManager),
-        resolveStart: uint40(block.timestamp + 1 days),
+        resolveStart: uint40(vm.getBlockTimestamp() + 1 days),
         quorum: 1,
         transferableIntent: true
       })
@@ -214,7 +215,7 @@ contract FacilityReentrancyTest is Test {
     facility.deposit(intentId2, 1000e18);
 
     // Warp past resolveStart and swap callbackDebt into intent1
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     SwapParams memory params = SwapParams({
       id1: intentId,
@@ -223,7 +224,7 @@ contract FacilityReentrancyTest is Test {
       token2: address(callbackDebt),
       amount1: 100e18,
       amount2: 100e18,
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
 
     address[] memory signers = new address[](1);
@@ -259,7 +260,7 @@ contract FacilityReentrancyTest is Test {
         targetAsset: Asset({asset: address(callbackDebt), isPositionManager: false}),
         depositCap: DEFAULT_DEPOSIT_CAP,
         guardKey: address(positionManager),
-        resolveStart: uint40(block.timestamp + 1 days),
+        resolveStart: uint40(vm.getBlockTimestamp() + 1 days),
         quorum: 1,
         transferableIntent: true
       })
@@ -289,7 +290,7 @@ contract FacilityReentrancyTest is Test {
         targetAsset: Asset({asset: address(callbackDebt), isPositionManager: false}),
         depositCap: DEFAULT_DEPOSIT_CAP,
         guardKey: address(positionManager),
-        resolveStart: uint40(block.timestamp + 1 days),
+        resolveStart: uint40(vm.getBlockTimestamp() + 1 days),
         quorum: 1,
         transferableIntent: true
       })
@@ -316,7 +317,7 @@ contract FacilityReentrancyTest is Test {
         targetAsset: Asset({asset: address(callbackDebt), isPositionManager: false}),
         depositCap: DEFAULT_DEPOSIT_CAP,
         guardKey: address(positionManager),
-        resolveStart: uint40(block.timestamp + 1 days),
+        resolveStart: uint40(vm.getBlockTimestamp() + 1 days),
         quorum: 1,
         transferableIntent: true
       })
@@ -327,7 +328,7 @@ contract FacilityReentrancyTest is Test {
     vm.prank(user);
     facility.deposit(intentId, depositAmount);
 
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
     vm.prank(facilitator);
     facility.resolve(intentId);
 

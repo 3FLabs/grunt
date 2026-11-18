@@ -32,7 +32,7 @@ contract RetargetterSmokeTest is RetargetterBaseTest {
     retargetter.commit();
     vm.stopPrank();
 
-    vm.warp(block.timestamp + 2 days);
+    vm.warp(vm.getBlockTimestamp() + 2 days);
     fund.settle();
 
     vm.startPrank(rebalancer);

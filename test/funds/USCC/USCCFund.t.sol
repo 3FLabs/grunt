@@ -32,6 +32,7 @@ contract USCCFundTest is Test {
   event OrderRecovering(bytes32 indexed orderId);
   event OrderProcessing(bytes32 indexed orderId);
   event OracleUpdated(address indexed newOracle, address indexed operator);
+  event RecipientUpdated(address indexed newRecipient);
   event OrderResolved(bytes32 indexed orderId, uint256 newInput, uint256 newOutput, address indexed operator);
 
   uint256 private constant ONE_USDC = 1e6;
@@ -71,7 +72,7 @@ contract USCCFundTest is Test {
     usdc = new MockERC20("USD Coin", "USDC", 6);
     uscc = new MockSuperstateToken("USCC", "USCC", address(allowlist), address(usdc));
     oracle = new MockChainlinkOracle(6);
-    oracle.setRoundData(1, int256(ONE_USDC), block.timestamp, 1);
+    oracle.setRoundData(1, int256(ONE_USDC), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(1);
 
     WrappedAsset implementation = new WrappedAsset();
@@ -810,7 +811,7 @@ contract USCCFundTest is Test {
   function test_SetOracle_Success() public {
     MockChainlinkOracle newOracle = new MockChainlinkOracle(6);
     // Set valid data in the new oracle since setOracle() now reads from it
-    newOracle.setRoundData(1, int256(ONE_USDC), block.timestamp, 1);
+    newOracle.setRoundData(1, int256(ONE_USDC), vm.getBlockTimestamp(), 1);
     newOracle.setLatestRound(1);
 
     vm.prank(owner);
@@ -837,6 +838,42 @@ contract USCCFundTest is Test {
     vm.prank(outsider);
     vm.expectRevert(Unauthorized.selector);
     fund.setOracle(address(newOracle));
+  }
+
+  function test_SetRecipient_Success() public {
+    address newRecipient = makeAddr("newRecipient");
+    vm.prank(owner);
+    vm.expectEmit(true, true, true, true);
+    emit RecipientUpdated(newRecipient);
+    fund.setRecipient(newRecipient);
+
+    Order memory order = _depositOrder(ONE_USDC, ONE_USDC);
+    fund.create(order);
+    _commitDeposit(order);
+    assertEq(usdc.balanceOf(newRecipient), order.input, "new recipient");
+    assertEq(usdc.balanceOf(recipient), 0, "old recipient");
+  }
+
+  function test_SetRecipient_RevertsZeroAddress() public {
+    vm.prank(owner);
+    vm.expectRevert(CommonErrors.AddressZero.selector);
+    fund.setRecipient(address(0));
+  }
+
+  function test_SetRecipient_Operator() public {
+    vm.prank(owner);
+    fund.grantRoles(operator, OPERATOR_ROLE);
+
+    vm.prank(operator);
+    vm.expectEmit(true, true, true, true);
+    emit RecipientUpdated(outsider);
+    fund.setRecipient(outsider);
+  }
+
+  function test_SetRecipient_OnlyOperatorOrOwner() public {
+    vm.prank(outsider);
+    vm.expectRevert(Unauthorized.selector);
+    fund.setRecipient(outsider);
   }
 
   function test_Resolve_Success() public {
@@ -978,7 +1015,7 @@ contract USCCFundTest is Test {
   }
 
   function test_TotalAssets_ChainlinkInvalidAnswer() public {
-    oracle.setRoundData(2, 0, block.timestamp, 2);
+    oracle.setRoundData(2, 0, vm.getBlockTimestamp(), 2);
     oracle.setLatestRound(2);
     vm.expectRevert(LibFundsErrors.ChainlinkInvalidAnswer.selector);
     fund.totalAssets();
@@ -992,7 +1029,7 @@ contract USCCFundTest is Test {
   }
 
   function test_TotalAssets_ChainlinkStaleRound() public {
-    oracle.setRoundData(2, int256(ONE_USDC), block.timestamp, 1);
+    oracle.setRoundData(2, int256(ONE_USDC), vm.getBlockTimestamp(), 1);
     oracle.setLatestRound(2);
     vm.expectRevert(LibFundsErrors.ChainlinkStaleRound.selector);
     fund.totalAssets();
@@ -1006,7 +1043,7 @@ contract USCCFundTest is Test {
   function test_TotalAssets_RoundIdGap() public {
     // Simulate a gap in round IDs (e.g., jump from round 1 to round 5)
     // Round 2, 3, 4 don't exist
-    oracle.setRoundData(5, int256(ONE_USDC), block.timestamp, 5);
+    oracle.setRoundData(5, int256(ONE_USDC), vm.getBlockTimestamp(), 5);
     oracle.setLatestRound(5);
 
     // This succeeds because we check absolute bounds, not previous rounds
@@ -1016,7 +1053,7 @@ contract USCCFundTest is Test {
 
   function test_TotalAssets_RoundIdGap_LargeJump() public {
     // Simulate a large gap in round IDs
-    oracle.setRoundData(100, int256(ONE_USDC), block.timestamp, 100);
+    oracle.setRoundData(100, int256(ONE_USDC), vm.getBlockTimestamp(), 100);
     oracle.setLatestRound(100);
 
     // Round 99 doesn't exist - handled gracefully with bounds-based approach
@@ -1027,8 +1064,8 @@ contract USCCFundTest is Test {
   function test_TotalAssets_SuccessWithNonSequentialRounds() public {
     // Bounds-based approach doesn't depend on previous rounds
     // This test verifies that even if previous round data is invalid, we can still read totalAssets
-    oracle.setRoundData(2, int256(ONE_USDC), block.timestamp, 2);
-    oracle.setRoundData(1, 0, block.timestamp, 1); // Invalid previous round
+    oracle.setRoundData(2, int256(ONE_USDC), vm.getBlockTimestamp(), 2);
+    oracle.setRoundData(1, 0, vm.getBlockTimestamp(), 1); // Invalid previous round
     oracle.setLatestRound(2);
 
     // Should succeed because we validate against absolute bounds, not previous rounds

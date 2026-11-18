@@ -63,7 +63,7 @@ contract RequestTest is Test {
     // Create request via factory with far future deadline (effectively disabled for most tests)
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset), "Test Request", "REQ", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
 
     request = Request(reqAddr);
@@ -93,7 +93,7 @@ contract RequestTest is Test {
     emit RequestCreated(address(0), address(asset), address(0), address(0));
 
     factory.createRequest(
-      owner, puller, consumer, address(asset), "New Request", "NEW", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset), "New Request", "NEW", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
   }
 
@@ -132,10 +132,10 @@ contract RequestTest is Test {
   function test_factory_isRequest_tracksMultipleRequests() public {
     // Deploy additional requests
     (address req1,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset), "Request 1", "REQ1", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
     (address req2,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset), "Request 2", "REQ2", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
 
     // All deployed requests should be tracked
@@ -162,7 +162,7 @@ contract RequestTest is Test {
       address(ytVault),
       "New",
       "NEW",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       0
     );
   }
@@ -313,7 +313,7 @@ contract RequestTest is Test {
     assertGt(mintTimestamp, 0);
 
     // Warp forward — a griefing caller tries to bump the timestamp
-    vm.warp(block.timestamp + 1 days);
+    vm.warp(vm.getBlockTimestamp() + 1 days);
     address griefer = makeAddr("griefer");
     vm.prank(griefer);
     request.mint(type(uint128).max, 0);
@@ -572,7 +572,7 @@ contract RequestTest is Test {
       address(asset),
       "Callback Request",
       "CALLBACK",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       0
     );
 
@@ -627,7 +627,7 @@ contract RequestTest is Test {
       address(asset),
       "Callback Request",
       "CALLBACK",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       0
     );
 
@@ -676,7 +676,7 @@ contract RequestTest is Test {
       address(asset),
       "Callback Request",
       "CALLBACK",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       0
     );
 
@@ -728,7 +728,7 @@ contract RequestTest is Test {
       address(asset),
       "Callback Request",
       "CALLBACK",
-      uint64(block.timestamp + 90 days),
+      uint64(vm.getBlockTimestamp() + 90 days),
       0
     );
 
@@ -1264,7 +1264,7 @@ contract RequestTest is Test {
     uint40 delay = 24 hours;
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(vm.getBlockTimestamp() + 90 days), delay
     );
     Request timelockRequest = Request(reqAddr);
     assertEq(timelockRequest.mintToRepaidDelay(), delay);
@@ -1283,14 +1283,14 @@ contract RequestTest is Test {
     request.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    assertEq(request.lastMintTimestamp(), uint40(block.timestamp));
+    assertEq(request.lastMintTimestamp(), uint40(vm.getBlockTimestamp()));
   }
 
   function test_setRepaid_revertsWhenTimelockActive() public {
     uint40 delay = 24 hours;
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(vm.getBlockTimestamp() + 90 days), delay
     );
     Request timelockRequest = Request(reqAddr);
 
@@ -1305,7 +1305,7 @@ contract RequestTest is Test {
     timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    uint40 expectedAvailableAt = uint40(block.timestamp) + delay;
+    uint40 expectedAvailableAt = uint40(vm.getBlockTimestamp()) + delay;
 
     vm.prank(owner);
     vm.expectRevert(abi.encodeWithSelector(LibRequestErrors.MintToRepaidDelayNotElapsed.selector, expectedAvailableAt));
@@ -1316,7 +1316,7 @@ contract RequestTest is Test {
     uint40 delay = 24 hours;
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(vm.getBlockTimestamp() + 90 days), delay
     );
     Request timelockRequest = Request(reqAddr);
 
@@ -1332,7 +1332,7 @@ contract RequestTest is Test {
     vm.stopPrank();
 
     // Warp past the timelock
-    vm.warp(block.timestamp + delay);
+    vm.warp(vm.getBlockTimestamp() + delay);
 
     vm.prank(owner);
     timelockRequest.setRepaid(0, type(uint256).max);
@@ -1343,7 +1343,7 @@ contract RequestTest is Test {
     uint40 delay = 24 hours;
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(vm.getBlockTimestamp() + 90 days), delay
     );
     Request timelockRequest = Request(reqAddr);
 
@@ -1363,7 +1363,7 @@ contract RequestTest is Test {
     uint40 delay = 24 hours;
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(block.timestamp + 90 days), delay
+      owner, puller, consumer, address(asset), "Timelock", "TL", uint64(vm.getBlockTimestamp() + 90 days), delay
     );
     Request timelockRequest = Request(reqAddr);
 
@@ -1377,7 +1377,7 @@ contract RequestTest is Test {
     timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    assertEq(timelockRequest.repaidAvailableAt(), uint40(block.timestamp) + delay);
+    assertEq(timelockRequest.repaidAvailableAt(), uint40(vm.getBlockTimestamp()) + delay);
   }
 
   function test_setMintToRepaidDelay_ownerCanSet() public {
@@ -1408,7 +1408,7 @@ contract RequestTest is Test {
 
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(
-      owner, puller, consumer, address(asset), "Fuzz", "FZ", uint64(block.timestamp + 90 days), delay
+      owner, puller, consumer, address(asset), "Fuzz", "FZ", uint64(vm.getBlockTimestamp() + 90 days), delay
     );
     Request timelockRequest = Request(reqAddr);
 
@@ -1423,7 +1423,7 @@ contract RequestTest is Test {
     timelockRequest.mint(type(uint128).max, 0);
     vm.stopPrank();
 
-    uint256 mintTime = block.timestamp;
+    uint256 mintTime = vm.getBlockTimestamp();
     vm.warp(mintTime + timePassed);
 
     if (timePassed >= 90 days) {
@@ -1464,7 +1464,7 @@ contract RequestTest is Test {
 
   function test_canWithdraw_realTimeAfterDeadline_isRepaidStillFalse() public {
     // Create a request with a deadline that will pass
-    uint64 deadline = uint64(block.timestamp + 1 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 1 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DL", deadline, 0);
@@ -1788,14 +1788,14 @@ contract RequestTest is Test {
 
     // Create request with 18 decimals
     (, address pt18, address yt18) = factory.createRequest(
-      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset18), "DAI Request", "DAI-REQ", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
     assertEq(Vault(pt18).decimals(), 18);
     assertEq(Vault(yt18).decimals(), 18);
 
     // Create request with 8 decimals
     (, address pt8, address yt8) = factory.createRequest(
-      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(block.timestamp + 90 days), 0
+      owner, puller, consumer, address(asset8), "WBTC Request", "WBTC-REQ", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
     assertEq(Vault(pt8).decimals(), 8);
     assertEq(Vault(yt8).decimals(), 8);
@@ -1857,7 +1857,7 @@ contract RequestTest is Test {
 
   function test_repaymentDeadline_enablesWithdrawalsAfterDeadline() public {
     // Create a new request with a deadline in the future
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr, address ptAddr, address ytAddr) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -1905,7 +1905,7 @@ contract RequestTest is Test {
   }
 
   function test_repaymentDeadline_setRepaidStillWorks() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -1924,7 +1924,7 @@ contract RequestTest is Test {
   }
 
   function test_repaymentDeadline_blocksOperationsAfterDeadline() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -1976,7 +1976,7 @@ contract RequestTest is Test {
   }
 
   function test_repaymentDeadline_mintBlockedAfterDeadline() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2003,7 +2003,7 @@ contract RequestTest is Test {
   }
 
   function test_repaymentDeadline_consumeBlockedAfterDeadline() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2014,7 +2014,7 @@ contract RequestTest is Test {
     vm.warp(deadline + 1);
 
     // Consume should be blocked
-    Offer memory offer = _createOffer(address(0x123), 1_000_000e6, 100_000e6, 1, block.timestamp + 1 days, false);
+    Offer memory offer = _createOffer(address(0x123), 1_000_000e6, 100_000e6, 1, vm.getBlockTimestamp() + 1 days, false);
     bytes memory signature = _signOffer(offer, maker);
 
     vm.prank(owner);
@@ -2023,7 +2023,7 @@ contract RequestTest is Test {
   }
 
   function test_repaymentDeadline_beforeDeadlineOperationsWork() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2065,7 +2065,7 @@ contract RequestTest is Test {
   }
 
   function test_repaymentDeadline_exactlyAtDeadline() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2086,7 +2086,7 @@ contract RequestTest is Test {
   }
 
   function test_syncRepaidStatus_returnsFalseBeforeDeadline() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2101,7 +2101,7 @@ contract RequestTest is Test {
   }
 
   function test_syncRepaidStatus_idempotentAfterDeadline() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2125,7 +2125,7 @@ contract RequestTest is Test {
   }
 
   function test_syncRepaidStatus_returnsTrueIfAlreadyRepaidViaSetRepaid() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2142,7 +2142,7 @@ contract RequestTest is Test {
   }
 
   function test_syncRepaidStatus_emitsRepaidEventWithCorrectBalance() public {
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     (address reqAddr,,) =
       factory.createRequest(owner, puller, consumer, address(asset), "Deadline Request", "DEADLINE", deadline, 0);
@@ -2175,21 +2175,21 @@ contract RequestTest is Test {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   function test_initialize_revertsWhenDeadlineInPast() public {
-    uint64 pastDeadline = uint64(block.timestamp - 1);
+    uint64 pastDeadline = uint64(vm.getBlockTimestamp() - 1);
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
     factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", pastDeadline, 0);
   }
 
   function test_initialize_revertsWhenDeadlineAtCurrentTimestamp() public {
-    uint64 currentDeadline = uint64(block.timestamp);
+    uint64 currentDeadline = uint64(vm.getBlockTimestamp());
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
     factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", currentDeadline, 0);
   }
 
   function test_initialize_revertsWhenDeadlineTooFarInFuture() public {
-    uint64 farDeadline = uint64(block.timestamp + 91 days);
+    uint64 farDeadline = uint64(vm.getBlockTimestamp() + 91 days);
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
     factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", farDeadline, 0);
@@ -2198,7 +2198,7 @@ contract RequestTest is Test {
   function test_initialize_revertsWhenDeadlineBelowMintToRepaidDelay() public {
     uint40 delay = 30 days;
     // Deadline is only 15 days away, but delay is 30 days → deadline < block.timestamp + delay
-    uint64 tooSoonDeadline = uint64(block.timestamp + 15 days);
+    uint64 tooSoonDeadline = uint64(vm.getBlockTimestamp() + 15 days);
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
     factory.createRequest(owner, puller, consumer, address(asset), "Bad", "BAD", tooSoonDeadline, delay);
@@ -2208,14 +2208,14 @@ contract RequestTest is Test {
     // Minimum valid: block.timestamp + mintToRepaidDelay (with delay=0, that's block.timestamp + 1 effectively)
     // Actually with delay=0, minimum is block.timestamp + 0, but strict > is needed for block.timestamp check
     // Let's use delay=0 and deadline=block.timestamp + 1
-    uint64 minDeadline = uint64(block.timestamp + 1);
+    uint64 minDeadline = uint64(vm.getBlockTimestamp() + 1);
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Min", "MIN", minDeadline, 0);
     assertNotEq(reqAddr, address(0));
   }
 
   function test_initialize_succeedsAtMaximumValidDeadline() public {
-    uint64 maxDeadline = uint64(block.timestamp + 90 days);
+    uint64 maxDeadline = uint64(vm.getBlockTimestamp() + 90 days);
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Max", "MAX", maxDeadline, 0);
     assertNotEq(reqAddr, address(0));
@@ -2223,7 +2223,7 @@ contract RequestTest is Test {
 
   function test_initialize_revertsWhenDeadlineEqualsDelay() public {
     uint40 delay = 30 days;
-    uint64 deadline = uint64(block.timestamp + 30 days);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days);
     vm.prank(owner);
     vm.expectRevert(LibRequestErrors.InvalidRepaymentDeadline.selector);
     factory.createRequest(owner, puller, consumer, address(asset), "Equal", "EQ", deadline, delay);
@@ -2231,7 +2231,7 @@ contract RequestTest is Test {
 
   function test_initialize_succeedsWithDeadlineAboveDelay() public {
     uint40 delay = 30 days;
-    uint64 deadline = uint64(block.timestamp + 30 days + 1);
+    uint64 deadline = uint64(vm.getBlockTimestamp() + 30 days + 1);
     vm.prank(owner);
     (address reqAddr,,) = factory.createRequest(owner, puller, consumer, address(asset), "Above", "AB", deadline, delay);
     assertNotEq(reqAddr, address(0));
@@ -2240,7 +2240,7 @@ contract RequestTest is Test {
   function test_initialize_revertOnZeroOwner() public {
     vm.expectRevert(LibCommonErrors.AddressZero.selector);
     factory.createRequest(
-      address(0), puller, consumer, address(asset), "Zero", "ZRO", uint64(block.timestamp + 90 days), 0
+      address(0), puller, consumer, address(asset), "Zero", "ZRO", uint64(vm.getBlockTimestamp() + 90 days), 0
     );
   }
 }

@@ -45,7 +45,11 @@ struct TokenConfig {
 ///      **Collateral check:**
 ///      When checkCollateralAllowed is set, the guard additionally calls the token's collateral
 ///      asset's `isAllowed(account, amount)` for each non-null party. This delegates compliance
-///      enforcement (e.g., Superstate allowlist) to the WrappedAsset layer.
+///      enforcement (e.g., Superstate allowlist) to the WrappedAsset layer. Set it on every PM
+///      whose collateral is a compliance wrapper: Facility and InKindFacility custody hide the
+///      original holder from the issuer, so this check on the holder's share transfer is what
+///      stops a revoked holder. The base WrappedAsset allows everyone, so a restricted
+///      underlying needs its restricted wrapper.
 ///
 ///      **Roles:**
 ///      - Owner: Full control (set token config, manage roles)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.22;
 
-import {IntentProperties, Asset} from "../../../libs/facility/LibIntent.sol";
+import {IntentProperties, Asset} from "../../../libs/facility/IntentTypes.sol";
 
 /// @title IFacilityIntents
 /// @author 3F Protocol
@@ -29,7 +29,7 @@ interface IFacilityIntents {
 
   /// @notice Emitted when the deposit cap is updated.
   /// @param id The intent ID.
-  /// @param newDepositCap The new deposit cap.
+  /// @param newDepositCap The new encoded deposit cap word.
   event DepositCapUpdated(uint256 indexed id, uint256 newDepositCap);
 
   /// @notice Emitted when the intent target is updated.
@@ -68,6 +68,7 @@ interface IFacilityIntents {
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
   /// @notice Creates a new intent and returns its ID.
+  /// @dev `params.depositCap` is validated like {setDepositCap}.
   /// @param params Configuration values for the new intent.
   function createIntent(IntentProperties calldata params) external returns (uint256 id);
 
@@ -86,8 +87,19 @@ interface IFacilityIntents {
   function resolve(uint256 id) external;
 
   /// @notice Sets a new deposit cap for a given intent ID.
+  /// @dev The cap is an encoded word: a zero top byte means the value is the max total supply
+  ///      of the intent (unchanged by deposits and withdrawals, LibCaps.MAX_ABSOLUTE for no cap),
+  ///      a top byte of 1 references a cap in an IFacilityCaps contract consumed on deposit and
+  ///      released on withdrawal (see LibCaps for the exact layout). Releases follow the current
+  ///      word, so change the encoding or the referenced cap only after setting the word to zero
+  ///      and letting outstanding shares exit, then reconcile the old pool. A multiplier change on
+  ///      the same pool (a periodic refresh) can be made in place: the pool drifts and its flows
+  ///      can revert until reconciled, with setCap only while every consumer of the pool is
+  ///      paused (see LibIntent.updateDepositCap).
+  ///      Callable in any intent state: caps are only consumed while depositing, but releases
+  ///      (e.g. reverted deposits while resolving) follow the current word.
   /// @param id The intent ID.
-  /// @param newDepositCap The new deposit cap value.
+  /// @param newDepositCap The new encoded deposit cap word.
   function setDepositCap(uint256 id, uint256 newDepositCap) external;
 
   /// @notice Sets a new fund address for a given intent ID.

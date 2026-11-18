@@ -65,17 +65,17 @@ contract PositionManagerInitTest is PositionManagerBaseTest {
 
   function test_lastFeeAccrualTimestamp() public {
     uint256 initialTimestamp = _lastFeeAccrualTimestamp();
-    assertEq(initialTimestamp, block.timestamp);
+    assertEq(initialTimestamp, vm.getBlockTimestamp());
 
     // Advance time
-    vm.warp(block.timestamp + 100);
+    vm.warp(vm.getBlockTimestamp() + 100);
 
     // Deposit triggers fee accrual
     _mintCollateral(minter, COLLATERAL_AMOUNT);
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    assertEq(_lastFeeAccrualTimestamp(), block.timestamp);
+    assertEq(_lastFeeAccrualTimestamp(), vm.getBlockTimestamp());
   }
 
   function test_totalAssets() public {

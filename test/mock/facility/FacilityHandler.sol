@@ -13,6 +13,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {IMorpho, MarketParams} from "lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {OracleMock} from "lib/morpho-blue/src/mocks/OracleMock.sol";
 import {MockRequest} from "test/mock/facility/MockRequest.sol";
+import {LibFacilityErrors} from "src/libs/facility/LibFacilityErrors.sol";
 
 /// @title FacilityHandler
 /// @notice Handler contract for Facility invariant tests.
@@ -66,6 +67,9 @@ contract FacilityHandler is Test {
   /// @notice Tracks whether an intent uses debtToken (true) or PM shares (false) as deposit asset.
   mapping(uint256 => bool) public intentIsDebtToken;
 
+  /// @notice FAC-4a: the absolute cap word last set (creation or setDepositCap).
+  mapping(uint256 => uint256) public lastSetCap;
+
   /// @notice Fixed users array used by the fuzzer.
   address[] public users;
 
@@ -88,7 +92,8 @@ contract FacilityHandler is Test {
   /// @notice FAC-8: Set to true if a swap digest replay succeeds.
   bool public swapReplaySucceeded;
 
-  /// @notice FAC-4: Set to true if a deposit results in totalSupply exceeding depositCap.
+  /// @notice FAC-4: Set to true if a deposit consumed more than the available cap, or a
+  ///         different amount than it minted.
   bool public depositExceededCap;
 
   /// @notice FAC-10: Tracks whether the facility is currently paused by this handler.
@@ -196,7 +201,7 @@ contract FacilityHandler is Test {
 
   /// @notice Sets request through facilitator + guardian signature path.
   function _setRequest(uint256 id, address newRequest) external {
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
     signers[0] = guardian;
@@ -268,7 +273,7 @@ contract FacilityHandler is Test {
       targetAsset: targetAsset,
       depositCap: depositCap,
       guardKey: address(positionManager),
-      resolveStart: uint40(block.timestamp + resolveDelay),
+      resolveStart: uint40(vm.getBlockTimestamp() + resolveDelay),
       quorum: 1,
       transferableIntent: true
     });
@@ -279,11 +284,14 @@ contract FacilityHandler is Test {
     intentIds.push(id);
     intentStates[id] = 0; // DEPOSITING
     intentIsDebtToken[id] = isDebt;
+    lastSetCap[id] = depositCap;
   }
 
   /// @notice Deposits into a DEPOSITING intent on behalf of a fuzzed user.
-  /// @dev Handles both PM-share and debtToken intents. Verifies 1:1 LP minting (FAC-3).
-  ///      Early-returns if no depositing intents or deposit cap already reached.
+  /// @dev Handles both PM-share and debtToken intents. Verifies 1:1 LP minting (FAC-3) and
+  ///      that the deposit did not push totalSupply above the cap (FAC-4). One deposit in eight
+  ///      is attempted above the cap and must revert with DepositCapExceeded.
+  ///      Early-returns if no depositing intents.
   /// @param intentSeed Seed for selecting an intent.
   /// @param amountSeed Seed for fuzzing the deposit amount.
   /// @param userSeed Seed for selecting a user.
@@ -294,27 +302,36 @@ contract FacilityHandler is Test {
     uint256 id = depositingIds[intentSeed % depositingIds.length];
 
     (IntentProperties memory props,,,) = facility.getIntent(id);
+    // the absolute cap is the max total supply, which a cap cut may leave below the supply
     uint256 currentSupply = facility.totalSupply(id);
-    if (currentSupply >= props.depositCap) return;
+    uint256 remaining = currentSupply < props.depositCap ? props.depositCap - currentSupply : 0;
+    address depositor = users[userSeed % users.length];
 
-    uint256 remaining = props.depositCap - currentSupply;
+    // FAC-4: a deposit above the cap must revert with the cap and the attempted total
+    if (amountSeed % 8 == 0 && remaining < 1_000_000e18) {
+      uint256 over = remaining + 1;
+      _fundDepositor(id, depositor, over);
+      vm.prank(depositor);
+      try facility.deposit(id, over) {
+        depositExceededCap = true;
+      } catch (bytes memory reason) {
+        // other reverts (pause, intent past resolveStart) are not cap decisions
+        if (reason.length >= 4 && bytes4(reason) == LibFacilityErrors.DepositCapExceeded.selector) {
+          bytes memory expected = abi.encodeWithSelector(
+            LibFacilityErrors.DepositCapExceeded.selector, id, props.depositCap, currentSupply + over
+          );
+          if (keccak256(reason) != keccak256(expected)) depositExceededCap = true;
+        }
+      }
+      return;
+    }
+
     uint256 maxDeposit = remaining < 1_000_000e18 ? remaining : 1_000_000e18;
     if (maxDeposit < 1e18) return;
 
     uint256 amount = bound(amountSeed, 1e18, maxDeposit);
-    address depositor = users[userSeed % users.length];
 
-    if (intentIsDebtToken[id]) {
-      // Mint debtToken directly to depositor
-      debtToken.setBalance(depositor, debtToken.balanceOf(depositor) + amount);
-      vm.prank(depositor);
-      debtToken.approve(address(facility), type(uint256).max);
-    } else {
-      // Mint PM shares to user via minter
-      _mintPmSharesToUser(depositor, amount);
-      vm.prank(depositor);
-      positionManager.approve(address(facility), type(uint256).max);
-    }
+    _fundDepositor(id, depositor, amount);
 
     // FAC-3: Capture balance before deposit
     uint256 balBefore = facility.balanceOf(depositor, id);
@@ -423,7 +440,7 @@ contract FacilityHandler is Test {
     (IntentProperties memory props,,,) = facility.getIntent(id);
 
     // Warp to just past resolveStart
-    if (block.timestamp < props.resolveStart) {
+    if (vm.getBlockTimestamp() < props.resolveStart) {
       vm.warp(props.resolveStart + 1);
     }
 
@@ -594,21 +611,21 @@ contract FacilityHandler is Test {
   /*                    FACILITATOR ACTIONS                         */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-  /// @notice Updates the deposit cap of a DEPOSITING intent.
+  /// @notice Updates the deposit cap of an intent in any state.
   /// @dev Allows setting cap below current totalSupply (which is valid on-chain).
   ///      This exercises the scenario where totalSupply > depositCap after a cap reduction.
   /// @param intentSeed Seed for selecting an intent.
   /// @param capSeed Seed for fuzzing the new deposit cap.
   function act_updateDepositCap(uint256 intentSeed, uint256 capSeed) external {
-    uint256[] memory depositingIds = _getIntentsByState(0);
-    if (depositingIds.length == 0) return;
+    if (intentIds.length == 0) return;
 
-    uint256 id = depositingIds[intentSeed % depositingIds.length];
+    uint256 id = intentIds[intentSeed % intentIds.length];
     uint256 newCap = bound(capSeed, 0, 10_000_000e18);
 
     vm.prank(facilitator);
-    try facility.setDepositCap(id, newCap) {}
-    catch {
+    try facility.setDepositCap(id, newCap) {
+      lastSetCap[id] = newCap;
+    } catch {
       return;
     }
   }
@@ -699,7 +716,7 @@ contract FacilityHandler is Test {
       token2: address(debtToken),
       amount1: bound(amountSeed, 1, pmSharesAvailable),
       amount2: bound(amountSeed, 1, debtTokenAvailable),
-      deadline: block.timestamp + 1 hours
+      deadline: vm.getBlockTimestamp() + 1 hours
     });
   }
 
@@ -741,6 +758,19 @@ contract FacilityHandler is Test {
       swapReplaySucceeded = true;
     } catch {
       // Expected: replay should fail
+    }
+  }
+
+  /// @dev Mints `amount` of the intent's deposit asset to `depositor` and approves the facility.
+  function _fundDepositor(uint256 id, address depositor, uint256 amount) internal {
+    if (intentIsDebtToken[id]) {
+      debtToken.setBalance(depositor, debtToken.balanceOf(depositor) + amount);
+      vm.prank(depositor);
+      debtToken.approve(address(facility), type(uint256).max);
+    } else {
+      _mintPmSharesToUser(depositor, amount);
+      vm.prank(depositor);
+      positionManager.approve(address(facility), type(uint256).max);
     }
   }
 

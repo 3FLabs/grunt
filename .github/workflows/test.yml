@@ -13,8 +13,16 @@ env:
 
 jobs:
   check:
-    name: Foundry project
+    name: Foundry project (${{ matrix.compiler }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: solc
+            use: ""
+          - compiler: solar
+            use: --use solar
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -23,17 +31,23 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@8b0419c685ef46cb79ec93fbdc131174afceb730 # v1.6.0
+        with:
+          # v1.9.0 ships the solar binary that `--use solar` resolves on PATH
+          version: v1.9.0
 
-      - name: Show Forge version
-        run: forge --version
+      - name: Show Forge and Solar versions
+        run: |
+          forge --version
+          solar --version
 
       - name: Run Forge fmt
+        if: matrix.compiler == 'solc'
         run: forge fmt --check
 
       - name: Run Forge build
-        run: forge build --sizes
+        run: forge build --sizes ${{ matrix.use }}
 
       - name: Run Forge tests
-        run: forge test -vvv
+        run: forge test -vvv ${{ matrix.use }}
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}

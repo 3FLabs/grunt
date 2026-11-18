@@ -1,0 +1,950 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.22;
+
+import {Test, Vm} from "forge-std/Test.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {Initializable} from "lib/solady/src/utils/Initializable.sol";
+import {SafeCastLib} from "lib/solady/src/utils/SafeCastLib.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+
+import {FacilityAbsoluteCaps} from "src/facility/caps/FacilityAbsoluteCaps.sol";
+import {IFacilityCaps} from "src/interfaces/facility/IFacilityCaps.sol";
+import {LibCapsMath} from "src/libs/common/LibCapsMath.sol";
+import {LibCommonErrors} from "src/libs/common/LibCommonErrors.sol";
+
+/// @title FacilityAbsoluteCapsTest
+/// @notice Unit tests for the shared pool FacilityAbsoluteCaps contract
+contract FacilityAbsoluteCapsTest is Test {
+  using LibClone for address;
+
+  FacilityAbsoluteCaps public caps;
+  FacilityAbsoluteCaps public implementation;
+
+  address owner = makeAddr("owner");
+  address manager = makeAddr("manager");
+  address consumer = makeAddr("consumer");
+  address stranger = makeAddr("stranger");
+
+  uint16 constant ID = 1;
+  uint16 constant OTHER_ID = 2;
+  uint16 constant THIRD_ID = 3;
+  uint128 constant HARD_CAP = 10_000e18;
+  uint256 constant LAYOUT_POOLS = 6;
+
+  // Q12.12 multipliers
+  int24 constant MULT_1X = 4096;
+  int24 constant MULT_1_5X = 6144;
+  int24 constant MULT_2X = 8192;
+
+  uint256 constant CAPS_MANAGER_ROLE = 1 << 0;
+  uint256 constant CAPS_CONSUMER_ROLE = 1 << 1;
+
+  function setUp() public {
+    implementation = new FacilityAbsoluteCaps();
+    caps = FacilityAbsoluteCaps(address(implementation).clone());
+    address[] memory managers = new address[](1);
+    managers[0] = manager;
+    address[] memory consumers = new address[](1);
+    consumers[0] = consumer;
+    caps.initialize(owner, managers, consumers);
+
+    _setCap(HARD_CAP, HARD_CAP);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           HELPERS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _setCap(uint128 cap, uint128 hardCap) internal {
+    vm.prank(manager);
+    caps.setCap(ID, cap, hardCap);
+  }
+
+  function _consume(uint256 amount, int24 multiplier) internal {
+    vm.prank(consumer);
+    caps.consume(ID, amount, multiplier);
+  }
+
+  function _cap() internal view returns (uint128 cap) {
+    (cap,) = caps.getCap(ID);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                       INITIALIZATION                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_initialize_setsOwnerAndRoles() public view {
+    assertEq(caps.owner(), owner, "Owner should be set");
+    assertTrue(caps.hasAllRoles(manager, CAPS_MANAGER_ROLE), "Manager role should be granted");
+    assertTrue(caps.hasAllRoles(consumer, CAPS_CONSUMER_ROLE), "Consumer role should be granted");
+    assertFalse(caps.hasAnyRole(manager, CAPS_CONSUMER_ROLE), "Manager should not consume");
+    assertFalse(caps.hasAnyRole(consumer, CAPS_MANAGER_ROLE), "Consumer should not manage");
+  }
+
+  function test_initialize_revertOnReinit() public {
+    address[] memory none = new address[](0);
+    vm.expectRevert(Initializable.InvalidInitialization.selector);
+    caps.initialize(owner, none, none);
+  }
+
+  function test_initialize_revertOnZeroOwner() public {
+    FacilityAbsoluteCaps fresh = FacilityAbsoluteCaps(address(implementation).clone());
+    address[] memory none = new address[](0);
+    vm.expectRevert(LibCommonErrors.AddressZero.selector);
+    fresh.initialize(address(0), none, none);
+  }
+
+  function test_initialize_revertOnImplementation() public {
+    address[] memory none = new address[](0);
+    vm.expectRevert(Initializable.InvalidInitialization.selector);
+    implementation.initialize(owner, none, none);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           SET CAP                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_setCap_storesAndEmits() public {
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit FacilityAbsoluteCaps.CapSet(OTHER_ID, 3e18, 5e18);
+    vm.prank(manager);
+    caps.setCap(OTHER_ID, 3e18, 5e18);
+
+    (uint128 cap, uint128 hardCap) = caps.getCap(OTHER_ID);
+    assertEq(cap, 3e18, "Cap should be stored");
+    assertEq(hardCap, 5e18, "Hard cap should be stored");
+  }
+
+  function test_setCap_writesPrecomputedSlot() public {
+    vm.prank(manager);
+    caps.setCap(OTHER_ID, 3e18, 5e18);
+
+    bytes32 base = keccak256("facility.caps.storage");
+    bytes32 slot = keccak256(abi.encode(uint256(OTHER_ID), base));
+    // consumed (hardCap - cap) in the low half, the hard cap in the high half
+    uint256 packed = uint256(2e18) | (uint256(5e18) << 128);
+    assertEq(vm.load(address(caps), slot), bytes32(packed), "Cap data should live at the precomputed slot");
+  }
+
+  function test_setCap_revertOnCapAboveHardCap() public {
+    vm.prank(manager);
+    vm.expectRevert(FacilityAbsoluteCaps.CapAboveHardCap.selector);
+    caps.setCap(ID, HARD_CAP + 1, HARD_CAP);
+  }
+
+  function test_setCap_revertOnZeroId() public {
+    vm.prank(manager);
+    vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+    caps.setCap(0, HARD_CAP, HARD_CAP);
+  }
+
+  function test_setCap_revertOnUnauthorized() public {
+    vm.prank(stranger);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.setCap(ID, HARD_CAP, HARD_CAP);
+
+    vm.prank(consumer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.setCap(ID, HARD_CAP, HARD_CAP);
+
+    vm.prank(owner);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.setCap(ID, HARD_CAP, HARD_CAP);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                          AVAILABLE                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_available_positiveDividesCap() public {
+    _setCap(3000e18, HARD_CAP);
+    assertEq(caps.available(ID, MULT_1X), 3000e18, "1x should quote the cap");
+    assertEq(caps.available(ID, MULT_2X), 1500e18, "2x should quote half the cap");
+    assertEq(caps.available(ID, MULT_1_5X), 2000e18, "1.5x should quote two thirds of the cap");
+    assertEq(caps.available(ID, 0), type(uint256).max, "Zero multiplier should be unbounded");
+  }
+
+  function test_available_negativeDividesHeadroom() public {
+    _setCap(3000e18, HARD_CAP);
+    assertEq(caps.available(ID, -MULT_1X), 7000e18, "-1x should quote the headroom");
+    assertEq(caps.available(ID, -MULT_2X), 3500e18, "-2x should quote half the headroom");
+    assertEq(caps.available(OTHER_ID, -MULT_1X), 0, "Unset cap should have no headroom");
+  }
+
+  function test_available_zeroIdIsZeroAtAnyMultiplier() public view {
+    assertEq(caps.available(0, 0), 0, "Empty cap ID should quote zero at a zero multiplier");
+    assertEq(caps.available(0, MULT_1X), 0, "Empty cap ID should quote zero when consuming");
+    assertEq(caps.available(0, -MULT_1X), 0, "Empty cap ID should quote zero when releasing");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           CONSUME                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function test_consume_positiveDecrementsAndEmits() public {
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 1000e18, MULT_1_5X, 1500e18, HARD_CAP - 1500e18);
+    _consume(1000e18, MULT_1_5X);
+    assertEq(_cap(), HARD_CAP - 1500e18, "Cap should shrink by amount x multiplier");
+
+    // 1 wei x 1.5 rounds up to 2
+    _consume(1, MULT_1_5X);
+    assertEq(_cap(), HARD_CAP - 1500e18 - 2, "Consumption should round up");
+  }
+
+  function test_consume_zeroMultiplierKeepsCap() public {
+    vm.recordLogs();
+    _consume(1000e18, 0);
+    assertEq(vm.getRecordedLogs().length, 0, "Nothing consumed should emit nothing");
+    assertEq(_cap(), HARD_CAP, "Zero multiplier should consume nothing");
+  }
+
+  function test_consume_revertOnInsufficientCap() public {
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, HARD_CAP + 1, MULT_1X);
+
+    _consume(HARD_CAP, MULT_1X);
+    assertEq(_cap(), 0, "Cap should be fully consumed");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+    caps.consume(ID, 1, MULT_1X);
+  }
+
+  function test_consume_negativeReleasesAndEmits() public {
+    _setCap(0, HARD_CAP);
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 1000e18, -MULT_1_5X, 1500e18, 1500e18);
+    _consume(1000e18, -MULT_1_5X);
+    assertEq(_cap(), 1500e18, "Cap should grow by amount x |multiplier|");
+
+    // 1 wei x 1.5 rounds down to 1
+    _consume(1, -MULT_1_5X);
+    assertEq(_cap(), 1500e18 + 1, "Release should round down");
+  }
+
+  function test_consume_revertOnHardCapExceeded() public {
+    _setCap(HARD_CAP - 1000e18, HARD_CAP);
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ID));
+    caps.consume(ID, 1000e18 + 1, -MULT_1X);
+
+    _consume(1000e18, -MULT_1X);
+    assertEq(_cap(), HARD_CAP, "Release up to the hard cap should succeed");
+  }
+
+  function test_consume_revertOnUnauthorized() public {
+    vm.prank(stranger);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.consume(ID, 1, MULT_1X);
+
+    vm.prank(manager);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.consume(ID, 1, MULT_1X);
+  }
+
+  function test_consume_revertOnChargeOverflow() public {
+    vm.prank(consumer);
+    vm.expectRevert(FixedPointMathLib.MulDivFailed.selector);
+    caps.consume(ID, type(uint256).max, MULT_2X);
+  }
+
+  function test_consume_unsetId() public {
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, OTHER_ID));
+    caps.consume(OTHER_ID, 1, MULT_1X);
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, OTHER_ID));
+    caps.consume(OTHER_ID, 1, -MULT_1X);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         MULTI POOL                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _ids(uint16 id1, uint16 id2, uint16 id3, uint16 id4) internal pure returns (uint64) {
+    return uint64(id1) | (uint64(id2) << 16) | (uint64(id3) << 32) | (uint64(id4) << 48);
+  }
+
+  function _setPool(uint16 id, uint128 cap, uint128 hardCap) internal {
+    vm.prank(manager);
+    caps.setCap(id, cap, hardCap);
+  }
+
+  function _poolCap(uint16 id) internal view returns (uint128 cap) {
+    (cap,) = caps.getCap(id);
+  }
+
+  function _assertCapConsumed(
+    Vm.Log memory log,
+    uint16 poolId,
+    uint256 amount,
+    int24 multiplier,
+    uint256 moved,
+    uint128 newCap
+  ) internal view {
+    assertEq(log.emitter, address(caps), "Event should come from the caps contract");
+    assertEq(log.topics.length, 2, "CapConsumed should have one indexed topic");
+    assertEq(log.topics[0], IFacilityCaps.CapConsumed.selector, "Event should be CapConsumed");
+    assertEq(log.topics[1], bytes32(uint256(poolId)), "Event should carry the pool ID");
+    assertEq(log.data, abi.encode(amount, multiplier, moved, newCap), "Event data should match");
+  }
+
+  function test_consume_multiPool_spillsOver() public {
+    _setPool(OTHER_ID, 5000e18, HARD_CAP);
+
+    // OTHER_ID first: drained, the rest spills to ID
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(OTHER_ID, 6000e18, MULT_1X, 5000e18, 0);
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 6000e18, MULT_1X, 1000e18, HARD_CAP - 1000e18);
+    vm.prank(consumer);
+    caps.consume(_ids(OTHER_ID, ID, 0, 0), 6000e18, MULT_1X);
+
+    assertEq(_poolCap(OTHER_ID), 0, "First pool should be drained");
+    assertEq(_poolCap(ID), HARD_CAP - 1000e18, "Second pool should take the rest");
+  }
+
+  function test_consume_multiPool_stopsOnceCovered() public {
+    _setPool(OTHER_ID, 5000e18, HARD_CAP);
+
+    vm.recordLogs();
+    vm.prank(consumer);
+    caps.consume(_ids(ID, OTHER_ID, 0, 0), 1000e18, MULT_1_5X);
+
+    assertEq(vm.getRecordedLogs().length, 1, "Only the first pool should be touched");
+    assertEq(_poolCap(ID), HARD_CAP - 1500e18, "First pool should cover the consumption");
+    assertEq(_poolCap(OTHER_ID), 5000e18, "Second pool should be untouched");
+  }
+
+  function test_consume_multiPool_skipsEmptySlotsAndDrainedPools() public {
+    _setPool(OTHER_ID, 0, HARD_CAP);
+    _setPool(THIRD_ID, HARD_CAP, HARD_CAP);
+
+    vm.prank(consumer);
+    caps.consume(_ids(0, OTHER_ID, 0, THIRD_ID), 1000e18, MULT_1X);
+    assertEq(_poolCap(OTHER_ID), 0, "Drained pool should stay drained");
+    assertEq(_poolCap(THIRD_ID), HARD_CAP - 1000e18, "Fourth slot should cover the consumption");
+    assertEq(_poolCap(ID), HARD_CAP, "Unreferenced pool should not change");
+  }
+
+  function test_consume_multiPool_drainedPoolEmitsNothing() public {
+    _setPool(OTHER_ID, 0, HARD_CAP);
+
+    vm.recordLogs();
+    vm.prank(consumer);
+    caps.consume(_ids(OTHER_ID, ID, 0, 0), 1000e18, MULT_1X);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    assertEq(logs.length, 1, "Only the pool that moved should emit");
+    _assertCapConsumed(logs[0], ID, 1000e18, MULT_1X, 1000e18, HARD_CAP - 1000e18);
+    assertEq(_poolCap(OTHER_ID), 0, "Drained pool should stay drained");
+  }
+
+  function test_release_multiPool_fullPoolEmitsNothing() public {
+    _setPool(OTHER_ID, 0, 5000e18);
+
+    vm.recordLogs();
+    vm.prank(consumer);
+    caps.consume(_ids(ID, OTHER_ID, 0, 0), 1000e18, -MULT_1X);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    assertEq(logs.length, 1, "Only the pool that moved should emit");
+    _assertCapConsumed(logs[0], OTHER_ID, 1000e18, -MULT_1X, 1000e18, 1000e18);
+    assertEq(_poolCap(ID), HARD_CAP, "Full pool should stay at its hard cap");
+  }
+
+  function test_consume_multiPool_revertsWhenPoolsTogetherFallShort() public {
+    _setPool(ID, 1000e18, HARD_CAP);
+    _setPool(OTHER_ID, 500e18, HARD_CAP);
+    uint64 ids = _ids(ID, OTHER_ID, 0, 0);
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ids));
+    caps.consume(ids, 1500e18 + 1, MULT_1X);
+    assertEq(_poolCap(ID), 1000e18, "First pool should be rolled back");
+
+    vm.prank(consumer);
+    caps.consume(ids, 1500e18, MULT_1X);
+    assertEq(_poolCap(ID), 0, "First pool should be drained");
+    assertEq(_poolCap(OTHER_ID), 0, "Second pool should be drained");
+  }
+
+  function test_release_multiPool_refillsInConsumptionOrder() public {
+    _setPool(ID, HARD_CAP - 1000e18, HARD_CAP);
+    _setPool(OTHER_ID, 0, 5000e18);
+
+    // ID is first: refilled to its hard cap first, the rest goes to OTHER_ID
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(ID, 5500e18, -MULT_1X, 1000e18, HARD_CAP);
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit IFacilityCaps.CapConsumed(OTHER_ID, 5500e18, -MULT_1X, 4500e18, 4500e18);
+    vm.prank(consumer);
+    caps.consume(_ids(ID, OTHER_ID, 0, 0), 5500e18, -MULT_1X);
+  }
+
+  function test_release_multiPool_revertsWhenHeadroomFallsShort() public {
+    _setPool(ID, HARD_CAP - 1000e18, HARD_CAP);
+    _setPool(OTHER_ID, 0, 500e18);
+    uint64 ids = _ids(ID, OTHER_ID, 0, 0);
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ids));
+    caps.consume(ids, 1500e18 + 1, -MULT_1X);
+    assertEq(_poolCap(ID), HARD_CAP - 1000e18, "First pool should be rolled back");
+  }
+
+  function test_consume_multiPool_roundTripRestoresPools() public {
+    // [asset pool, shared pool]: the asset pool's hard cap is its own allocation
+    _setPool(ID, 1000e18, 1000e18);
+    _setPool(OTHER_ID, 2000e18, 2000e18);
+    uint64 ids = _ids(ID, OTHER_ID, 0, 0);
+
+    vm.prank(consumer);
+    caps.consume(ids, 2000e18, MULT_1_5X);
+    assertEq(_poolCap(ID), 0, "First pool should be drained");
+    assertEq(_poolCap(OTHER_ID), 0, "Second pool should take the rest");
+
+    vm.prank(consumer);
+    caps.consume(ids, 1000e18, -MULT_1_5X);
+    assertEq(_poolCap(ID), 1000e18, "First pool should be refilled first");
+    assertEq(_poolCap(OTHER_ID), 500e18, "Second pool should take the rest of the release");
+
+    vm.prank(consumer);
+    caps.consume(ids, 1000e18, -MULT_1_5X);
+    assertEq(_poolCap(ID), 1000e18, "First pool should stay at its hard cap");
+    assertEq(_poolCap(OTHER_ID), 2000e18, "Second pool should be restored");
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         ADJUST CAP                         */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _adjust(uint16 id, int256 delta) internal returns (uint128 cap, uint128 hardCap) {
+    vm.prank(manager);
+    return caps.adjustCap(id, delta);
+  }
+
+  function test_adjustCap_growKeepsConsumption() public {
+    _consume(3000e18, MULT_1X);
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit FacilityAbsoluteCaps.CapSet(ID, 9000e18, HARD_CAP + 2000e18);
+    (uint128 cap, uint128 hardCap) = _adjust(ID, 2000e18);
+    assertEq(cap, 9000e18, "Cap should grow by the delta");
+    assertEq(hardCap, HARD_CAP + 2000e18, "Hard cap should follow the cap");
+
+    // the consumption made before the adjustment is still fully releasable
+    _consume(3000e18, -MULT_1X);
+    assertEq(_cap(), HARD_CAP + 2000e18, "Release should reach the new hard cap");
+  }
+
+  function test_adjustCap_shrinkKeepsConsumption() public {
+    _consume(3000e18, MULT_1X);
+
+    (uint128 cap, uint128 hardCap) = _adjust(ID, -5000e18);
+    assertEq(cap, 2000e18, "Cap should shrink by the delta");
+    assertEq(hardCap, 5000e18, "Hard cap should follow the cap");
+
+    _consume(3000e18, -MULT_1X);
+    assertEq(_cap(), 5000e18, "Consumption should stay releasable");
+  }
+
+  function test_adjustCap_shrinkPastCapLeavesAShortfall() public {
+    _consume(7000e18, MULT_1X);
+
+    (uint128 cap, uint128 hardCap) = _adjust(ID, -8000e18);
+    assertEq(cap, 0, "Cap should stop at zero");
+    assertEq(hardCap, 2000e18, "Hard cap should move by the whole delta");
+    assertEq(caps.available(ID, -MULT_1X), 7000e18, "Consumption should stay releasable");
+
+    // releases pay the 5000e18 shortfall back before any capacity returns
+    _consume(5000e18, -MULT_1X);
+    assertEq(_cap(), 0, "Shortfall should absorb the first releases");
+    _consume(2000e18, -MULT_1X);
+    assertEq(_cap(), 2000e18, "Pool should end at the shrunk hard cap");
+  }
+
+  function test_adjustCap_shrinkHoldsThroughTransientConsumption() public {
+    // auditor's sandwich: drain the pool, the manager shrinks it, the drain is released
+    uint128 remaining = _cap();
+    _consume(remaining, MULT_1X);
+    _adjust(ID, -int256(uint256(remaining)));
+    _consume(remaining, -MULT_1X);
+
+    assertEq(_cap(), 0, "Shrink should hold");
+    (, uint128 hardCap) = caps.getCap(ID);
+    assertEq(hardCap, HARD_CAP - remaining, "Hard cap should keep the shrink");
+  }
+
+  function test_adjustCap_zeroDeltaKeepsPool() public {
+    _consume(3000e18, MULT_1X);
+
+    vm.expectEmit(true, true, true, true, address(caps));
+    emit FacilityAbsoluteCaps.CapSet(ID, HARD_CAP - 3000e18, HARD_CAP);
+    (uint128 cap, uint128 hardCap) = _adjust(ID, 0);
+    assertEq(cap, HARD_CAP - 3000e18, "Cap should not move");
+    assertEq(hardCap, HARD_CAP, "Hard cap should not move");
+    (uint128 storedCap, uint128 storedHardCap) = caps.getCap(ID);
+    assertEq(storedCap, cap, "Stored cap should match the return value");
+    assertEq(storedHardCap, hardCap, "Stored hard cap should match the return value");
+  }
+
+  function test_adjustCap_minDeltaStopsAtZero() public {
+    _consume(3000e18, MULT_1X);
+
+    (uint128 cap, uint128 hardCap) = _adjust(ID, type(int256).min);
+    assertEq(cap, 0, "Cap should stop at zero");
+    assertEq(hardCap, 0, "Hard cap should stop at zero");
+    assertEq(caps.available(ID, -MULT_1X), 3000e18, "Consumption should stay releasable");
+  }
+
+  function test_adjustCap_revertOnCapOverflow() public {
+    vm.prank(manager);
+    vm.expectRevert(SafeCastLib.Overflow.selector);
+    caps.adjustCap(ID, type(int256).max);
+  }
+
+  function test_adjustCap_revertOnHardCapOverflow() public {
+    // the hard cap is already at the maximum
+    _setCap(0, type(uint128).max);
+
+    vm.prank(manager);
+    vm.expectRevert(SafeCastLib.Overflow.selector);
+    caps.adjustCap(ID, 1);
+
+    (uint128 cap, uint128 hardCap) = _adjust(ID, 0);
+    assertEq(cap, 0, "Zero delta should still fit");
+    assertEq(hardCap, type(uint128).max, "Hard cap should stay at the maximum");
+  }
+
+  function test_adjustCap_unsetPool() public {
+    (uint128 cap, uint128 hardCap) = _adjust(OTHER_ID, 500e18);
+    assertEq(cap, 500e18, "Unset pool should grow from zero");
+    assertEq(hardCap, 500e18, "Unset pool hard cap should grow from zero");
+
+    (cap, hardCap) = _adjust(THIRD_ID, -500e18);
+    assertEq(cap, 0, "Unset pool should not shrink below zero");
+    assertEq(hardCap, 0, "Unset pool hard cap should stay zero");
+  }
+
+  function test_adjustCap_reverts() public {
+    vm.prank(manager);
+    vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+    caps.adjustCap(0, 1);
+
+    vm.prank(manager);
+    vm.expectRevert(SafeCastLib.Overflow.selector);
+    caps.adjustCap(ID, int256(uint256(type(uint128).max)));
+
+    vm.prank(consumer);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.adjustCap(ID, 1);
+
+    vm.prank(stranger);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    caps.adjustCap(ID, 1);
+  }
+
+  function testFuzz_adjustCap_keepsConsumption(uint128 cap, uint128 hardCap, int256 delta) public {
+    hardCap = uint128(bound(hardCap, cap, type(uint128).max));
+    delta = bound(delta, -int256(uint256(type(uint128).max)), int256(uint256(type(uint128).max)));
+    _setCap(cap, hardCap);
+    uint256 consumed = hardCap - cap;
+
+    int256 target = int256(uint256(hardCap)) + delta;
+    uint256 expectedHardCap = target < 0 ? 0 : uint256(target);
+    if (expectedHardCap > type(uint128).max) {
+      vm.prank(manager);
+      vm.expectRevert(SafeCastLib.Overflow.selector);
+      caps.adjustCap(ID, delta);
+      return;
+    }
+
+    (uint128 newCap, uint128 newHardCap) = _adjust(ID, delta);
+    assertEq(newHardCap, expectedHardCap, "Hard cap should move by the delta, stopping at zero");
+    assertEq(newCap, expectedHardCap > consumed ? expectedHardCap - consumed : 0, "Cap should be what is left");
+    assertEq(caps.available(ID, -MULT_1X), consumed, "Outstanding consumption should be kept");
+  }
+
+  function test_validate_acceptsContiguousDistinctIds() public view {
+    caps.validate(_ids(ID, 0, 0, 0), MULT_1X);
+    caps.validate(_ids(ID, OTHER_ID, 0, 0), MULT_1X);
+    caps.validate(_ids(4, 3, 2, 1), MULT_1X);
+    caps.validate(type(uint64).max - 0x0001_0002_0003_0000, MULT_1X);
+  }
+
+  function test_validate_revertOnMinMultiplier() public {
+    vm.expectRevert(IFacilityCaps.InvalidMultiplier.selector);
+    caps.validate(ID, type(int24).min);
+    caps.validate(ID, type(int24).min + 1);
+  }
+
+  function test_validate_revertOnInvalidIds() public {
+    uint64[7] memory badIds = [
+      _ids(0, 0, 0, 0), // no pool
+      _ids(0, ID, 0, 0), // id1 missing
+      _ids(ID, 0, OTHER_ID, 0), // gap
+      _ids(ID, OTHER_ID, 0, THIRD_ID), // gap before id4
+      _ids(ID, ID, 0, 0), // repeat
+      _ids(ID, OTHER_ID, ID, 0), // repeat, not adjacent
+      _ids(ID, OTHER_ID, THIRD_ID, THIRD_ID) // repeat in the last slot
+    ];
+    for (uint256 i = 0; i < badIds.length; i++) {
+      vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+      caps.validate(badIds[i], MULT_1X);
+    }
+  }
+
+  function testFuzz_validate_id(uint64 id) public {
+    uint16[4] memory pools;
+    uint256 count = 0;
+    while (count < 4 && uint16(id >> (count * 16)) != 0) {
+      pools[count] = uint16(id >> (count * 16));
+      count++;
+    }
+    bool valid = count != 0 && (count == 4 || id >> (count * 16) == 0);
+    for (uint256 i = 0; i < count; i++) {
+      for (uint256 j = i + 1; j < count; j++) {
+        if (pools[i] == pools[j]) valid = false;
+      }
+    }
+    if (!valid) vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+    caps.validate(id, MULT_1X);
+  }
+
+  function test_consume_revertOnZeroId() public {
+    vm.prank(consumer);
+    vm.expectRevert(FacilityAbsoluteCaps.InvalidCapId.selector);
+    caps.consume(0, 1, MULT_1X);
+  }
+
+  function test_available_multiPool_quotesSum() public {
+    _setPool(ID, 3000e18, HARD_CAP);
+    _setPool(OTHER_ID, 1000e18, 2000e18);
+    uint64 ids = _ids(ID, 0, OTHER_ID, 0);
+
+    assertEq(caps.available(ids, MULT_1X), 4000e18, "Should quote the summed capacity");
+    assertEq(caps.available(ids, MULT_2X), 2000e18, "Multiplier should apply to the sum");
+    assertEq(caps.available(ids, -MULT_1X), 8000e18, "Should quote the summed headroom");
+    assertEq(caps.available(ids, 0), type(uint256).max, "Zero multiplier should be unbounded");
+    assertEq(caps.available(0, MULT_1X), 0, "Empty cap ID should quote zero");
+  }
+
+  function testFuzz_consume_multiPool_quoteIsConsumableAndTight(
+    uint128[4] memory poolCaps,
+    uint128[4] memory hardCaps,
+    int24 multiplier
+  ) public {
+    vm.assume(multiplier != 0 && multiplier != type(int24).min);
+    for (uint16 i = 0; i < 4; i++) {
+      hardCaps[i] = uint128(bound(hardCaps[i], poolCaps[i], type(uint128).max));
+      _setPool(i + 1, poolCaps[i], hardCaps[i]);
+    }
+    uint64 ids = _ids(1, 2, 3, 4);
+
+    uint256 quote = caps.available(ids, multiplier);
+    if (multiplier > 0 && quote < type(uint256).max) {
+      vm.prank(consumer);
+      vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ids));
+      caps.consume(ids, quote + 1, multiplier);
+    } else if (multiplier < 0) {
+      uint256 headroom = 0;
+      for (uint256 i = 0; i < 4; i++) {
+        headroom += hardCaps[i] - poolCaps[i];
+      }
+      uint256 over = FixedPointMathLib.mulDivUp(headroom + 1, 4096, uint256(-int256(multiplier)));
+      vm.prank(consumer);
+      vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ids));
+      caps.consume(ids, over, multiplier);
+    }
+
+    vm.prank(consumer);
+    caps.consume(ids, quote, multiplier);
+    for (uint16 i = 1; i <= 4; i++) {
+      (uint128 cap, uint128 hardCap) = caps.getCap(i);
+      assertLe(cap, hardCap, "Pools should stay within their hard caps");
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                     RELEASE PAST HEADROOM                  */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function _assertPool(uint16 id, uint128 expectedCap, uint128 expectedHardCap) internal view {
+    (uint128 cap, uint128 hardCap) = caps.getCap(id);
+    assertEq(cap, expectedCap, "Pool cap");
+    assertEq(hardCap, expectedHardCap, "Pool hard cap");
+  }
+
+  function test_release_pastSummedHeadroomRevertsAndKeepsPools() public {
+    _setPool(ID, HARD_CAP - 1000e18, HARD_CAP);
+    _setPool(OTHER_ID, 300e18, 500e18);
+    _setPool(THIRD_ID, 700e18, 700e18);
+    uint64 ids = _ids(ID, OTHER_ID, THIRD_ID, 0);
+    assertEq(caps.available(ids, -MULT_2X), 600e18, "Summed headroom of 1200 at -2x");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ids));
+    caps.consume(ids, 600e18 + 1, -MULT_2X);
+    _assertPool(ID, HARD_CAP - 1000e18, HARD_CAP);
+    _assertPool(OTHER_ID, 300e18, 500e18);
+    _assertPool(THIRD_ID, 700e18, 700e18);
+
+    vm.prank(consumer);
+    caps.consume(ids, 600e18, -MULT_2X);
+    _assertPool(ID, HARD_CAP, HARD_CAP);
+    _assertPool(OTHER_ID, 500e18, 500e18);
+  }
+
+  function test_release_creditOnSharedPoolBlocksRelease() public {
+    _setCap(1000e18, 1000e18);
+    _consume(400e18, MULT_1X);
+    // a negative word credits capacity it never consumed, filling the pool to its hard cap
+    _consume(400e18, -MULT_1X);
+    assertEq(_cap(), 1000e18, "Credit should fill the pool");
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ID));
+    caps.consume(ID, 400e18, -MULT_1X);
+    _assertPool(ID, 1000e18, 1000e18);
+  }
+
+  function test_release_blockSurvivesAdjustCap() public {
+    _setCap(1000e18, 1000e18);
+    _consume(400e18, MULT_1X);
+    _consume(400e18, -MULT_1X);
+    bytes memory blocked = abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ID);
+
+    _adjust(ID, 5000e18);
+    vm.prank(consumer);
+    vm.expectRevert(blocked);
+    caps.consume(ID, 400e18, -MULT_1X);
+
+    _adjust(ID, -5500e18);
+    _assertPool(ID, 500e18, 500e18);
+    vm.prank(consumer);
+    vm.expectRevert(blocked);
+    caps.consume(ID, 400e18, -MULT_1X);
+  }
+
+  function test_release_blockClearedBySetCap() public {
+    _setCap(1000e18, 1000e18);
+    _consume(400e18, MULT_1X);
+    _consume(400e18, -MULT_1X);
+
+    // lowering the cap back to the outstanding consumption
+    _setCap(600e18, 1000e18);
+    _consume(400e18, -MULT_1X);
+    _assertPool(ID, 1000e18, 1000e18);
+
+    // or raising the hard cap above it
+    _consume(400e18, MULT_1X);
+    _consume(400e18, -MULT_1X);
+    _setCap(1000e18, 1400e18);
+    _consume(400e18, -MULT_1X);
+    _assertPool(ID, 1400e18, 1400e18);
+  }
+
+  function test_release_roundTripThroughLongerWordBlocksShorterWord() public {
+    // [ID] and [ID, OTHER_ID] share ID but list different pools after it
+    _setPool(ID, 1000e18, 1000e18);
+    _setPool(OTHER_ID, 2000e18, 2000e18);
+    uint64 longer = _ids(ID, OTHER_ID, 0, 0);
+    _consume(600e18, MULT_1X);
+
+    vm.startPrank(consumer);
+    caps.consume(longer, 1400e18, MULT_1X);
+    caps.consume(longer, 1400e18, -MULT_1X);
+    vm.stopPrank();
+    _assertPool(ID, 1000e18, 1000e18);
+    _assertPool(OTHER_ID, 1400e18, 2000e18);
+
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ID));
+    caps.consume(ID, 600e18, -MULT_1X);
+
+    // switching the word to [ID, OTHER_ID] releases into the stranded consumption
+    vm.prank(consumer);
+    caps.consume(longer, 600e18, -MULT_1X);
+    _assertPool(ID, 1000e18, 1000e18);
+    _assertPool(OTHER_ID, 2000e18, 2000e18);
+  }
+
+  function test_release_wordsListingTheSamePoolsAfterTheSharedOneDoNotBlock() public {
+    // [ID, OTHER_ID] and [THIRD_ID, OTHER_ID] both end with the shared pool
+    _setPool(ID, 1000e18, 1000e18);
+    _setPool(THIRD_ID, 1000e18, 1000e18);
+    _setPool(OTHER_ID, 2000e18, 2000e18);
+    uint64 first = _ids(ID, OTHER_ID, 0, 0);
+    uint64 second = _ids(THIRD_ID, OTHER_ID, 0, 0);
+
+    vm.startPrank(consumer);
+    caps.consume(first, 1500e18, MULT_1X);
+    caps.consume(second, 2500e18, MULT_1X);
+    caps.consume(second, 2500e18, -MULT_1X);
+    caps.consume(first, 1500e18, -MULT_1X);
+    vm.stopPrank();
+    _assertPool(ID, 1000e18, 1000e18);
+    _assertPool(THIRD_ID, 1000e18, 1000e18);
+    _assertPool(OTHER_ID, 2000e18, 2000e18);
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                            FUZZ                            */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  function testFuzz_consume_quoteIsConsumableAndTight(uint128 cap, uint128 hardCap, int24 multiplier) public {
+    hardCap = uint128(bound(hardCap, cap, type(uint128).max));
+    vm.assume(multiplier != 0 && multiplier != type(int24).min);
+    _setCap(cap, hardCap);
+
+    uint256 quote = caps.available(ID, multiplier);
+
+    // consumption rounds up, so one more than a positive quote never fits; release rounds down,
+    // so a negative quote is consumable but not necessarily the largest such amount
+    if (multiplier > 0) {
+      vm.prank(consumer);
+      vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.InsufficientCap.selector, ID));
+      caps.consume(ID, quote + 1, multiplier);
+    } else {
+      // smallest amount whose release passes the headroom
+      uint256 over = FixedPointMathLib.mulDivUp(uint256(hardCap - cap) + 1, 4096, uint256(-int256(multiplier)));
+      assertLt(quote, over, "Quote should stay below the first release past the headroom");
+      vm.prank(consumer);
+      vm.expectRevert(abi.encodeWithSelector(IFacilityCaps.HardCapExceeded.selector, ID));
+      caps.consume(ID, over, multiplier);
+    }
+
+    _consume(quote, multiplier);
+    if (multiplier > 0) {
+      assertEq(_cap(), cap - LibCapsMath.consumption(quote, multiplier), "Quote should be consumable");
+    } else {
+      assertEq(_cap(), cap + LibCapsMath.release(quote, multiplier), "Quote should be releasable");
+      assertLe(_cap(), hardCap, "Release should stay within the hard cap");
+    }
+  }
+
+  struct Walk {
+    uint64 ids;
+    uint16[] pools;
+    bool releasing;
+    int24 multiplier;
+    uint256 total;
+    uint256 charge;
+  }
+
+  /// @dev Shuffles pool IDs 1 to 6 and spreads the first 1 to 4 over random slots, gaps included.
+  function _randomLayout(uint256 seed) internal pure returns (uint64 ids, uint16[] memory pools) {
+    uint16[LAYOUT_POOLS] memory perm;
+    for (uint256 i = 0; i < LAYOUT_POOLS; i++) {
+      perm[i] = uint16(i + 1);
+    }
+    for (uint256 i = LAYOUT_POOLS - 1; i > 0; i--) {
+      uint256 j = uint256(keccak256(abi.encode(seed, i))) % (i + 1);
+      (perm[i], perm[j]) = (perm[j], perm[i]);
+    }
+    pools = new uint16[](seed % 4 + 1);
+    uint256 n = 0;
+    for (uint256 slot = 0; slot < 4; slot++) {
+      // takes the slot with probability (pools left) / (slots left), so exactly pools.length are used
+      if (uint256(keccak256(abi.encode(seed, "slot", slot))) % (4 - slot) >= pools.length - n) continue;
+      pools[n] = perm[n];
+      ids |= uint64(perm[n]) << (16 * slot);
+      n++;
+    }
+  }
+
+  function _assertPools(uint128[6] memory poolCaps, uint128[6] memory hardCaps) internal view {
+    for (uint256 i = 0; i < LAYOUT_POOLS; i++) {
+      (uint128 cap, uint128 hardCap) = caps.getCap(uint16(i + 1));
+      assertEq(cap, poolCaps[i], "Pool cap should match the walk");
+      assertEq(hardCap, hardCaps[i], "Pool hard cap should never change");
+    }
+  }
+
+  function _assertWalk(Walk memory w, uint128[6] memory poolCaps, uint128[6] memory hardCaps) internal {
+    vm.recordLogs();
+    vm.prank(consumer);
+    caps.consume(w.ids, w.charge, w.multiplier);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    uint256 left = w.charge;
+    uint256 emitted = 0;
+    for (uint256 i = 0; i < w.pools.length && left != 0; i++) {
+      uint256 p = w.pools[i] - 1;
+      uint256 moved = FixedPointMathLib.min(left, w.releasing ? hardCaps[p] - poolCaps[p] : poolCaps[p]);
+      if (moved == 0) continue;
+      left -= moved;
+      poolCaps[p] = uint128(w.releasing ? poolCaps[p] + moved : poolCaps[p] - moved);
+      assertLt(emitted, logs.length, "Each changed pool should emit");
+      _assertCapConsumed(logs[emitted++], w.pools[i], w.charge, w.multiplier, moved, poolCaps[p]);
+    }
+    assertEq(left, 0, "Walk should absorb the whole charge");
+    assertEq(logs.length, emitted, "Only changed pools should emit");
+    _assertPools(poolCaps, hardCaps);
+  }
+
+  function testFuzz_consume_randomLayoutWalk(
+    uint256 seed,
+    uint128[6] memory poolCaps,
+    uint128[6] memory hardCaps,
+    bool releasing,
+    uint8 target
+  ) public {
+    for (uint256 i = 0; i < LAYOUT_POOLS; i++) {
+      hardCaps[i] = uint128(bound(hardCaps[i], poolCaps[i], type(uint128).max));
+      // about a quarter of the pools have no room in the walk direction
+      if ((seed >> (128 + 2 * i)) & 3 == 0) poolCaps[i] = releasing ? hardCaps[i] : 0;
+      _setPool(uint16(i + 1), poolCaps[i], hardCaps[i]);
+    }
+
+    Walk memory w;
+    (w.ids, w.pools) = _randomLayout(seed);
+    w.releasing = releasing;
+    w.multiplier = releasing ? -MULT_1X : MULT_1X;
+    for (uint256 i = 0; i < w.pools.length; i++) {
+      uint256 p = w.pools[i] - 1;
+      w.total += releasing ? hardCaps[p] - poolCaps[p] : poolCaps[p];
+    }
+    assertEq(caps.available(w.ids, w.multiplier), w.total, "1x quote should be the summed room");
+
+    // at 1x the charge is the amount: room - 1, room, room + 1, or anywhere up to room
+    target %= 4;
+    if (target == 0) w.charge = w.total == 0 ? 0 : w.total - 1;
+    else if (target == 1) w.charge = w.total;
+    else if (target == 2) w.charge = w.total + 1;
+    else w.charge = bound(uint256(keccak256(abi.encode(seed))), 0, w.total);
+
+    if (w.charge <= w.total) {
+      _assertWalk(w, poolCaps, hardCaps);
+      return;
+    }
+
+    bytes4 selector = releasing ? IFacilityCaps.HardCapExceeded.selector : IFacilityCaps.InsufficientCap.selector;
+    vm.prank(consumer);
+    vm.expectRevert(abi.encodeWithSelector(selector, w.ids));
+    caps.consume(w.ids, w.charge, w.multiplier);
+    _assertPools(poolCaps, hardCaps);
+  }
+
+  function testFuzz_consume_roundTripNeverCreatesCapacity(uint128 hardCap, uint256 amount, int24 multiplier) public {
+    multiplier = int24(bound(multiplier, 1, type(int24).max));
+    hardCap = uint128(bound(hardCap, 1, type(uint128).max));
+    _setCap(hardCap, hardCap);
+    amount = bound(amount, 0, LibCapsMath.depositable(hardCap, multiplier));
+
+    _consume(amount, multiplier);
+    uint128 consumed = _cap();
+    _consume(amount, -multiplier);
+
+    assertLe(_cap(), hardCap, "Round trip should never exceed the starting cap");
+    assertGe(_cap(), consumed, "Release should never lower the cap");
+    assertLe(hardCap - _cap(), 1, "Round trip should lose at most one unit to rounding");
+  }
+}

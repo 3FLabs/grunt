@@ -38,9 +38,8 @@ interface IMidasAccessControlFork {
 ///      - swapper redemption vault: instantFee 50, minAmount 1e18 mGLOBAL.
 ///      - mGLOBAL is permissioned: every transfer requires both parties to hold
 ///        M_GLOBAL_GREENLISTED_ROLE (mints only check the recipient, burns are unchecked).
-///      The fund is deployed with no redemption vault: each redemption points the fund at its
-///      vault via setRedemptionVault() while the redeem is live (the mainnet Aave/Swapper
-///      vaults stand in for the per-redemption Repay-and-Redeem vaults Midas deploys).
+///      The fund is deployed with no redemption vault: tests point it at a mainnet Aave/Swapper
+///      vault via setRedemptionVault(), which is kept across orders.
 contract MidasFundForkTest is Test {
   using LibOrder for Order;
 
@@ -216,10 +215,10 @@ contract MidasFundForkTest is Test {
     uint256 expectedNet = _expectedRedeemAssets(shares * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_AAVE);
     Order memory order = _redeemOrder(shares, _haircut(expectedNet));
     fund.create(order);
-    assertEq(fund.redemptionVault(), address(0), "vault reset by create");
+    assertEq(fund.redemptionVault(), address(0), "no vault configured yet");
 
     // Skip the bond leg (nothing required for this redemption) and point the fund at the
-    // redemption vault (the Aave vault stands in for the per-redemption vault).
+    // Aave redemption vault.
     vm.prank(owner);
     fund.unlockInstantRedeem(order.toId(address(fund)));
     vm.prank(owner);
@@ -299,8 +298,8 @@ contract MidasFundForkTest is Test {
     vm.expectRevert(abi.encodeWithSelector(LibFundsErrors.InvalidState.selector, State.PROCESSING));
     fund.unlock(order);
 
-    // Midas deploys the dedicated vault once the bond is received (the Aave vault stands in),
-    // then the payment-role unlock re-arms the order for the redeem leg.
+    // Configure the Aave redemption vault, then the payment-role unlock re-arms the order for
+    // the redeem leg.
     vm.prank(owner);
     fund.setRedemptionVault(REDEMPTION_VAULT_AAVE);
     vm.prank(owner);
@@ -436,8 +435,7 @@ contract MidasFundForkTest is Test {
     uint256 bondAmount = shares * 200 / BPS;
     assertEq(IERC20(MGLOBAL).balanceOf(bondRecipient), bondAmount, "bond paid in mGLOBAL");
 
-    // Midas deploys the dedicated Repay-and-Redeem vault once the bond is received: point the
-    // fund at it while the order waits in the bond phase (the Swapper vault stands in; funded
+    // Point the fund at the Swapper vault while the order waits in the bond phase (funded
     // directly so the redemption settles from its own balance).
     vm.prank(owner);
     fund.setRedemptionVault(REDEMPTION_VAULT_SWAPPER);
@@ -447,7 +445,7 @@ contract MidasFundForkTest is Test {
     vm.prank(owner);
     fund.unlockInstantRedeem(order.toId(address(fund)));
 
-    // The redeem leg settles the remainder through the freshly configured vault.
+    // The redeem leg settles the remainder through the newly configured vault.
     uint256 remainder = shares - bondAmount;
     uint256 expectedRemainderNet =
       _expectedRedeemAssets(remainder * (BPS - REDEEM_INSTANT_FEE) / BPS, REDEMPTION_VAULT_SWAPPER);
@@ -460,7 +458,7 @@ contract MidasFundForkTest is Test {
     (State state, uint256 amount) = fund.unlock(order);
     assertEq(uint256(state), uint256(State.ENDED), "ended");
     assertGe(amount, order.output * remainder / shares, "assets >= scaled min output");
-    assertApproxEqRel(amount, expectedRemainderNet, 0.001e18, "proceeds priced by the fresh vault");
+    assertApproxEqRel(amount, expectedRemainderNet, 0.001e18, "proceeds priced by the Swapper vault");
     assertEq(IERC20(USDC).balanceOf(address(this)) - usdcBefore, amount, "USDC received");
   }
 

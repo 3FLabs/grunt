@@ -394,7 +394,7 @@ contract PositionManagerHandler is Test {
   /// @param seconds_ Raw fuzz input for seconds to warp.
   function act_warpTime(uint256 seconds_) external ghostObserve {
     seconds_ = _bound(seconds_, 1, 365 days);
-    vm.warp(block.timestamp + seconds_);
+    vm.warp(vm.getBlockTimestamp() + seconds_);
   }
 
   /// @notice Sets fee parameters on the PositionManager.

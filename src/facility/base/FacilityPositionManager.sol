@@ -21,6 +21,17 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   using LibStorage for FacilityStorageData;
   using LibIntent for Intent;
 
+  /// @dev Resolved parameters and pre-operation balance snapshots of a position manager
+  ///      operation, bundled so the three operations share one prologue and one epilogue.
+  struct PmContext {
+    address positionManager;
+    address collateralAsset;
+    address debtAsset;
+    BalanceSnapshot collateralSnapshot;
+    BalanceSnapshot debtSnapshot;
+    BalanceSnapshot sharesSnapshot;
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                 POSITION MANAGER OPERATIONS                */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -35,31 +46,23 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     onlyRoles(FACILITATOR_ROLE)
   {
     // getting the initial parameters
-    (
-      Intent storage _intent,
-      address _positionManager,
-      address _collateralAsset,
-      address _debtAsset,
-      BalanceSnapshot memory collateralSnapshot,
-      BalanceSnapshot memory debtSnapshot,
-      BalanceSnapshot memory sharesSnapshot
-    ) = _initialPmParameters(id, useTarget);
+    (Intent storage _intent, PmContext memory ctx) = _initialPmParameters(id, useTarget);
 
     if (depositAmount > 0) {
       // if we have non null collateral, approve the position manager to pull it
-      _collateralAsset.safeApproveWithRetry(_positionManager, depositAmount);
+      ctx.collateralAsset.safeApproveWithRetry(ctx.positionManager, depositAmount);
     }
 
     // deposit the collateral and borrow the debt
-    IPositionManager(_positionManager).deposit(depositAmount, borrowAmount);
+    IPositionManager(ctx.positionManager).deposit(depositAmount, borrowAmount);
 
     if (depositAmount > 0) {
       // reset approval to 0
-      _collateralAsset.safeApproveWithRetry(_positionManager, 0);
+      ctx.collateralAsset.safeApproveWithRetry(ctx.positionManager, 0);
     }
 
     // commit snapshots to record the balance changes
-    _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
+    _commitSnapshots(_intent, id, ctx);
   }
 
   /// @inheritdoc IFacilityPositionManager
@@ -73,31 +76,23 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     WithdrawalStrategy strategy
   ) external override nonReentrant onlyRoles(FACILITATOR_ROLE) {
     // getting the initial parameters
-    (
-      Intent storage _intent,
-      address _positionManager,
-      address _collateralAsset,
-      address _debtAsset,
-      BalanceSnapshot memory collateralSnapshot,
-      BalanceSnapshot memory debtSnapshot,
-      BalanceSnapshot memory sharesSnapshot
-    ) = _initialPmParameters(id, useTarget);
+    (Intent storage _intent, PmContext memory ctx) = _initialPmParameters(id, useTarget);
 
     if (repayAmount > 0) {
       // if we have non null debt, approve the position manager to pull it
-      _debtAsset.safeApproveWithRetry(_positionManager, repayAmount);
+      ctx.debtAsset.safeApproveWithRetry(ctx.positionManager, repayAmount);
     }
 
     // repay the debt and withdraw the collateral
-    IPositionManager(_positionManager).withdraw(withdrawAmount, repayAmount, strategy);
+    IPositionManager(ctx.positionManager).withdraw(withdrawAmount, repayAmount, strategy);
 
     if (repayAmount > 0) {
       // reset approval to 0
-      _debtAsset.safeApproveWithRetry(_positionManager, 0);
+      ctx.debtAsset.safeApproveWithRetry(ctx.positionManager, 0);
     }
 
     // commit snapshots to record the balance changes
-    _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
+    _commitSnapshots(_intent, id, ctx);
   }
 
   /// @inheritdoc IFacilityPositionManager
@@ -110,27 +105,19 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     onlyRoles(FACILITATOR_ROLE)
   {
     // getting the initial parameters
-    (
-      Intent storage _intent,
-      address _positionManager,
-      address _collateralAsset,
-      address _debtAsset,
-      BalanceSnapshot memory collateralSnapshot,
-      BalanceSnapshot memory debtSnapshot,
-      BalanceSnapshot memory sharesSnapshot
-    ) = _initialPmParameters(id, useTarget);
+    (Intent storage _intent, PmContext memory ctx) = _initialPmParameters(id, useTarget);
 
     // give infinite approval of the debt asset to the position manager
-    _debtAsset.safeApproveWithRetry(_positionManager, type(uint256).max);
+    ctx.debtAsset.safeApproveWithRetry(ctx.positionManager, type(uint256).max);
 
     // burn the shares by sending debt to the position manager and receiving collateral back
-    IPositionManager(_positionManager).burn(shares, strategy);
+    IPositionManager(ctx.positionManager).burn(shares, strategy);
 
     // commit snapshots to record the balance changes
-    _commitSnapshots(_intent, id, collateralSnapshot, debtSnapshot, sharesSnapshot, _positionManager);
+    _commitSnapshots(_intent, id, ctx);
 
     // reset approval of the debt asset to the position manager to 0
-    _debtAsset.safeApproveWithRetry(_positionManager, 0);
+    ctx.debtAsset.safeApproveWithRetry(ctx.positionManager, 0);
   }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -145,24 +132,11 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   /// @param id The intent id.
   /// @param useTarget If true, use the targetAsset; otherwise, use the depositAsset.
   /// @return _intent Storage pointer to the retrieved intent struct.
-  /// @return positionManager Address of the position manager contract.
-  /// @return collateralAsset Address of the collateral asset handled by the position manager.
-  /// @return debtAsset Address of the debt asset handled by the position manager.
-  /// @return collateralSnapshot Snapshot of the collateral asset balance before the operation.
-  /// @return debtSnapshot Snapshot of the debt asset balance before the operation.
-  /// @return sharesSnapshot Snapshot of the shares balance before the operation.
+  /// @return ctx The resolved position manager, its assets and the pre-operation balance snapshots.
   function _initialPmParameters(uint256 id, bool useTarget)
     private
     view
-    returns (
-      Intent storage _intent,
-      address positionManager,
-      address collateralAsset,
-      address debtAsset,
-      BalanceSnapshot memory collateralSnapshot,
-      BalanceSnapshot memory debtSnapshot,
-      BalanceSnapshot memory sharesSnapshot
-    )
+    returns (Intent storage _intent, PmContext memory ctx)
   {
     // check if the facility is paused
     LibStorage.checkNotPaused();
@@ -175,9 +149,9 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     if (!_selected.isPositionManager) revert LibFacilityErrors.AssetNotPositionManager(_selected.asset);
 
     // get the position manager address
-    positionManager = _selected.asset;
+    address positionManager = _selected.asset;
     // get the position manager assets
-    (collateralAsset, debtAsset) = IPositionManager(positionManager).assets();
+    (address collateralAsset, address debtAsset) = IPositionManager(positionManager).assets();
 
     // if (collateralAsset == debtAsset || collateralAsset == positionManager || debtAsset == positionManager)
     //   revert LibFacilityErrors.InvalidPositionManagerAssets();
@@ -189,9 +163,12 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
     }
 
     // take snapshots before the operation
-    collateralSnapshot = LibIntent.takeBalanceSnapshot(collateralAsset);
-    debtSnapshot = LibIntent.takeBalanceSnapshot(debtAsset);
-    sharesSnapshot = LibIntent.takeBalanceSnapshot(positionManager);
+    ctx.positionManager = positionManager;
+    ctx.collateralAsset = collateralAsset;
+    ctx.debtAsset = debtAsset;
+    ctx.collateralSnapshot = LibIntent.takeBalanceSnapshot(collateralAsset);
+    ctx.debtSnapshot = LibIntent.takeBalanceSnapshot(debtAsset);
+    ctx.sharesSnapshot = LibIntent.takeBalanceSnapshot(positionManager);
   }
 
   /// @notice Commits all balance snapshots after a position manager operation.
@@ -201,20 +178,10 @@ abstract contract FacilityPositionManager is IFacilityPositionManager, Reentranc
   ///      `feeRecipient` must never be this Facility.
   /// @param _intent Storage pointer to the intent struct.
   /// @param id The intent id.
-  /// @param collateralSnapshot Snapshot of the collateral asset balance before the operation.
-  /// @param debtSnapshot Snapshot of the debt asset balance before the operation.
-  /// @param sharesSnapshot Snapshot of the shares balance before the operation.
-  /// @param positionManager Address of the position manager (counterparty for collateral/debt events).
-  function _commitSnapshots(
-    Intent storage _intent,
-    uint256 id,
-    BalanceSnapshot memory collateralSnapshot,
-    BalanceSnapshot memory debtSnapshot,
-    BalanceSnapshot memory sharesSnapshot,
-    address positionManager
-  ) private {
-    _intent.commitBalanceSnapshot(id, collateralSnapshot, positionManager);
-    _intent.commitBalanceSnapshot(id, debtSnapshot, positionManager);
-    _intent.commitBalanceSnapshot(id, sharesSnapshot, address(0));
+  /// @param ctx The position manager context with the pre-operation snapshots.
+  function _commitSnapshots(Intent storage _intent, uint256 id, PmContext memory ctx) private {
+    _intent.commitBalanceSnapshot(id, ctx.collateralSnapshot, ctx.positionManager);
+    _intent.commitBalanceSnapshot(id, ctx.debtSnapshot, ctx.positionManager);
+    _intent.commitBalanceSnapshot(id, ctx.sharesSnapshot, address(0));
   }
 }

@@ -36,7 +36,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     facility.deposit(intentId, shares);
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
   }
 
   /// @notice Creates intent where PM is target asset and gets to resolving with debt tokens
@@ -53,7 +53,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     vm.stopPrank();
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
   }
 
   /// @notice Fund intent with collateral tokens (for PM deposit operations)
@@ -118,14 +118,6 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     uint256 depositAmount = withdrawAmount / 2;
     vm.prank(facilitator);
     facility.depositManager(intentId, depositAmount, 0, false);
-  }
-
-  function test_depositManager_useTargetAsset() public {
-    // This test demonstrates using the target asset (PM) for deposit operations
-    // For this to work, we need collateral in the intent's balance
-    // Skip this test for now - it requires a more complex setup with Fund or Swap operations
-    // to get collateral into an intent where depositAsset is not PM
-    vm.skip(true);
   }
 
   function test_depositManager_revertWhenPaused() public {
@@ -392,7 +384,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
       targetAsset: Asset({asset: address(debtToken), isPositionManager: false}),
       depositCap: DEFAULT_DEPOSIT_CAP,
       guardKey: maliciousPM,
-      resolveStart: uint40(block.timestamp + 1 days),
+      resolveStart: uint40(vm.getBlockTimestamp() + 1 days),
       quorum: 1,
       transferableIntent: true
     });
@@ -401,7 +393,7 @@ contract FacilityPositionManagerTest is FacilityBaseTest {
     intentId = facility.createIntent(props);
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
   }
 
   function test_depositManager_revertWhenCollateralEqualsDebt() public {

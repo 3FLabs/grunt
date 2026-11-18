@@ -40,7 +40,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 totalSupplyBefore = positionManager.totalSupply();
 
     // Advance time by 1 year
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Trigger fee accrual with another deposit
     _mintCollateral(minter, 1e18);
@@ -126,7 +126,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.setFeeData(feeRecipient, managementFee, performanceFee);
 
     // Advance time
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // First deposit should not cause issues with fee calculation
     _mintCollateral(minter, COLLATERAL_AMOUNT);
@@ -150,7 +150,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
     // Advance time
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Crash price to make totalAssets = 0 (underwater)
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 10 / 100); // 10% of original
@@ -180,7 +180,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // Simulate 20% collateral price gain and 1 year passage
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Snapshot perf-only fees to compute the management-fee deduction's impact on perf shares.
     uint256 snap = vm.snapshotState();
@@ -222,7 +222,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100); // 1% gain
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     _mintCollateral(minter, 1e18);
     vm.prank(minter);
@@ -242,7 +242,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100); // same 1% gain
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Levered-slice basis (rough):
     //   lastCollat = 10_000e18, lastDebt = 5_000e18, currentCollat = 10_100e18, currentDebt = 5_000e18
@@ -276,7 +276,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     _mintCollateral(minter, 1e18);
     vm.prank(minter);
@@ -297,7 +297,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     _mintCollateral(minter, 1e18);
     vm.prank(minter);
@@ -316,7 +316,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     _mintCollateral(minter, 1e18);
     vm.prank(minter);
@@ -403,7 +403,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -417,7 +417,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(owner);
     positionManager.setFeeData(feeRecipient, 200, 2000);
 
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -435,7 +435,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -453,7 +453,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -476,7 +476,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     uint256 expectedFeeAssets = COLLATERAL_AMOUNT * 200 / 10_000;
@@ -526,7 +526,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -550,7 +550,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 lastDebt_ = positionManager.lastDebt();
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100); // 20% gain
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -586,7 +586,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Read pending fees before accrual
     (, uint256 totalSupplyBefore, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
@@ -619,7 +619,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     positionManager.deposit(COLLATERAL_AMOUNT, 0);
 
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 120 / 100);
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     // Trigger accrual
     _mintCollateral(minter, 1e18);
@@ -643,7 +643,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
 
     // 1% gain but 2% management fee over 1 year => net gain negative => no perf fee
     oracle.setPrice(DEFAULT_ORACLE_PRICE * 101 / 100);
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -665,7 +665,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 lpShares = positionManager.balanceOf(minter);
     uint256 supplyBefore = positionManager.totalSupply();
 
-    vm.warp(block.timestamp + 1000 * 365 days);
+    vm.warp(vm.getBlockTimestamp() + 1000 * 365 days);
 
     (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 
@@ -695,7 +695,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     uint256 lpShares = positionManager.balanceOf(minter);
     uint256 supplyBefore = positionManager.totalSupply();
 
-    vm.warp(block.timestamp + 30 * 365 days);
+    vm.warp(vm.getBlockTimestamp() + 30 * 365 days);
 
     (,, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
     assertEq(mgmtShares, 0, "no fee shares minted on dormant leveraged vault");
@@ -844,7 +844,7 @@ contract PositionManagerFeeTest is PositionManagerBaseTest {
     vm.prank(minter);
     positionManager.deposit(COLLATERAL_AMOUNT, DEBT_AMOUNT);
 
-    vm.warp(block.timestamp + 365 days);
+    vm.warp(vm.getBlockTimestamp() + 365 days);
 
     (uint256 totalAssets_, uint256 totalSupply_, uint256 mgmtShares, uint256 perfShares) = positionManager.pendingFees();
 

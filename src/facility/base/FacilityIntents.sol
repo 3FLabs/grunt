@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {FacilityRoles} from "./FacilityRoles.sol";
 import {EIP712} from "lib/solady/src/utils/EIP712.sol";
 import {IFacilityIntents} from "src/interfaces/facility/base/IFacilityIntents.sol";
+import {IFacilityCapsWhitelist} from "src/interfaces/facility/IFacilityCapsWhitelist.sol";
 import {IFund} from "src/interfaces/funds/IFund.sol";
 import {IPositionManager} from "src/interfaces/manager/IPositionManager.sol";
 import {IRequestInteractions} from "src/interfaces/request/IRequestInteractions.sol";
@@ -22,6 +23,18 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
   using LibIntent for Intent;
   using LibChecks for address;
   using LibAddress for address;
+
+  /// @notice Registry of the caps contracts EXTERNAL deposit cap words may reference.
+  /// @dev No getter, to stay under the EIP-170 size limit: read it from the implementation's
+  ///      constructor arguments.
+  IFacilityCapsWhitelist internal immutable CAPS_WHITELIST;
+
+  /// @dev Reverts with InvalidContract if the whitelist is not a contract.
+  /// @param capsWhitelist The caps whitelist shared by every facility built from this implementation.
+  constructor(address capsWhitelist) {
+    capsWhitelist.checkContract();
+    CAPS_WHITELIST = IFacilityCapsWhitelist(capsWhitelist);
+  }
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         CONSTANTS                          */
@@ -78,7 +91,7 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
     (_intent, id) = _facilityStorage.createIntent(params.depositAsset, params.quorum, params.transferableIntent);
 
     _intent.updateTargetAsset(id, params.targetAsset, params.guardKey);
-    _intent.updateDepositCap(id, params.depositCap);
+    _intent.updateDepositCap(id, params.depositCap, CAPS_WHITELIST);
     _intent.updateResolveStart(id, params.resolveStart);
   }
 
@@ -122,10 +135,10 @@ abstract contract FacilityIntents is IFacilityIntents, EIP712, FacilityRoles {
 
   /// @inheritdoc IFacilityIntents
   /// @dev Sets a new deposit cap for the intent.
-  ///      The intent must be in the depositing state.
+  ///      Allowed in any state so releases (withdrawals, reverted deposits) can be unblocked.
   function setDepositCap(uint256 id, uint256 newDepositCap) external override onlyRoles(FACILITATOR_ROLE) {
     LibStorage.checkNotPaused();
-    LibStorage.facilityStorage().getDepositingIntent(id).updateDepositCap(id, newDepositCap);
+    LibStorage.facilityStorage().getIntent(id).updateDepositCap(id, newDepositCap, CAPS_WHITELIST);
   }
 
   /// @inheritdoc IFacilityIntents

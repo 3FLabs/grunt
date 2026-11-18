@@ -55,8 +55,11 @@ abstract contract FacilitySwap is IFacilitySwap, EIP712, ReentrancyGuardTransien
   /// @inheritdoc IFacilitySwap
   /// @dev The required quorum is the maximum of the two intent quorums.
   ///      Uses EIP-712 typed data hashing for digest computation.
-  ///      Each digest can only be used once to prevent replay attacks.
+  ///      With a nonzero quorum each digest can only be used once. A zero-quorum swap checks no
+  ///      digest: it is a facilitator-only operation with no replay protection.
   ///      Both intents must be in resolving state for the swap to succeed.
+  ///      Claims move between intents without a guard check, so guardians should only sign swaps
+  ///      between intents whose tokens follow the same TransferGuard policy.
   ///
   /// @custom:security-note The EIP-712 digest does not include the signer address. See the
   ///      security note on {SWAP_PARAMS_TYPEHASH} for SC wallet replay considerations.

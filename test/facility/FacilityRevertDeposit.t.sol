@@ -155,7 +155,7 @@ contract FacilityRevertDepositTest is FacilityBaseTest {
     facility.deposit(intentId, DEFAULT_AMOUNT);
 
     // Move to resolving phase
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set up request (uses debtToken as its asset) and repay to move debtToken out
     vm.prank(facilitator);

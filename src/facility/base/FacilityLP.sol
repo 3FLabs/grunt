@@ -33,14 +33,15 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
   /// @inheritdoc IFacilityLP
   /// @dev Mints LP tokens 1:1 with the deposited amount.
   ///      The intent must be in depositing phase (not yet resolving or resolved).
-  ///      Reverts if the deposit would exceed the intent's deposit cap.
+  ///      Reverts if the deposit cannot be absorbed by the intent's deposit cap.
   function deposit(uint256 id, uint256 amount) external override nonReentrant {
     LibStorage.checkNotPaused();
     LibChecks.checkNotZero(amount);
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
-    // ensure we do not exceed the deposit cap
-    _intent.checkCap(id, amount);
+    // check the deposit cap (max total supply for absolute caps, consumes the shared pool
+    // for external caps)
+    _intent.consumeCap(id, amount);
 
     // receive the tokens from the sender
     _intent.receiveTokenFrom(id, _intent.properties.depositAsset.asset, msg.sender, amount);
@@ -60,13 +61,17 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
 
     Intent storage _intent = LibStorage.facilityStorage().getDepositingIntent(id);
 
+    // release the deposit's cap consumption back to the intent or its shared pool
+    _intent.releaseCap(amount);
+
     // transfer the tokens to the receiver
     _intent.transferTokenTo(id, _intent.properties.depositAsset.asset, receiver, amount);
   }
 
   /// @inheritdoc IFacilityLP
   /// @dev Distributes tokens held by the intent proportionally to the shares being burned.
-  ///      The intent must be resolved before claims can be made.
+  ///      The intent must be resolved before claims can be made. Does not release the deposit
+  ///      cap (see IFacilityLP.claim).
   ///      If `from` is not `msg.sender`, the caller must be an operator for `from`.
   function claim(uint256 id, address from, address receiver, uint256 shares)
     external
@@ -132,6 +137,8 @@ abstract contract FacilityLP is IFacilityLP, ERC6909, ReentrancyGuardTransient, 
     }
     // burn the user's shares to reflect the withdrawal
     _burn(from, id, balance);
+    // release the deposit's cap consumption back to the intent or its shared pool
+    _intent.releaseCap(balance);
     // transfer the deposit asset to the receiver
     _intent.transferTokenTo(id, _depositAsset, receiver, balance);
   }

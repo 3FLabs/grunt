@@ -40,7 +40,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     assertFalse(props.targetAsset.isPositionManager, "Target should not be PM");
     assertEq(props.depositCap, DEFAULT_DEPOSIT_CAP, "Deposit cap should match");
     assertEq(props.guardKey, address(positionManager), "Guard key should match");
-    assertEq(props.resolveStart, uint40(block.timestamp + 1 days), "Resolve start should match");
+    assertEq(props.resolveStart, uint40(vm.getBlockTimestamp() + 1 days), "Resolve start should match");
     assertEq(props.quorum, 1, "Quorum should match");
     assertTrue(props.transferableIntent, "Should be transferable");
     assertEq(fund, address(0), "Fund should be zero");
@@ -103,12 +103,12 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_createIntent_revertOnPastResolveStart() public {
     IntentProperties memory params = _defaultIntentProperties();
-    params.resolveStart = uint40(block.timestamp - 1);
+    params.resolveStart = uint40(vm.getBlockTimestamp() - 1);
 
     vm.prank(owner);
     vm.expectRevert(
       abi.encodeWithSelector(
-        LibFacilityErrors.InvalidResolveStart.selector, params.resolveStart, uint40(block.timestamp)
+        LibFacilityErrors.InvalidResolveStart.selector, params.resolveStart, uint40(vm.getBlockTimestamp())
       )
     );
     facility.createIntent(params);
@@ -214,6 +214,68 @@ contract FacilityIntentsTest is FacilityBaseTest {
     facility.setDepositCap(intentId, 500_000e18);
   }
 
+  function test_setDepositCap_worksOnResolving() public {
+    uint256 intentId = _createResolvingIntent();
+    uint256 newCap = 500_000e18;
+
+    vm.prank(facilitator);
+    vm.expectEmit(true, true, true, true);
+    emit IFacilityIntents.DepositCapUpdated(intentId, newCap);
+    facility.setDepositCap(intentId, newCap);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, newCap, "Deposit cap should be updated while resolving");
+  }
+
+  function test_setDepositCap_worksAfterLock() public {
+    uint256 intentId = _createDefaultIntent();
+    vm.prank(facilitator);
+    facility.lock(intentId);
+
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 0);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, 0, "Deposit cap should be updated after lock");
+  }
+
+  function test_setDepositCap_worksOnResolved() public {
+    uint256 intentId = _createResolvingIntent();
+    vm.prank(facilitator);
+    facility.resolve(intentId);
+
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 500_000e18);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, 500_000e18, "Deposit cap should be updated when resolved");
+  }
+
+  function test_setDepositCap_thenRevertDepositOnResolving() public {
+    uint256 intentId = _createIntentWithDeposits(DEFAULT_AMOUNT);
+    assertTrue(_isResolving(intentId), "Intent should be resolving");
+
+    // a reverted deposit leaves the absolute word set while resolving untouched
+    vm.prank(facilitator);
+    facility.setDepositCap(intentId, 0);
+    vm.prank(owner);
+    facility.revertDeposit(intentId, user, user);
+
+    (IntentProperties memory props,,,) = facility.getIntent(intentId);
+    assertEq(props.depositCap, 0, "Reverted deposit should not change an absolute cap");
+    assertEq(facility.totalSupply(intentId), 0, "Total supply should be 0");
+  }
+
+  function test_setDepositCap_revertOnPaused() public {
+    uint256 intentId = _createResolvingIntent();
+    vm.prank(owner);
+    facility.pauseFor(type(uint256).max);
+
+    vm.prank(facilitator);
+    vm.expectRevert();
+    facility.setDepositCap(intentId, 500_000e18);
+  }
+
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        LOCK TESTS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -233,7 +295,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     vm.expectEmit(true, true, true, true);
-    emit IFacilityIntents.ResolveStartUpdated(intentId, uint40(block.timestamp));
+    emit IFacilityIntents.ResolveStartUpdated(intentId, uint40(vm.getBlockTimestamp()));
     facility.lock(intentId);
   }
 
@@ -339,7 +401,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_setFund_revertWhenExpired() public {
     uint256 intentId = _createResolvingIntent();
 
-    uint256 deadline = block.timestamp - 1;
+    uint256 deadline = vm.getBlockTimestamp() - 1;
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
     signers[0] = guardian;
@@ -352,7 +414,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_setFund_revertWhenInvalidSignatureLength() public {
     uint256 intentId = _createResolvingIntent();
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     address[] memory signers = new address[](2);
     bytes[] memory signatures = new bytes[](1);
@@ -368,9 +430,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_setFund_revertWhenInsufficientSignatures() public {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
@@ -385,9 +447,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_setFund_revertWhenInvalidSignerOrder() public {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     address[] memory signers = new address[](2);
     bytes[] memory signatures = new bytes[](2);
@@ -411,7 +473,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_setFund_revertWhenNotGuardian() public {
     uint256 intentId = _createResolvingIntent();
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     uint256 userPk = 0x9999;
     address userSigner = vm.addr(userPk);
@@ -432,7 +494,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_setFund_revertWhenInvalidSignature() public {
     uint256 intentId = _createResolvingIntent();
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     bytes memory invalidSig = _signSetFund(intentId, address(mockFund), deadline - 1, GUARDIAN_PK);
 
@@ -476,7 +538,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     {
-      uint256 deadline = block.timestamp + 1 hours;
+      uint256 deadline = vm.getBlockTimestamp() + 1 hours;
       address[] memory signers = new address[](1);
       bytes[] memory signatures = new bytes[](1);
 
@@ -494,7 +556,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
     // Re-bind to a different fund after auto-sync clears stale binding
     vm.prank(facilitator);
     {
-      uint256 deadline = block.timestamp + 2 hours;
+      uint256 deadline = vm.getBlockTimestamp() + 2 hours;
       address[] memory signers = new address[](1);
       bytes[] memory signatures = new bytes[](1);
 
@@ -515,7 +577,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     {
-      uint256 deadline = block.timestamp + 1 hours;
+      uint256 deadline = vm.getBlockTimestamp() + 1 hours;
       address[] memory signers = new address[](1);
       bytes[] memory signatures = new bytes[](1);
 
@@ -538,7 +600,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(facilitator);
     {
-      uint256 deadline = block.timestamp + 2 hours;
+      uint256 deadline = vm.getBlockTimestamp() + 2 hours;
       address[] memory signers = new address[](1);
       bytes[] memory signatures = new bytes[](1);
 
@@ -571,7 +633,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_setRequest_revertWhenExpired() public {
     uint256 intentId = _createResolvingIntent();
 
-    uint256 deadline = block.timestamp - 1;
+    uint256 deadline = vm.getBlockTimestamp() - 1;
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
     signers[0] = guardian;
@@ -584,7 +646,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_setRequest_revertWhenInvalidSignatureLength() public {
     uint256 intentId = _createResolvingIntent();
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     address[] memory signers = new address[](2);
     bytes[] memory signatures = new bytes[](1);
@@ -600,9 +662,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_setRequest_revertWhenInsufficientSignatures() public {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     address[] memory signers = new address[](1);
     bytes[] memory signatures = new bytes[](1);
@@ -617,9 +679,9 @@ contract FacilityIntentsTest is FacilityBaseTest {
   function test_setRequest_revertWhenInvalidSignerOrder() public {
     vm.prank(owner);
     uint256 intentId = facility.createIntent(_intentParamsWithDualPM());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     address[] memory signers = new address[](2);
     bytes[] memory signatures = new bytes[](2);
@@ -643,7 +705,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_setRequest_revertWhenNotGuardian() public {
     uint256 intentId = _createResolvingIntent();
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     uint256 userPk = 0x9999;
     address userSigner = vm.addr(userPk);
@@ -664,7 +726,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
   function test_setRequest_revertWhenInvalidSignature() public {
     uint256 intentId = _createResolvingIntent();
-    uint256 deadline = block.timestamp + 1 hours;
+    uint256 deadline = vm.getBlockTimestamp() + 1 hours;
 
     bytes memory invalidSig = _signSetRequest(intentId, address(mockRequest), deadline - 1, GUARDIAN_PK);
 
@@ -711,6 +773,8 @@ contract FacilityIntentsTest is FacilityBaseTest {
   }
 
   function testFuzz_createIntent_withDifferentDepositCaps(uint256 cap) public {
+    // keep the top type byte zero so the cap reads as ABSOLUTE
+    cap = bound(cap, 0, (uint256(1) << 248) - 1);
     IntentProperties memory params = _defaultIntentProperties();
     params.depositCap = cap;
 
@@ -722,7 +786,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
   }
 
   function testFuzz_createIntent_withDifferentResolveStarts(uint40 resolveStart) public {
-    vm.assume(resolveStart > block.timestamp);
+    vm.assume(resolveStart > vm.getBlockTimestamp());
 
     IntentProperties memory params = _defaultIntentProperties();
     params.resolveStart = resolveStart;
@@ -735,6 +799,8 @@ contract FacilityIntentsTest is FacilityBaseTest {
   }
 
   function testFuzz_setDepositCap_withDifferentValues(uint256 cap) public {
+    // keep the top type byte zero so the cap reads as ABSOLUTE
+    cap = bound(cap, 0, (uint256(1) << 248) - 1);
     uint256 intentId = _createDefaultIntent();
 
     vm.prank(facilitator);
@@ -816,7 +882,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(owner);
     uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set fund on first intent
     vm.prank(facilitator);
@@ -842,7 +908,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(owner);
     uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set fund on first intent
     vm.prank(facilitator);
@@ -859,7 +925,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(owner);
     uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set request on first intent
     vm.prank(facilitator);
@@ -887,7 +953,7 @@ contract FacilityIntentsTest is FacilityBaseTest {
 
     vm.prank(owner);
     uint256 intentId2 = facility.createIntent(_defaultIntentProperties());
-    vm.warp(block.timestamp + 1 days + 1);
+    vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
     // Set request on first intent
     vm.prank(facilitator);

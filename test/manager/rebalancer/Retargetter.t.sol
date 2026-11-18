@@ -294,7 +294,7 @@ contract RetargetterTest is RetargetterBaseTest {
     _seedPosition(10_000e18, 5_000e18);
     address request = _startAsync(4_000e18, 100);
     _consume(request, 1_000e18, 10e18, 1_000e18);
-    uint256 origin = block.timestamp;
+    uint256 origin = vm.getBlockTimestamp();
 
     RetargetterConfig memory config_ = retargetter.config();
     config_.tickThreshold = 1 hours;
@@ -628,7 +628,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
   function test_operation_fieldsAfterStartAndConsume() public {
     _seedPosition(10_000e18, 5_000e18);
-    uint256 startTime = block.timestamp;
+    uint256 startTime = vm.getBlockTimestamp();
     address request = _startAsync(6_000e18, 100);
 
     // Block-scoped so the wide destructuring does not deepen the stack for the rest
@@ -684,7 +684,7 @@ contract RetargetterTest is RetargetterBaseTest {
     _startAsync(6_000e18, 100);
 
     assertEq(retargetter.owed(), 0, "nothing consumed, nothing owed");
-    vm.warp(block.timestamp + 10 days);
+    vm.warp(vm.getBlockTimestamp() + 10 days);
     assertEq(retargetter.owed(), 0, "time alone accrues nothing before the first consume");
   }
 
@@ -1049,7 +1049,7 @@ contract RetargetterTest is RetargetterBaseTest {
 
   function test_storageLayout_operationPacking() public {
     _seedPosition(10_000e18, 5_000e18);
-    uint256 startTime = block.timestamp;
+    uint256 startTime = vm.getBlockTimestamp();
     address request = _startAsync(6_000e18, 100);
     vm.warp(startTime + 1 days);
     _consume(request, 1_000e18, 10e18, 1_000e18);

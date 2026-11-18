@@ -990,7 +990,7 @@ contract ParetoFundTest is Test {
     fund.unlock(depositOrder);
 
     // Set epoch as running so withdrawal isn't immediately claimable
-    cdo.setEpochEndDate(block.timestamp + 1 days);
+    cdo.setEpochEndDate(vm.getBlockTimestamp() + 1 days);
 
     // Create redeem order
     Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
@@ -1091,7 +1091,7 @@ contract ParetoFundTest is Test {
     fund.commit(order);
 
     // Set epoch as running (epoch not ended yet)
-    cdo.setEpochEndDate(block.timestamp + 1 days);
+    cdo.setEpochEndDate(vm.getBlockTimestamp() + 1 days);
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing during epoch");
 
     // Advance epoch to make withdrawal claimable
@@ -1134,7 +1134,7 @@ contract ParetoFundTest is Test {
     _depositAndUnlock(ONE_USDC);
 
     // Set epoch as running so withdrawal isn't immediately claimable
-    cdo.setEpochEndDate(block.timestamp + 1 days);
+    cdo.setEpochEndDate(vm.getBlockTimestamp() + 1 days);
 
     // Redeem lifecycle
     Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
@@ -1163,7 +1163,7 @@ contract ParetoFundTest is Test {
     cdo.setApr0Mode(true);
 
     // Set epoch as running so withdrawal isn't immediately claimable
-    cdo.setEpochEndDate(block.timestamp + 1 days);
+    cdo.setEpochEndDate(vm.getBlockTimestamp() + 1 days);
 
     // Redeem lifecycle
     Order memory order = _redeemOrder(ONE_AA, ONE_USDC);
@@ -1206,7 +1206,7 @@ contract ParetoFundTest is Test {
     assertGt(strategy.lastWithdrawRequest(address(fund)), 0, "lastWithdrawRequest should be set");
 
     // Set epoch as running (epoch not ended yet)
-    cdo.setEpochEndDate(block.timestamp + 1 days);
+    cdo.setEpochEndDate(vm.getBlockTimestamp() + 1 days);
     assertEq(uint256(fund.state(order)), uint256(State.PROCESSING), "processing during epoch");
 
     // Advance epoch to make withdrawal claimable

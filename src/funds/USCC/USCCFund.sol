@@ -29,6 +29,10 @@ import {BPS} from "../../libs/Constants.sol";
 ///      - This contract uses an "internal state" pattern where the stored state (internalState) may differ
 ///        from the state returned by the public state() function. The state() function performs dynamic checks
 ///        on asset balances to determine state transitions.
+///      - State reads the fund's whole USCC/USDC balance and unlock sweeps it, so a settlement
+///        landing after its order ended, or a direct transfer, is credited to the next order.
+///        Set `order.output` close to the expected amount (or tighten it with resolve()) and
+///        unlock once Superstate confirms settlement.
 contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   using SafeTransferLib for address;
   using FixedPointMathLib for uint256;
@@ -157,6 +161,7 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
     depositor_.checkContract();
 
     _usccFundStorage().recipient = recipient_;
+    emit RecipientUpdated(recipient_);
 
     _setOracle(oracle_);
 
@@ -357,6 +362,13 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   }
 
   /// @inheritdoc IUSCCFund
+  function setRecipient(address newRecipient) external override onlyOwnerOrRoles(_OPERATOR_ROLE) {
+    newRecipient.checkNotZero();
+    _usccFundStorage().recipient = newRecipient;
+    emit RecipientUpdated(newRecipient);
+  }
+
+  /// @inheritdoc IUSCCFund
   function resolve(Order memory order, uint256 input, uint256 output)
     external
     override
@@ -412,6 +424,11 @@ contract USCCFund is IUSCCFund, OwnableRoles, Initializable {
   /// @inheritdoc IFund
   function maxRedeem(address account) external view override returns (uint256) {
     return hasAllRoles(account, _DEPOSITOR_ROLE) ? IERC20(WUSCC).balanceOf(account) : 0;
+  }
+
+  /// @inheritdoc IUSCCFund
+  function recipient() external view override returns (address) {
+    return _usccFundStorage().recipient;
   }
 
   /// @inheritdoc IFund
