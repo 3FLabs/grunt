@@ -13,7 +13,10 @@ import {
 } from "src/interfaces/manager/base/IPositionManagerRebalancing.sol";
 import {Order, Mode, State} from "src/libs/funds/Order.sol";
 import {MockRetargetterFund} from "test/mock/manager/rebalancer/MockRetargetterFund.sol";
+import {PositionManager} from "src/manager/PositionManager.sol";
+import {PositionManagerMetadata} from "src/libs/manager/LibStorage.sol";
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {LibClone} from "lib/solady/src/utils/LibClone.sol";
 
 /// @dev Fund reentering setTargetLtvOverride from inside cancel. The test makes it the
 ///      position manager's owner, so only the reentrancy guard can stop the call.
@@ -21,7 +24,7 @@ contract OverrideReenteringFund is MockRetargetterFund {
   constructor(address asset_, address share_) MockRetargetterFund(asset_, share_) {}
 
   function cancel(Order calldata order) public override returns (State) {
-    IRetargetter(msg.sender).setTargetLtvOverride(0.6e18);
+    IRetargetter(msg.sender).setTargetLtvOverride(IRetargetter(msg.sender).boundPositionManager(), 0.6e18);
     return super.cancel(order);
   }
 }
@@ -31,7 +34,7 @@ contract OverrideReenteringFund is MockRetargetterFund {
 ///      there, so only the idle check can stop the call.
 contract OverrideSettingFlashLoanModule is IFlashLoanModule {
   function flashLoan(address, uint256, bytes calldata) external {
-    IRetargetter(msg.sender).setTargetLtvOverride(0.6e18);
+    IRetargetter(msg.sender).setTargetLtvOverride(IRetargetter(msg.sender).boundPositionManager(), 0.6e18);
   }
 }
 
@@ -54,7 +57,7 @@ contract RetargetterTargetLtvOverrideTest is RetargetterBaseTest {
   /// @dev Sets the override as the fixture's position manager owner.
   function _setOverride(uint256 targetLtvOverride) internal {
     vm.prank(owner);
-    retargetter.setTargetLtvOverride(targetLtvOverride);
+    retargetter.setTargetLtvOverride(address(positionManager), targetLtvOverride);
   }
 
   /// @dev Reads the third assets slot: position manager (bits 0..159), override (160..223).
@@ -138,11 +141,11 @@ contract RetargetterTargetLtvOverrideTest is RetargetterBaseTest {
     for (uint256 i; i < rejected.length; ++i) {
       vm.prank(rejected[i]);
       vm.expectRevert(Ownable.Unauthorized.selector);
-      retargetter.setTargetLtvOverride(OVERRIDE);
+      retargetter.setTargetLtvOverride(address(positionManager), OVERRIDE);
     }
 
     vm.prank(pmOwner);
-    retargetter.setTargetLtvOverride(OVERRIDE);
+    retargetter.setTargetLtvOverride(address(positionManager), OVERRIDE);
     assertEq(retargetter.targetLtv(), OVERRIDE, "position manager owner set the override");
   }
 
@@ -152,18 +155,65 @@ contract RetargetterTargetLtvOverrideTest is RetargetterBaseTest {
 
     vm.prank(caller);
     vm.expectRevert(Ownable.Unauthorized.selector);
-    retargetter.setTargetLtvOverride(value);
+    retargetter.setTargetLtvOverride(address(positionManager), value);
   }
 
-  /// @notice Unbound, there is no position manager owner to authorize against: the owner
-  ///         read on the zero address fails and the call reverts for everyone. Asserted with
-  ///         a low-level call (the revert carries no data).
+  /// @notice The expected position manager must be the bound one, even for its owner.
+  function testFuzz_setTargetLtvOverride_revertsForWrongPositionManager(address expected, uint256 value) public {
+    vm.assume(expected != address(positionManager));
+    value = bound(value, 0, WAD);
+
+    vm.prank(owner);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.setTargetLtvOverride(expected, value);
+  }
+
+  /// @notice A call made for one binding cannot land on the next, even when the same address
+  ///         owns both position managers: the stale call reverts and the owner sets the
+  ///         override again for the new binding.
+  function test_setTargetLtvOverride_staleCallRevertsAfterRebind() public {
+    PositionManager second = PositionManager(LibClone.clone(address(new PositionManager())));
+    second.initialize(
+      owner,
+      PositionManagerMetadata({
+        name: "Second Position Manager",
+        symbol: "PMS2",
+        collateralAsset: address(collateralToken),
+        debtAsset: address(debtToken)
+      }),
+      POSITION_MANAGER_LTV,
+      address(0),
+      0,
+      0
+    );
+    vm.prank(owner);
+    retargetter.setPositionManager(address(second));
+
+    vm.prank(owner);
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.setTargetLtvOverride(address(positionManager), OVERRIDE);
+    assertEq(_storedOverride(), 0, "stale call stores nothing");
+
+    vm.expectEmit(true, true, true, true, address(retargetter));
+    emit IRetargetter.TargetLtvOverrideSet(address(second), OVERRIDE);
+    vm.prank(owner);
+    retargetter.setTargetLtvOverride(address(second), OVERRIDE);
+    assertEq(retargetter.targetLtv(), OVERRIDE, "override set for the new binding");
+  }
+
+  /// @notice Unbound, nothing authorizes: the previous position manager mismatches, and the
+  ///         zero address fails the owner read (a low-level call, as that revert carries no
+  ///         data).
   function test_setTargetLtvOverride_revertsWhileUnbound() public {
     vm.prank(owner);
     retargetter.setPositionManager(address(0));
 
     vm.prank(owner);
-    (bool ok,) = address(retargetter).call(abi.encodeCall(retargetter.setTargetLtvOverride, (OVERRIDE)));
+    vm.expectRevert(Ownable.Unauthorized.selector);
+    retargetter.setTargetLtvOverride(address(positionManager), OVERRIDE);
+
+    vm.prank(owner);
+    (bool ok,) = address(retargetter).call(abi.encodeCall(retargetter.setTargetLtvOverride, (address(0), OVERRIDE)));
     assertFalse(ok, "unbound setter reverts");
     assertEq(_storedOverride(), 0, "nothing stored");
   }
@@ -203,7 +253,7 @@ contract RetargetterTargetLtvOverrideTest is RetargetterBaseTest {
     for (uint256 i; i < values.length; ++i) {
       vm.prank(owner);
       vm.expectRevert(LibRetargetterErrors.OperationActive.selector);
-      retargetter.setTargetLtvOverride(values[i]);
+      retargetter.setTargetLtvOverride(address(positionManager), values[i]);
     }
     assertEq(retargetter.targetLtv(), OVERRIDE, "override unchanged during the operation");
 
@@ -239,7 +289,7 @@ contract RetargetterTargetLtvOverrideTest is RetargetterBaseTest {
 
     vm.prank(owner);
     vm.expectRevert(LibRetargetterErrors.InvalidParameters.selector);
-    retargetter.setTargetLtvOverride(value);
+    retargetter.setTargetLtvOverride(address(positionManager), value);
   }
 
   /// @notice WAD is accepted but inert (the live ltv is lower); zero unsets.

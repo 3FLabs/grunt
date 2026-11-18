@@ -375,9 +375,10 @@ interface IRetargetter {
   /// @dev Only the bound position manager's owner, and only while no operation is active.
   ///      The direction checks and the principal cap use the lower of the override and the
   ///      position manager's live ltv, so the override can only lower the target. Zero unsets
-  ///      it.
+  ///      it. Reverts Unauthorized unless `positionManager` is the bound position manager.
+  /// @param positionManager The bound position manager the caller expects
   /// @param targetLtvOverride_ The override (WAD, at most WAD), or zero to unset
-  function setTargetLtvOverride(uint256 targetLtvOverride_) external;
+  function setTargetLtvOverride(address positionManager, uint256 targetLtvOverride_) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */

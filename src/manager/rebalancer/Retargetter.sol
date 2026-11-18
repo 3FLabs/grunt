@@ -770,12 +770,14 @@ contract Retargetter is IRetargetter, IFlashLoanReceiver, OwnableRoles, Initiali
   /// @inheritdoc IRetargetter
   /// @dev Gated on the owner of the ltv it narrows: the gates behave exactly as if that owner
   ///      had set the position manager's ltv to the effective target. Idle only, so the
-  ///      override never moves under an operation (SYNC windows included). Reverts while
-  ///      unbound (the owner read on the zero address fails).
-  function setTargetLtvOverride(uint256 targetLtvOverride_) external nonReentrant {
+  ///      override never moves under an operation (SYNC windows included). The expected
+  ///      position manager stops a call made for a previous binding from landing on a new
+  ///      one. Reverts while unbound (the owner read on the zero address fails).
+  function setTargetLtvOverride(address positionManager, uint256 targetLtvOverride_) external nonReentrant {
     RetargetterAssets storage assets_ = LibStorage.assetsStorage();
-    address positionManager = assets_.positionManager;
-    if (msg.sender != OwnableRoles(positionManager).owner()) revert Unauthorized();
+    if (positionManager != assets_.positionManager || msg.sender != OwnableRoles(positionManager).owner()) {
+      revert Unauthorized();
+    }
     _checkIdle();
     if (targetLtvOverride_ > FixedPointMathLib.WAD) revert LibRetargetterErrors.InvalidParameters();
     // Safe: at most WAD, which fits in uint64

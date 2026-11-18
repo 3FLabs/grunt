@@ -642,7 +642,7 @@ contract RetargetterHandler is Test {
     uint256 newOverride = overrideSeed % 4 == 0 ? 0 : _bound(overrideSeed, 0.3e18, 0.72e18);
     bool active = retargetter.isActive();
     vm.prank(owner);
-    try retargetter.setTargetLtvOverride(newOverride) {
+    try retargetter.setTargetLtvOverride(address(positionManager), newOverride) {
       if (active) overrideMovedWhileActive = true;
     } catch {}
   }
