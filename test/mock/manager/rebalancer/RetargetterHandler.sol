@@ -121,9 +121,6 @@ contract RetargetterHandler is Test {
   /// @notice Set if any SYNC attempt (successful or reverted) left persistent state behind.
   bool public syncStatePersisted;
 
-  /// @notice Set if a target LTV override update succeeded while an operation was active.
-  bool public overrideMovedWhileActive;
-
   /// @dev The recorded startedAt of the current operation (0 while unset or inactive).
   uint40 internal ghostStartedAt;
 
@@ -338,7 +335,7 @@ contract RetargetterHandler is Test {
   function _gateCap(uint16 yieldCapBps) internal view returns (uint256) {
     uint256 collateralQuoted = positionManager.collateralAmountQuoted();
     uint256 debt = positionManager.debtAmount();
-    uint256 target = retargetter.targetLtv();
+    (uint256 target,) = positionManager.config();
     RetargetterConfig memory config_ = retargetter.config();
     address quoter = retargetter.quoter();
     YieldEstimates memory e = config_.estimates;
@@ -517,7 +514,7 @@ contract RetargetterHandler is Test {
       );
     }
 
-    uint256 target = retargetter.targetLtv();
+    (uint256 target,) = positionManager.config();
     uint256 ltvBefore = _positionManagerLtv();
     bool bridgeOutstanding = _bridgeOutstanding();
     int256 valueBefore = _positionValue();
@@ -635,18 +632,6 @@ contract RetargetterHandler is Test {
     try positionManager.setLtv(newLtv) {} catch {}
   }
 
-  /// @notice Sets the position manager owner's target LTV override over the setLtv range,
-  ///         so some values land above the live ltv (inert); one seed in four clears it.
-  ///         Records a ghost if the update lands while an operation is active.
-  function act_setTargetLtvOverride(uint256 overrideSeed) external trackStartedAt {
-    uint256 newOverride = overrideSeed % 4 == 0 ? 0 : _bound(overrideSeed, 0.3e18, 0.72e18);
-    bool active = retargetter.isActive();
-    vm.prank(owner);
-    try retargetter.setTargetLtvOverride(address(positionManager), newOverride) {
-      if (active) overrideMovedWhileActive = true;
-    } catch {}
-  }
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                         INTERNALS                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -678,7 +663,7 @@ contract RetargetterHandler is Test {
   ///      target, counting collateral about to be supplied to borrowPosition1 in the same
   ///      rebalance (quoted one-to-one, matching the fixture oracle).
   function _borrowHeadroom(uint256 incomingCollateral) internal view returns (uint256) {
-    uint256 target = retargetter.targetLtv();
+    (uint256 target,) = positionManager.config();
     uint256 aggregateMax = (positionManager.collateralAmountQuoted() + incomingCollateral) * target / WAD;
     uint256 debt = positionManager.debtAmount();
     if (aggregateMax <= debt) return 0;
@@ -694,7 +679,7 @@ contract RetargetterHandler is Test {
   ///      zero-rate ideal principal, so the post-window LTV lands at or below target at a
   ///      share price of one (price drift above one may still revert, which is caught).
   function _syncUpAmount(uint256 seed, uint256 cap) internal view returns (uint256) {
-    uint256 target = retargetter.targetLtv();
+    (uint256 target,) = positionManager.config();
     uint256 debt = positionManager.debtAmount();
     uint256 targetDebt = positionManager.collateralAmountQuoted() * target / WAD;
     if (targetDebt <= debt) return 0;

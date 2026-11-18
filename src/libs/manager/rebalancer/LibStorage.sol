@@ -25,13 +25,10 @@ import {
 /// @param debtAsset The debt asset every position manager, fund and Request must match
 /// @param positionManager The single position manager every operation runs against; its assets
 ///        define the pair at the first bind, and every rebind must match that pair
-/// @param targetLtvOverride The position manager owner's target LTV override (WAD, zero when
-///        unset); packs into the position manager's slot and is cleared at every bind
 struct RetargetterAssets {
   address collateralAsset;
   address debtAsset;
   address positionManager;
-  uint64 targetLtvOverride;
 }
 
 /// @notice The Retargetter's whitelists (namespace "retargetter.whitelists").

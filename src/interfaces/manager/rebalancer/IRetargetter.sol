@@ -163,11 +163,6 @@ interface IRetargetter {
   /// @param config The new configuration
   event ConfigSet(RetargetterConfig config);
 
-  /// @notice Emitted when the bound position manager's owner sets the target LTV override.
-  /// @param positionManager The bound position manager
-  /// @param targetLtvOverride The new override (WAD), zero to unset
-  event TargetLtvOverrideSet(address indexed positionManager, uint256 targetLtvOverride);
-
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                        ASYNC FLOW                          */
   /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -367,18 +362,8 @@ interface IRetargetter {
   ///      principal-cap read trusts an owner-curated address rather than a caller-supplied
   ///      one. A nonzero manager is checked to be a contract on the bound pair; both paths
   ///      revert while an operation is active (the binding can only change while idle).
-  ///      Every bind clears the target LTV override.
   /// @param positionManager The position manager to bind, or the zero address to unbind
   function setPositionManager(address positionManager) external;
-
-  /// @notice Sets the target LTV override for the bound position manager.
-  /// @dev Only the bound position manager's owner, and only while no operation is active.
-  ///      The direction checks and the principal cap use the lower of the override and the
-  ///      position manager's live ltv, so the override can only lower the target. Zero unsets
-  ///      it. Reverts Unauthorized unless `positionManager` is the bound position manager.
-  /// @param positionManager The bound position manager the caller expects
-  /// @param targetLtvOverride_ The override (WAD, at most WAD), or zero to unset
-  function setTargetLtvOverride(address positionManager, uint256 targetLtvOverride_) external;
 
   /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
   /*                           VIEWS                            */
@@ -470,11 +455,6 @@ interface IRetargetter {
 
   /// @notice Returns the bound position manager (zero when none is bound).
   function boundPositionManager() external view returns (address);
-
-  /// @notice Returns the target LTV the direction checks and the principal cap use: the
-  ///         position manager's ltv, or the override when one is set below it.
-  /// @dev Reverts if no position manager is bound.
-  function targetLtv() external view returns (uint256);
 
   /// @notice Returns the quoter holding the sizing math.
   function quoter() external view returns (address);
